@@ -216,7 +216,24 @@
     ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
     pressure_types: "{{ item.status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | list }}"
     node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
-    primary_node_role: "{{ (node_roles | first) | default('worker') }}"
+    primary_node_role: >-
+      {{
+        'master'
+        if 'master' in node_roles
+        else (
+          'control-plane'
+          if 'control-plane' in node_roles
+          else (
+            'infra'
+            if 'infra' in node_roles
+            else (
+              'worker'
+              if 'worker' in node_roles
+              else ((node_roles | sort | first) | default('worker'))
+            )
+          )
+        )
+      }}
     kubelet_version: "{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}"
   changed_when: false
 
@@ -253,7 +270,24 @@
     pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
     cpu_allocatable_millicores: "{{ (cpu_allocatable_raw | regex_replace('m$', '') | int) if (cpu_allocatable_raw | string | regex_search('m$')) else (((cpu_allocatable_raw | float) * 1000) | int) }}"
     node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
-    role_name: "{{ (node_roles | first) | default('worker') }}"
+    role_name: >-
+      {{
+        'master'
+        if 'master' in node_roles
+        else (
+          'control-plane'
+          if 'control-plane' in node_roles
+          else (
+            'infra'
+            if 'infra' in node_roles
+            else (
+              'worker'
+              if 'worker' in node_roles
+              else ((node_roles | sort | first) | default('worker'))
+            )
+          )
+        )
+      }}
     scheduled_pods: "{{ node_pod_counts[item.metadata.name] | default(0) | int }}"
     node_capacity_entry:
       name: "{{ item.metadata.name }}"

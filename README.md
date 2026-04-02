@@ -30,6 +30,7 @@ The report includes:
 - an overall status
 - an audit score
 - a cluster health score from `0` to `100`
+- a `Cluster Current State` section near the top
 - grouped findings
 - suggested next steps
 - execution details
@@ -48,6 +49,8 @@ The report covers the main areas operators usually care about:
 - machine config pool health
 - node readiness and node pressure
 - node role and kubelet version spread
+- node inventory that works across UPI, ARO, and ROSA
+- current cluster state such as visibility, uptime, node counts, worker pool shapes, node architectures, OS images, and average utilization
 - pod density on nodes
 - workload rollout health for deployments, statefulsets, and daemonsets
 - workloads missing liveness, readiness, or startup probes
@@ -257,6 +260,8 @@ reports/cluster-health-my-cluster-20260402T112233Z.pdf
 
 HTML and PDF output are best-effort. If the required tools are missing, the Markdown and JSON reports are still generated.
 
+Near the top of the report, the `Cluster Current State` section shows what the cluster looks like before you get into the findings. This includes version, visibility, uptime, node counts, worker pool shapes, node platform details, and average resource usage when Prometheus data is available.
+
 The `my-cluster` part comes from the cluster infrastructure name. If that is not available, the tool falls back to the current `oc` context name.
 
 The report also includes a `Data Collection` section. Check that section early if a report looks too clean. It shows:
@@ -268,6 +273,15 @@ The report also includes a `Data Collection` section. Check that section early i
 - whether any core data sets were missing
 
 By default, the temporary raw collection file is removed automatically. Set `keep_collection_artifacts=true` only when you need it for debugging.
+
+For node inventory, the report uses cloud instance-type labels when they exist. If they do not exist, which is common in some UPI environments, it falls back to a node shape built from allocatable CPU, memory, and architecture. That keeps the node summary useful across OpenShift installation types.
+
+For example:
+
+- on ARO and ROSA, you will usually see cloud instance types
+- on many UPI clusters, you may see allocatable shapes instead
+
+Both are expected. The goal is to keep the node summary useful even when cloud labels are missing.
 
 ## How To Read The Report
 
@@ -328,15 +342,16 @@ Core commands are the main data sources for cluster state, nodes, workloads, rou
 
 If you are reading the report by hand, this order usually works well:
 
-1. `Audit Rubric`
-2. `Executive Summary`
-3. `Priority Findings`
-4. `Suggested Next Steps`
-5. `Upgrade Risk`
-6. `Workload Health`
-7. `Storage`
-8. `Security And Best Practice Audit`
-9. `Optional Prometheus Signals`
+1. `Cluster Current State`
+2. `Audit Rubric`
+3. `Executive Summary`
+4. `Priority Findings`
+5. `Suggested Next Steps`
+6. `Upgrade Risk`
+7. `Workload Health`
+8. `Storage`
+9. `Security And Best Practice Audit`
+10. `Optional Prometheus Signals`
 
 ## Strong Signals And Heuristic Signals
 

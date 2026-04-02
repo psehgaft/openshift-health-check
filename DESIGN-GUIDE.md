@@ -135,6 +135,17 @@ The common pattern is hard to miss:
 
 The easiest way to think about this is as a layered model.
 
+Before the tool shows problems, it now shows the current state of the cluster near the top of the report. That is intentional. Operators usually need quick context first:
+
+- what version is this cluster on
+- how big is it
+- what kind of nodes does it have
+- is it public or private
+- how old is it
+- what does average utilization look like
+
+Without that context, the findings are harder to interpret.
+
 ### Layer 1: Platform State
 
 Start with the platform itself:
@@ -202,6 +213,8 @@ These usually are not page-level on their own:
 - one short worker restart
 - one warning event with no visible impact
 
+For the node inventory itself, the tool needs to work across more than one OpenShift style. ARO and ROSA often have cloud instance-type labels. UPI clusters often do not. That is why the report prefers cloud instance types when they exist, but falls back to an allocatable node shape built from CPU, memory, and architecture when they do not. The point is to keep the node summary readable across UPI, ARO, and ROSA without pretending the metadata is always the same.
+
 ### Layer 4: Service Path Checks
 
 Metrics alone are not enough here.
@@ -267,6 +280,7 @@ Raw object dumps create noise. Operators need signal.
 
 That is why the report favors:
 
+- a current-state section first
 - grouped summaries
 - top-N sections
 - priority findings

@@ -6,6 +6,144 @@
 - User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
 - Overall status: `{{ health_summary.status }}`
 
+## Cluster Current State
+
+| Property | Value |
+| --- | --- |
+| OpenShift version | `{{ cluster_current_state.ocp_version | default(health_summary.cluster_version | default('unknown')) }}` |
+| Kubernetes version | `{{ cluster_current_state.kubernetes_version | default('unknown') }}` |
+| Kubernetes version state | `{{ cluster_current_state.kubernetes_version_state | default('unknown') }}` |
+| Red Hat Insights status | `{{ cluster_current_state.insights_status | default('unknown') }}` |
+| Cluster visibility | `{{ cluster_current_state.cluster_visibility | default('unknown') }}` |
+| API visibility | `{{ cluster_current_state.api_visibility | default('unknown') }}` |
+| Ingress visibility | `{{ cluster_current_state.ingress_visibility | default('unknown') }}` |
+| Default ingress publish strategy | `{{ cluster_current_state.default_ingress_strategy | default('unknown') }}` |
+| Platform | `{{ cluster_profile.platform | default('unknown') }}` |
+| Control plane topology | `{{ cluster_profile.control_plane_topology | default('unknown') }}` |
+| Infrastructure topology | `{{ cluster_profile.infrastructure_topology | default('unknown') }}` |
+| Installed at | `{{ cluster_current_state.installed_at | default('unknown') }}` |
+| Cluster uptime | `{{ cluster_current_state.uptime_human | default('unknown') }}` |
+| Cluster age in days | `{{ cluster_current_state.uptime_days | default('unknown') }}` |
+
+### Cluster Size
+
+| Signal | Value |
+| --- | --- |
+| Nodes | `{{ cluster_current_state.node_counts.total | default(0) }}` |
+| Control plane nodes | `{{ cluster_current_state.node_counts.control_plane | default(0) }}` |
+| Worker nodes | `{{ cluster_current_state.node_counts.worker | default(0) }}` |
+| Infra nodes | `{{ cluster_current_state.node_counts.infra | default(0) }}` |
+| Other nodes | `{{ cluster_current_state.node_counts.other | default(0) }}` |
+| Worker pool shapes | `{{ cluster_current_state.worker_pool_count | default(0) }}` |
+| MachineConfigPools | `{{ cluster_current_state.machineconfigpool_count | default(0) }}` |
+| Namespaces | `{{ cluster_current_state.object_counts.namespaces | default(0) }}` |
+| Pods | `{{ cluster_current_state.object_counts.pods | default(0) }}` |
+| Running pods | `{{ cluster_current_state.object_counts.running_pods | default(0) }}` |
+| Deployments | `{{ cluster_current_state.object_counts.deployments | default(0) }}` |
+| StatefulSets | `{{ cluster_current_state.object_counts.statefulsets | default(0) }}` |
+| DaemonSets | `{{ cluster_current_state.object_counts.daemonsets | default(0) }}` |
+| Routes | `{{ cluster_current_state.object_counts.routes | default(0) }}` |
+| Ingresses | `{{ cluster_current_state.object_counts.ingresses | default(0) }}` |
+| StorageClasses | `{{ cluster_current_state.object_counts.storageclasses | default(0) }}` |
+
+### Capacity And Average Utilization
+
+| Signal | Value |
+| --- | --- |
+| Total allocatable CPU | `{{ cluster_current_state.resources.total_cpu_cores | default('unknown') }}` cores |
+| Total allocatable memory | `{{ cluster_current_state.resources.total_memory_gib | default('unknown') }}` GiB |
+| Total allocatable ephemeral storage | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default('unknown') }}` GiB |
+| Average CPU per node | `{{ cluster_current_state.resources.average_cpu_cores_per_node | default('unknown') }}` cores |
+| Average memory per node | `{{ cluster_current_state.resources.average_memory_gib_per_node | default('unknown') }}` GiB |
+| Average ephemeral storage per node | `{{ cluster_current_state.resources.average_ephemeral_storage_gib_per_node | default('unknown') }}` GiB |
+| Average pods per node | `{{ cluster_current_state.resources.average_pods_per_node | default('unknown') }}` |
+| Average pod density | `{{ cluster_current_state.resources.average_pod_density_pct | default('n/a') }}`% |
+| Average CPU utilization | `{{ cluster_current_state.resources.average_cpu_utilization_pct | default('n/a') }}`% |
+| Average memory utilization | `{{ cluster_current_state.resources.average_memory_utilization_pct | default('n/a') }}`% |
+| Average disk utilization | `{{ cluster_current_state.resources.average_disk_utilization_pct | default('n/a') }}`% |
+
+### Node Platform Summary
+
+{% if cluster_current_state.node_architectures | default([]) | length > 0 %}
+Architectures:
+{% for item in cluster_current_state.node_architectures %}
+- `{{ item.architecture }}`: `{{ item.count }}`
+{% endfor %}
+{% endif %}
+
+{% if cluster_current_state.kubernetes_versions | default([]) | length > 0 %}
+Kubernetes versions:
+{% for item in cluster_current_state.kubernetes_versions %}
+- `{{ item.version }}`: `{{ item.count }}`
+{% endfor %}
+{% endif %}
+
+{% if cluster_current_state.instance_types | default([]) | length > 0 %}
+Cloud instance types:
+{% for item in cluster_current_state.instance_types[:10] %}
+- `{{ item.instance_type }}`: `{{ item.count }}`
+{% endfor %}
+{% endif %}
+
+{% if cluster_current_state.node_shapes | default([]) | length > 0 %}
+Node shapes:
+{% for item in cluster_current_state.node_shapes[:12] %}
+- `{{ item.shape }}`: `{{ item.count }}`
+{% endfor %}
+{% endif %}
+
+{% if cluster_current_state.provider_types | default([]) | length > 0 %}
+Node providers:
+{% for item in cluster_current_state.provider_types %}
+- `{{ item.provider }}`: `{{ item.count }}`
+{% endfor %}
+{% endif %}
+
+{% if cluster_current_state.os_images | default([]) | length > 0 %}
+OS images:
+{% for item in cluster_current_state.os_images[:10] %}
+- `{{ item.os_image }}`: `{{ item.count }}`
+{% endfor %}
+{% endif %}
+
+{% if cluster_current_state.container_runtimes | default([]) | length > 0 %}
+Container runtimes:
+{% for item in cluster_current_state.container_runtimes[:10] %}
+- `{{ item.runtime }}`: `{{ item.count }}`
+{% endfor %}
+{% endif %}
+
+{% if cluster_current_state.top_node_features | default([]) | length > 0 %}
+Top node features:
+{% for item in cluster_current_state.top_node_features %}
+- `{{ item.feature }}`: `{{ item.node_count }}` nodes
+{% endfor %}
+{% endif %}
+
+### Worker Pool Summary
+
+{% if cluster_current_state.worker_pools | default([]) | length == 0 %}
+No worker pool shape data was built from the current node labels.
+{% else %}
+| Role | Type | Source | Provider | Architecture | Nodes | Zones |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in cluster_current_state.worker_pools %}
+| `{{ item.role }}` | `{{ item.type }}` | `{{ item.type_source }}` | `{{ item.provider }}` | `{{ item.architecture }}` | `{{ item.nodes }}` | `{{ item.zones | join(', ') }}` |
+{% endfor %}
+{% endif %}
+
+### MachineConfigPool Snapshot
+
+{% if cluster_current_state.machineconfigpools | default([]) | length == 0 %}
+No MachineConfigPool data found.
+{% else %}
+| MCP | Machines | Ready | Updated | Degraded |
+| --- | --- | --- | --- | --- |
+{% for item in cluster_current_state.machineconfigpools %}
+| `{{ item.name }}` | `{{ item.machine_count }}` | `{{ item.ready_machine_count }}` | `{{ item.updated_machine_count }}` | `{{ item.degraded_machine_count }}` |
+{% endfor %}
+{% endif %}
+
 ## Audit Rubric
 
 | Metric | Value |
