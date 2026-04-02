@@ -1,0 +1,171 @@
+---
+- name: Build aggregate lists
+  ansible.builtin.set_fact:
+    default_storageclasses: "{{ storageclass_summary | default([]) | selectattr('is_default', 'in', ['true', 'True']) | list }}"
+    top_pod_restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit] }}"
+    high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', pod_restart_warning_threshold | default(5)) | sort(attribute='restarts', reverse=true) | list) }}"
+    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', pod_restart_warning_threshold | default(5)) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit]) }}"
+    top_pvc_issues: "{{ (pvc_issues | default([]))[:top_pvc_issue_limit] }}"
+    top_pv_issues: "{{ (pv_issues | default([]))[:top_pvc_issue_limit] }}"
+    top_event_reasons: "{{ (warning_event_reason_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | list)[:top_event_reason_limit] }}"
+    top_alert_groups: "{{ (firing_alert_name_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | list)[:top_alert_group_limit] }}"
+    top_alert_namespaces: "{{ (firing_alert_namespace_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | list)[:top_namespace_issue_limit] }}"
+    top_namespace_issue_summary: "{{ (namespace_issue_summary | default([]))[:top_namespace_issue_limit] }}"
+    top_workload_health_issues: "{{ (workload_health_issues | default([]))[:top_workload_issue_limit] }}"
+    top_workload_probe_findings: "{{ (workload_probe_findings | default([]))[:top_workload_issue_limit] }}"
+    top_overprovisioned_pods: "{{ (overprovisioned_pods | default([]))[:top_workload_issue_limit] }}"
+    top_quota_pressure_findings: "{{ (quota_pressure_findings | default([]))[:top_workload_issue_limit] }}"
+    top_security_findings: "{{ (security_findings | default([]))[:top_security_issue_limit] }}"
+    top_workload_practice_findings: "{{ (workload_practice_findings | default([]))[:top_security_issue_limit] }}"
+    top_route_issues: "{{ (route_issues | default([]))[:top_workload_issue_limit] }}"
+    top_ingress_issues: "{{ (ingress_issues | default([]))[:top_workload_issue_limit] }}"
+    top_route_host_conflicts: "{{ (route_host_conflicts | default([]))[:top_workload_issue_limit] }}"
+    top_ingress_host_conflicts: "{{ (ingress_host_conflicts | default([]))[:top_workload_issue_limit] }}"
+    top_deprecated_crd_findings: "{{ (deprecated_crd_findings | default([]))[:top_deprecated_api_limit] }}"
+    top_deprecated_api_lines: "{{ (deprecated_api_lines | default([]))[:top_deprecated_api_limit] }}"
+    top_services_without_endpoints: "{{ (services_without_endpoints | default([]))[:top_workload_issue_limit] }}"
+    top_likely_unused_serviceaccounts: "{{ (likely_unused_serviceaccounts | default([]))[:top_workload_issue_limit] }}"
+    top_likely_unused_configmaps: "{{ (likely_unused_configmaps | default([]))[:top_workload_issue_limit] }}"
+    top_likely_unused_secrets: "{{ (likely_unused_secrets | default([]))[:top_workload_issue_limit] }}"
+    top_likely_unused_crds: "{{ (likely_unused_crds | default([]))[:top_deprecated_api_limit] }}"
+    top_image_registry_findings: "{{ (image_registry_findings | default([]))[:top_security_issue_limit] }}"
+    top_feature_findings: "{{ (feature_findings | default([]))[:top_security_issue_limit] }}"
+    top_observability_findings: "{{ (observability_findings | default([]))[:top_security_issue_limit] }}"
+  changed_when: false
+
+- name: Build security issue type counts
+  ansible.builtin.set_fact:
+    security_issue_type_counts: "{{ security_issue_type_counts | default({}) | combine({item.issue: ((security_issue_type_counts[item.issue] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ security_findings | default([]) }}"
+  changed_when: false
+
+- name: Build workload practice issue type counts
+  ansible.builtin.set_fact:
+    workload_practice_issue_type_counts: "{{ workload_practice_issue_type_counts | default({}) | combine({item.issue: ((workload_practice_issue_type_counts[item.issue] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ workload_practice_findings | default([]) }}"
+  changed_when: false
+
+- name: Build workload probe issue type counts
+  ansible.builtin.set_fact:
+    workload_probe_issue_type_counts: "{{ workload_probe_issue_type_counts | default({}) | combine({item.issue: ((workload_probe_issue_type_counts[item.issue] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ workload_probe_findings | default([]) }}"
+  changed_when: false
+
+- name: Build health summary
+  ansible.builtin.set_fact:
+    health_summary:
+      status: >-
+        {{
+          'CRITICAL'
+          if (
+            cv_available != 'True'
+            or cv_failing == 'True'
+            or (degraded_operators | default([]) | length > 0)
+            or (unavailable_operators | default([]) | length > 0)
+            or (not_ready_nodes | default([]) | length > 0)
+            or (degraded_mcps | default([]) | length > 0)
+            or (route_issues | default([]) | length > 0)
+            or (ingress_issues | default([]) | length > 0)
+            or (route_host_conflicts | default([]) | length > 0)
+            or (ingress_host_conflicts | default([]) | length > 0)
+            or (auth_findings | default([]) | length > 0)
+            or (ingresscontroller_issues | default([]) | length > 0)
+            or (infrastructure_component_issues | default([]) | length > 0)
+            or (critical_pod_density_nodes | default([]) | length > 0)
+            or (expiring_certificates_critical | default([]) | length > 0)
+            or (collection_summary.core_failed_commands | default(0) | int > 0)
+          )
+          else (
+            'WARNING'
+            if (
+              (progressing_operators | default([]) | length > 0)
+              or (pressure_nodes | default([]) | length > 0)
+              or (platform_pod_issues | default([]) | length > 0)
+              or (high_restart_pods | default([]) | length > 0)
+              or (namespace_issue_summary | default([]) | length > 0)
+              or (pvc_issues | default([]) | length > 0)
+              or (pv_issues | default([]) | length > 0)
+              or (workload_health_issues | default([]) | length > 0)
+              or (workload_probe_findings | default([]) | length > 0)
+              or (overprovisioned_pods | default([]) | length > 0)
+              or (quota_pressure_findings | default([]) | length > 0)
+              or (security_findings | default([]) | length > 0)
+              or (workload_practice_findings | default([]) | length > 0)
+              or (empty_user_namespaces | default([]) | length > 0)
+              or (services_without_endpoints | default([]) | length > 0)
+              or (likely_unused_serviceaccounts | default([]) | length > 0)
+              or (likely_unused_configmaps | default([]) | length > 0)
+              or (likely_unused_secrets | default([]) | length > 0)
+              or (likely_unused_crds | default([]) | length > 0)
+              or (image_registry_findings | default([]) | length > 0)
+              or (feature_findings | default([]) | length > 0)
+              or (namespaces_without_networkpolicy | default([]) | length > 0)
+              or (namespaces_missing_ingress_policies | default([]) | length > 0)
+              or (namespaces_missing_egress_policies | default([]) | length > 0)
+              or (namespaces_without_limitrange | default([]) | length > 0)
+              or (namespaces_without_resourcequota | default([]) | length > 0)
+              or (conditional_updates | default([]) | length > 0)
+              or (deprecated_crd_findings | default([]) | length > 0)
+              or (deprecated_api_lines | default([]) | length > 0)
+              or (high_pod_density_nodes | default([]) | length > 0)
+              or (expiring_certificates_warning | default([]) | length > 0)
+              or (observability_findings | default([]) | length > 0)
+              or (recent_warning_events | default([]) | length > 0)
+              or (collection_failures | default([]) | length > 0)
+            )
+            else 'HEALTHY'
+          )
+        }}
+      cluster_version: "{{ clusterversion.status.desired.version | default('unknown') }}"
+      operators_total: "{{ clusteroperators.items | default([]) | length }}"
+      operators_degraded: "{{ degraded_operators | default([]) | length }}"
+      operators_unavailable: "{{ unavailable_operators | default([]) | length }}"
+      nodes_total: "{{ nodes.items | default([]) | length }}"
+      nodes_not_ready: "{{ not_ready_nodes | default([]) | length }}"
+      node_pressure_count: "{{ pressure_nodes | default([]) | length }}"
+      mcps_degraded: "{{ degraded_mcps | default([]) | length }}"
+      platform_pod_issues: "{{ platform_pod_issues | default([]) | length }}"
+      high_restart_pods: "{{ high_restart_pods | default([]) | length }}"
+      workload_health_issues: "{{ workload_health_issues | default([]) | length }}"
+      workload_probe_findings: "{{ workload_probe_findings | default([]) | length }}"
+      overprovisioned_pods: "{{ overprovisioned_pods | default([]) | length }}"
+      quota_pressure_findings: "{{ quota_pressure_findings | default([]) | length }}"
+      route_issues: "{{ route_issues | default([]) | length }}"
+      ingress_issues: "{{ ingress_issues | default([]) | length }}"
+      route_host_conflicts: "{{ route_host_conflicts | default([]) | length }}"
+      ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) | length }}"
+      auth_findings: "{{ auth_findings | default([]) | length }}"
+      ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) | length }}"
+      infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) | length }}"
+      security_findings: "{{ security_findings | default([]) | length }}"
+      workload_practice_findings: "{{ workload_practice_findings | default([]) | length }}"
+      empty_user_namespaces: "{{ empty_user_namespaces | default([]) | length }}"
+      services_without_endpoints: "{{ services_without_endpoints | default([]) | length }}"
+      likely_unused_serviceaccounts: "{{ likely_unused_serviceaccounts | default([]) | length }}"
+      likely_unused_configmaps: "{{ likely_unused_configmaps | default([]) | length }}"
+      likely_unused_secrets: "{{ likely_unused_secrets | default([]) | length }}"
+      likely_unused_crds: "{{ likely_unused_crds | default([]) | length }}"
+      image_registry_findings: "{{ image_registry_findings | default([]) | length }}"
+      feature_findings: "{{ feature_findings | default([]) | length }}"
+      deprecated_crd_findings: "{{ deprecated_crd_findings | default([]) | length }}"
+      deprecated_api_lines: "{{ deprecated_api_lines | default([]) | length }}"
+      namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) | length }}"
+      namespaces_missing_ingress_policies: "{{ namespaces_missing_ingress_policies | default([]) | length }}"
+      namespaces_missing_egress_policies: "{{ namespaces_missing_egress_policies | default([]) | length }}"
+      namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) | length }}"
+      namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) | length }}"
+      namespaces_non_active: "{{ namespace_issue_summary | default([]) | length }}"
+      pv_issues: "{{ pv_issues | default([]) | length }}"
+      pvc_issues: "{{ pvc_issues | default([]) | length }}"
+      high_pod_density_nodes: "{{ high_pod_density_nodes | default([]) | length }}"
+      critical_pod_density_nodes: "{{ critical_pod_density_nodes | default([]) | length }}"
+      expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) | length }}"
+      expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) | length }}"
+      observability_findings: "{{ observability_findings | default([]) | length }}"
+      collection_failed_commands: "{{ collection_summary.failed_commands | default(0) }}"
+      collection_core_failed_commands: "{{ collection_summary.core_failed_commands | default(0) }}"
+      collection_timed_out_commands: "{{ collection_summary.timed_out_commands | default(0) }}"
+      available_updates: "{{ available_updates | default([]) | length }}"
+      conditional_updates: "{{ conditional_updates | default([]) | length }}"
+      recent_warning_events: "{{ recent_warning_events | default([]) | length }}"
+      firing_alerts: "{{ firing_alerts | default([]) | length }}"

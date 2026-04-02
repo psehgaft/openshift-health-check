@@ -1,0 +1,918 @@
+# OpenShift Cluster Health Report
+
+- Generated at: `{{ report_generated_at }}`
+- Context: `{{ oc_context_cmd.stdout | default('unknown') | trim }}`
+- API server: `{{ oc_server_cmd.stdout | default('unknown') | trim }}`
+- User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
+- Overall status: `{{ health_summary.status }}`
+
+## Audit Rubric
+
+| Metric | Value |
+| --- | --- |
+| Cluster health score | `{{ cluster_health_score }}/100` |
+| Cluster health rating | `{{ cluster_health_score_label }}` |
+| Score | `{{ audit_score_total }}/{{ audit_score_max }}` |
+| Critical checks | `{{ audit_critical_checks | length }}` |
+| Warning checks | `{{ audit_warning_checks | length }}` |
+
+### Health Score Legend
+
+| Score Range | Rating | Meaning |
+| --- | --- | --- |
+{% for item in cluster_health_score_legend %}
+| `{{ item.min }}-{{ item.max }}` | `{{ item.label }}` | {{ item.meaning }} |
+{% endfor %}
+
+| Check | Severity | Score | Findings |
+| --- | --- | --- | --- |
+{% for check in audit_checks %}
+| `{{ check.title }}` | `{{ check.severity }}` | `{{ check.score }}/{{ check.max_score }}` | `{{ check.findings_count }}` |
+{% endfor %}
+
+## Executive Summary
+
+| Signal | Value |
+| --- | --- |
+| Cluster version | `{{ health_summary.cluster_version }}` |
+| ClusterVersion Available | `{{ cv_available }}` |
+| ClusterVersion Progressing | `{{ cv_progressing }}` |
+| ClusterVersion Failing | `{{ cv_failing }}` |
+| Available updates | `{{ health_summary.available_updates }}` |
+| Conditional update risks | `{{ health_summary.conditional_updates }}` |
+| Cluster operators | `{{ health_summary.operators_total }}` total |
+| Degraded operators | `{{ health_summary.operators_degraded }}` |
+| Unavailable operators | `{{ health_summary.operators_unavailable }}` |
+| Nodes | `{{ health_summary.nodes_total }}` total |
+| NotReady nodes | `{{ health_summary.nodes_not_ready }}` |
+| Nodes under pressure | `{{ health_summary.node_pressure_count }}` |
+| Degraded MCPs | `{{ health_summary.mcps_degraded }}` |
+| Workload rollout issues | `{{ health_summary.workload_health_issues }}` |
+| Workloads missing probes | `{{ health_summary.workload_probe_findings }}` |
+| Overprovisioned pod candidates | `{{ health_summary.overprovisioned_pods }}` |
+| Quota pressure findings | `{{ health_summary.quota_pressure_findings }}` |
+| Platform pod issues | `{{ health_summary.platform_pod_issues }}` |
+| Pods with high restarts | `{{ health_summary.high_restart_pods }}` |
+| Route issues | `{{ health_summary.route_issues }}` |
+| Ingress issues | `{{ health_summary.ingress_issues }}` |
+| Route host conflicts | `{{ health_summary.route_host_conflicts }}` |
+| Ingress host conflicts | `{{ health_summary.ingress_host_conflicts }}` |
+| Authentication findings | `{{ health_summary.auth_findings }}` |
+| Infrastructure component issues | `{{ health_summary.infrastructure_component_issues }}` |
+| Ingress controller issues | `{{ health_summary.ingresscontroller_issues }}` |
+| Security findings | `{{ health_summary.security_findings }}` |
+| Workload practice findings | `{{ health_summary.workload_practice_findings }}` |
+| Empty user namespaces | `{{ health_summary.empty_user_namespaces }}` |
+| Services without endpoints | `{{ health_summary.services_without_endpoints }}` |
+| Likely unused service accounts | `{{ health_summary.likely_unused_serviceaccounts }}` |
+| Likely unused configmaps | `{{ health_summary.likely_unused_configmaps }}` |
+| Likely unused secrets | `{{ health_summary.likely_unused_secrets }}` |
+| Likely unused CRDs | `{{ health_summary.likely_unused_crds }}` |
+| Image registry findings | `{{ health_summary.image_registry_findings }}` |
+| Important feature findings | `{{ health_summary.feature_findings }}` |
+| Deprecated CRD versions | `{{ health_summary.deprecated_crd_findings }}` |
+| Deprecated API resources | `{{ health_summary.deprecated_api_lines }}` |
+| Namespaces without NetworkPolicy | `{{ health_summary.namespaces_without_networkpolicy }}` |
+| Namespaces missing ingress policies | `{{ health_summary.namespaces_missing_ingress_policies }}` |
+| Namespaces missing egress policies | `{{ health_summary.namespaces_missing_egress_policies }}` |
+| Namespaces without ResourceQuota | `{{ health_summary.namespaces_without_resourcequota }}` |
+| Namespaces without LimitRange | `{{ health_summary.namespaces_without_limitrange }}` |
+| Non-active namespaces | `{{ health_summary.namespaces_non_active }}` |
+| PV issues | `{{ health_summary.pv_issues }}` |
+| PVC issues | `{{ health_summary.pvc_issues }}` |
+| High pod density nodes | `{{ health_summary.high_pod_density_nodes }}` |
+| Critical pod density nodes | `{{ health_summary.critical_pod_density_nodes }}` |
+| Certificates expiring <= 30d | `{{ health_summary.expiring_certificates_warning }}` |
+| Certificates expiring <= 7d | `{{ health_summary.expiring_certificates_critical }}` |
+| Observability findings | `{{ health_summary.observability_findings }}` |
+| Collection command failures | `{{ health_summary.collection_failed_commands | default(0) }}` |
+| Core collection failures | `{{ health_summary.collection_core_failed_commands | default(0) }}` |
+| Collection timeouts | `{{ health_summary.collection_timed_out_commands | default(0) }}` |
+| Recent warning events | `{{ health_summary.recent_warning_events }}` |
+| Firing alerts | `{{ health_summary.firing_alerts }}` |
+
+## Cluster Profile
+
+| Property | Value |
+| --- | --- |
+| Infrastructure name | `{{ cluster_profile.infrastructure_name | default('unknown') }}` |
+| Platform | `{{ cluster_profile.platform | default('unknown') }}` |
+| Control plane topology | `{{ cluster_profile.control_plane_topology | default('unknown') }}` |
+| Infrastructure topology | `{{ cluster_profile.infrastructure_topology | default('unknown') }}` |
+| Base domain | `{{ cluster_profile.base_domain | default('unknown') }}` |
+| Ingress domain | `{{ cluster_profile.ingress_domain | default('unknown') }}` |
+| Network type | `{{ cluster_profile.network_type | default('unknown') }}` |
+| Identity provider count | `{{ cluster_profile.identity_provider_count | default(0) }}` |
+| Identity provider names | `{{ cluster_profile.identity_provider_names | default([]) | join(', ') or 'none' }}` |
+| Service networks | `{{ cluster_profile.service_networks | default([]) | join(', ') or 'unknown' }}` |
+| Cluster networks | `{{ cluster_profile.cluster_networks | default([]) | map(attribute='cidr') | join(', ') or 'unknown' }}` |
+| API URL | `{{ cluster_profile.api_url | default('unknown') }}` |
+| Internal API URL | `{{ cluster_profile.api_internal_url | default('unknown') }}` |
+
+## Data Collection
+
+| Signal | Value |
+| --- | --- |
+| Commands attempted | `{{ collection_summary.command_count | default(0) }}` |
+| Collector parallelism | `{{ collection_summary.parallelism | default(0) }}` |
+| Per-command timeout | `{{ collection_summary.timeout_seconds | default(0) }}` seconds |
+| Successful commands | `{{ collection_summary.succeeded_commands | default(0) }}` |
+| Failed commands | `{{ collection_summary.failed_commands | default(0) }}` |
+| Timed out commands | `{{ collection_summary.timed_out_commands | default(0) }}` |
+| Core command failures | `{{ collection_summary.core_failed_commands | default(0) }}` |
+
+{% if collection_failures | default([]) | length == 0 %}
+All collection commands completed successfully.
+{% else %}
+| Command | RC | Timed Out | Detail |
+| --- | --- | --- | --- |
+{% for item in collection_failures %}
+| `{{ item.name }}` | `{{ item.rc }}` | `{{ item.timed_out }}` | {{ item.stderr or 'n/a' }} |
+{% endfor %}
+{% endif %}
+
+## Priority Findings
+
+{% set has_findings =
+  (degraded_operators | default([]) | length > 0)
+  or (unavailable_operators | default([]) | length > 0)
+  or (not_ready_nodes | default([]) | length > 0)
+  or (pressure_nodes | default([]) | length > 0)
+  or (degraded_mcps | default([]) | length > 0)
+  or (workload_health_issues | default([]) | length > 0)
+  or (workload_probe_findings | default([]) | length > 0)
+  or (high_restart_pods | default([]) | length > 0)
+  or (route_issues | default([]) | length > 0)
+  or (ingress_issues | default([]) | length > 0)
+  or (route_host_conflicts | default([]) | length > 0)
+  or (ingress_host_conflicts | default([]) | length > 0)
+  or (auth_findings | default([]) | length > 0)
+  or (infrastructure_component_issues | default([]) | length > 0)
+  or (ingresscontroller_issues | default([]) | length > 0)
+  or (observability_findings | default([]) | length > 0)
+  or (collection_failures | default([]) | length > 0)
+  or (security_findings | default([]) | length > 0)
+  or (workload_practice_findings | default([]) | length > 0)
+  or (pvc_issues | default([]) | length > 0)
+  or (top_event_reasons | default([]) | length > 0)
+  or (firing_alerts | default([]) | length > 0)
+%}
+{% if not has_findings %}
+No actionable findings were detected from the checks this run could perform.
+{% else %}
+{% if degraded_operators | default([]) | length > 0 %}
+### Degraded Operators
+{% for name in degraded_operators %}
+- `{{ name }}`
+{% endfor %}
+{% endif %}
+
+{% if unavailable_operators | default([]) | length > 0 %}
+### Unavailable Operators
+{% for name in unavailable_operators %}
+- `{{ name }}`
+{% endfor %}
+{% endif %}
+
+{% if not_ready_nodes | default([]) | length > 0 %}
+### NotReady Nodes
+{% for name in not_ready_nodes %}
+- `{{ name }}`
+{% endfor %}
+{% endif %}
+
+{% if pressure_nodes | default([]) | length > 0 %}
+### Nodes With Pressure
+{% for node in pressure_nodes %}
+- `{{ node.name }}`: `{{ node.pressures | join(', ') }}`
+{% endfor %}
+{% endif %}
+
+{% if collection_failures | default([]) | length > 0 %}
+### Data Collection Issues
+{% for item in collection_failures[:10] %}
+- `{{ item.name }}` rc=`{{ item.rc }}` timeout=`{{ item.timed_out }}`{% if item.stderr %} detail=`{{ item.stderr }}`{% endif %}
+{% endfor %}
+{% if (collection_failures | length) > 10 %}
+- additional collection failures omitted: `{{ (collection_failures | length) - 10 }}`
+{% endif %}
+{% endif %}
+
+{% if top_workload_health_issues | default([]) | length > 0 %}
+### Workload Rollout Issues
+{% for item in top_workload_health_issues %}
+- `{{ item.kind }} {{ item.namespace }}/{{ item.name }}` desired=`{{ item.desired }}` ready=`{{ item.ready }}` updated=`{{ item.updated }}`
+{% endfor %}
+{% if (workload_health_issues | default([]) | length) > (top_workload_health_issues | length) %}
+- additional workload issues omitted: `{{ (workload_health_issues | length) - (top_workload_health_issues | length) }}`
+{% endif %}
+{% endif %}
+
+{% if top_workload_probe_findings | default([]) | length > 0 %}
+### Workloads Missing Probes
+{% for item in top_workload_probe_findings %}
+- `{{ item.kind }} {{ item.namespace }}/{{ item.name }}` `{{ item.issue }}` containers=`{{ item.detail }}` 
+{% endfor %}
+{% if (workload_probe_findings | default([]) | length) > (top_workload_probe_findings | length) %}
+- additional probe findings omitted: `{{ (workload_probe_findings | length) - (top_workload_probe_findings | length) }}`
+{% endif %}
+{% endif %}
+
+{% if top_overprovisioned_pods | default([]) | length > 0 %}
+### Overprovisioned Pod Candidates
+{% for item in top_overprovisioned_pods %}
+- `{{ item.namespace }}/{{ item.pod }}` cpu_req=`{{ item.cpu_request_millicores }}m` cpu_use=`{{ item.cpu_usage_millicores }}m` mem_req=`{{ item.memory_request_mib }}Mi` mem_use=`{{ item.memory_usage_mib }}Mi`
+{% endfor %}
+{% endif %}
+
+{% if top_high_restart_pods | default([]) | length > 0 %}
+### Pods With High Restarts
+{% for item in top_high_restart_pods %}
+- `{{ item.namespace }}/{{ item.name }}` phase=`{{ item.phase }}` restarts=`{{ item.restarts }}`
+{% endfor %}
+{% if (high_restart_pods | default([]) | length) > (top_high_restart_pods | length) %}
+- additional high restart pods omitted: `{{ (high_restart_pods | length) - (top_high_restart_pods | length) }}`
+{% endif %}
+{% endif %}
+
+{% if route_issues | default([]) | length > 0 %}
+### Route Issues
+{% for item in top_route_issues %}
+- `{{ item.namespace }}/{{ item.name }}` host=`{{ item.host }}` issue=`{{ item.issue }}` detail=`{{ item.detail }}`
+{% endfor %}
+{% if (route_issues | length) > (top_route_issues | length) %}
+- additional route issues omitted: `{{ (route_issues | length) - (top_route_issues | length) }}`
+{% endif %}
+{% endif %}
+
+{% if top_ingress_issues | default([]) | length > 0 %}
+### Ingress Issues
+{% for item in top_ingress_issues %}
+- `{{ item.namespace }}/{{ item.name }}` host=`{{ item.host }}` issue=`{{ item.issue }}` detail=`{{ item.detail }}`
+{% endfor %}
+{% if (ingress_issues | default([]) | length) > (top_ingress_issues | length) %}
+- additional ingress issues omitted: `{{ (ingress_issues | length) - (top_ingress_issues | length) }}`
+{% endif %}
+{% endif %}
+
+{% if top_route_host_conflicts | default([]) | length > 0 or top_ingress_host_conflicts | default([]) | length > 0 %}
+### Route And Ingress Host Conflicts
+{% for item in top_route_host_conflicts | default([]) %}
+- route host conflict: host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
+{% endfor %}
+{% for item in top_ingress_host_conflicts | default([]) %}
+- ingress host conflict: host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
+{% endfor %}
+{% endif %}
+
+{% if auth_findings | default([]) | length > 0 %}
+### Authentication Findings
+{% for item in auth_findings %}
+- `{{ item.issue }}` detail=`{{ item.detail }}`
+{% endfor %}
+{% endif %}
+
+{% if infrastructure_component_issues | default([]) | length > 0 or ingresscontroller_issues | default([]) | length > 0 %}
+### Infrastructure Component Findings
+{% for item in (infrastructure_component_issues | default([]))[:15] %}
+- component=`{{ item.component }}` issue=`{{ item.issue }}` detail=`{{ item.detail }}`
+{% endfor %}
+{% for item in (ingresscontroller_issues | default([]))[:15] %}
+- component=`{{ item.component }}` issue=`{{ item.issue }}` detail=`{{ item.detail }}`
+{% endfor %}
+{% endif %}
+
+{% if top_observability_findings | default([]) | length > 0 %}
+### Observability Findings
+{% for item in top_observability_findings %}
+- `{{ item.issue }}` detail=`{{ item.detail }}`
+{% endfor %}
+{% if (observability_findings | default([]) | length) > (top_observability_findings | length) %}
+- additional observability findings omitted: `{{ (observability_findings | length) - (top_observability_findings | length) }}`
+{% endif %}
+{% endif %}
+
+{% if top_security_findings | default([]) | length > 0 %}
+### Security Findings
+{% for item in top_security_findings %}
+- `{{ item.namespace }}/{{ item.pod }}` `{{ item.issue }}`: `{{ item.detail }}`
+{% endfor %}
+{% if (security_findings | default([]) | length) > (top_security_findings | length) %}
+- additional security findings omitted: `{{ (security_findings | length) - (top_security_findings | length) }}`
+{% endif %}
+{% endif %}
+
+{% if top_workload_practice_findings | default([]) | length > 0 %}
+### Workload Practice Findings
+{% for item in top_workload_practice_findings %}
+- `{{ item.namespace }}/{{ item.pod }}` `{{ item.issue }}`: `{{ item.detail }}`
+{% endfor %}
+{% if (workload_practice_findings | default([]) | length) > (top_workload_practice_findings | length) %}
+- additional practice findings omitted: `{{ (workload_practice_findings | length) - (top_workload_practice_findings | length) }}`
+{% endif %}
+
+{% if top_image_registry_findings | default([]) | length > 0 or top_feature_findings | default([]) | length > 0 %}
+### Image Registry And Feature Findings
+{% for item in top_image_registry_findings | default([]) %}
+- image registry: `{{ item.issue }}` `{{ item.detail }}`
+{% endfor %}
+{% for item in top_feature_findings | default([]) %}
+- feature: `{{ item.issue }}` `{{ item.detail }}`
+{% endfor %}
+{% endif %}
+
+{% if empty_user_namespaces | default([]) | length > 0 or top_services_without_endpoints | default([]) | length > 0 or top_likely_unused_configmaps | default([]) | length > 0 or top_likely_unused_secrets | default([]) | length > 0 %}
+### Unused Resource Heuristics
+{% if empty_user_namespaces | default([]) | length > 0 %}
+- empty user namespaces: `{{ empty_user_namespaces | join(', ') }}`
+{% endif %}
+{% for item in top_services_without_endpoints | default([]) %}
+- service without endpoints: `{{ item.namespace }}/{{ item.name }}` type=`{{ item.type }}` endpoints=`{{ item.endpoint_count }}`
+{% endfor %}
+{% for item in top_likely_unused_serviceaccounts | default([]) %}
+- likely unused service account: `{{ item.namespace }}/{{ item.name }}`
+{% endfor %}
+{% for item in top_likely_unused_configmaps | default([]) %}
+- likely unused configmap: `{{ item.namespace }}/{{ item.name }}`
+{% endfor %}
+{% for item in top_likely_unused_secrets | default([]) %}
+- likely unused secret: `{{ item.namespace }}/{{ item.name }}` type=`{{ item.type }}`
+{% endfor %}
+{% for item in top_likely_unused_crds | default([]) %}
+- likely unused CRD: `{{ item.name }}` group=`{{ item.group }}` instances=`{{ item.count }}`
+{% endfor %}
+{% endif %}
+{% endif %}
+
+{% if top_deprecated_crd_findings | default([]) | length > 0 or top_deprecated_api_lines | default([]) | length > 0 %}
+### Deprecated APIs And CRDs
+{% for item in top_deprecated_crd_findings %}
+- CRD `{{ item.name }}` deprecated versions=`{{ item.versions }}`
+{% endfor %}
+{% for line in top_deprecated_api_lines %}
+- `{{ line }}`
+{% endfor %}
+{% endif %}
+
+{% if pvc_issues | default([]) | length > 0 %}
+### PVC Issues
+{% for pvc in top_pvc_issues %}
+- `{{ pvc.namespace }}/{{ pvc.name }}` phase=`{{ pvc.phase }}` storageClass=`{{ pvc.storageClassName or 'none' }}`
+{% endfor %}
+{% if (pvc_issues | length) > (top_pvc_issues | length) %}
+- additional PVC issues omitted: `{{ (pvc_issues | length) - (top_pvc_issues | length) }}`
+{% endif %}
+{% endif %}
+
+{% if pv_issues | default([]) | length > 0 %}
+### PV Issues
+{% for pv in top_pv_issues %}
+- `{{ pv.name }}` phase=`{{ pv.phase }}` storageClass=`{{ pv.storageClassName or 'none' }}` claim=`{{ pv.claimRef or 'unbound' }}`
+{% endfor %}
+{% if (pv_issues | length) > (top_pv_issues | length) %}
+- additional PV issues omitted: `{{ (pv_issues | length) - (top_pv_issues | length) }}`
+{% endif %}
+{% endif %}
+
+{% if expiring_certificates_critical | default([]) | length > 0 or expiring_certificates_warning | default([]) | length > 0 %}
+### Expiring Certificates
+{% for cert in (expiring_certificates_critical | default([]))[:top_certificate_issue_limit] %}
+- critical `{{ cert.namespace }}/{{ cert.name }}` expires=`{{ cert.not_after }}` days_remaining=`{{ cert.days_remaining }}`
+{% endfor %}
+{% for cert in (expiring_certificates_warning | default([]))[:top_certificate_issue_limit] %}
+{% if cert.days_remaining > certificate_expiry_critical_days %}
+- warning `{{ cert.namespace }}/{{ cert.name }}` expires=`{{ cert.not_after }}` days_remaining=`{{ cert.days_remaining }}`
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if top_event_reasons | default([]) | length > 0 %}
+### Top Warning Event Reasons
+{% for item in top_event_reasons %}
+- `{{ item.key }}`: `{{ item.value }}`
+{% endfor %}
+{% endif %}
+
+{% if top_alert_groups | default([]) | length > 0 %}
+### Top Firing Alerts
+{% for item in top_alert_groups %}
+- `{{ item.key }}`: `{{ item.value }}`
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Upgrade Risk
+
+{% if (available_updates | default([]) | length) == 0 and (conditional_updates | default([]) | length) == 0 %}
+No available or conditional updates were returned by `ClusterVersion`.
+{% else %}
+{% if available_updates | default([]) | length > 0 %}
+### Available Updates
+{% for item in available_updates[:10] %}
+- version=`{{ item.version | default('unknown') }}` image=`{{ item.image | default('unknown') }}`
+{% endfor %}
+{% endif %}
+
+{% if conditional_updates | default([]) | length > 0 %}
+### Conditional Update Risks
+{% for item in conditional_updates[:10] %}
+- version=`{{ item.release.version | default('unknown') }}` risk=`{{ item.risks[0].name | default('unknown') if (item.risks | default([]) | length > 0) else 'unknown' }}`
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Update History
+
+{% if cluster_update_history | default([]) | length == 0 %}
+Cluster update history was not returned.
+{% else %}
+| Version | State | Started | Completed |
+| --- | --- | --- | --- |
+{% for item in cluster_update_history[:5] %}
+| `{{ item.version | default('unknown') }}` | `{{ item.state | default('unknown') }}` | `{{ item.startedTime | default('unknown') }}` | `{{ item.completionTime | default('in-progress') }}` |
+{% endfor %}
+{% endif %}
+
+## Node Utilization And Density
+
+{% if node_capacity_summary_by_density_desc | default([]) | length > 0 %}
+### Highest Pod Density Nodes
+
+| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
+| --- | --- | --- | --- | --- | --- |
+{% for item in node_capacity_summary_by_density_desc[:10] %}
+| `{{ item.name }}` | `{{ item.role }}` | `{{ item.scheduled_pods }}` | `{{ item.pods_allocatable }}` | `{{ item.pod_density_pct }}` | `{{ item.requested_cpu_pct }}` |
+{% endfor %}
+
+### Lowest Pod Density Nodes
+
+| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
+| --- | --- | --- | --- | --- | --- |
+{% for item in node_capacity_summary_by_density_asc[:10] %}
+| `{{ item.name }}` | `{{ item.role }}` | `{{ item.scheduled_pods }}` | `{{ item.pods_allocatable }}` | `{{ item.pod_density_pct }}` | `{{ item.requested_cpu_pct }}` |
+{% endfor %}
+{% endif %}
+
+{% if high_pod_density_nodes | default([]) | length > 0 %}
+### Pod Density Best-Practice Exceptions
+{% for item in high_pod_density_nodes[:15] %}
+- node=`{{ item.node }}` density_pct=`{{ item.value }}`
+{% endfor %}
+{% endif %}
+
+{% if low_cpu_nodes | default([]) | length > 0 or high_cpu_nodes | default([]) | length > 0 or low_memory_nodes | default([]) | length > 0 or high_memory_nodes | default([]) | length > 0 %}
+### Prometheus Utilization Summary
+
+{% if low_cpu_nodes | default([]) | length > 0 %}
+- low CPU utilization nodes (`<20%`): `{{ low_cpu_nodes | length }}`
+{% endif %}
+{% if high_cpu_nodes | default([]) | length > 0 %}
+- high CPU utilization nodes (`>85%`): `{{ high_cpu_nodes | length }}`
+{% endif %}
+{% if low_memory_nodes | default([]) | length > 0 %}
+- low memory utilization nodes (`<30%`): `{{ low_memory_nodes | length }}`
+{% endif %}
+{% if high_memory_nodes | default([]) | length > 0 %}
+- high memory utilization nodes (`>85%`): `{{ high_memory_nodes | length }}`
+{% endif %}
+{% endif %}
+
+## Workload Health
+
+{% if workload_health_issues | default([]) | length == 0 and workload_probe_findings | default([]) | length == 0 %}
+No deployment, statefulset, or daemonset rollout or probe coverage issues were detected.
+{% else %}
+{% if workload_health_issues | default([]) | length > 0 %}
+| Kind | Namespace | Name | Desired | Ready | Updated |
+| --- | --- | --- | --- | --- | --- |
+{% for item in top_workload_health_issues %}
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.desired }}` | `{{ item.ready }}` | `{{ item.updated }}` |
+{% endfor %}
+{% endif %}
+
+{% if workload_probe_issue_type_counts | default({}) | length > 0 %}
+### Probe Coverage Summary
+
+| Missing Probe Type | Count |
+| --- | --- |
+{% for item in (workload_probe_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_workload_probe_findings | default([]) | length > 0 %}
+### Probe Coverage Samples
+
+| Kind | Namespace | Name | Missing Probe Type | Containers |
+| --- | --- | --- | --- | --- |
+{% for item in top_workload_probe_findings %}
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.issue }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+{% endif %}
+
+{% if top_pod_restart_hotspots | default([]) | length > 0 %}
+### Restart Hotspots
+
+| Namespace | Pod | Phase | Restarts |
+| --- | --- | --- | --- |
+{% for pod in top_pod_restart_hotspots %}
+| `{{ pod.namespace }}` | `{{ pod.name }}` | `{{ pod.phase }}` | `{{ pod.restarts }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_high_restart_pods | default([]) | length > 0 %}
+### High Restart Pod Summary
+
+Pods in this section have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
+
+| Namespace | Pod | Phase | Restarts |
+| --- | --- | --- | --- |
+{% for pod in top_high_restart_pods %}
+| `{{ pod.namespace }}` | `{{ pod.name }}` | `{{ pod.phase }}` | `{{ pod.restarts }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
+### Top Pod CPU Usage
+
+| Namespace | Pod | CPU cores |
+| --- | --- | --- |
+{% for item in top_pod_cpu_usage_summary[:15] %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ (item.value[1] | float) | round(3) }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_pod_memory_usage_summary | default([]) | length > 0 %}
+### Top Pod Memory Usage
+
+| Namespace | Pod | Memory MiB |
+| --- | --- | --- |
+{% for item in top_pod_memory_usage_summary[:15] %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}` |
+{% endfor %}
+{% endif %}
+
+## Security And Best Practice Audit
+
+### Namespace Hygiene
+
+{% if namespaces_without_networkpolicy | default([]) | length > 0 %}
+- namespaces without `NetworkPolicy`: `{{ namespaces_without_networkpolicy | join(', ') }}`
+{% else %}
+- all discovered user namespaces had at least one `NetworkPolicy`
+{% endif %}
+
+{% if namespaces_missing_ingress_policies | default([]) | length > 0 %}
+- namespaces with some `NetworkPolicy` objects but no ingress policy coverage: `{{ namespaces_missing_ingress_policies | join(', ') }}`
+{% endif %}
+
+{% if namespaces_missing_egress_policies | default([]) | length > 0 %}
+- namespaces with some `NetworkPolicy` objects but no egress policy coverage: `{{ namespaces_missing_egress_policies | join(', ') }}`
+{% endif %}
+
+{% if namespaces_without_resourcequota | default([]) | length > 0 %}
+- namespaces without `ResourceQuota`: `{{ namespaces_without_resourcequota | join(', ') }}`
+{% else %}
+- all discovered user namespaces had at least one `ResourceQuota`
+{% endif %}
+
+{% if namespaces_without_limitrange | default([]) | length > 0 %}
+- namespaces without `LimitRange`: `{{ namespaces_without_limitrange | join(', ') }}`
+{% else %}
+- all discovered user namespaces had at least one `LimitRange`
+{% endif %}
+
+{% if (security_issue_type_counts | default({}) | length) > 0 %}
+### Security Finding Summary
+
+| Finding | Count |
+| --- | --- |
+{% for item in (security_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if (workload_practice_issue_type_counts | default({}) | length) > 0 %}
+### Workload Practice Summary
+
+| Finding | Count |
+| --- | --- |
+{% for item in (workload_practice_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+## Network And Route Health
+
+{% if route_issues | default([]) | length == 0 and ingress_issues | default([]) | length == 0 and route_host_conflicts | default([]) | length == 0 and ingress_host_conflicts | default([]) | length == 0 %}
+No route or ingress issues were detected.
+{% else %}
+{% if top_route_issues | default([]) | length > 0 %}
+### Route Issue Samples
+
+| Namespace | Route | Host | Issue | Detail |
+| --- | --- | --- | --- | --- |
+{% for item in top_route_issues %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.host }}` | `{{ item.issue }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_ingress_issues | default([]) | length > 0 %}
+### Ingress Issue Samples
+
+| Namespace | Ingress | Hosts | Issue | Detail |
+| --- | --- | --- | --- | --- |
+{% for item in top_ingress_issues %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.host or 'none' }}` | `{{ item.issue }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_route_host_conflicts | default([]) | length > 0 %}
+### Route Host Conflicts
+{% for item in top_route_host_conflicts %}
+- host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
+{% endfor %}
+{% endif %}
+
+{% if top_ingress_host_conflicts | default([]) | length > 0 %}
+### Ingress Host Conflicts
+{% for item in top_ingress_host_conflicts %}
+- host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Cluster Operators
+
+{% if clusteroperators.items | default([]) | length == 0 %}
+Cluster operator data was not collected.
+{% else %}
+| Operator | Version | Available | Progressing | Degraded |
+| --- | --- | --- | --- | --- |
+{% for item in clusteroperators.items | sort(attribute='metadata.name') %}
+| `{{ item.metadata.name }}` | `{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown') }}` |
+{% endfor %}
+{% endif %}
+
+## Cluster Infrastructure Components
+
+{% if infrastructure_component_summary | default([]) | length == 0 %}
+Infrastructure component summary was not collected.
+{% else %}
+| Component | Available | Progressing | Degraded | Version | Detail |
+| --- | --- | --- | --- | --- | --- |
+{% for item in infrastructure_component_summary %}
+| `{{ item.component }}` | `{{ item.available }}` | `{{ item.progressing }}` | `{{ item.degraded }}` | `{{ item.version }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if ingresscontroller_summary | default([]) | length > 0 %}
+### Ingress Controllers
+
+| Name | Domain | Available | Progressing | Degraded | Available Replicas | Desired Replicas |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in ingresscontroller_summary %}
+| `{{ item.name }}` | `{{ item.domain }}` | `{{ item.available }}` | `{{ item.progressing }}` | `{{ item.degraded }}` | `{{ item.available_replicas }}` | `{{ item.desired_replicas }}` |
+{% endfor %}
+{% endif %}
+
+## Nodes
+
+{% if nodes.items | default([]) | length == 0 %}
+Node data was not collected.
+{% else %}
+| Node | Roles | Ready | Pressures | Kubelet | OS Image |
+| --- | --- | --- | --- | --- | --- |
+{% for item in nodes.items | sort(attribute='metadata.name') %}
+| `{{ item.metadata.name }}` | `{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | join(', ') or 'worker' }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown') }}` | `{{ item.status.conditions | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | join(', ') or 'None' }}` | `{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}` | `{{ item.status.nodeInfo.osImage | default('unknown') }}` |
+{% endfor %}
+{% endif %}
+
+## MachineConfigPools
+
+{% if machineconfigpools.items | default([]) | length == 0 %}
+MachineConfigPool data was not collected.
+{% else %}
+| MCP | Updated | Updating | Degraded | Machine Count | Ready Count | Updated Count |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in machineconfigpools.items | sort(attribute='metadata.name') %}
+| `{{ item.metadata.name }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown') }}` | `{{ item.status.machineCount | default('n/a') }}` | `{{ item.status.readyMachineCount | default('n/a') }}` | `{{ item.status.updatedMachineCount | default('n/a') }}` |
+{% endfor %}
+{% endif %}
+
+## Storage
+
+| StorageClass | Provisioner | Default | Volume Binding | Reclaim Policy |
+| --- | --- | --- | --- | --- |
+{% for item in storageclass_summary | default([]) | sort(attribute='name') %}
+| `{{ item.name }}` | `{{ item.provisioner }}` | `{{ item.is_default }}` | `{{ item.volume_binding_mode }}` | `{{ item.reclaim_policy }}` |
+{% endfor %}
+{% if (storageclass_summary | default([]) | length) == 0 %}
+| `none` | `unknown` | `false` | `unknown` | `unknown` |
+{% endif %}
+
+| PV phases | Count |
+| --- | --- |
+{% for item in (pv_phase_counts | default({}) | dict2items | sort(attribute='key')) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% if (pv_phase_counts | default({}) | length) == 0 %}
+| `unknown` | `0` |
+{% endif %}
+
+| PVC phases | Count |
+| --- | --- |
+{% for item in (pvc_phase_counts | default({}) | dict2items | sort(attribute='key')) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% if (pvc_phase_counts | default({}) | length) == 0 %}
+| `unknown` | `0` |
+{% endif %}
+
+{% if pv_issues | default([]) | length > 0 %}
+### PV Issue Samples
+
+| PV | Phase | StorageClass | Claim |
+| --- | --- | --- | --- |
+{% for item in top_pv_issues %}
+| `{{ item.name }}` | `{{ item.phase }}` | `{{ item.storageClassName or 'none' }}` | `{{ item.claimRef or 'unbound' }}` |
+{% endfor %}
+{% endif %}
+
+{% if pvc_issues | default([]) | length > 0 %}
+### PVC Issue Samples
+
+| Namespace | PVC | Phase | StorageClass | Volume |
+| --- | --- | --- | --- | --- |
+{% for item in top_pvc_issues %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.storageClassName or 'none' }}` | `{{ item.volumeName or 'none' }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_quota_pressure_findings | default([]) | length > 0 %}
+### Namespace Quota Pressure
+
+| Namespace | Quota | Resource | Used | Hard | Percent |
+| --- | --- | --- | --- | --- | --- |
+{% for item in top_quota_pressure_findings %}
+| `{{ item.namespace }}` | `{{ item.quota }}` | `{{ item.resource }}` | `{{ item.used }}` | `{{ item.hard }}` | `{{ item.pct }}` |
+{% endfor %}
+{% endif %}
+
+## API And CRD Lifecycle
+
+{% if top_deprecated_crd_findings | default([]) | length == 0 and top_deprecated_api_lines | default([]) | length == 0 %}
+No deprecated CRD versions or deprecated API resources were identified from the collected data.
+{% else %}
+{% if top_deprecated_crd_findings | default([]) | length > 0 %}
+### Deprecated CRD Versions
+{% for item in top_deprecated_crd_findings %}
+- `{{ item.name }}` group=`{{ item.group }}` versions=`{{ item.versions }}`
+{% endfor %}
+{% endif %}
+
+## Observability And External Forwarding
+
+| Signal | Value |
+| --- | --- |
+| Monitoring operator available | `{{ observability_forwarding_summary.monitoring_operator_available | default('Unknown') }}` |
+| Monitoring operator degraded | `{{ observability_forwarding_summary.monitoring_operator_degraded | default('Unknown') }}` |
+| Thanos querier route found | `{{ observability_forwarding_summary.thanos_querier_route_found | default(false) }}` |
+| ClusterLogForwarder count | `{{ observability_forwarding_summary.cluster_log_forwarder_count | default(0) }}` |
+| Log forwarding outputs | `{{ observability_forwarding_summary.log_forwarding_outputs | default([]) | length }}` |
+| External log forwarding outputs | `{{ observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length }}` |
+| Cluster metrics remote write targets | `{{ observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) }}` |
+| External cluster metrics remote write targets | `{{ observability_forwarding_summary.external_cluster_metrics_remote_write_count | default(0) }}` |
+| User workload metrics remote write targets | `{{ observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) }}` |
+| External user workload metrics remote write targets | `{{ observability_forwarding_summary.external_user_workload_metrics_remote_write_count | default(0) }}` |
+
+{% if top_observability_findings | default([]) | length == 0 %}
+No observability setup gaps were detected from the collected data.
+{% else %}
+### Observability Best-Practice Findings
+{% for item in top_observability_findings %}
+- `{{ item.issue }}` detail=`{{ item.detail }}`
+{% endfor %}
+{% endif %}
+
+{% if observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length > 0 %}
+### External Log Forwarding Outputs
+
+| Namespace | ClusterLogForwarder | Output | Type | Target |
+| --- | --- | --- | --- | --- |
+{% for item in (observability_forwarding_summary.external_log_forwarding_outputs | default([]))[:15] %}
+| `{{ item.namespace }}` | `{{ item.clusterlogforwarder }}` | `{{ item.name }}` | `{{ item.type }}` | `{{ item.target or 'not-shown' }}` |
+{% endfor %}
+{% endif %}
+{% if top_deprecated_api_lines | default([]) | length > 0 %}
+### Deprecated API Resources
+{% for line in top_deprecated_api_lines %}
+- `{{ line }}`
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Suggested Next Steps
+
+{% if suggested_next_steps | default([]) | length == 0 %}
+No specific next steps were generated for this run.
+{% else %}
+{% for item in suggested_next_steps %}
+- `{{ item.priority }}`: {{ item.summary }} {{ item.detail }}
+{% endfor %}
+{% endif %}
+
+## Recent Warning Events
+
+{% if top_event_reasons | default([]) | length == 0 %}
+No warning events were returned, or events could not be collected.
+{% else %}
+| Reason | Count |
+| --- | --- |
+{% for item in top_event_reasons %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+
+### Samples
+
+| Namespace | Object | Reason | Last Seen | Message |
+| --- | --- | --- | --- | --- |
+{% for event in recent_warning_events %}
+| `{{ event.metadata.namespace | default('') }}` | `{{ event.involvedObject.kind | default('') }}/{{ event.involvedObject.name | default('') }}` | `{{ event.reason | default('') }}` | `{{ event.lastTimestamp | default(event.eventTime | default(event.metadata.creationTimestamp | default('unknown'))) }}` | {{ event.message | default('') | replace('\n', ' ') | replace('|', '\\|') }} |
+{% endfor %}
+{% endif %}
+
+## Optional Prometheus Signals
+
+{% if not prom_available %}
+Prometheus queries were not attempted because the `thanos-querier` route or bearer token could not be obtained.
+{% else %}
+| Signal | Value | Status |
+| --- | --- | --- |
+| etcd WAL fsync p99 | `{{ etcd_wal_fsync_p99_ms if etcd_wal_fsync_p99_ms != '' else 'unavailable' }}` ms | `{% if etcd_wal_fsync_p99_ms == '' %}UNKNOWN{% elif (etcd_wal_fsync_p99_ms | float) > etcd_wal_fsync_p99_warn_ms %}WARN{% else %}OK{% endif %}` |
+| etcd peer RTT p99 | `{{ etcd_peer_rtt_p99_ms if etcd_peer_rtt_p99_ms != '' else 'unavailable' }}` ms | `{% if etcd_peer_rtt_p99_ms == '' %}UNKNOWN{% elif (etcd_peer_rtt_p99_ms | float) > etcd_peer_rtt_p99_warn_ms %}WARN{% else %}OK{% endif %}` |
+| API server p99 latency | `{{ apiserver_request_p99_seconds if apiserver_request_p99_seconds != '' else 'unavailable' }}` s | `{% if apiserver_request_p99_seconds == '' %}UNKNOWN{% elif (apiserver_request_p99_seconds | float) > apiserver_latency_p99_warn_seconds %}WARN{% else %}OK{% endif %}` |
+| Firing alerts | `{{ firing_alerts | length }}` | `{% if firing_alerts | length > 0 %}WARN{% else %}OK{% endif %}` |
+
+{% if (firing_alerts_by_severity | default({}) | length) > 0 %}
+### Firing Alert Severity Summary
+
+| Severity | Count |
+| --- | --- |
+{% for item in (firing_alerts_by_severity | dict2items | sort(attribute='key')) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_alert_groups | default([]) | length > 0 %}
+### Top Firing Alert Names
+
+| Alert | Count |
+| --- | --- |
+{% for item in top_alert_groups %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_alert_namespaces | default([]) | length > 0 %}
+### Firing Alerts By Namespace
+
+| Namespace | Count |
+| --- | --- |
+{% for item in top_alert_namespaces %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Notes
+
+- This report is a point-in-time read of cluster state.
+- It combines health, upgrade, workload, security, and configuration signals.
+- It prefers grouped summaries and top-N sections to reduce duplicate noise.
+- If this report shows `CRITICAL`, start with operators, nodes, routes, warning event summaries, and firing alerts.
+
+## Execution Stats
+
+| Stat | Value |
+| --- | --- |
+| OpenShift user | `{{ execution_stats.ocp_user | default('unknown') }}` |
+| Local user | `{{ execution_stats.local_user | default('unknown') }}` |
+| Local host | `{{ execution_stats.local_hostname | default('unknown') }}` |
+| Local FQDN | `{{ execution_stats.local_fqdn | default('unknown') }}` |
+| Local OS | `{{ execution_stats.local_os | default('unknown') }}` |
+| Local Python | `{{ execution_stats.local_python | default('unknown') }}` |
+| Ansible version | `{{ execution_stats.ansible_version | default('unknown') }}` |
+| Context | `{{ execution_stats.context | default('unknown') }}` |
+| API server | `{{ execution_stats.api_server | default('unknown') }}` |
+| Report started | `{{ execution_stats.started_at | default('unknown') }}` |
+| Report completed | `{{ execution_stats.completed_at | default('unknown') }}` |
+| Run time seconds | `{{ execution_stats.duration_seconds | default(0) }}` |
+| Run time minutes | `{{ execution_stats.duration_minutes | default(0) }}` |
+| Collection commands | `{{ execution_stats.collection.command_count | default(0) }}` |
+| Collection parallelism | `{{ execution_stats.collection.parallelism | default(0) }}` |
+| Collection timeout | `{{ execution_stats.collection.timeout_seconds | default(0) }}` seconds |
+| Collection failures | `{{ execution_stats.collection.failed_commands | default(0) }}` |
+| Collection timeouts | `{{ execution_stats.collection.timed_out_commands | default(0) }}` |
+| Core collection failures | `{{ execution_stats.collection.core_failed_commands | default(0) }}` |

@@ -1,0 +1,55 @@
+---
+- name: Ensure report output directory exists
+  ansible.builtin.file:
+    path: "{{ report_output_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Define report timestamp
+  ansible.builtin.set_fact:
+    report_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    report_generated_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Validate oc session
+  ansible.builtin.command: oc whoami
+  register: oc_session_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when not logged in to OpenShift
+  ansible.builtin.fail:
+    msg: >-
+      OpenShift login validation failed. Run `oc login ...` with a user that has
+      cluster-admin privileges, verify the current context, and rerun this playbook.
+  when: oc_session_check.rc != 0
+
+- name: Validate cluster-admin privileges
+  ansible.builtin.command: oc auth can-i '*' '*' --all-namespaces
+  register: cluster_admin_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when caller is not cluster-admin
+  ansible.builtin.fail:
+    msg: >-
+      The current `oc` user is authenticated but does not have cluster-admin privileges.
+      Log in with cluster-admin credentials and rerun this playbook.
+  when: cluster_admin_check.rc != 0 or (cluster_admin_check.stdout | trim | lower) != 'yes'
+
+- name: Capture oc context
+  ansible.builtin.command: oc config current-context
+  register: oc_context_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Capture cluster API server
+  ansible.builtin.command: oc whoami --show-server
+  register: oc_server_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Capture current user
+  ansible.builtin.command: oc whoami
+  register: oc_user_cmd
+  changed_when: false
+  failed_when: false

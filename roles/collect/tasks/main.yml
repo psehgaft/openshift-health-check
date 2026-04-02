@@ -1,0 +1,261 @@
+---
+- name: Define collection commands
+  ansible.builtin.set_fact:
+    collection_core_command_names:
+      - clusterversion
+      - clusteroperators
+      - nodes
+      - machineconfigpools
+      - pods
+      - deployments
+      - statefulsets
+      - daemonsets
+      - routes
+      - ingresses
+      - persistentvolumes
+      - persistentvolumeclaims
+    collection_commands:
+      - name: clusterversion
+        argv: ["oc", "get", "clusterversion", "version", "-o", "json"]
+      - name: clusteroperators
+        argv: ["oc", "get", "clusteroperators", "-o", "json"]
+      - name: infrastructure
+        argv: ["oc", "get", "infrastructure", "cluster", "-o", "json"]
+      - name: network
+        argv: ["oc", "get", "network", "cluster", "-o", "json"]
+      - name: ingress_config
+        argv: ["oc", "get", "ingress.config.openshift.io", "cluster", "-o", "json"]
+      - name: image_config
+        argv: ["oc", "get", "image.config.openshift.io", "cluster", "-o", "json"]
+      - name: image_registry_config
+        argv: ["oc", "get", "configs.imageregistry.operator.openshift.io", "cluster", "-o", "json"]
+      - name: image_pruner
+        argv: ["oc", "get", "imagepruner.imageregistry.operator.openshift.io", "cluster", "-o", "json"]
+      - name: dns
+        argv: ["oc", "get", "dns.operator/default", "-o", "json"]
+      - name: oauth
+        argv: ["oc", "get", "oauth", "cluster", "-o", "json"]
+      - name: nodes
+        argv: ["oc", "get", "nodes", "-o", "json"]
+      - name: machineconfigpools
+        argv: ["oc", "get", "machineconfigpools", "-o", "json"]
+      - name: pods
+        argv: ["oc", "get", "pods", "-A", "-o", "json"]
+      - name: deployments
+        argv: ["oc", "get", "deployments", "-A", "-o", "json"]
+      - name: statefulsets
+        argv: ["oc", "get", "statefulsets", "-A", "-o", "json"]
+      - name: daemonsets
+        argv: ["oc", "get", "daemonsets", "-A", "-o", "json"]
+      - name: routes
+        argv: ["oc", "get", "routes", "-A", "-o", "json"]
+      - name: ingresses
+        argv: ["oc", "get", "ingresses.networking.k8s.io", "-A", "-o", "json"]
+      - name: ingresscontrollers
+        argv: ["oc", "-n", "openshift-ingress-operator", "get", "ingresscontrollers", "-o", "json"]
+      - name: serviceaccounts
+        argv: ["oc", "get", "serviceaccounts", "-A", "-o", "json"]
+      - name: services
+        argv: ["oc", "get", "services", "-A", "-o", "json"]
+      - name: endpoints
+        argv: ["oc", "get", "endpoints", "-A", "-o", "json"]
+      - name: crds
+        argv: ["oc", "get", "crd", "-o", "json"]
+      - name: namespaces
+        argv: ["oc", "get", "namespaces", "-o", "json"]
+      - name: networkpolicies
+        argv: ["oc", "get", "networkpolicies", "-A", "-o", "json"]
+      - name: resourcequotas
+        argv: ["oc", "get", "resourcequotas", "-A", "-o", "json"]
+      - name: limitranges
+        argv: ["oc", "get", "limitranges", "-A", "-o", "json"]
+      - name: api_resources
+        argv: ["oc", "api-resources", "-o", "wide"]
+      - name: secrets
+        argv: ["oc", "get", "secrets", "-A", "-o", "json"]
+      - name: configmaps
+        argv: ["oc", "get", "configmaps", "-A", "-o", "json"]
+      - name: storageclasses
+        argv: ["oc", "get", "storageclass", "-o", "json"]
+      - name: persistentvolumes
+        argv: ["oc", "get", "pv", "-o", "json"]
+      - name: persistentvolumeclaims
+        argv: ["oc", "get", "pvc", "-A", "-o", "json"]
+      - name: warning_events
+        argv: ["oc", "get", "events", "-A", "--field-selector", "type=Warning", "-o", "json"]
+      - name: clusterlogforwarders
+        argv: ["oc", "get", "clusterlogforwarders", "-A", "-o", "json"]
+      - name: cluster_monitoring_config
+        argv: ["oc", "-n", "openshift-monitoring", "get", "configmap", "cluster-monitoring-config", "-o", "json"]
+      - name: user_workload_monitoring_config
+        argv: ["oc", "-n", "openshift-user-workload-monitoring", "get", "configmap", "user-workload-monitoring-config", "-o", "json"]
+
+- name: Collect cluster data in parallel
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+    import os
+    import subprocess
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    commands = json.loads(r'''{{ collection_commands | to_json }}''')
+    timeout_seconds = int({{ collection_command_timeout_seconds | int }})
+    max_workers = min(
+        max(1, int({{ collection_parallelism | int }})),
+        max(1, len(commands)),
+    )
+
+    def run_command(spec):
+        try:
+            proc = subprocess.run(
+                spec["argv"],
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+            return {
+                "name": spec["name"],
+                "rc": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+                "stdout_lines": proc.stdout.splitlines(),
+                "timed_out": False,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "name": spec["name"],
+                "rc": 124,
+                "stdout": exc.stdout or "",
+                "stderr": f"timed out after {timeout_seconds} seconds",
+                "stdout_lines": (exc.stdout or "").splitlines(),
+                "timed_out": True,
+            }
+        except Exception as exc:
+            return {
+                "name": spec["name"],
+                "rc": 1,
+                "stdout": "",
+                "stderr": str(exc),
+                "stdout_lines": [],
+                "timed_out": False,
+            }
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(run_command, spec): spec["name"] for spec in commands}
+        for future in as_completed(futures):
+            result = future.result()
+            results[result["name"]] = result
+
+    output_dir = tempfile.mkdtemp(prefix="ocp-health-collect-")
+    output_path = os.path.join(output_dir, "collected-commands.json")
+    with open(output_path, "w", encoding="utf-8") as handle:
+        json.dump(results, handle)
+    print(json.dumps({
+        "results_path": output_path,
+        "command_count": len(commands),
+        "max_workers": max_workers,
+        "timeout_seconds": timeout_seconds
+    }))
+    PY
+  register: collected_commands_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize collection metadata
+  ansible.builtin.set_fact:
+    collection_run_metadata: "{{ collected_commands_cmd.stdout | from_json if (collected_commands_cmd.rc == 0 and (collected_commands_cmd.stdout | default('') | length > 0)) else {} }}"
+
+- name: Build collection wrapper failure
+  ansible.builtin.set_fact:
+    collection_wrapper_failure:
+      name: collector-wrapper
+      rc: "{{ collected_commands_cmd.rc | default(1) }}"
+      timed_out: false
+      stderr: >-
+        {{
+          (
+            collected_commands_cmd.stderr
+            | default('parallel collector task failed before command results could be loaded', true)
+          ) | trim
+        }}
+  when: collected_commands_cmd.rc | default(1) != 0 or (collection_run_metadata.results_path | default('') | length == 0)
+
+- name: Load collected command results
+  ansible.builtin.set_fact:
+    collected_commands: "{{ lookup('file', collection_run_metadata.results_path) | from_json if (collection_run_metadata.results_path | default('') | length > 0) else {} }}"
+
+- name: Seed collection failures with wrapper failure
+  ansible.builtin.set_fact:
+    collection_failures: "{{ [collection_wrapper_failure] }}"
+  when: collection_wrapper_failure is defined
+
+- name: Build collection failure list
+  ansible.builtin.set_fact:
+    collection_failures: "{{ (collection_failures | default([])) + [collection_failure_entry] }}"
+  loop: "{{ collected_commands | default({}) | dict2items }}"
+  vars:
+    collection_failure_entry:
+      name: "{{ item.key }}"
+      rc: "{{ item.value.rc | default(1) }}"
+      timed_out: "{{ item.value.timed_out | default(false) }}"
+      stderr: "{{ item.value.stderr | default('') | trim }}"
+  when: (item.value.rc | default(1) | int) != 0
+  changed_when: false
+
+- name: Build collection summary
+  ansible.builtin.set_fact:
+    collection_summary:
+      command_count: "{{ collection_run_metadata.command_count | default(collection_commands | length) }}"
+      parallelism: "{{ collection_run_metadata.max_workers | default(collection_parallelism | int) }}"
+      timeout_seconds: "{{ collection_run_metadata.timeout_seconds | default(collection_command_timeout_seconds | int) }}"
+      failed_commands: "{{ (collection_commands | length) if collection_wrapper_failure is defined else (collection_failures | default([]) | length) }}"
+      timed_out_commands: "{{ collection_failures | default([]) | selectattr('timed_out', 'equalto', true) | list | length }}"
+      succeeded_commands: "{{ 0 if collection_wrapper_failure is defined else ([0, (collection_commands | length) - (collection_failures | default([]) | length)] | max) }}"
+      core_failed_commands: "{{ (collection_core_command_names | length) if collection_wrapper_failure is defined else ((collection_failures | default([]) | selectattr('name', 'in', collection_core_command_names) | list | length)) }}"
+
+- name: Parse collected JSON
+  ansible.builtin.set_fact:
+    api_resources_cmd:
+      stdout_lines: "{{ collected_commands.api_resources.stdout_lines | default([]) }}"
+      stdout: "{{ collected_commands.api_resources.stdout | default('') }}"
+      stderr: "{{ collected_commands.api_resources.stderr | default('') }}"
+      rc: "{{ collected_commands.api_resources.rc | default(1) }}"
+    clusterversion: "{{ collected_commands.clusterversion.stdout | from_json if (collected_commands.clusterversion.rc | default(1)) == 0 else {} }}"
+    clusteroperators: "{{ collected_commands.clusteroperators.stdout | from_json if (collected_commands.clusteroperators.rc | default(1)) == 0 else {'items': []} }}"
+    infrastructure: "{{ collected_commands.infrastructure.stdout | from_json if (collected_commands.infrastructure.rc | default(1)) == 0 else {} }}"
+    network_config: "{{ collected_commands.network.stdout | from_json if (collected_commands.network.rc | default(1)) == 0 else {} }}"
+    ingress_config: "{{ collected_commands.ingress_config.stdout | from_json if (collected_commands.ingress_config.rc | default(1)) == 0 else {} }}"
+    image_config: "{{ collected_commands.image_config.stdout | from_json if (collected_commands.image_config.rc | default(1)) == 0 else {} }}"
+    image_registry_config: "{{ collected_commands.image_registry_config.stdout | from_json if (collected_commands.image_registry_config.rc | default(1)) == 0 else {} }}"
+    image_pruner_config: "{{ collected_commands.image_pruner.stdout | from_json if (collected_commands.image_pruner.rc | default(1)) == 0 else {} }}"
+    dns_config: "{{ collected_commands.dns.stdout | from_json if (collected_commands.dns.rc | default(1)) == 0 else {} }}"
+    oauth_config: "{{ collected_commands.oauth.stdout | from_json if (collected_commands.oauth.rc | default(1)) == 0 else {} }}"
+    nodes: "{{ collected_commands.nodes.stdout | from_json if (collected_commands.nodes.rc | default(1)) == 0 else {'items': []} }}"
+    machineconfigpools: "{{ collected_commands.machineconfigpools.stdout | from_json if (collected_commands.machineconfigpools.rc | default(1)) == 0 else {'items': []} }}"
+    pods: "{{ collected_commands.pods.stdout | from_json if (collected_commands.pods.rc | default(1)) == 0 else {'items': []} }}"
+    deployments: "{{ collected_commands.deployments.stdout | from_json if (collected_commands.deployments.rc | default(1)) == 0 else {'items': []} }}"
+    statefulsets: "{{ collected_commands.statefulsets.stdout | from_json if (collected_commands.statefulsets.rc | default(1)) == 0 else {'items': []} }}"
+    daemonsets: "{{ collected_commands.daemonsets.stdout | from_json if (collected_commands.daemonsets.rc | default(1)) == 0 else {'items': []} }}"
+    routes: "{{ collected_commands.routes.stdout | from_json if (collected_commands.routes.rc | default(1)) == 0 else {'items': []} }}"
+    ingresses: "{{ collected_commands.ingresses.stdout | from_json if (collected_commands.ingresses.rc | default(1)) == 0 else {'items': []} }}"
+    ingresscontrollers: "{{ collected_commands.ingresscontrollers.stdout | from_json if (collected_commands.ingresscontrollers.rc | default(1)) == 0 else {'items': []} }}"
+    serviceaccounts: "{{ collected_commands.serviceaccounts.stdout | from_json if (collected_commands.serviceaccounts.rc | default(1)) == 0 else {'items': []} }}"
+    services: "{{ collected_commands.services.stdout | from_json if (collected_commands.services.rc | default(1)) == 0 else {'items': []} }}"
+    endpoints: "{{ collected_commands.endpoints.stdout | from_json if (collected_commands.endpoints.rc | default(1)) == 0 else {'items': []} }}"
+    crds: "{{ collected_commands.crds.stdout | from_json if (collected_commands.crds.rc | default(1)) == 0 else {'items': []} }}"
+    namespaces: "{{ collected_commands.namespaces.stdout | from_json if (collected_commands.namespaces.rc | default(1)) == 0 else {'items': []} }}"
+    networkpolicies: "{{ collected_commands.networkpolicies.stdout | from_json if (collected_commands.networkpolicies.rc | default(1)) == 0 else {'items': []} }}"
+    resourcequotas: "{{ collected_commands.resourcequotas.stdout | from_json if (collected_commands.resourcequotas.rc | default(1)) == 0 else {'items': []} }}"
+    limitranges: "{{ collected_commands.limitranges.stdout | from_json if (collected_commands.limitranges.rc | default(1)) == 0 else {'items': []} }}"
+    secrets: "{{ collected_commands.secrets.stdout | from_json if (collected_commands.secrets.rc | default(1)) == 0 else {'items': []} }}"
+    configmaps: "{{ collected_commands.configmaps.stdout | from_json if (collected_commands.configmaps.rc | default(1)) == 0 else {'items': []} }}"
+    storageclasses: "{{ collected_commands.storageclasses.stdout | from_json if (collected_commands.storageclasses.rc | default(1)) == 0 else {'items': []} }}"
+    persistentvolumes: "{{ collected_commands.persistentvolumes.stdout | from_json if (collected_commands.persistentvolumes.rc | default(1)) == 0 else {'items': []} }}"
+    persistentvolumeclaims: "{{ collected_commands.persistentvolumeclaims.stdout | from_json if (collected_commands.persistentvolumeclaims.rc | default(1)) == 0 else {'items': []} }}"
+    warning_events: "{{ collected_commands.warning_events.stdout | from_json if (collected_commands.warning_events.rc | default(1)) == 0 else {'items': []} }}"
+    clusterlogforwarders: "{{ collected_commands.clusterlogforwarders.stdout | from_json if (collected_commands.clusterlogforwarders.rc | default(1)) == 0 else {'items': []} }}"
+    cluster_monitoring_config: "{{ collected_commands.cluster_monitoring_config.stdout | from_json if (collected_commands.cluster_monitoring_config.rc | default(1)) == 0 else {} }}"
+    user_workload_monitoring_config: "{{ collected_commands.user_workload_monitoring_config.stdout | from_json if (collected_commands.user_workload_monitoring_config.rc | default(1)) == 0 else {} }}"

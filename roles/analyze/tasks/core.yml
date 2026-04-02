@@ -1,0 +1,272 @@
+---
+- name: Build cluster profile
+  ansible.builtin.set_fact:
+    cluster_profile:
+      infrastructure_name: "{{ infrastructure.status.infrastructureName | default('unknown') }}"
+      platform: "{{ infrastructure.status.platformStatus.type | default(infrastructure.status.platform | default('unknown')) }}"
+      control_plane_topology: "{{ infrastructure.status.controlPlaneTopology | default('unknown') }}"
+      infrastructure_topology: "{{ infrastructure.status.infrastructureTopology | default('unknown') }}"
+      api_url: "{{ infrastructure.status.apiServerURL | default('unknown') }}"
+      api_internal_url: "{{ infrastructure.status.apiServerInternalURL | default('unknown') }}"
+      base_domain: "{{ dns_config.spec.baseDomain | default(ingress_config.spec.domain | default('unknown')) }}"
+      ingress_domain: "{{ ingress_config.spec.domain | default('unknown') }}"
+      network_type: "{{ network_config.status.networkType | default('unknown') }}"
+      service_networks: "{{ network_config.spec.serviceNetwork | default([]) }}"
+      cluster_networks: "{{ network_config.spec.clusterNetwork | default([]) }}"
+      identity_provider_count: "{{ oauth_config.spec.identityProviders | default([]) | length }}"
+      identity_provider_names: "{{ oauth_config.spec.identityProviders | default([]) | map(attribute='name') | list }}"
+
+- name: Build authentication findings
+  ansible.builtin.set_fact:
+    auth_findings: "{{ ([{'issue': 'missing-identity-provider', 'detail': 'oauth cluster has no configured identityProviders'}] if (oauth_config.spec.identityProviders | default([]) | length) == 0 else []) }}"
+
+- name: Capture cluster version history and updates
+  ansible.builtin.set_fact:
+    cluster_update_history: "{{ clusterversion.status.history | default([]) }}"
+    available_updates: "{{ clusterversion.status.availableUpdates | default([]) }}"
+    conditional_updates: "{{ clusterversion.status.conditionalUpdates | default([]) }}"
+
+- name: Extract cluster version conditions
+  ansible.builtin.set_fact:
+    cv_available: "{{ ((clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
+    cv_progressing: "{{ ((clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
+    cv_failing: "{{ ((clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Failing') | map(attribute='status') | first) | default('Unknown')) }}"
+
+- name: Initialize operator facts
+  ansible.builtin.set_fact:
+    degraded_operators: []
+    unavailable_operators: []
+    progressing_operators: []
+    clusteroperator_status_map: {}
+
+- name: Build operator facts
+  ansible.builtin.set_fact:
+    degraded_operators: "{{ degraded_operators + ([item.metadata.name] if degraded_status == 'True' else []) }}"
+    unavailable_operators: "{{ unavailable_operators + ([item.metadata.name] if available_status != 'True' else []) }}"
+    progressing_operators: "{{ progressing_operators + ([item.metadata.name] if progressing_status == 'True' else []) }}"
+    clusteroperator_status_map: "{{ clusteroperator_status_map | combine({item.metadata.name: {'available': available_status, 'degraded': degraded_status, 'progressing': progressing_status, 'version': operator_version}}, recursive=True) }}"
+  loop: "{{ clusteroperators.items | default([]) }}"
+  vars:
+    available_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
+    degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
+    progressing_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
+    operator_version: "{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}"
+  changed_when: false
+
+- name: Build ingress controller summary
+  ansible.builtin.set_fact:
+    ingresscontroller_summary: "{{ ingresscontroller_summary | default([]) + [summary_entry] }}"
+    ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) + issue_entries }}"
+  loop: "{{ ingresscontrollers.items | default([]) }}"
+  vars:
+    desired_replicas: "{{ item.spec.replicas | default(2) | int }}"
+    available_replicas: "{{ item.status.availableReplicas | default(0) | int }}"
+    unavailable_replicas: "{{ item.status.unavailableReplicas | default(0) | int }}"
+    ic_available_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
+    ic_progressing_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
+    ic_degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
+    summary_entry:
+      name: "{{ item.metadata.name | default('unknown') }}"
+      domain: "{{ item.status.domain | default(item.spec.domain | default('unknown')) }}"
+      available: "{{ ic_available_status }}"
+      progressing: "{{ ic_progressing_status }}"
+      degraded: "{{ ic_degraded_status }}"
+      desired_replicas: "{{ desired_replicas }}"
+      available_replicas: "{{ available_replicas }}"
+      unavailable_replicas: "{{ unavailable_replicas }}"
+    issue_entries: >-
+      {{
+        ([] +
+        ([{
+          'component': 'ingresscontroller/' ~ (item.metadata.name | default('unknown')),
+          'issue': 'ingresscontroller-unavailable',
+          'detail': 'available=' ~ ic_available_status ~ ' availableReplicas=' ~ (available_replicas | string) ~ '/' ~ (desired_replicas | string)
+        }] if ic_available_status != 'True' or available_replicas < desired_replicas else []) +
+        ([{
+          'component': 'ingresscontroller/' ~ (item.metadata.name | default('unknown')),
+          'issue': 'ingresscontroller-degraded',
+          'detail': 'degraded=' ~ ic_degraded_status
+        }] if ic_degraded_status == 'True' else []))
+      }}
+  changed_when: false
+
+- name: Build infrastructure component summary
+  ansible.builtin.set_fact:
+    infrastructure_component_summary:
+      - component: authentication
+        available: "{{ clusteroperator_status_map.authentication.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.authentication.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.authentication.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.authentication.version | default('unknown') }}"
+        detail: "identityProviders={{ oauth_config.spec.identityProviders | default([]) | length }}"
+      - component: console
+        available: "{{ clusteroperator_status_map.console.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.console.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.console.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.console.version | default('unknown') }}"
+        detail: "console operator health"
+      - component: dns
+        available: "{{ clusteroperator_status_map.dns.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.dns.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.dns.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.dns.version | default('unknown') }}"
+        detail: "baseDomain={{ dns_config.spec.baseDomain | default('unknown') }}"
+      - component: etcd
+        available: "{{ clusteroperator_status_map.etcd.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.etcd.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.etcd.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.etcd.version | default('unknown') }}"
+        detail: "etcd operator health"
+      - component: image-registry
+        available: "{{ clusteroperator_status_map['image-registry'].available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map['image-registry'].progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map['image-registry'].degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map['image-registry'].version | default('unknown') }}"
+        detail: "managementState={{ image_registry_config.spec.managementState | default('unknown') }} defaultRoute={{ image_registry_config.spec.defaultRoute | default(false) }}"
+      - component: ingress
+        available: "{{ clusteroperator_status_map.ingress.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.ingress.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.ingress.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.ingress.version | default('unknown') }}"
+        detail: "ingressControllers={{ ingresscontrollers.items | default([]) | length }}"
+      - component: insights
+        available: "{{ clusteroperator_status_map.insights.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.insights.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.insights.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.insights.version | default('unknown') }}"
+        detail: "insights operator health"
+      - component: kube-apiserver
+        available: "{{ clusteroperator_status_map['kube-apiserver'].available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map['kube-apiserver'].progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map['kube-apiserver'].degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map['kube-apiserver'].version | default('unknown') }}"
+        detail: "API server operator health"
+      - component: monitoring
+        available: "{{ clusteroperator_status_map.monitoring.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.monitoring.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.monitoring.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.monitoring.version | default('unknown') }}"
+        detail: "monitoring operator health"
+      - component: network
+        available: "{{ clusteroperator_status_map.network.available | default('Unknown') }}"
+        progressing: "{{ clusteroperator_status_map.network.progressing | default('Unknown') }}"
+        degraded: "{{ clusteroperator_status_map.network.degraded | default('Unknown') }}"
+        version: "{{ clusteroperator_status_map.network.version | default('unknown') }}"
+        detail: "networkType={{ network_config.status.networkType | default('unknown') }}"
+
+- name: Build infrastructure component issues
+  ansible.builtin.set_fact:
+    infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) + issue_entries }}"
+  loop: "{{ infrastructure_component_summary | default([]) }}"
+  vars:
+    issue_entries: >-
+      {{
+        ([] +
+        ([{
+          'component': item.component,
+          'issue': 'component-unavailable',
+          'detail': 'available=' ~ (item.available | string)
+        }] if item.available != 'True' else []) +
+        ([{
+          'component': item.component,
+          'issue': 'component-degraded',
+          'detail': 'degraded=' ~ (item.degraded | string)
+        }] if item.degraded == 'True' else []) +
+        ([{
+          'component': item.component,
+          'issue': 'component-progressing',
+          'detail': 'progressing=' ~ (item.progressing | string)
+        }] if item.progressing == 'True' else []))
+      }}
+  changed_when: false
+
+- name: Initialize node facts
+  ansible.builtin.set_fact:
+    not_ready_nodes: []
+    pressure_nodes: []
+    primary_node_role_counts: {}
+    kubelet_version_counts: {}
+    node_pod_counts: {}
+    namespace_pod_counts: {}
+    node_cpu_request_millicores: {}
+
+- name: Build pod count and restart hotspots
+  ansible.builtin.set_fact:
+    pod_restart_hotspots: "{{ pod_restart_hotspots | default([]) + restart_entry }}"
+    pod_phase_counts: "{{ pod_phase_counts | default({}) | combine({phase: ((pod_phase_counts[phase] | default(0)) + 1)}, recursive=True) }}"
+    node_pod_counts: "{{ node_pod_counts | combine({node_name: ((node_pod_counts[node_name] | default(0)) + 1)}, recursive=True) }}"
+    namespace_pod_counts: "{{ namespace_pod_counts | combine({namespace_name: ((namespace_pod_counts[namespace_name] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ pods.items | default([]) }}"
+  vars:
+    phase: "{{ item.status.phase | default('Unknown') }}"
+    node_name: "{{ item.spec.nodeName | default('unscheduled') }}"
+    namespace_name: "{{ item.metadata.namespace | default('') }}"
+    restart_count: "{{ item.status.containerStatuses | default([]) | map(attribute='restartCount') | list | sum }}"
+    restart_entry: "{{ [{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': phase, 'restarts': restart_count}] if restart_count | int > 0 else [] }}"
+  changed_when: false
+
+- name: Build node health facts
+  ansible.builtin.set_fact:
+    not_ready_nodes: "{{ not_ready_nodes + ([item.metadata.name] if ready_status != 'True' else []) }}"
+    pressure_nodes: "{{ pressure_nodes + ([{'name': item.metadata.name, 'pressures': pressure_types}] if pressure_types | length > 0 else []) }}"
+    primary_node_role_counts: "{{ primary_node_role_counts | combine({primary_node_role: ((primary_node_role_counts[primary_node_role] | default(0)) + 1)}, recursive=True) }}"
+    kubelet_version_counts: "{{ kubelet_version_counts | combine({kubelet_version: ((kubelet_version_counts[kubelet_version] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ nodes.items | default([]) }}"
+  vars:
+    ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
+    pressure_types: "{{ item.status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | list }}"
+    node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
+    primary_node_role: "{{ (node_roles | first) | default('worker') }}"
+    kubelet_version: "{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}"
+  changed_when: false
+
+- name: Initialize MCP facts
+  ansible.builtin.set_fact:
+    degraded_mcps: []
+    updating_mcps: []
+
+- name: Build MCP facts
+  ansible.builtin.set_fact:
+    degraded_mcps: "{{ degraded_mcps + ([item.metadata.name] if degraded_status == 'True' else []) }}"
+    updating_mcps: "{{ updating_mcps + ([item.metadata.name] if updating_status == 'True' else []) }}"
+  loop: "{{ machineconfigpools.items | default([]) }}"
+  vars:
+    degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
+    updating_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) }}"
+  changed_when: false
+
+- name: Build namespace phase findings
+  ansible.builtin.set_fact:
+    namespace_issue_summary: "{{ namespace_issue_summary | default([]) + ([{'name': item.metadata.name, 'phase': phase}] if phase != 'Active' else []) }}"
+    user_namespace_names: "{{ user_namespace_names | default([]) + ([item.metadata.name] if not (item.metadata.name is match(user_namespaces_exclude_regex)) else []) }}"
+  loop: "{{ namespaces.items | default([]) }}"
+  vars:
+    phase: "{{ item.status.phase | default('Unknown') }}"
+  changed_when: false
+
+- name: Build node capacity summary
+  ansible.builtin.set_fact:
+    node_capacity_summary: "{{ node_capacity_summary | default([]) + [node_capacity_entry] }}"
+  loop: "{{ nodes.items | default([]) }}"
+  vars:
+    cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
+    pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
+    cpu_allocatable_millicores: "{{ (cpu_allocatable_raw | regex_replace('m$', '') | int) if (cpu_allocatable_raw | string | regex_search('m$')) else (((cpu_allocatable_raw | float) * 1000) | int) }}"
+    node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
+    role_name: "{{ (node_roles | first) | default('worker') }}"
+    scheduled_pods: "{{ node_pod_counts[item.metadata.name] | default(0) | int }}"
+    node_capacity_entry:
+      name: "{{ item.metadata.name }}"
+      role: "{{ role_name }}"
+      pods_allocatable: "{{ pods_allocatable_raw | int }}"
+      scheduled_pods: "{{ scheduled_pods }}"
+      pod_density_pct: "{{ (((scheduled_pods | float) / ((pods_allocatable_raw | int) if (pods_allocatable_raw | int) > 0 else 1)) * 100) | round(1) }}"
+      cpu_allocatable_millicores: "{{ cpu_allocatable_millicores }}"
+      requested_cpu_millicores: "{{ node_cpu_request_millicores[item.metadata.name] | default(0) | int }}"
+      requested_cpu_pct: "{{ (((node_cpu_request_millicores[item.metadata.name] | default(0) | float) / (cpu_allocatable_millicores if cpu_allocatable_millicores > 0 else 1)) * 100) | round(1) }}"
+  changed_when: false
+
+- name: Sort node density summaries
+  ansible.builtin.set_fact:
+    node_capacity_summary_by_density_desc: "{{ (node_capacity_summary | default([])) | sort(attribute='pod_density_pct', reverse=true) | list }}"
+    node_capacity_summary_by_density_asc: "{{ (node_capacity_summary | default([])) | sort(attribute='pod_density_pct') | list }}"

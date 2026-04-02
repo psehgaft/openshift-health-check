@@ -1,0 +1,74 @@
+---
+- name: Generate an OpenShift cluster health report
+  hosts: local
+  gather_facts: true
+  vars:
+    report_output_dir: "{{ playbook_dir }}/../reports"
+    report_basename: "cluster-health"
+    report_generate_html: true
+    report_generate_pdf: true
+    collection_parallelism: 8
+    collection_command_timeout_seconds: 300
+    keep_collection_artifacts: false
+    warning_event_limit: 20
+    top_restart_pod_limit: 15
+    top_alert_group_limit: 15
+    top_event_reason_limit: 15
+    top_namespace_issue_limit: 15
+    top_pvc_issue_limit: 20
+    top_workload_issue_limit: 25
+    top_security_issue_limit: 25
+    top_certificate_issue_limit: 20
+    top_deprecated_api_limit: 25
+    platform_namespaces_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*)$"
+    user_namespaces_exclude_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*)$"
+    etcd_wal_fsync_p99_warn_ms: 10
+    etcd_peer_rtt_p99_warn_ms: 50
+    apiserver_latency_p99_warn_seconds: 1
+    pod_density_warn_pct: 80
+    pod_density_critical_pct: 90
+    certificate_expiry_warn_days: 30
+    certificate_expiry_critical_days: 7
+    require_cluster_log_forwarder: false
+    require_external_metrics_remote_write: false
+    warn_on_ingress_without_class: false
+    prom_queries:
+      firing_alerts: 'ALERTS{alertstate="firing"}'
+      etcd_wal_fsync_p99_ms: 'histogram_quantile(0.99, sum by (le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))) * 1000'
+      etcd_peer_rtt_p99_ms: 'histogram_quantile(0.99, sum by (le) (rate(etcd_network_peer_round_trip_time_seconds_bucket[5m]))) * 1000'
+      apiserver_request_p99_seconds: 'histogram_quantile(0.99, sum by (le) (rate(apiserver_request_duration_seconds_bucket{verb!~"WATCH|LIST"}[5m])))'
+      node_cpu_utilization: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))'
+      node_memory_utilization: '100 * (1 - ((node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100) / 100)'
+      kubelet_pod_density: '100 * (sum by (node) (kubelet_running_pods) / sum by (node) (kube_node_status_allocatable{resource="pods"}))'
+      top_pod_cpu_usage: 'topk(20, sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!="",pod!=""}[5m])))'
+      top_pod_memory_usage: 'topk(20, sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!=""}))'
+      pod_cpu_usage_all: 'sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!="",pod!=""}[5m]))'
+      pod_memory_usage_all: 'sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!=""})'
+  tasks:
+    - name: Run cluster health report workflow
+      block:
+        - name: Run preflight checks
+          ansible.builtin.include_role:
+            name: preflight
+
+        - name: Collect cluster data
+          ansible.builtin.include_role:
+            name: collect
+
+        - name: Analyze collected data
+          ansible.builtin.include_role:
+            name: analyze
+
+        - name: Build reports
+          ansible.builtin.include_role:
+            name: report
+      always:
+        - name: Ensure temporary collection artifacts are removed
+          ansible.builtin.file:
+            path: "{{ collection_run_metadata.results_path | dirname }}"
+            state: absent
+          when:
+            - not (keep_collection_artifacts | bool)
+            - collection_run_metadata is defined
+            - collection_run_metadata.results_path | default('') | length > 0
+          failed_when: false

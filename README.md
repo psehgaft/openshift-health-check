@@ -1,0 +1,387 @@
+# OpenShift Cluster Health Check
+
+This repo contains an Ansible-based health report for a single OpenShift cluster.
+
+The tool uses your current `oc` session, reads cluster state, and writes:
+
+- a Markdown report for people
+- a JSON report for automation
+
+It is read-only. It does not make changes to the cluster.
+
+By default, it collects data in parallel so the run finishes faster. It also reports collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete.
+
+## Design Guide
+
+The check set in this repo follows the design in [DESIGN-GUIDE.md](DESIGN-GUIDE.md).
+
+Use this `README.md` when you want to install, run, and read the tool.
+Use the design guide when you want to understand why the checks exist and how the report is meant to be used.
+
+## What This Tool Does
+
+In simple terms, the tool tries to answer two questions:
+
+1. Is the cluster healthy right now?
+2. Is there anything risky, weak, or badly configured that should be fixed?
+
+The report includes:
+
+- an overall status
+- an audit score
+- a cluster health score from `0` to `100`
+- grouped findings
+- suggested next steps
+- execution details
+- a JSON file for dashboards, scripts, or later processing
+
+## What It Checks
+
+The report covers the main areas operators usually care about:
+
+- cluster profile and topology
+- cluster version and update history
+- cluster authentication setup and identity provider presence
+- available updates and conditional update risks
+- cluster operator health
+- cluster infrastructure component health such as authentication, DNS, ingress, image registry, monitoring, network, and ingress controllers
+- machine config pool health
+- node readiness and node pressure
+- node role and kubelet version spread
+- pod density on nodes
+- workload rollout health for deployments, statefulsets, and daemonsets
+- workloads missing liveness, readiness, or startup probes
+- platform pod issues in `openshift-*`, `kube-*`, and `default`
+- restart hotspots and pods with high restart counts
+- overprovisioned pod candidates
+- quota pressure
+- unhealthy routes and ingresses, missing backend services, and host conflicts
+- observability setup, including monitoring health, log forwarding, and metrics remote write to external targets
+- deprecated APIs and deprecated CRD versions
+- expiring TLS certificates
+- image registry risks
+- network policy and namespace hygiene
+- security and best-practice issues in pod specs
+- likely unused resources
+- warning events
+- optional Prometheus signals such as alerts, API latency, etcd latency, CPU, memory, and pod usage
+
+## Repository Layout
+
+- [playbooks/cluster_health_report.yml](playbooks/cluster_health_report.yml)
+  Main playbook.
+- [DESIGN-GUIDE.md](DESIGN-GUIDE.md)
+  Design notes and the reasoning behind the checks.
+- [roles/preflight/tasks/main.yml](roles/preflight/tasks/main.yml)
+  Login and access checks.
+- [roles/collect/tasks/main.yml](roles/collect/tasks/main.yml)
+  Raw cluster data collection.
+- [roles/analyze/tasks/main.yml](roles/analyze/tasks/main.yml)
+  Analysis entry point.
+- [roles/report/tasks/main.yml](roles/report/tasks/main.yml)
+  Scoring, rendering, and output generation.
+- [templates/cluster_health_report.md.j2](templates/cluster_health_report.md.j2)
+  Markdown report template.
+
+## Prerequisites
+
+Install these programs first:
+
+- `oc`
+- `ansible-playbook`
+- `python3`
+- `openssl`
+
+You also need:
+
+- a working `oc login`
+- a user with `cluster-admin`
+
+For Ansible:
+
+- `ansible-core` or `ansible` must be installed and working
+- no extra Ansible collections are required
+- no extra Ansible modules are required
+- the playbook uses only `ansible.builtin` modules
+
+Nice to have:
+
+- access to `openshift-monitoring/thanos-querier`
+
+Optional tools by output format:
+
+- Markdown report: no extra tools
+- JSON report: no extra tools
+- HTML report: `pandoc`
+- PDF report: `pandoc` plus one supported PDF engine
+
+Supported PDF engines are checked automatically:
+
+- `wkhtmltopdf`
+- `weasyprint`
+- `prince`
+- `tectonic`
+- `xelatex`
+- `lualatex`
+- `pdflatex`
+
+Important runtime settings:
+
+- `collection_parallelism`
+  Number of `oc` read commands to run at the same time. Default: `8`
+- `collection_command_timeout_seconds`
+  Timeout for each `oc` collection command. Default: `300`
+- `keep_collection_artifacts`
+  If `true`, keep the temporary raw collection file for debugging. Default: `false`
+- `require_cluster_log_forwarder`
+  If `true`, missing `ClusterLogForwarder` is reported as a finding. Default: `false`
+- `require_external_metrics_remote_write`
+  If `true`, missing external Prometheus `remoteWrite` targets are reported as findings. Default: `false`
+- `warn_on_ingress_without_class`
+  If `true`, `Ingress` objects with no explicit class are reported. Default: `false`
+
+Before the playbook starts, the tool checks two things:
+
+- it stops if `oc whoami` fails
+- it stops if `oc auth can-i '*' '*' --all-namespaces` is not `yes`
+
+## Namespace Scope
+
+Most objects are collected from all namespaces with `-A`.
+
+For checks that should focus on customer workloads, the tool treats these as platform namespaces by default:
+
+- `default`
+- `openshift`
+- `openshift-*`
+- `kube-system`
+- `kube-public`
+- `kube-node-lease`
+- `kube-*`
+
+That default works well for OpenShift, ARO, and ROSA.
+
+Checks such as security review, best-practice review, probe coverage, and unused-resource detection skip those namespaces on purpose. That keeps platform components from creating noise in the application-focused sections.
+
+If your environment has extra managed namespaces that should also be excluded, override:
+
+- `platform_namespaces_regex`
+- `user_namespaces_exclude_regex`
+
+## How To Run
+
+The basic run is:
+
+```bash
+ansible-playbook playbooks/cluster_health_report.yml
+```
+
+If you want a different output path or file prefix:
+
+```bash
+ansible-playbook playbooks/cluster_health_report.yml \
+  -e report_output_dir=./reports \
+  -e report_basename=prod-cluster-health
+```
+
+If you want to tune some report limits:
+
+```bash
+ansible-playbook playbooks/cluster_health_report.yml \
+  -e warning_event_limit=25 \
+  -e top_restart_pod_limit=20 \
+  -e top_alert_group_limit=20 \
+  -e top_event_reason_limit=20 \
+  -e top_pvc_issue_limit=30
+```
+
+If you want to tune collection speed or turn on stricter best-practice checks:
+
+```bash
+ansible-playbook playbooks/cluster_health_report.yml \
+  -e collection_parallelism=6 \
+  -e collection_command_timeout_seconds=600 \
+  -e require_cluster_log_forwarder=true \
+  -e require_external_metrics_remote_write=true \
+  -e warn_on_ingress_without_class=true
+```
+
+## Estimated Run Time
+
+Run time depends on cluster size, API speed, network latency, and whether Prometheus-based checks are available.
+
+As a rough guide:
+
+- small cluster: about `1` to `5` minutes
+- medium cluster: about `5` to `10` minutes
+- large cluster: about `10` to `30` minutes
+
+Runs usually take longer when:
+
+- the cluster has many namespaces, pods, PVCs, or CRDs
+- API calls are slow
+- Prometheus is available and the optional metrics queries run
+- many custom resources exist and the CRD usage checks need to inspect them
+
+Runs can also take longer if you lower `collection_parallelism` or raise `collection_command_timeout_seconds`.
+
+## Output
+
+By default, the tool writes:
+
+```text
+reports/cluster-health-my-cluster-20260402T112233Z.md
+reports/cluster-health-my-cluster-20260402T112233Z.json
+```
+
+The Markdown file is the main report for day-to-day review.
+
+The JSON file is useful for:
+
+- dashboards
+- scripts
+- automation
+- storing results from many runs
+
+If `pandoc` is installed, the playbook will also try to write:
+
+```text
+reports/cluster-health-my-cluster-20260402T112233Z.html
+```
+
+If `pandoc` and a supported PDF engine are installed, the playbook will also try to write:
+
+```text
+reports/cluster-health-my-cluster-20260402T112233Z.pdf
+```
+
+HTML and PDF output are best-effort. If the required tools are missing, the Markdown and JSON reports are still generated.
+
+The `my-cluster` part comes from the cluster infrastructure name. If that is not available, the tool falls back to the current `oc` context name.
+
+The report also includes a `Data Collection` section. Check that section early if a report looks too clean. It shows:
+
+- how many collection commands were attempted
+- the parallelism and timeout used
+- which commands failed
+- which commands timed out
+- whether any core data sets were missing
+
+By default, the temporary raw collection file is removed automatically. Set `keep_collection_artifacts=true` only when you need it for debugging.
+
+## How To Read The Report
+
+### Overall Status
+
+The report starts with one overall status:
+
+- `HEALTHY`
+- `WARNING`
+- `CRITICAL`
+
+This is the fast summary.
+
+If the report shows collection failures, be careful with the result. A cluster can look healthier than it really is when part of the data could not be collected.
+
+### Suggested Next Steps
+
+The report includes a `Suggested Next Steps` section so you can decide what to do first:
+
+- `immediate` means do this first
+- `next` means important, but not the first emergency action
+- `planned` means cleanup or posture work
+- `steady-state` means the cluster looks healthy and should stay on normal review
+
+### Cluster Health Score
+
+The report also gives a health score from `0` to `100`.
+
+Score bands:
+
+- `95-100`: `Excellent`
+- `85-94.9`: `Good`
+- `70-84.9`: `Fair`
+- `50-69.9`: `Poor`
+- `0-49.9`: `Critical`
+
+In plain terms:
+
+- `Excellent`: the cluster looks stable
+- `Good`: the cluster is healthy but has some warnings
+- `Fair`: the cluster works, but there are clear issues to fix
+- `Poor`: the cluster has several meaningful problems
+- `Critical`: the cluster has serious risk or active failure
+
+### Audit Score
+
+The report also includes a weighted audit score. That score feeds the `0-100` health score.
+
+The audit rubric also includes `Data Collection Completeness`:
+
+- `pass` means all collection commands worked
+- `warning` means some non-core commands failed
+- `critical` means one or more core commands failed
+
+Core commands are the main data sources for cluster state, nodes, workloads, routes, ingresses, and storage.
+
+### Best Order To Read
+
+If you are reading the report by hand, this order usually works well:
+
+1. `Audit Rubric`
+2. `Executive Summary`
+3. `Priority Findings`
+4. `Suggested Next Steps`
+5. `Upgrade Risk`
+6. `Workload Health`
+7. `Storage`
+8. `Security And Best Practice Audit`
+9. `Optional Prometheus Signals`
+
+## Strong Signals And Heuristic Signals
+
+Not every finding has the same weight.
+
+Some findings are strong signals:
+
+- cluster operators unavailable or degraded
+- cluster version failing or unavailable
+- nodes not ready
+- node pressure
+- route admission failures
+- bad PV or PVC states
+- quota pressure
+- firing alerts
+- expiring TLS certificates
+
+Some findings are heuristic:
+
+- unused service accounts, configmaps, secrets, and CRDs
+- overprovisioned pods
+- image registry policy findings
+- network policy best-practice findings
+- feature findings
+
+Heuristic means the tool is making its best guess from the data it could see. Review those findings before you treat them as cleanup work or policy violations.
+
+## Known Limits
+
+- unused resource checks can still show false positives
+- overprovisioned pod checks use short Prometheus time windows
+- certificate checks only look at `kubernetes.io/tls` secrets that can be read by `openssl x509`
+- image registry checks are conservative and only flag clear risks
+- pod density checks are for one cluster only
+- if Prometheus access is not available, Prometheus sections will be missing but the rest of the report will still work
+- if some collection commands fail or time out, the report is still generated but should be treated as incomplete
+
+## How To Use This Tool
+
+This tool is useful for:
+
+- regular cluster health review
+- pre or post cluster upgrade checks
+- post-incident review
+- platform cleanup work
+- feeding JSON into dashboards or scripts
+
+Do not use this as your only monitoring system. It works best alongside normal OpenShift monitoring, alerts, and runbooks.
