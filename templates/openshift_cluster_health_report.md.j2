@@ -1,6 +1,7 @@
 # OpenShift Cluster Health Report
 
 - Generated at: `{{ report_generated_at }}`
+- Cluster type: `{{ report_cluster_type | default('openshift') }}`
 - Context: `{{ oc_context_cmd.stdout | default('unknown') | trim }}`
 - API server: `{{ oc_server_cmd.stdout | default('unknown') | trim }}`
 - User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
@@ -18,6 +19,10 @@
 | API visibility | `{{ cluster_current_state.api_visibility | default('unknown') }}` |
 | Ingress visibility | `{{ cluster_current_state.ingress_visibility | default('unknown') }}` |
 | Default ingress publish strategy | `{{ cluster_current_state.default_ingress_strategy | default('unknown') }}` |
+| Cluster type | `{{ report_cluster_type | default('openshift') }}` |
+| Deployment type | `{{ cluster_current_state.deployment_type | default(cluster_profile.deployment_type | default('openshift')) }}` |
+| Single node OpenShift | `{{ cluster_current_state.is_sno | default(cluster_profile.is_sno | default(false)) }}` |
+| Hosted control plane | `{{ cluster_current_state.is_hosted_control_plane | default(cluster_profile.is_hosted_control_plane | default(false)) }}` |
 | Platform | `{{ cluster_profile.platform | default('unknown') }}` |
 | Control plane topology | `{{ cluster_profile.control_plane_topology | default('unknown') }}` |
 | Infrastructure topology | `{{ cluster_profile.infrastructure_topology | default('unknown') }}` |
@@ -30,7 +35,7 @@
 | Signal | Value |
 | --- | --- |
 | Nodes | `{{ cluster_current_state.node_counts.total | default(0) }}` |
-| Control plane nodes | `{{ cluster_current_state.node_counts.control_plane | default(0) }}` |
+| Control plane nodes | `{% if cluster_current_state.is_hosted_control_plane | default(false) %}hosted externally{% else %}{{ cluster_current_state.node_counts.control_plane | default(0) }}{% endif %}` |
 | Worker nodes | `{{ cluster_current_state.node_counts.worker | default(0) }}` |
 | Infra nodes | `{{ cluster_current_state.node_counts.infra | default(0) }}` |
 | Other nodes | `{{ cluster_current_state.node_counts.other | default(0) }}` |
@@ -123,7 +128,11 @@ Top node features:
 ### Worker Pool Summary
 
 {% if cluster_current_state.worker_pools | default([]) | length == 0 %}
+{% if cluster_current_state.is_hosted_control_plane | default(false) %}
+No worker pool shape data was built from the current worker node labels.
+{% else %}
 No worker pool shape data was built from the current node labels.
+{% endif %}
 {% else %}
 | Role | Type | Source | Provider | Architecture | Nodes | Zones |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -132,7 +141,24 @@ No worker pool shape data was built from the current node labels.
 {% endfor %}
 {% endif %}
 
+{% if cluster_current_state.is_hosted_control_plane | default(false) %}
+Hosted control plane note:
+- control plane nodes are not expected to appear in the worker cluster node inventory
+- worker node counts and worker pool shapes are the main node signals for this cluster type
+{% endif %}
+
+{% if cluster_current_state.is_sno | default(false) %}
+SNO note:
+- a single control plane node is expected
+- default ingress replica count is treated as `1` for this cluster type
+{% endif %}
+
 ### MachineConfigPool Snapshot
+
+{% if cluster_current_state.is_hosted_control_plane | default(false) %}
+Hosted control plane note:
+- MachineConfigPool data can still be present, but do not read it as if this cluster had a classic self-managed control plane node layout
+{% endif %}
 
 {% if cluster_current_state.machineconfigpools | default([]) | length == 0 %}
 No MachineConfigPool data found.

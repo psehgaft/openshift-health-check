@@ -1,0 +1,69 @@
+---
+- name: Generate a Kubernetes cluster health report
+  hosts: local
+  gather_facts: true
+  vars:
+    platform_family: kubernetes
+    provider_family: generic
+    cluster_profile_mode: production
+    kube_cli: kubectl
+    report_output_dir: "{{ playbook_dir }}/../reports"
+    report_basename: "k8s-cluster-health"
+    report_generate_html: true
+    report_generate_pdf: true
+    collection_parallelism: 8
+    collection_command_timeout_seconds: 300
+    keep_collection_artifacts: false
+    warning_event_limit: 20
+    top_restart_pod_limit: 15
+    top_alert_group_limit: 15
+    top_event_reason_limit: 15
+    top_namespace_issue_limit: 15
+    top_pvc_issue_limit: 20
+    top_workload_issue_limit: 25
+    top_security_issue_limit: 25
+    top_certificate_issue_limit: 20
+    top_deprecated_api_limit: 25
+    platform_namespaces_regex: "^(default|kube-system|kube-public|kube-node-lease|kube-.*)$"
+    user_namespaces_exclude_regex: "^(default|kube-system|kube-public|kube-node-lease|kube-.*)$"
+  tasks:
+    - name: Run Kubernetes cluster health report scaffold
+      block:
+        - name: Run common preflight
+          ansible.builtin.include_role:
+            name: preflight_common
+
+        - name: Run Kubernetes preflight
+          ansible.builtin.include_role:
+            name: preflight_kubernetes
+
+        - name: Run common collection scaffold
+          ansible.builtin.include_role:
+            name: collect_common
+
+        - name: Run Kubernetes collection extension
+          ansible.builtin.include_role:
+            name: collect_kubernetes
+
+        - name: Run common analysis
+          ansible.builtin.include_role:
+            name: analyze_common
+
+        - name: Run Kubernetes analysis extension
+          ansible.builtin.include_role:
+            name: analyze_kubernetes
+
+        - name: Run common reporting scaffold
+          ansible.builtin.include_role:
+            name: report_common
+
+      always:
+        - name: Ensure temporary collection artifacts are removed
+          ansible.builtin.file:
+            path: "{{ collection_run_metadata.results_path | dirname }}"
+            state: absent
+          when:
+            - not (keep_collection_artifacts | default(false) | bool)
+            - collection_run_metadata is defined
+            - collection_run_metadata.results_path | default('') | length > 0
+          failed_when: false

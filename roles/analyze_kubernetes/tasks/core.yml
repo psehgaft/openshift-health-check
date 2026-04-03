@@ -1,0 +1,142 @@
+---
+- name: Build Kubernetes cluster profile
+  ansible.builtin.set_fact:
+    cluster_profile:
+      infrastructure_name: "{{ (oc_context_cmd.stdout | default('cluster') | trim) or 'cluster' }}"
+      platform: kubernetes
+      control_plane_topology: unknown
+      infrastructure_topology: unknown
+      api_url: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
+      api_internal_url: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
+      base_domain: unknown
+      ingress_domain: unknown
+      network_type: unknown
+      service_networks: []
+      cluster_networks: []
+      identity_provider_count: 0
+      identity_provider_names: []
+
+- name: Initialize Kubernetes core facts
+  ansible.builtin.set_fact:
+    auth_findings: []
+    available_updates: []
+    conditional_updates: []
+    cv_available: Unknown
+    cv_progressing: Unknown
+    cv_failing: Unknown
+    degraded_operators: []
+    unavailable_operators: []
+    progressing_operators: []
+    degraded_mcps: []
+    updating_mcps: []
+    infrastructure_component_summary: []
+    infrastructure_component_issues: []
+    ingresscontroller_summary: []
+    ingresscontroller_issues: []
+    not_ready_nodes: []
+    pressure_nodes: []
+    primary_node_role_counts: {}
+    kubelet_version_counts: {}
+    node_pod_counts: {}
+    namespace_pod_counts: {}
+    pod_phase_counts: {}
+
+- name: Build pod count and restart hotspots
+  ansible.builtin.set_fact:
+    pod_restart_hotspots: "{{ pod_restart_hotspots | default([]) + restart_entry }}"
+    pod_phase_counts: "{{ pod_phase_counts | default({}) | combine({phase: ((pod_phase_counts[phase] | default(0)) + 1)}, recursive=True) }}"
+    node_pod_counts: "{{ node_pod_counts | combine({node_name: ((node_pod_counts[node_name] | default(0)) + 1)}, recursive=True) }}"
+    namespace_pod_counts: "{{ namespace_pod_counts | combine({namespace_name: ((namespace_pod_counts[namespace_name] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ pods.items | default([]) }}"
+  vars:
+    phase: "{{ item.status.phase | default('Unknown') }}"
+    node_name: "{{ item.spec.nodeName | default('unscheduled') }}"
+    namespace_name: "{{ item.metadata.namespace | default('') }}"
+    restart_count: "{{ item.status.containerStatuses | default([]) | map(attribute='restartCount') | list | sum }}"
+    restart_entry: "{{ [{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': phase, 'restarts': restart_count}] if restart_count | int > 0 else [] }}"
+  changed_when: false
+
+- name: Build node health facts
+  ansible.builtin.set_fact:
+    not_ready_nodes: "{{ not_ready_nodes + ([item.metadata.name] if ready_status != 'True' else []) }}"
+    pressure_nodes: "{{ pressure_nodes + ([{'name': item.metadata.name, 'pressures': pressure_types}] if pressure_types | length > 0 else []) }}"
+    primary_node_role_counts: "{{ primary_node_role_counts | combine({primary_node_role: ((primary_node_role_counts[primary_node_role] | default(0)) + 1)}, recursive=True) }}"
+    kubelet_version_counts: "{{ kubelet_version_counts | combine({kubelet_version: ((kubelet_version_counts[kubelet_version] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ nodes.items | default([]) }}"
+  vars:
+    ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
+    pressure_types: "{{ item.status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | list }}"
+    node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
+    primary_node_role: >-
+      {{
+        'master'
+        if 'master' in node_roles
+        else (
+          'control-plane'
+          if 'control-plane' in node_roles
+          else (
+            'infra'
+            if 'infra' in node_roles
+            else (
+              'worker'
+              if 'worker' in node_roles
+              else ((node_roles | sort | first) | default('worker'))
+            )
+          )
+        )
+      }}
+    kubelet_version: "{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}"
+  changed_when: false
+
+- name: Build namespace phase findings
+  ansible.builtin.set_fact:
+    namespace_issue_summary: "{{ namespace_issue_summary | default([]) + ([{'name': item.metadata.name, 'phase': phase}] if phase != 'Active' else []) }}"
+    user_namespace_names: "{{ user_namespace_names | default([]) + ([item.metadata.name] if not (item.metadata.name is match(user_namespaces_exclude_regex)) else []) }}"
+  loop: "{{ namespaces.items | default([]) }}"
+  vars:
+    phase: "{{ item.status.phase | default('Unknown') }}"
+  changed_when: false
+
+- name: Build node capacity summary
+  ansible.builtin.set_fact:
+    node_capacity_summary: "{{ node_capacity_summary | default([]) + [node_capacity_entry] }}"
+  loop: "{{ nodes.items | default([]) }}"
+  vars:
+    cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
+    pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
+    cpu_allocatable_millicores: "{{ (cpu_allocatable_raw | regex_replace('m$', '') | int) if (cpu_allocatable_raw | string | regex_search('m$')) else (((cpu_allocatable_raw | float) * 1000) | int) }}"
+    node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
+    role_name: >-
+      {{
+        'master'
+        if 'master' in node_roles
+        else (
+          'control-plane'
+          if 'control-plane' in node_roles
+          else (
+            'infra'
+            if 'infra' in node_roles
+            else (
+              'worker'
+              if 'worker' in node_roles
+              else ((node_roles | sort | first) | default('worker'))
+            )
+          )
+        )
+      }}
+    scheduled_pods: "{{ node_pod_counts[item.metadata.name] | default(0) | int }}"
+    node_capacity_entry:
+      name: "{{ item.metadata.name }}"
+      role: "{{ role_name }}"
+      pods_allocatable: "{{ pods_allocatable_raw | int }}"
+      scheduled_pods: "{{ scheduled_pods }}"
+      pod_density_pct: "{{ (((scheduled_pods | float) / ((pods_allocatable_raw | int) if (pods_allocatable_raw | int) > 0 else 1)) * 100) | round(1) }}"
+      cpu_allocatable_millicores: "{{ cpu_allocatable_millicores }}"
+      requested_cpu_millicores: "{{ node_cpu_request_millicores[item.metadata.name] | default(0) | int }}"
+      requested_cpu_pct: "{{ (((node_cpu_request_millicores[item.metadata.name] | default(0) | float) / (cpu_allocatable_millicores if cpu_allocatable_millicores > 0 else 1)) * 100) | round(1) }}"
+  changed_when: false
+
+- name: Sort node density summaries
+  ansible.builtin.set_fact:
+    node_capacity_summary_by_density_desc: "{{ (node_capacity_summary | default([])) | sort(attribute='pod_density_pct', reverse=true) | list }}"
+    node_capacity_summary_by_density_asc: "{{ (node_capacity_summary | default([])) | sort(attribute='pod_density_pct') | list }}"

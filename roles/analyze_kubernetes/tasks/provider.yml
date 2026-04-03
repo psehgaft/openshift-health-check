@@ -1,0 +1,278 @@
+---
+- name: Build Kubernetes provider analysis
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+    from collections import defaultdict
+
+    data = json.loads(r'''{{ {
+      "provider_family": resolved_provider_family | default(provider_family | default('generic')),
+      "nodes": nodes.items | default([]),
+      "pods": pods.items | default([]),
+      "deployments": deployments.items | default([]),
+      "daemonsets": daemonsets.items | default([]),
+      "namespaces": namespaces.items | default([])
+    } | to_json }}''')
+
+    provider = str(data.get("provider_family") or "generic").lower()
+    nodes = data.get("nodes") or []
+    pods = data.get("pods") or []
+    deployments = data.get("deployments") or []
+    daemonsets = data.get("daemonsets") or []
+    namespaces = {(item.get("metadata", {}) or {}).get("name", "") for item in (data.get("namespaces") or [])}
+
+    findings = []
+    nodepools = []
+    components = []
+    current_state = {
+        "provider": provider,
+        "profile_mode": "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}",
+        "details": []
+    }
+
+    def deployment_status(item):
+        meta = item.get("metadata", {}) or {}
+        status = item.get("status", {}) or {}
+        spec = item.get("spec", {}) or {}
+        desired = int(spec.get("replicas", 1) or 0)
+        ready = int(status.get("readyReplicas", 0) or 0)
+        updated = int(status.get("updatedReplicas", 0) or 0)
+        available = int(status.get("availableReplicas", 0) or 0)
+        healthy = not (desired > 0 and (ready < desired or updated < desired or available < desired))
+        return {
+            "kind": "Deployment",
+            "namespace": meta.get("namespace", ""),
+            "name": meta.get("name", ""),
+            "desired": desired,
+            "ready": ready,
+            "updated": updated,
+            "available": available,
+            "healthy": healthy,
+        }
+
+    def daemonset_status(item):
+        meta = item.get("metadata", {}) or {}
+        status = item.get("status", {}) or {}
+        desired = int(status.get("desiredNumberScheduled", 0) or 0)
+        ready = int(status.get("numberReady", 0) or 0)
+        updated = int(status.get("updatedNumberScheduled", 0) or 0)
+        healthy = not (desired > 0 and (ready < desired or updated < desired))
+        return {
+            "kind": "DaemonSet",
+            "namespace": meta.get("namespace", ""),
+            "name": meta.get("name", ""),
+            "desired": desired,
+            "ready": ready,
+            "updated": updated,
+            "available": ready,
+            "healthy": healthy,
+        }
+
+    def add_component_if_present(kind, namespace, name):
+        if kind == "Deployment":
+            for item in deployments:
+                meta = item.get("metadata", {}) or {}
+                if meta.get("namespace") == namespace and meta.get("name") == name:
+                    components.append(deployment_status(item))
+                    return
+        if kind == "DaemonSet":
+            for item in daemonsets:
+                meta = item.get("metadata", {}) or {}
+                if meta.get("namespace") == namespace and meta.get("name") == name:
+                    components.append(daemonset_status(item))
+                    return
+
+    if provider == "aks":
+        pools = defaultdict(lambda: {"nodes": 0, "modes": set(), "architectures": set(), "zones": set()})
+        for node in nodes:
+            meta = node.get("metadata", {}) or {}
+            labels = meta.get("labels", {}) or {}
+            status = node.get("status", {}) or {}
+            node_info = status.get("nodeInfo", {}) or {}
+            pool = labels.get("kubernetes.azure.com/agentpool") or labels.get("agentpool") or "unknown"
+            pools[pool]["nodes"] += 1
+            pools[pool]["modes"].add(labels.get("kubernetes.azure.com/mode", "unknown"))
+            pools[pool]["architectures"].add(node_info.get("architecture", "unknown"))
+            pools[pool]["zones"].add(labels.get("topology.kubernetes.io/zone") or "unknown")
+        for name, item in sorted(pools.items()):
+            nodepools.append({
+                "name": name,
+                "kind": "aks-agentpool",
+                "nodes": item["nodes"],
+                "modes": sorted(item["modes"]),
+                "architectures": sorted(item["architectures"]),
+                "zones": sorted(item["zones"]),
+            })
+        current_state["details"].append({
+            "label": "AKS node pools",
+            "value": str(len(nodepools))
+        })
+        current_state["details"].append({
+            "label": "AKS system pools visible",
+            "value": str(sum(1 for pool in nodepools if "system" in pool.get("modes", [])))
+        })
+        current_state["details"].append({
+            "label": "AKS user pools visible",
+            "value": str(sum(1 for pool in nodepools if "user" in pool.get("modes", [])))
+        })
+        if nodepools and any("system" in pool["modes"] for pool in nodepools):
+            pass
+        elif any(pool["modes"] != ["unknown"] for pool in nodepools):
+            findings.append({
+                "issue": "aks-system-pool-not-visible",
+                "detail": "No AKS node pool with mode=system was found in node labels"
+            })
+        add_component_if_present("Deployment", "kube-system", "coredns")
+        add_component_if_present("DaemonSet", "kube-system", "kube-proxy")
+        add_component_if_present("DaemonSet", "kube-system", "csi-azuredisk-node")
+        add_component_if_present("DaemonSet", "kube-system", "csi-azurefile-node")
+
+    elif provider == "eks":
+        pools = defaultdict(lambda: {"nodes": 0, "architectures": set(), "zones": set()})
+        fargate_pods = 0
+        for node in nodes:
+            meta = node.get("metadata", {}) or {}
+            labels = meta.get("labels", {}) or {}
+            status = node.get("status", {}) or {}
+            node_info = status.get("nodeInfo", {}) or {}
+            pool = (
+                labels.get("eks.amazonaws.com/nodegroup")
+                or labels.get("alpha.eksctl.io/nodegroup-name")
+                or "unknown"
+            )
+            pools[pool]["nodes"] += 1
+            pools[pool]["architectures"].add(node_info.get("architecture", "unknown"))
+            pools[pool]["zones"].add(labels.get("topology.kubernetes.io/zone") or "unknown")
+        for pod in pods:
+            labels = (pod.get("metadata", {}) or {}).get("labels", {}) or {}
+            annotations = (pod.get("metadata", {}) or {}).get("annotations", {}) or {}
+            if "eks.amazonaws.com/fargate-profile" in labels or "eks.amazonaws.com/fargate-profile" in annotations:
+                fargate_pods += 1
+        for name, item in sorted(pools.items()):
+            nodepools.append({
+                "name": name,
+                "kind": "eks-nodegroup",
+                "nodes": item["nodes"],
+                "architectures": sorted(item["architectures"]),
+                "zones": sorted(item["zones"]),
+            })
+        current_state["details"].append({
+            "label": "EKS node groups",
+            "value": str(len(nodepools))
+        })
+        current_state["details"].append({
+            "label": "EKS Fargate pods",
+            "value": str(fargate_pods)
+        })
+        if fargate_pods > 0:
+            findings.append({
+                "issue": "eks-fargate-workloads-detected",
+                "detail": f"{fargate_pods} pods appear to be running on EKS Fargate"
+            })
+        add_component_if_present("Deployment", "kube-system", "coredns")
+        add_component_if_present("DaemonSet", "kube-system", "kube-proxy")
+        add_component_if_present("DaemonSet", "kube-system", "aws-node")
+
+    elif provider == "gke":
+        pools = defaultdict(lambda: {"nodes": 0, "architectures": set(), "zones": set()})
+        metadata_server_nodes = 0
+        for node in nodes:
+            meta = node.get("metadata", {}) or {}
+            labels = meta.get("labels", {}) or {}
+            status = node.get("status", {}) or {}
+            node_info = status.get("nodeInfo", {}) or {}
+            pool = labels.get("cloud.google.com/gke-nodepool") or "unknown"
+            pools[pool]["nodes"] += 1
+            pools[pool]["architectures"].add(node_info.get("architecture", "unknown"))
+            pools[pool]["zones"].add(labels.get("topology.kubernetes.io/zone") or "unknown")
+            if str(labels.get("iam.gke.io/gke-metadata-server-enabled", "")).lower() == "true":
+                metadata_server_nodes += 1
+        for name, item in sorted(pools.items()):
+            nodepools.append({
+                "name": name,
+                "kind": "gke-nodepool",
+                "nodes": item["nodes"],
+                "architectures": sorted(item["architectures"]),
+                "zones": sorted(item["zones"]),
+            })
+        current_state["details"].append({
+            "label": "GKE node pools",
+            "value": str(len(nodepools))
+        })
+        current_state["details"].append({
+            "label": "GKE metadata server nodes",
+            "value": str(metadata_server_nodes)
+        })
+        if metadata_server_nodes > 0:
+            findings.append({
+                "issue": "gke-workload-identity-nodes-detected",
+                "detail": f"{metadata_server_nodes} nodes have the GKE metadata server enabled"
+            })
+        add_component_if_present("Deployment", "kube-system", "coredns")
+        add_component_if_present("Deployment", "kube-system", "kube-dns")
+        add_component_if_present("DaemonSet", "kube-system", "fluentbit-gke")
+
+    elif provider == "rancher":
+        current_state["details"].append({
+            "label": "Rancher namespaces visible",
+            "value": ", ".join(sorted(ns for ns in namespaces if ns.startswith("cattle-"))) or "none"
+        })
+        if "cattle-system" not in namespaces:
+            findings.append({
+                "issue": "rancher-system-namespace-missing",
+                "detail": "Cluster type was detected as rancher, but cattle-system namespace was not found"
+            })
+        add_component_if_present("Deployment", "cattle-system", "cattle-cluster-agent")
+        add_component_if_present("Deployment", "cattle-system", "rancher-webhook")
+        add_component_if_present("DaemonSet", "cattle-system", "cattle-node-agent")
+
+    elif provider == "minikube":
+        nodepools.append({
+            "name": "minikube",
+            "kind": "minikube",
+            "nodes": len(nodes),
+            "architectures": sorted({((n.get("status", {}) or {}).get("nodeInfo", {}) or {}).get("architecture", "unknown") for n in nodes}),
+            "zones": ["local"],
+        })
+        minikube_namespaces = sorted(ns for ns in namespaces if ns in {"ingress-nginx", "kube-system"})
+        current_state["details"].append({
+            "label": "Minikube nodes",
+            "value": str(len(nodes))
+        })
+        current_state["details"].append({
+            "label": "Minikube visible addon namespaces",
+            "value": ", ".join(minikube_namespaces) or "none"
+        })
+        findings.append({
+            "issue": "minikube-lightweight-profile",
+            "detail": "Local development profile is active. Some production-style hygiene checks are reduced."
+        })
+
+    for item in components:
+        if not item["healthy"]:
+            findings.append({
+                "issue": "provider-managed-component-unhealthy",
+                "detail": f'{item["kind"]} {item["namespace"]}/{item["name"]} is not fully ready'
+            })
+
+    print(json.dumps({
+        "provider_nodepool_summary": nodepools,
+        "provider_component_summary": components,
+        "provider_specific_findings": findings,
+        "provider_current_state": current_state,
+    }))
+    PY
+  register: kubernetes_provider_analysis_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize Kubernetes provider analysis
+  ansible.builtin.set_fact:
+    kubernetes_provider_analysis: "{{ kubernetes_provider_analysis_cmd.stdout | from_json if (kubernetes_provider_analysis_cmd.rc == 0 and (kubernetes_provider_analysis_cmd.stdout | default('') | length > 0)) else {'provider_nodepool_summary': [], 'provider_component_summary': [], 'provider_specific_findings': [], 'provider_current_state': {'provider': (resolved_provider_family | default(provider_family | default('generic'))), 'profile_mode': (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))), 'details': []}} }}"
+
+- name: Set Kubernetes provider analysis facts
+  ansible.builtin.set_fact:
+    provider_nodepool_summary: "{{ kubernetes_provider_analysis.provider_nodepool_summary | default([]) }}"
+    provider_component_summary: "{{ kubernetes_provider_analysis.provider_component_summary | default([]) }}"
+    provider_specific_findings: "{{ kubernetes_provider_analysis.provider_specific_findings | default([]) }}"
+    provider_current_state: "{{ kubernetes_provider_analysis.provider_current_state | default({'provider': (resolved_provider_family | default(provider_family | default('generic'))), 'profile_mode': (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))), 'details': []}) }}"

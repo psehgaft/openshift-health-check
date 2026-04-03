@@ -1,0 +1,149 @@
+# Kubernetes Cluster Health Report
+
+Generated at: `{{ report_completed_at | default(report_generated_at) }}`
+
+## Summary
+
+- Cluster type: `{{ report_cluster_type | default(provider_family | default(platform_family | default('kubernetes'))) }}`
+- Cluster type detection: `{{ cluster_type_detection_source | default('unknown') }}`
+- Cluster profile mode: `{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}`
+- Status: `{{ health_summary.status | default('UNKNOWN') }}`
+- Audit score: `{{ audit_score_total | default(0) }}/{{ audit_score_max | default(0) }}`
+- Cluster health score: `{{ cluster_health_score | default(0) }}/100 ({{ cluster_health_score_label | default('Unknown') }})`
+- Context: `{{ oc_context_cmd.stdout | default('unknown') | trim }}`
+- API server: `{{ oc_server_cmd.stdout | default('unknown') | trim }}`
+- User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
+
+## Cluster Current State
+
+| Item | Value |
+| --- | --- |
+| Cluster type | `{{ report_cluster_type | default(provider_family | default(platform_family | default('kubernetes'))) }}` |
+| Cluster type detection | `{{ cluster_type_detection_source | default('unknown') }}` |
+| Cluster profile mode | `{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}` |
+| Kubernetes version | `{{ cluster_current_state.kubernetes_version | default('unknown') }}` |
+| Node count | `{{ cluster_current_state.node_counts.total | default(0) }}` |
+| Worker pool count | `{{ cluster_current_state.worker_pool_count | default(0) }}` |
+| Namespace count | `{{ cluster_current_state.object_counts.namespaces | default(0) }}` |
+| Pod count | `{{ cluster_current_state.object_counts.pods | default(0) }}` |
+| Running pods | `{{ cluster_current_state.object_counts.running_pods | default(0) }}` |
+| Average pods per node | `{{ cluster_current_state.resources.average_pods_per_node | default(0) }}` |
+| Total CPU cores | `{{ cluster_current_state.resources.total_cpu_cores | default(0) }}` |
+| Total memory GiB | `{{ cluster_current_state.resources.total_memory_gib | default(0) }}` |
+| Total ephemeral storage GiB | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default(0) }}` |
+
+{% if cluster_current_state.worker_pools | default([]) | length > 0 %}
+### Worker Pools
+
+| Type | Provider | Architecture | Nodes | Zones |
+| --- | --- | --- | ---: | --- |
+{% for item in cluster_current_state.worker_pools %}
+| `{{ item.type }}` | `{{ item.provider }}` | `{{ item.architecture }}` | `{{ item.nodes }}` | `{{ item.zones | join(', ') }}` |
+{% endfor %}
+{% endif %}
+
+{% if provider_nodepool_summary | default([]) | length > 0 or provider_component_summary | default([]) | length > 0 %}
+## Provider Platform
+
+{% if provider_current_state.details | default([]) | length > 0 %}
+### Provider Current State
+
+| Item | Value |
+| --- | --- |
+{% for item in provider_current_state.details %}
+| `{{ item.label }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if provider_nodepool_summary | default([]) | length > 0 %}
+### Provider Node Pools
+
+| Name | Kind | Nodes | Architectures | Zones |
+| --- | --- | ---: | --- | --- |
+{% for item in provider_nodepool_summary %}
+| `{{ item.name }}` | `{{ item.kind }}` | `{{ item.nodes }}` | `{{ item.architectures | default([]) | join(', ') }}` | `{{ item.zones | default([]) | join(', ') }}` |
+{% endfor %}
+{% endif %}
+
+{% if provider_component_summary | default([]) | length > 0 %}
+### Provider Components
+
+| Kind | Namespace | Name | Ready | Desired | Healthy |
+| --- | --- | --- | ---: | ---: | --- |
+{% for item in provider_component_summary %}
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.ready }}` | `{{ item.desired }}` | `{{ item.healthy }}` |
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Key Findings
+
+{% if collection_failures | default([]) | length > 0 %}
+- Collection failures: `{{ collection_failures | length }}`
+{% endif %}
+{% if not_ready_nodes | default([]) | length > 0 %}
+- NotReady nodes: `{{ not_ready_nodes | length }}`
+{% endif %}
+{% if pressure_nodes | default([]) | length > 0 %}
+- Nodes under pressure: `{{ pressure_nodes | length }}`
+{% endif %}
+{% if workload_health_issues | default([]) | length > 0 %}
+- Workload health issues: `{{ workload_health_issues | length }}`
+{% endif %}
+{% if workload_probe_findings | default([]) | length > 0 %}
+- Workloads missing probes: `{{ workload_probe_findings | length }}`
+{% endif %}
+{% if high_restart_pods | default([]) | length > 0 %}
+- High restart pods: `{{ high_restart_pods | length }}`
+{% endif %}
+{% if security_findings | default([]) | length > 0 %}
+- Security findings: `{{ security_findings | length }}`
+{% endif %}
+{% if workload_practice_findings | default([]) | length > 0 %}
+- Workload best-practice findings: `{{ workload_practice_findings | length }}`
+{% endif %}
+{% if pv_issues | default([]) | length > 0 or pvc_issues | default([]) | length > 0 %}
+- Storage issues: `{{ (pv_issues | default([]) | length) + (pvc_issues | default([]) | length) }}`
+{% endif %}
+{% if deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 %}
+- Deprecated API or CRD findings: `{{ (deprecated_crd_findings | default([]) | length) + (deprecated_api_lines | default([]) | length) }}`
+{% endif %}
+{% if certificate_expiry_findings | default([]) | length > 0 %}
+- TLS secrets with captured certificate expiry data: `{{ certificate_expiry_findings | length }}`
+{% endif %}
+{% if provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length > 0 %}
+- Provider-specific findings: `{{ provider_specific_findings | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length }}`
+{% endif %}
+{% if (collection_failures | default([]) | length) == 0 and (not_ready_nodes | default([]) | length) == 0 and (pressure_nodes | default([]) | length) == 0 and (workload_health_issues | default([]) | length) == 0 and (workload_probe_findings | default([]) | length) == 0 and (high_restart_pods | default([]) | length) == 0 and (security_findings | default([]) | length) == 0 and (workload_practice_findings | default([]) | length) == 0 and (pv_issues | default([]) | length) == 0 and (pvc_issues | default([]) | length) == 0 and (deprecated_crd_findings | default([]) | length) == 0 and (deprecated_api_lines | default([]) | length) == 0 %}
+- No major issues were detected in the checks used by the common Kubernetes path.
+{% endif %}
+
+## Suggested Next Steps
+
+{% for item in suggested_next_steps | default([]) %}
+- `{{ item.priority }}`: {{ item.summary }} {{ item.detail }}
+{% endfor %}
+
+{% if (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] %}
+Profile note: this report used a non-production profile, so some hygiene and unused-resource findings do not reduce the score the same way they do in production.
+{% endif %}
+
+## Execution Stats
+
+| Item | Value |
+| --- | --- |
+| Started at | `{{ execution_stats.started_at | default(report_generated_at) }}` |
+| Completed at | `{{ execution_stats.completed_at | default(report_generated_at) }}` |
+| Run time seconds | `{{ execution_stats.duration_seconds | default(0) }}` |
+| Run time minutes | `{{ execution_stats.duration_minutes | default(0) }}` |
+| Cluster user | `{{ execution_stats.ocp_user | default('unknown') }}` |
+| Local user | `{{ execution_stats.local_user | default('unknown') }}` |
+| Local host | `{{ execution_stats.local_hostname | default('unknown') }}` |
+| Local OS | `{{ execution_stats.local_os | default('unknown') }}` |
+| Python | `{{ execution_stats.local_python | default('unknown') }}` |
+| Ansible | `{{ execution_stats.ansible_version | default('unknown') }}` |
+| Collection command count | `{{ execution_stats.collection.command_count | default(0) }}` |
+| Collection parallelism | `{{ execution_stats.collection.parallelism | default(0) }}` |
+| Collection timeout seconds | `{{ execution_stats.collection.timeout_seconds | default(0) }}` |
+| Failed collection commands | `{{ execution_stats.collection.failed_commands | default(0) }}` |
+| Timed out collection commands | `{{ execution_stats.collection.timed_out_commands | default(0) }}` |

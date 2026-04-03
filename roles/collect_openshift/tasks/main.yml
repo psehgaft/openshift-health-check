@@ -1,0 +1,156 @@
+---
+- name: Define OpenShift-specific collection commands
+  ansible.builtin.set_fact:
+    openshift_collection_core_command_names:
+      - clusterversion
+      - clusteroperators
+      - machineconfigpools
+      - routes
+    openshift_collection_commands:
+      - name: clusterversion
+        argv: ["oc", "get", "clusterversion", "version", "-o", "json"]
+      - name: clusteroperators
+        argv: ["oc", "get", "clusteroperators", "-o", "json"]
+      - name: infrastructure
+        argv: ["oc", "get", "infrastructure", "cluster", "-o", "json"]
+      - name: network
+        argv: ["oc", "get", "network", "cluster", "-o", "json"]
+      - name: ingress_config
+        argv: ["oc", "get", "ingress.config.openshift.io", "cluster", "-o", "json"]
+      - name: image_config
+        argv: ["oc", "get", "image.config.openshift.io", "cluster", "-o", "json"]
+      - name: image_registry_config
+        argv: ["oc", "get", "configs.imageregistry.operator.openshift.io", "cluster", "-o", "json"]
+      - name: image_pruner
+        argv: ["oc", "get", "imagepruner.imageregistry.operator.openshift.io", "cluster", "-o", "json"]
+      - name: dns
+        argv: ["oc", "get", "dns.operator/default", "-o", "json"]
+      - name: oauth
+        argv: ["oc", "get", "oauth", "cluster", "-o", "json"]
+      - name: machineconfigpools
+        argv: ["oc", "get", "machineconfigpools", "-o", "json"]
+      - name: routes
+        argv: ["oc", "get", "routes", "-A", "-o", "json"]
+      - name: ingresscontrollers
+        argv: ["oc", "-n", "openshift-ingress-operator", "get", "ingresscontrollers", "-o", "json"]
+      - name: clusterlogforwarders
+        argv: ["oc", "get", "clusterlogforwarders", "-A", "-o", "json"]
+      - name: cluster_monitoring_config
+        argv: ["oc", "-n", "openshift-monitoring", "get", "configmap", "cluster-monitoring-config", "-o", "json"]
+      - name: user_workload_monitoring_config
+        argv: ["oc", "-n", "openshift-user-workload-monitoring", "get", "configmap", "user-workload-monitoring-config", "-o", "json"]
+
+- name: Collect OpenShift-specific data in parallel
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    commands = json.loads(r'''{{ openshift_collection_commands | to_json }}''')
+    timeout_seconds = int({{ collection_command_timeout_seconds | int }})
+    max_workers = min(
+        max(1, int({{ collection_parallelism | int }})),
+        max(1, len(commands)),
+    )
+
+    def run_command(spec):
+        try:
+            proc = subprocess.run(
+                spec["argv"],
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+            return {
+                "name": spec["name"],
+                "rc": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+                "stdout_lines": proc.stdout.splitlines(),
+                "timed_out": False,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "name": spec["name"],
+                "rc": 124,
+                "stdout": exc.stdout or "",
+                "stderr": f"timed out after {timeout_seconds} seconds",
+                "stdout_lines": (exc.stdout or "").splitlines(),
+                "timed_out": True,
+            }
+        except Exception as exc:
+            return {
+                "name": spec["name"],
+                "rc": 1,
+                "stdout": "",
+                "stderr": str(exc),
+                "stdout_lines": [],
+                "timed_out": False,
+            }
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(run_command, spec): spec["name"] for spec in commands}
+        for future in as_completed(futures):
+            result = future.result()
+            results[result["name"]] = result
+
+    print(json.dumps(results))
+    PY
+  register: openshift_collected_commands_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize OpenShift-specific command results
+  ansible.builtin.set_fact:
+    openshift_collected_commands: "{{ openshift_collected_commands_cmd.stdout | from_json if (openshift_collected_commands_cmd.rc == 0 and (openshift_collected_commands_cmd.stdout | default('') | length > 0)) else {} }}"
+
+- name: Merge OpenShift-specific collection failures
+  ansible.builtin.set_fact:
+    collection_failures: "{{ (collection_failures | default([])) + [collection_failure_entry] }}"
+  loop: "{{ openshift_collected_commands | default({}) | dict2items }}"
+  vars:
+    collection_failure_entry:
+      name: "{{ item.key }}"
+      rc: "{{ item.value.rc | default(1) }}"
+      timed_out: "{{ item.value.timed_out | default(false) }}"
+      stderr: "{{ item.value.stderr | default('') | trim }}"
+  when: (item.value.rc | default(1) | int) != 0
+  changed_when: false
+
+- name: Merge OpenShift-specific collection summary
+  ansible.builtin.set_fact:
+    collection_summary:
+      command_count: "{{ (collection_summary.command_count | default(0) | int) + (openshift_collection_commands | length) }}"
+      parallelism: "{{ collection_summary.parallelism | default(collection_parallelism | int) }}"
+      timeout_seconds: "{{ collection_summary.timeout_seconds | default(collection_command_timeout_seconds | int) }}"
+      failed_commands: "{{ collection_failures | default([]) | length }}"
+      timed_out_commands: "{{ collection_failures | default([]) | selectattr('timed_out', 'equalto', true) | list | length }}"
+      succeeded_commands: "{{ [0, ((collection_summary.command_count | default(0) | int) + (openshift_collection_commands | length)) - (collection_failures | default([]) | length)] | max }}"
+      core_failed_commands: "{{ (collection_failures | default([]) | selectattr('name', 'in', (collection_core_command_names + openshift_collection_core_command_names)) | list | length) }}"
+  changed_when: false
+
+- name: Extend core command names with OpenShift commands
+  ansible.builtin.set_fact:
+    collection_core_command_names: "{{ collection_core_command_names + openshift_collection_core_command_names }}"
+
+- name: Parse OpenShift-specific JSON
+  ansible.builtin.set_fact:
+    clusterversion: "{{ openshift_collected_commands.clusterversion.stdout | from_json if (openshift_collected_commands.clusterversion.rc | default(1)) == 0 else {} }}"
+    clusteroperators: "{{ openshift_collected_commands.clusteroperators.stdout | from_json if (openshift_collected_commands.clusteroperators.rc | default(1)) == 0 else {'items': []} }}"
+    infrastructure: "{{ openshift_collected_commands.infrastructure.stdout | from_json if (openshift_collected_commands.infrastructure.rc | default(1)) == 0 else {} }}"
+    network_config: "{{ openshift_collected_commands.network.stdout | from_json if (openshift_collected_commands.network.rc | default(1)) == 0 else {} }}"
+    ingress_config: "{{ openshift_collected_commands.ingress_config.stdout | from_json if (openshift_collected_commands.ingress_config.rc | default(1)) == 0 else {} }}"
+    image_config: "{{ openshift_collected_commands.image_config.stdout | from_json if (openshift_collected_commands.image_config.rc | default(1)) == 0 else {} }}"
+    image_registry_config: "{{ openshift_collected_commands.image_registry_config.stdout | from_json if (openshift_collected_commands.image_registry_config.rc | default(1)) == 0 else {} }}"
+    image_pruner_config: "{{ openshift_collected_commands.image_pruner.stdout | from_json if (openshift_collected_commands.image_pruner.rc | default(1)) == 0 else {} }}"
+    dns_config: "{{ openshift_collected_commands.dns.stdout | from_json if (openshift_collected_commands.dns.rc | default(1)) == 0 else {} }}"
+    oauth_config: "{{ openshift_collected_commands.oauth.stdout | from_json if (openshift_collected_commands.oauth.rc | default(1)) == 0 else {} }}"
+    machineconfigpools: "{{ openshift_collected_commands.machineconfigpools.stdout | from_json if (openshift_collected_commands.machineconfigpools.rc | default(1)) == 0 else {'items': []} }}"
+    routes: "{{ openshift_collected_commands.routes.stdout | from_json if (openshift_collected_commands.routes.rc | default(1)) == 0 else {'items': []} }}"
+    ingresscontrollers: "{{ openshift_collected_commands.ingresscontrollers.stdout | from_json if (openshift_collected_commands.ingresscontrollers.rc | default(1)) == 0 else {'items': []} }}"
+    clusterlogforwarders: "{{ openshift_collected_commands.clusterlogforwarders.stdout | from_json if (openshift_collected_commands.clusterlogforwarders.rc | default(1)) == 0 else {'items': []} }}"
+    cluster_monitoring_config: "{{ openshift_collected_commands.cluster_monitoring_config.stdout | from_json if (openshift_collected_commands.cluster_monitoring_config.rc | default(1)) == 0 else {} }}"
+    user_workload_monitoring_config: "{{ openshift_collected_commands.user_workload_monitoring_config.stdout | from_json if (openshift_collected_commands.user_workload_monitoring_config.rc | default(1)) == 0 else {} }}"

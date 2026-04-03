@@ -1,0 +1,110 @@
+---
+- name: Detect Kubernetes cluster type from cluster signals
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+
+    data = json.loads(r'''{{ {
+      "requested_provider_family": provider_family | default('generic'),
+      "requested_cluster_profile_mode": cluster_profile_mode | default('production'),
+      "context": oc_context_cmd.stdout | default(''),
+      "nodes": nodes.items | default([]),
+      "namespaces": namespaces.items | default([]),
+      "crds": crds.items | default([])
+    } | to_json }}''')
+
+    requested = str(data.get("requested_provider_family") or "generic").strip().lower()
+    requested_profile_mode = str(data.get("requested_cluster_profile_mode") or "production").strip().lower() or "production"
+    context = str(data.get("context") or "").strip().lower()
+    nodes = data.get("nodes") or []
+    namespaces = {(item.get("metadata", {}) or {}).get("name", "") for item in (data.get("namespaces") or [])}
+    crd_names = {(item.get("metadata", {}) or {}).get("name", "") for item in (data.get("crds") or [])}
+
+    if requested != "generic":
+        print(json.dumps({
+            "provider_family": requested,
+            "detected_from": "playbook-wrapper",
+            "cluster_profile_mode": ("lightweight" if requested == "minikube" else requested_profile_mode),
+        }))
+        raise SystemExit(0)
+
+    provider_ids = []
+    label_keys = set()
+    label_values = set()
+    node_names = set()
+
+    for node in nodes:
+        meta = node.get("metadata", {}) or {}
+        spec = node.get("spec", {}) or {}
+        labels = meta.get("labels", {}) or {}
+        provider_ids.append(str(spec.get("providerID") or "").lower())
+        label_keys.update(labels.keys())
+        label_values.update(str(v).lower() for v in labels.values())
+        node_names.add(str(meta.get("name") or "").lower())
+
+    detected = "generic"
+    detected_from = "default"
+    profile_mode = requested_profile_mode
+
+    if (
+        "minikube" in context
+        or "minikube.k8s.io/name" in label_keys
+        or any(name.startswith("minikube") for name in node_names)
+    ):
+        detected = "minikube"
+        detected_from = "context-or-node-labels"
+        profile_mode = "lightweight"
+    elif (
+        "cattle-system" in namespaces
+        or "cattle-fleet-system" in namespaces
+        or any("management.cattle.io" in name for name in crd_names)
+        or "rancher" in context
+    ):
+        detected = "rancher"
+        detected_from = "rancher-namespaces-or-crds"
+    elif (
+        any(pid.startswith("azure://") for pid in provider_ids)
+        or "kubernetes.azure.com/cluster" in label_keys
+        or "kubernetes.azure.com/agentpool" in label_keys
+        or "aks" in context
+    ):
+        detected = "aks"
+        detected_from = "azure-provider-or-labels"
+    elif (
+        any(pid.startswith("gce://") for pid in provider_ids)
+        or "cloud.google.com/gke-nodepool" in label_keys
+        or "iam.gke.io/gke-metadata-server-enabled" in label_keys
+        or context.startswith("gke_")
+        or " gke_" in context
+    ):
+        detected = "gke"
+        detected_from = "gke-provider-or-labels"
+    elif (
+        any(pid.startswith("aws://") for pid in provider_ids)
+        or "eks.amazonaws.com/nodegroup" in label_keys
+        or "alpha.eksctl.io/nodegroup-name" in label_keys
+        or "eks.amazonaws.com/capacityType" in label_keys
+        or "eks" in context
+    ):
+        detected = "eks"
+        detected_from = "aws-provider-or-labels"
+
+    print(json.dumps({
+        "provider_family": detected,
+        "detected_from": detected_from,
+        "cluster_profile_mode": profile_mode,
+    }))
+    PY
+  register: kubernetes_provider_detection_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize Kubernetes cluster type detection
+  ansible.builtin.set_fact:
+    kubernetes_provider_detection: "{{ kubernetes_provider_detection_cmd.stdout | from_json if (kubernetes_provider_detection_cmd.rc == 0 and (kubernetes_provider_detection_cmd.stdout | default('') | length > 0)) else {'provider_family': (provider_family | default('generic')), 'detected_from': 'fallback', 'cluster_profile_mode': (cluster_profile_mode | default('production'))} }}"
+
+- name: Set resolved cluster type facts
+  ansible.builtin.set_fact:
+    resolved_provider_family: "{{ kubernetes_provider_detection.provider_family | default(provider_family | default('generic')) }}"
+    resolved_cluster_profile_mode: "{{ kubernetes_provider_detection.cluster_profile_mode | default(cluster_profile_mode | default('production')) }}"
+    cluster_type_detection_source: "{{ kubernetes_provider_detection.detected_from | default('fallback') }}"

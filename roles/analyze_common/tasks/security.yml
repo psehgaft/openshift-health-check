@@ -34,34 +34,6 @@
   loop: "{{ user_namespace_names | default([]) }}"
   changed_when: false
 
-- name: Build image registry exposure and policy findings
-  ansible.builtin.set_fact:
-    image_registry_findings: "{{ image_registry_findings | default([]) + image_registry_finding_entries }}"
-    feature_findings: "{{ feature_findings | default([]) + feature_finding_entries }}"
-  vars:
-    allowed_imports: "{{ image_config.spec.allowedRegistriesForImport | default([]) }}"
-    registry_sources: "{{ image_config.spec.registrySources | default({}) }}"
-    allowed_registries: "{{ registry_sources.allowedRegistries | default([]) }}"
-    blocked_registries: "{{ registry_sources.blockedRegistries | default([]) }}"
-    insecure_registries: "{{ registry_sources.insecureRegistries | default([]) }}"
-    public_default_route: "{{ image_registry_config.spec.defaultRoute | default(false) }}"
-    pruner_suspended: "{{ image_pruner_config.spec.suspend | default(false) }}"
-    image_registry_managed: "{{ image_registry_config.spec.managementState | default('Managed') }}"
-    image_registry_finding_entries: >-
-      {{
-        ([] +
-        ([{'issue': 'public-internal-image-registry-route', 'detail': 'imageregistry operator defaultRoute=true'}] if public_default_route else []) +
-        ([{'issue': 'missing-image-registry-filter-policy', 'detail': 'allowedRegistriesForImport and registrySources allow/block lists are unset'}] if (allowed_imports | length == 0 and allowed_registries | length == 0 and blocked_registries | length == 0) else []) +
-        ([{'issue': 'insecure-image-registries-configured', 'detail': insecure_registries | join(', ')}] if insecure_registries | length > 0 else []))
-      }}
-    feature_finding_entries: >-
-      {{
-        ([] +
-        ([{'issue': 'image-pruner-suspended', 'detail': 'image pruner is suspended'}] if pruner_suspended else []) +
-        ([{'issue': 'image-registry-not-managed', 'detail': image_registry_managed}] if image_registry_managed != 'Managed' else []) +
-        ([{'issue': 'insights-operator-not-healthy', 'detail': 'cluster operator insights is unavailable or degraded'}] if ('insights' in (unavailable_operators | default([])) or 'insights' in (degraded_operators | default([]))) else []))
-      }}
-
 - name: Build pod CPU request map
   ansible.builtin.shell: |
     python3 - <<'PY'
@@ -282,10 +254,7 @@
     cm_name: "{{ item.metadata.name | default('') }}"
     configmap_issue_entry: >-
       {{
-        [{
-          'namespace': cm_ns,
-          'name': cm_name
-        }]
+        [{'namespace': cm_ns, 'name': cm_name}]
         if (
           not (cm_ns is match(user_namespaces_exclude_regex))
           and cm_name not in (referenced_configmaps[cm_ns] | default([]))
@@ -302,10 +271,7 @@
     sa_name: "{{ item.metadata.name | default('') }}"
     serviceaccount_issue_entry: >-
       {{
-        [{
-          'namespace': sa_ns,
-          'name': sa_name
-        }]
+        [{'namespace': sa_ns, 'name': sa_name}]
         if (
           not (sa_ns is match(user_namespaces_exclude_regex))
           and sa_name not in ['default', 'builder', 'deployer']
@@ -324,11 +290,7 @@
     secret_type: "{{ item.type | default('') }}"
     secret_issue_entry: >-
       {{
-        [{
-          'namespace': secret_ns,
-          'name': secret_name,
-          'type': secret_type
-        }]
+        [{'namespace': secret_ns, 'name': secret_name, 'type': secret_type}]
         if (
           not (secret_ns is match(user_namespaces_exclude_regex))
           and secret_type not in ['kubernetes.io/service-account-token', 'kubernetes.io/dockercfg', 'kubernetes.io/dockerconfigjson']
@@ -341,7 +303,7 @@
 - name: Check CRD instance counts
   ansible.builtin.shell: |
     set -o pipefail
-    oc get '{{ item.spec.names.plural }}.{{ item.spec.group }}' -A -o json 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); print(len(data.get("items", [])))'
+    {{ kube_cli | default('oc') }} get '{{ item.spec.names.plural }}.{{ item.spec.group }}' -A -o json 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); print(len(data.get("items", [])))'
   register: crd_instance_count_cmd
   loop: "{{ crds.items | default([]) }}"
   changed_when: false

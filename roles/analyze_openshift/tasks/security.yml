@@ -1,0 +1,28 @@
+---
+- name: Build image registry exposure and policy findings
+  ansible.builtin.set_fact:
+    image_registry_findings: "{{ image_registry_findings | default([]) + image_registry_finding_entries }}"
+    feature_findings: "{{ feature_findings | default([]) + feature_finding_entries }}"
+  vars:
+    allowed_imports: "{{ image_config.spec.allowedRegistriesForImport | default([]) }}"
+    registry_sources: "{{ image_config.spec.registrySources | default({}) }}"
+    allowed_registries: "{{ registry_sources.allowedRegistries | default([]) }}"
+    blocked_registries: "{{ registry_sources.blockedRegistries | default([]) }}"
+    insecure_registries: "{{ registry_sources.insecureRegistries | default([]) }}"
+    public_default_route: "{{ image_registry_config.spec.defaultRoute | default(false) }}"
+    pruner_suspended: "{{ image_pruner_config.spec.suspend | default(false) }}"
+    image_registry_managed: "{{ image_registry_config.spec.managementState | default('Managed') }}"
+    image_registry_finding_entries: >-
+      {{
+        ([] +
+        ([{'issue': 'public-internal-image-registry-route', 'detail': 'imageregistry operator defaultRoute=true'}] if public_default_route else []) +
+        ([{'issue': 'missing-image-registry-filter-policy', 'detail': 'allowedRegistriesForImport and registrySources allow/block lists are unset'}] if (allowed_imports | length == 0 and allowed_registries | length == 0 and blocked_registries | length == 0) else []) +
+        ([{'issue': 'insecure-image-registries-configured', 'detail': insecure_registries | join(', ')}] if insecure_registries | length > 0 else []))
+      }}
+    feature_finding_entries: >-
+      {{
+        ([] +
+        ([{'issue': 'image-pruner-suspended', 'detail': 'image pruner is suspended'}] if pruner_suspended else []) +
+        ([{'issue': 'image-registry-not-managed', 'detail': image_registry_managed}] if image_registry_managed != 'Managed' else []) +
+        ([{'issue': 'insights-operator-not-healthy', 'detail': 'cluster operator insights is unavailable or degraded'}] if ('insights' in (unavailable_operators | default([])) or 'insights' in (degraded_operators | default([]))) else []))
+      }}

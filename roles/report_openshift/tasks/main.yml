@@ -1,9 +1,10 @@
 ---
 - name: Define report paths
   ansible.builtin.set_fact:
+    report_cluster_type: "{{ cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift'))) }}"
     report_cluster_name_source: "{{ cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim) }}"
     report_cluster_name: "{{ (report_cluster_name_source | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
-    report_file_prefix: "{{ report_basename }}-{{ report_cluster_name }}-{{ report_timestamp }}"
+    report_file_prefix: "{{ report_basename }}-{{ report_cluster_type }}-{{ report_cluster_name }}-{{ report_timestamp }}"
     report_path: "{{ report_output_dir }}/{{ report_file_prefix }}.md"
     report_json_path: "{{ report_output_dir }}/{{ report_file_prefix }}.json"
     report_html_path: "{{ report_output_dir }}/{{ report_file_prefix }}.html"
@@ -252,6 +253,7 @@
         context: "{{ oc_context_cmd.stdout | default('unknown') | trim }}"
         api_server: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
         user: "{{ oc_user_cmd.stdout | default('unknown') | trim }}"
+        cluster_type: "{{ report_cluster_type }}"
         local_user: "{{ ansible_env.USER | default(ansible_user_id | default('unknown')) }}"
         local_hostname: "{{ ansible_hostname | default('unknown') }}"
       cluster_profile: "{{ cluster_profile }}"
@@ -399,9 +401,23 @@
         )
       }}
 
-- name: Render report Markdown source
+- name: Capture final report completion epoch
+  ansible.builtin.set_fact:
+    final_report_completion_epoch: "{{ now(utc=true, fmt='%s') | int }}"
+
+- name: Format final report completion time
+  ansible.builtin.set_fact:
+    final_report_completion_iso: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(final_report_completion_epoch | int, utc=true) }}"
+
+- name: Update final execution stats and audit payload before rendering artifacts
+  ansible.builtin.set_fact:
+    report_completed_at: "{{ final_report_completion_iso }}"
+    execution_stats: "{{ execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True) }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': (execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True)), 'metadata': (audit_report.metadata | combine({'completed_at': final_report_completion_iso, 'local_user': execution_stats.local_user, 'local_hostname': execution_stats.local_hostname}, recursive=True))}, recursive=True) }}"
+
+- name: Render final Markdown report
   ansible.builtin.template:
-    src: "{{ playbook_dir }}/../templates/cluster_health_report.md.j2"
+    src: "{{ playbook_dir }}/../templates/openshift_cluster_health_report.md.j2"
     dest: "{{ report_path }}"
     mode: "0644"
 
@@ -442,22 +458,10 @@
     - report_pandoc_available | bool
     - report_pdf_engine | length > 0
 
-- name: Capture actual report completion time
+- name: Update generated format status
   ansible.builtin.set_fact:
-    final_report_completion_epoch: "{{ now(utc=true, fmt='%s') | int }}"
-    final_report_completion_iso: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(final_report_completion_epoch | int, utc=true) }}"
-
-- name: Update final execution stats and audit payload
-  ansible.builtin.set_fact:
-    report_completed_at: "{{ final_report_completion_iso }}"
-    execution_stats: "{{ execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True) }}"
-    audit_report: "{{ audit_report | combine({'execution_stats': (execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True)), 'metadata': (audit_report.metadata | combine({'completed_at': final_report_completion_iso, 'local_user': execution_stats.local_user, 'local_hostname': execution_stats.local_hostname}, recursive=True))}, recursive=True) }}"
-
-- name: Render final Markdown report
-  ansible.builtin.template:
-    src: "{{ playbook_dir }}/../templates/cluster_health_report.md.j2"
-    dest: "{{ report_path }}"
-    mode: "0644"
+    execution_stats: "{{ execution_stats | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True) }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True))}, recursive=True) }}"
 
 - name: Write final JSON report
   ansible.builtin.copy:

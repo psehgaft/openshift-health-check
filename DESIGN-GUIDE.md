@@ -1,8 +1,91 @@
-# OpenShift Cluster Health Check Guide
-
-Research date: April 2, 2026
+# Cluster Health Check Guide
 
 This guide explains the design behind the cluster health report in this repo.
+
+The original design started from OpenShift operations, but the repo now has a broader shape:
+
+- a rich OpenShift path
+- a shared Kubernetes path
+- provider-aware reporting for AKS, EKS, GKE, Rancher, and Minikube
+- profile-aware scoring for production, development, and lightweight use
+
+## Supported Cluster Types
+
+Today the repo is designed to support these cluster types:
+
+- OpenShift
+- OpenShift SNO
+- ARO
+- ROSA
+- ROSA HCP
+- generic Kubernetes
+- AKS
+- EKS
+- GKE
+- Rancher-managed Kubernetes
+- Minikube
+
+The design is layered on purpose:
+
+- shared Kubernetes checks for things that are portable
+- OpenShift-specific checks for OpenShift-only APIs and behaviors
+- provider-aware sections where safe cluster-local signals exist
+- profile-aware scoring so development and lightweight clusters are not judged like production by default
+
+OpenShift is still the deepest path in the repo. The Kubernetes path is broader now, but it intentionally stays conservative unless the cluster exposes strong local signals for a provider or platform feature.
+
+## Best-Practice Sources
+
+The check design and report behavior are based on a mix of vendor, upstream, and operations sources.
+
+Main source groups:
+
+- Red Hat OpenShift documentation
+- IBM Cloud OpenShift documentation
+- Kubernetes upstream documentation
+- CNCF guidance and operational best practices
+- GitHub OpenShift runbooks
+- Microsoft AKS documentation
+- AWS EKS documentation and AWS prescriptive guidance
+- Google GKE documentation
+
+Reference URLs:
+
+- Red Hat OpenShift etcd practices:
+  https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html-single/etcd/
+- Red Hat Lightspeed Advisor:
+  https://docs.redhat.com/en/documentation/red_hat_lightspeed/1-latest/html-single/monitoring_your_openshift_cluster_health_with_red_hat_lightspeed_advisor/index
+- IBM Cloud OpenShift cluster health and monitoring:
+  https://cloud.ibm.com/docs/openshift?topic=openshift-health-monitor
+  https://cloud.ibm.com/docs/openshift?topic=openshift-monitoring
+- Kubernetes node pressure eviction:
+  https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/
+- CNCF monitoring and alerting guidance:
+  https://www.cncf.io/blog/2020/06/30/kubernetes-best-practices-for-monitoring-and-alerts/
+- OpenShift runbooks:
+  https://github.com/openshift/runbooks
+- AKS monitoring and proactive checks:
+  https://learn.microsoft.com/en-us/azure/aks/monitor-aks
+  https://learn.microsoft.com/en-us/azure/aks/best-practices-monitoring-proactive
+  https://learn.microsoft.com/en-us/azure/aks/cluster-health-monitor
+- EKS control plane and alerting guidance:
+  https://docs.aws.amazon.com/eks/latest/best-practices/control-plane.html
+  https://docs.aws.amazon.com/prescriptive-guidance/latest/amazon-eks-observability-best-practices/alerting-best-practices.html
+- GKE observability and cluster notifications:
+  https://cloud.google.com/kubernetes-engine/docs/concepts/observability
+  https://cloud.google.com/kubernetes-engine/docs/concepts/cluster-notifications
+
+How those sources are used:
+
+- Red Hat is the main source for OpenShift-specific health, lifecycle, operator, registry, ingress, monitoring, and hosted-topology guidance
+- IBM Cloud is used to reinforce OpenShift operational guidance in managed environments
+- Kubernetes and CNCF are the main sources for portable node, workload, storage, networking, lifecycle, and observability practices
+- GitHub OpenShift runbooks are used as operational references for what should have an owner and a response path
+- AKS, EKS, and GKE guidance shape the provider-aware sections in the Kubernetes path
+
+This repo does not try to copy one vendor document line by line. It turns the common themes from those sources into a practical health-review model that can run from inside the cluster with cluster-local data.
+
+Rancher-managed Kubernetes and Minikube are supported cluster types in the repo, but the current best-practice model for those paths is still driven mostly by the shared Kubernetes guidance above, not by a deep Rancher-specific or Minikube-specific source set.
 
 It pulls together guidance from:
 
@@ -13,6 +96,8 @@ It pulls together guidance from:
 - AKS
 - EKS
 - GKE
+
+The best-practice checks in the repo are therefore a synthesis of those sources, not a direct copy of any single document.
 
 ## The Basic Idea
 
@@ -146,6 +231,8 @@ Before the tool shows problems, it now shows the current state of the cluster ne
 
 Without that context, the findings are harder to interpret.
 
+That same rule now applies across the supported cluster types. The report should identify what kind of cluster it is before it starts judging it. That is why the repo now carries cluster type in the file name and the report body, and why the Kubernetes path also shows provider and profile context.
+
 ### Layer 1: Platform State
 
 Start with the platform itself:
@@ -213,7 +300,11 @@ These usually are not page-level on their own:
 - one short worker restart
 - one warning event with no visible impact
 
-For the node inventory itself, the tool needs to work across more than one OpenShift style. ARO and ROSA often have cloud instance-type labels. UPI clusters often do not. That is why the report prefers cloud instance types when they exist, but falls back to an allocatable node shape built from CPU, memory, and architecture when they do not. The point is to keep the node summary readable across UPI, ARO, and ROSA without pretending the metadata is always the same.
+For the node inventory itself, the tool needs to work across more than one OpenShift style. ARO and ROSA often have cloud instance-type labels. UPI clusters often do not. SNO and ROSA HCP also have their own topology expectations. That is why the report prefers cloud instance types when they exist, but falls back to an allocatable node shape built from CPU, memory, and architecture when they do not. The point is to keep the node summary readable across UPI, ARO, ROSA, ROSA HCP, and SNO without pretending the metadata is always the same.
+
+For ROSA HCP, control plane nodes are not expected to appear in the worker cluster node inventory. The report should reflect that in wording and not imply a fault from that shape alone.
+
+For SNO, single-replica expectations are normal. The report should not score it like a multi-node production cluster for replica assumptions that do not apply.
 
 ### Layer 4: Service Path Checks
 
@@ -394,7 +485,7 @@ No point-in-time report can replace:
 This tool is best used as:
 
 - a regular health review
-- a pre-upgrade check
+- a pre/post cluster upgrade check
 - a post-incident review
 - a hygiene and posture review
 

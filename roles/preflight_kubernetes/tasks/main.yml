@@ -1,0 +1,58 @@
+---
+- name: Validate Kubernetes CLI session
+  ansible.builtin.command: "{{ kube_cli }} auth whoami"
+  register: kube_session_check
+  changed_when: false
+  failed_when: false
+
+- name: Fallback to current-context validation when auth whoami is unavailable
+  ansible.builtin.command: "{{ kube_cli }} config current-context"
+  register: kube_context_check
+  changed_when: false
+  failed_when: false
+  when: kube_session_check.rc != 0
+
+- name: Fail when not logged in to Kubernetes
+  ansible.builtin.fail:
+    msg: >-
+      Kubernetes login validation failed. Run `{{ kube_cli }} ...` with a user that has
+      the required access, verify the current context, and rerun this playbook.
+  when:
+    - kube_session_check.rc != 0
+    - kube_context_check is not defined or kube_context_check.rc != 0
+
+- name: Validate cluster-wide access
+  ansible.builtin.command: "{{ kube_cli }} auth can-i '*' '*' --all-namespaces"
+  register: kube_admin_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when caller does not have broad cluster access
+  ansible.builtin.fail:
+    msg: >-
+      The current `{{ kube_cli }}` user is authenticated but does not appear to have
+      broad cluster access. Use credentials with the required permissions and rerun this playbook.
+  when: kube_admin_check.rc != 0 or (kube_admin_check.stdout | trim | lower) != 'yes'
+
+- name: Capture Kubernetes context
+  ansible.builtin.command: "{{ kube_cli }} config current-context"
+  register: oc_context_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Capture Kubernetes API server
+  ansible.builtin.command: "{{ kube_cli }} config view --minify -o jsonpath={.clusters[0].cluster.server}"
+  register: oc_server_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Capture current Kubernetes user
+  ansible.builtin.command: "{{ kube_cli }} auth whoami"
+  register: oc_user_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize fallback Kubernetes user
+  ansible.builtin.set_fact:
+    oc_user_cmd: "{{ oc_user_cmd | combine({'stdout': (oc_user_cmd.stdout | default('') | trim) or ((kube_context_check.stdout | default('unknown')) | trim)}) }}"
+  when: (oc_user_cmd.stdout | default('') | trim | length) == 0

@@ -1,0 +1,350 @@
+---
+- name: Define common report paths
+  ansible.builtin.set_fact:
+    report_cluster_type: "{{ resolved_provider_family if (resolved_provider_family | default(provider_family | default('generic'))) != 'generic' else (platform_family | default('kubernetes')) }}"
+    report_cluster_name_source: "{{ cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim)) }}"
+    report_cluster_name: "{{ (report_cluster_name_source | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
+    report_file_prefix: "{{ report_basename }}-{{ report_cluster_type }}-{{ report_cluster_name }}-{{ report_timestamp }}"
+    report_path: "{{ report_output_dir }}/{{ report_file_prefix }}.md"
+    report_json_path: "{{ report_output_dir }}/{{ report_file_prefix }}.json"
+    report_html_path: "{{ report_output_dir }}/{{ report_file_prefix }}.html"
+    report_pdf_path: "{{ report_output_dir }}/{{ report_file_prefix }}.pdf"
+
+- name: Build common execution stats
+  ansible.builtin.set_fact:
+    execution_stats:
+      started_at: "{{ report_generated_at }}"
+      completed_at: "{{ report_generated_at }}"
+      duration_seconds: 0
+      duration_minutes: 0
+      ocp_user: "{{ oc_user_cmd.stdout | default('unknown') | trim }}"
+      local_user: "{{ ansible_env.USER | default(ansible_user_id | default('unknown')) }}"
+      local_hostname: "{{ ansible_hostname | default('unknown') }}"
+      local_fqdn: "{{ ansible_fqdn | default(ansible_hostname | default('unknown')) }}"
+      local_os: "{{ ansible_distribution | default('unknown') }} {{ ansible_distribution_version | default('') | trim }}"
+      local_python: "{{ ansible_python_version | default('unknown') }}"
+      ansible_version: "{{ ansible_version.full | default('unknown') }}"
+      context: "{{ oc_context_cmd.stdout | default('unknown') | trim }}"
+      api_server: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
+      report_formats_generated:
+        markdown: true
+        json: true
+        html: false
+        pdf: false
+      collection:
+        command_count: "{{ collection_summary.command_count | default(0) }}"
+        parallelism: "{{ collection_summary.parallelism | default(0) }}"
+        timeout_seconds: "{{ collection_summary.timeout_seconds | default(0) }}"
+        failed_commands: "{{ collection_summary.failed_commands | default(0) }}"
+        timed_out_commands: "{{ collection_summary.timed_out_commands | default(0) }}"
+        core_failed_commands: "{{ collection_summary.core_failed_commands | default(0) }}"
+
+- name: Build common audit rubric
+  ansible.builtin.set_fact:
+    audit_checks:
+      - id: nodes
+        title: Node Health
+        severity: "{{ 'critical' if (not_ready_nodes | default([]) | length > 0) else ('warning' if (pressure_nodes | default([]) | length > 0 else 'pass') }}"
+        score: "{{ 0 if (not_ready_nodes | default([]) | length > 0) else (10 if (pressure_nodes | default([]) | length == 0 else 7) }}"
+        max_score: 10
+        findings_count: "{{ (not_ready_nodes | default([]) | length) + (pressure_nodes | default([]) | length) }}"
+      - id: workloads
+        title: Workload Health
+        severity: "{{ 'warning' if (workload_health_issues | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or high_restart_pods | default([]) | length > 0) else 'pass' }}"
+        score: "{{ 5 if (workload_health_issues | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or high_restart_pods | default([]) | length > 0) else 10 }}"
+        max_score: 10
+        findings_count: "{{ (workload_health_issues | default([]) | length) + (workload_probe_findings | default([]) | length) + (platform_pod_issues | default([]) | length) + (high_restart_pods | default([]) | length) }}"
+      - id: security_practices
+        title: Security And Best Practices
+        severity: "{{ 'warning' if (security_findings | default([]) | length > 0 or workload_practice_findings | default([]) | length > 0 or health_summary.namespaces_without_networkpolicy | default(0) | int > 0 or health_summary.namespaces_missing_ingress_policies | default(0) | int > 0 or health_summary.namespaces_missing_egress_policies | default(0) | int > 0 or health_summary.namespaces_without_resourcequota | default(0) | int > 0 or health_summary.namespaces_without_limitrange | default(0) | int > 0) else 'pass' }}"
+        score: "{{ 9 if (security_findings | default([]) | length > 0 or workload_practice_findings | default([]) | length > 0 or health_summary.namespaces_without_networkpolicy | default(0) | int > 0 or health_summary.namespaces_missing_ingress_policies | default(0) | int > 0 or health_summary.namespaces_missing_egress_policies | default(0) | int > 0 or health_summary.namespaces_without_resourcequota | default(0) | int > 0 or health_summary.namespaces_without_limitrange | default(0) | int > 0) and (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] else (6 if (security_findings | default([]) | length > 0 or workload_practice_findings | default([]) | length > 0 or health_summary.namespaces_without_networkpolicy | default(0) | int > 0 or health_summary.namespaces_missing_ingress_policies | default(0) | int > 0 or health_summary.namespaces_missing_egress_policies | default(0) | int > 0 or health_summary.namespaces_without_resourcequota | default(0) | int > 0 or health_summary.namespaces_without_limitrange | default(0) | int > 0) else 14) }}"
+        max_score: 14
+        findings_count: "{{ (security_findings | default([]) | length) + (workload_practice_findings | default([]) | length) + (health_summary.namespaces_without_networkpolicy | default(0) | int) + (health_summary.namespaces_missing_ingress_policies | default(0) | int) + (health_summary.namespaces_missing_egress_policies | default(0) | int) + (health_summary.namespaces_without_resourcequota | default(0) | int) + (health_summary.namespaces_without_limitrange | default(0) | int) }}"
+      - id: unused_resources
+        title: Unused Resource Heuristics
+        severity: "{{ 'warning' if (health_summary.empty_user_namespaces | default(0) | int > 0 or health_summary.services_without_endpoints | default(0) | int > 0 or health_summary.likely_unused_serviceaccounts | default(0) | int > 0 or health_summary.likely_unused_configmaps | default(0) | int > 0 or health_summary.likely_unused_secrets | default(0) | int > 0 or health_summary.likely_unused_crds | default(0) | int > 0) else 'pass' }}"
+        score: "{{ 8 if (health_summary.empty_user_namespaces | default(0) | int > 0 or health_summary.services_without_endpoints | default(0) | int > 0 or health_summary.likely_unused_serviceaccounts | default(0) | int > 0 or health_summary.likely_unused_configmaps | default(0) | int > 0 or health_summary.likely_unused_secrets | default(0) | int > 0 or health_summary.likely_unused_crds | default(0) | int > 0) and (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] else (5 if (health_summary.empty_user_namespaces | default(0) | int > 0 or health_summary.services_without_endpoints | default(0) | int > 0 or health_summary.likely_unused_serviceaccounts | default(0) | int > 0 or health_summary.likely_unused_configmaps | default(0) | int > 0 or health_summary.likely_unused_secrets | default(0) | int > 0 or health_summary.likely_unused_crds | default(0) | int > 0) else 10) }}"
+        max_score: 10
+        findings_count: "{{ (health_summary.empty_user_namespaces | default(0) | int) + (health_summary.services_without_endpoints | default(0) | int) + (health_summary.likely_unused_serviceaccounts | default(0) | int) + (health_summary.likely_unused_configmaps | default(0) | int) + (health_summary.likely_unused_secrets | default(0) | int) + (health_summary.likely_unused_crds | default(0) | int) }}"
+      - id: provider_platform
+        title: Provider Platform Checks
+        severity: "{{ 'warning' if (health_summary.provider_specific_findings | default(0) | int > 0) else 'pass' }}"
+        score: "{{ 5 if (health_summary.provider_specific_findings | default(0) | int > 0) else 10 }}"
+        max_score: 10
+        findings_count: "{{ health_summary.provider_specific_findings | default(0) | int }}"
+      - id: storage
+        title: Storage Health
+        severity: "{{ 'warning' if (pv_issues | default([]) | length > 0 or pvc_issues | default([]) | length > 0) else 'pass' }}"
+        score: "{{ 5 if (pv_issues | default([]) | length > 0 or pvc_issues | default([]) | length > 0) else 10 }}"
+        max_score: 10
+        findings_count: "{{ (pv_issues | default([]) | length) + (pvc_issues | default([]) | length) }}"
+      - id: lifecycle
+        title: API And Certificate Lifecycle
+        severity: "{{ 'warning' if (deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 or certificate_expiry_findings | default([]) | length > 0) else 'pass' }}"
+        score: "{{ 6 if (deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 or certificate_expiry_findings | default([]) | length > 0) else 14 }}"
+        max_score: 14
+        findings_count: "{{ (deprecated_crd_findings | default([]) | length) + (deprecated_api_lines | default([]) | length) + (certificate_expiry_findings | default([]) | length) }}"
+      - id: collection_completeness
+        title: Data Collection Completeness
+        severity: "{{ 'critical' if (collection_summary.core_failed_commands | default(0) | int > 0) else ('warning' if (collection_summary.failed_commands | default(0) | int > 0) else 'pass') }}"
+        score: "{{ 0 if (collection_summary.core_failed_commands | default(0) | int > 0) else (6 if (collection_summary.failed_commands | default(0) | int > 0) else 12) }}"
+        max_score: 12
+        findings_count: "{{ collection_summary.failed_commands | default(0) }}"
+
+- name: Build common audit score summary
+  ansible.builtin.set_fact:
+    audit_score_total: "{{ audit_checks | map(attribute='score') | map('int') | list | sum }}"
+    audit_score_max: "{{ audit_checks | map(attribute='max_score') | map('int') | list | sum }}"
+    audit_critical_checks: "{{ audit_checks | selectattr('severity', 'equalto', 'critical') | map(attribute='id') | list }}"
+    audit_warning_checks: "{{ audit_checks | selectattr('severity', 'equalto', 'warning') | map(attribute='id') | list }}"
+
+- name: Build common cluster health score
+  ansible.builtin.set_fact:
+    cluster_health_score: "{{ (((audit_score_total | float) / ((audit_score_max | float) if (audit_score_max | float) > 0 else 1.0)) * 100) | round(1) }}"
+    cluster_health_score_label: >-
+      {{
+        'Excellent'
+        if ( (((audit_score_total | float) / ((audit_score_max | float) if (audit_score_max | float) > 0 else 1.0)) * 100) >= 95 )
+        else (
+          'Good'
+          if ( (((audit_score_total | float) / ((audit_score_max | float) if (audit_score_max | float) > 0 else 1.0)) * 100) >= 85 )
+          else (
+            'Fair'
+            if ( (((audit_score_total | float) / ((audit_score_max | float) if (audit_score_max | float) > 0 else 1.0)) * 100) >= 70 )
+            else (
+              'Poor'
+              if ( (((audit_score_total | float) / ((audit_score_max | float) if (audit_score_max | float) > 0 else 1.0)) * 100) >= 50 )
+              else 'Critical'
+            )
+          )
+        )
+      }}
+
+- name: Build common suggested next steps
+  ansible.builtin.set_fact:
+    suggested_next_steps: >-
+      {{
+        []
+        + ([{'priority': 'immediate', 'summary': 'Fix collection failures first.', 'detail': 'Check the data collection section and rerun after failed commands are resolved.'}] if (collection_summary.failed_commands | default(0) | int) > 0 else [])
+        + ([{'priority': 'immediate', 'summary': 'Restore node health.', 'detail': 'Start with NotReady nodes and node pressure before lower-priority cleanup.'}] if (not_ready_nodes | default([]) | length > 0 or pressure_nodes | default([]) | length > 0) else [])
+        + ([{'priority': 'next', 'summary': 'Review workload rollout and restart problems.', 'detail': 'Focus on unhealthy workloads, missing probes, and restart hotspots.'}] if (workload_health_issues | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or high_restart_pods | default([]) | length > 0) else [])
+        + ([{'priority': 'next', 'summary': 'Review storage and lifecycle findings.', 'detail': 'Check PV and PVC health, deprecated APIs, CRDs, and expiring TLS secrets.'}] if (pv_issues | default([]) | length > 0 or pvc_issues | default([]) | length > 0 or deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 or certificate_expiry_findings | default([]) | length > 0) else [])
+        + ([{'priority': 'next', 'summary': 'Review provider-specific platform findings.', 'detail': 'Check the provider section for node pool shape, managed component health, and platform-specific signals.'}] if (provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length > 0) else [])
+        + ([{'priority': 'planned', 'summary': 'Use the report for hygiene work.', 'detail': 'Review unused-resource heuristics, namespace guardrails, and pod security findings after service health is stable.'}] if (security_findings | default([]) | length > 0 or workload_practice_findings | default([]) | length > 0 or health_summary.empty_user_namespaces | default(0) | int > 0 or health_summary.likely_unused_serviceaccounts | default(0) | int > 0 or health_summary.likely_unused_configmaps | default(0) | int > 0 or health_summary.likely_unused_secrets | default(0) | int > 0 or health_summary.likely_unused_crds | default(0) | int > 0) else [])
+        + ([{'priority': 'note', 'summary': 'This run used a non-production profile.', 'detail': 'Development or lightweight profile mode reduces some hygiene and unused-resource penalties so the score better matches lab or local clusters.'}] if (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] else [])
+        + ([{'priority': 'steady-state', 'summary': 'Keep the cluster under normal review.', 'detail': 'No major health risks were detected in this run.'}] if (health_summary.status == 'HEALTHY' and (collection_summary.failed_commands | default(0) | int) == 0) else [])
+      }}
+
+- name: Build common audit payload
+  ansible.builtin.set_fact:
+    audit_report:
+      metadata:
+        generated_at: "{{ report_generated_at }}"
+        completed_at: "{{ report_generated_at }}"
+        context: "{{ oc_context_cmd.stdout | default('unknown') | trim }}"
+        api_server: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
+        user: "{{ oc_user_cmd.stdout | default('unknown') | trim }}"
+        cluster_type: "{{ report_cluster_type }}"
+        platform_family: "{{ platform_family | default('kubernetes') }}"
+        provider_family: "{{ resolved_provider_family | default(provider_family | default('generic')) }}"
+        cluster_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}"
+        cluster_type_detection_source: "{{ cluster_type_detection_source | default('not-applicable') }}"
+      cluster_profile: "{{ cluster_profile | default({}) }}"
+      cluster_current_state: "{{ cluster_current_state | default({}) }}"
+      health_summary: "{{ health_summary | default({}) }}"
+      suggested_next_steps: "{{ suggested_next_steps | default([]) }}"
+      audit:
+        score_total: "{{ audit_score_total }}"
+        score_max: "{{ audit_score_max }}"
+        cluster_health_score: "{{ cluster_health_score }}"
+        cluster_health_score_label: "{{ cluster_health_score_label }}"
+        critical_checks: "{{ audit_critical_checks }}"
+        warning_checks: "{{ audit_warning_checks }}"
+        checks: "{{ audit_checks }}"
+      findings:
+        collection_failures: "{{ collection_failures | default([]) }}"
+        not_ready_nodes: "{{ not_ready_nodes | default([]) }}"
+        pressure_nodes: "{{ pressure_nodes | default([]) }}"
+        workload_health_issues: "{{ top_workload_health_issues | default([]) }}"
+        workload_probe_findings: "{{ top_workload_probe_findings | default([]) }}"
+        high_restart_pods: "{{ top_high_restart_pods | default([]) }}"
+        security_findings: "{{ top_security_findings | default([]) }}"
+        workload_practice_findings: "{{ top_workload_practice_findings | default([]) }}"
+        services_without_endpoints: "{{ top_services_without_endpoints | default([]) }}"
+        likely_unused_serviceaccounts: "{{ top_likely_unused_serviceaccounts | default([]) }}"
+        likely_unused_configmaps: "{{ top_likely_unused_configmaps | default([]) }}"
+        likely_unused_secrets: "{{ top_likely_unused_secrets | default([]) }}"
+        likely_unused_crds: "{{ top_likely_unused_crds | default([]) }}"
+        deprecated_crd_findings: "{{ top_deprecated_crd_findings | default([]) }}"
+        deprecated_api_lines: "{{ top_deprecated_api_lines | default([]) }}"
+        pv_issues: "{{ top_pv_issues | default([]) }}"
+        pvc_issues: "{{ top_pvc_issues | default([]) }}"
+        certificate_expiry_findings: "{{ certificate_expiry_findings | default([]) }}"
+        provider_specific_findings: "{{ top_provider_specific_findings | default([]) }}"
+      metrics:
+        collection_summary: "{{ collection_summary | default({}) }}"
+        node_capacity_summary_by_density_desc: "{{ node_capacity_summary_by_density_desc | default([]) }}"
+        provider_nodepool_summary: "{{ provider_nodepool_summary | default([]) }}"
+        provider_component_summary: "{{ provider_component_summary | default([]) }}"
+        provider_current_state: "{{ provider_current_state | default({}) }}"
+
+- name: Detect pandoc
+  ansible.builtin.shell: command -v pandoc
+  register: pandoc_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Detect wkhtmltopdf
+  ansible.builtin.shell: command -v wkhtmltopdf
+  register: wkhtmltopdf_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Detect weasyprint
+  ansible.builtin.shell: command -v weasyprint
+  register: weasyprint_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Detect prince
+  ansible.builtin.shell: command -v prince
+  register: prince_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Detect tectonic
+  ansible.builtin.shell: command -v tectonic
+  register: tectonic_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Detect xelatex
+  ansible.builtin.shell: command -v xelatex
+  register: xelatex_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Detect lualatex
+  ansible.builtin.shell: command -v lualatex
+  register: lualatex_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Detect pdflatex
+  ansible.builtin.shell: command -v pdflatex
+  register: pdflatex_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Build common report conversion capability facts
+  ansible.builtin.set_fact:
+    report_pandoc_available: "{{ pandoc_cmd.rc == 0 }}"
+    report_pdf_engine: >-
+      {{
+        'wkhtmltopdf'
+        if wkhtmltopdf_cmd.rc == 0
+        else (
+          'weasyprint'
+          if weasyprint_cmd.rc == 0
+          else (
+            'prince'
+            if prince_cmd.rc == 0
+            else (
+              'tectonic'
+              if tectonic_cmd.rc == 0
+              else (
+                'xelatex'
+                if xelatex_cmd.rc == 0
+                else (
+                  'lualatex'
+                  if lualatex_cmd.rc == 0
+                  else (
+                    'pdflatex'
+                    if pdflatex_cmd.rc == 0
+                    else ''
+                  )
+                )
+              )
+            )
+          )
+        )
+      }}
+
+- name: Capture final common report completion epoch
+  ansible.builtin.set_fact:
+    final_report_completion_epoch: "{{ now(utc=true, fmt='%s') | int }}"
+
+- name: Format final common report completion time
+  ansible.builtin.set_fact:
+    final_report_completion_iso: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(final_report_completion_epoch | int, utc=true) }}"
+
+- name: Update common final execution stats before rendering artifacts
+  ansible.builtin.set_fact:
+    report_completed_at: "{{ final_report_completion_iso }}"
+    execution_stats: "{{ execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True) }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': (execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True)), 'metadata': (audit_report.metadata | combine({'completed_at': final_report_completion_iso}, recursive=True))}, recursive=True) }}"
+
+- name: Render final common Markdown report
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../templates/k8s_cluster_health_report.md.j2"
+    dest: "{{ report_path }}"
+    mode: "0644"
+
+- name: Render common HTML report when pandoc is available
+  ansible.builtin.command:
+    argv:
+      - pandoc
+      - --standalone
+      - --from
+      - gfm
+      - --to
+      - html5
+      - --output
+      - "{{ report_html_path }}"
+      - "{{ report_path }}"
+  register: report_html_cmd
+  changed_when: true
+  failed_when: false
+  when:
+    - report_generate_html | default(true) | bool
+    - report_pandoc_available | bool
+
+- name: Render common PDF report when a PDF engine is available
+  ansible.builtin.command:
+    argv:
+      - pandoc
+      - --from
+      - gfm
+      - --pdf-engine={{ report_pdf_engine }}
+      - --output
+      - "{{ report_pdf_path }}"
+      - "{{ report_path }}"
+  register: report_pdf_cmd
+  changed_when: true
+  failed_when: false
+  when:
+    - report_generate_pdf | default(true) | bool
+    - report_pandoc_available | bool
+    - report_pdf_engine | length > 0
+
+- name: Update common generated format status
+  ansible.builtin.set_fact:
+    execution_stats: "{{ execution_stats | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True) }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True))}, recursive=True) }}"
+
+- name: Write common JSON report
+  ansible.builtin.copy:
+    dest: "{{ report_json_path }}"
+    mode: "0644"
+    content: "{{ audit_report | to_nice_json }}"
+
+- name: Show common report locations
+  ansible.builtin.debug:
+    msg:
+      - "Health report generated: {{ report_path }}"
+      - "JSON report generated: {{ report_json_path }}"
+      - "HTML report generated: {{ report_html_path if (execution_stats.report_formats_generated.html | default(false)) else 'skipped' }}"
+      - "PDF report generated: {{ report_pdf_path if (execution_stats.report_formats_generated.pdf | default(false)) else 'skipped' }}"
+      - "Overall status: {{ health_summary.status | default('UNKNOWN') }}"
+      - "Audit score: {{ audit_score_total }}/{{ audit_score_max }}"
+      - "Cluster health score: {{ cluster_health_score }}/100 ({{ cluster_health_score_label }})"

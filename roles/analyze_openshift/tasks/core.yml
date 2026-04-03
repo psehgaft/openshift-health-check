@@ -15,6 +15,12 @@
       cluster_networks: "{{ network_config.spec.clusterNetwork | default([]) }}"
       identity_provider_count: "{{ oauth_config.spec.identityProviders | default([]) | length }}"
       identity_provider_names: "{{ oauth_config.spec.identityProviders | default([]) | map(attribute='name') | list }}"
+      deployment_type: openshift
+      is_sno: false
+      is_hosted_control_plane: false
+      control_plane_node_count: 0
+      worker_node_count: 0
+      infra_node_count: 0
 
 - name: Build authentication findings
   ansible.builtin.set_fact:
@@ -59,7 +65,7 @@
     ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) + issue_entries }}"
   loop: "{{ ingresscontrollers.items | default([]) }}"
   vars:
-    desired_replicas: "{{ item.spec.replicas | default(2) | int }}"
+    desired_replicas: "{{ item.spec.replicas | default((1 if (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica' else 2)) | int }}"
     available_replicas: "{{ item.status.availableReplicas | default(0) | int }}"
     unavailable_replicas: "{{ item.status.unavailableReplicas | default(0) | int }}"
     ic_available_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
@@ -189,6 +195,9 @@
     node_pod_counts: {}
     namespace_pod_counts: {}
     node_cpu_request_millicores: {}
+    openshift_control_plane_node_count: 0
+    openshift_worker_node_count: 0
+    openshift_infra_node_count: 0
 
 - name: Build pod count and restart hotspots
   ansible.builtin.set_fact:
@@ -211,6 +220,9 @@
     pressure_nodes: "{{ pressure_nodes + ([{'name': item.metadata.name, 'pressures': pressure_types}] if pressure_types | length > 0 else []) }}"
     primary_node_role_counts: "{{ primary_node_role_counts | combine({primary_node_role: ((primary_node_role_counts[primary_node_role] | default(0)) + 1)}, recursive=True) }}"
     kubelet_version_counts: "{{ kubelet_version_counts | combine({kubelet_version: ((kubelet_version_counts[kubelet_version] | default(0)) + 1)}, recursive=True) }}"
+    openshift_control_plane_node_count: "{{ openshift_control_plane_node_count + (1 if primary_node_role in ['master', 'control-plane'] else 0) }}"
+    openshift_worker_node_count: "{{ openshift_worker_node_count + (1 if primary_node_role == 'worker' else 0) }}"
+    openshift_infra_node_count: "{{ openshift_infra_node_count + (1 if primary_node_role == 'infra' else 0) }}"
   loop: "{{ nodes.items | default([]) }}"
   vars:
     ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
@@ -236,6 +248,58 @@
       }}
     kubelet_version: "{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}"
   changed_when: false
+
+- name: Detect OpenShift deployment type
+  ansible.builtin.set_fact:
+    openshift_deployment_type: >-
+      {{
+        'openshift-sno'
+        if (
+          (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
+          or (
+            (nodes.items | default([]) | length) == 1
+            and (openshift_control_plane_node_count | int) == 1
+          )
+        )
+        else (
+          'rosa-hcp'
+          if (
+            (cluster_profile.platform | default('unknown') | lower) == 'aws'
+            and (openshift_control_plane_node_count | int) == 0
+            and (nodes.items | default([]) | length) > 0
+          )
+          else (
+            'aro'
+            if ((cluster_profile.platform | default('unknown') | lower) == 'azure')
+            else (
+              'rosa'
+              if (
+                (cluster_profile.platform | default('unknown') | lower) == 'aws'
+                and (openshift_control_plane_node_count | int) > 0
+              )
+              else 'openshift'
+            )
+          )
+        )
+      }}
+    openshift_is_sno: >-
+      {{
+        (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
+        or (
+          (nodes.items | default([]) | length) == 1
+          and (openshift_control_plane_node_count | int) == 1
+        )
+      }}
+    openshift_is_hosted_control_plane: >-
+      {{
+        (cluster_profile.platform | default('unknown') | lower) == 'aws'
+        and (openshift_control_plane_node_count | int) == 0
+        and (nodes.items | default([]) | length) > 0
+      }}
+
+- name: Extend cluster profile with deployment type
+  ansible.builtin.set_fact:
+    cluster_profile: "{{ cluster_profile | combine({'deployment_type': openshift_deployment_type, 'is_sno': (openshift_is_sno | bool), 'is_hosted_control_plane': (openshift_is_hosted_control_plane | bool), 'control_plane_node_count': (openshift_control_plane_node_count | int), 'worker_node_count': (openshift_worker_node_count | int), 'infra_node_count': (openshift_infra_node_count | int)}, recursive=True) }}"
 
 - name: Initialize MCP facts
   ansible.builtin.set_fact:

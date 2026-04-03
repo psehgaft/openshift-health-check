@@ -1,11 +1,27 @@
-# OpenShift Cluster Health Check
+# Kubernetes Cluster Health Check
 
-This repo contains an Ansible-based health report for a single OpenShift cluster.
+This repo contains an Ansible-based health report framework for a single cluster.
 
-The tool uses your current `oc` session, reads cluster state, and writes:
+It supports:
+
+- OpenShift
+- OpenShift SNO
+- ARO
+- ROSA
+- ROSA HCP
+- generic Kubernetes
+- AKS
+- EKS
+- GKE
+- Rancher-managed Kubernetes
+- Minikube
+
+The tool uses your current `oc` or `kubectl` session, reads cluster state, and writes:
 
 - a Markdown report for people
 - a JSON report for automation
+
+Report file names include the cluster type and cluster name.
 
 It is read-only. It does not make changes to the cluster.
 
@@ -38,7 +54,12 @@ The report includes:
 
 ## What It Checks
 
-The report covers the main areas operators usually care about:
+The report covers the main areas operators usually care about.
+
+The OpenShift path is the deepest path in the repo.
+The Kubernetes path covers shared checks plus provider-aware sections where safe cluster-local signals exist.
+
+Main areas:
 
 - cluster profile and topology
 - cluster version and update history
@@ -69,36 +90,115 @@ The report covers the main areas operators usually care about:
 - warning events
 - optional Prometheus signals such as alerts, API latency, etcd latency, CPU, memory, and pod usage
 
+The report also includes:
+
+- cluster type in the file name and report body
+- cluster profile mode in the Kubernetes path
+- provider-specific sections for AKS, EKS, GKE, Rancher, and Minikube
+- OpenShift deployment type labels for SNO and ROSA HCP
+
 ## Repository Layout
 
-- [playbooks/cluster_health_report.yml](playbooks/cluster_health_report.yml)
-  Main playbook.
+- [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
+  Main OpenShift playbook.
+- [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml)
+  Generic Kubernetes playbook.
+- [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml)
+  Development Kubernetes playbook.
+- [playbooks/aks_cluster_health_report.yml](playbooks/aks_cluster_health_report.yml)
+  AKS playbook.
+- [playbooks/eks_cluster_health_report.yml](playbooks/eks_cluster_health_report.yml)
+  EKS playbook.
+- [playbooks/gke_cluster_health_report.yml](playbooks/gke_cluster_health_report.yml)
+  GKE playbook.
+- [playbooks/rancher_cluster_health_report.yml](playbooks/rancher_cluster_health_report.yml)
+  Rancher Kubernetes playbook.
+- [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml)
+  Minikube playbook.
 - [DESIGN-GUIDE.md](DESIGN-GUIDE.md)
   Design notes and the reasoning behind the checks.
-- [roles/preflight/tasks/main.yml](roles/preflight/tasks/main.yml)
+- [roles/preflight_openshift/tasks/main.yml](roles/preflight_openshift/tasks/main.yml)
   Login and access checks.
-- [roles/collect/tasks/main.yml](roles/collect/tasks/main.yml)
-  Raw cluster data collection.
-- [roles/analyze/tasks/main.yml](roles/analyze/tasks/main.yml)
-  Analysis entry point.
-- [roles/report/tasks/main.yml](roles/report/tasks/main.yml)
-  Scoring, rendering, and output generation.
-- [templates/cluster_health_report.md.j2](templates/cluster_health_report.md.j2)
-  Markdown report template.
+- [roles/preflight_common/tasks/main.yml](roles/preflight_common/tasks/main.yml)
+  Shared preflight setup.
+- [roles/preflight_kubernetes/tasks/main.yml](roles/preflight_kubernetes/tasks/main.yml)
+  Kubernetes preflight checks.
+- [roles/collect_common/tasks/main.yml](roles/collect_common/tasks/main.yml)
+  Shared Kubernetes-native data collection.
+- [roles/collect_openshift/tasks/main.yml](roles/collect_openshift/tasks/main.yml)
+  OpenShift-specific data collection.
+- [roles/collect_kubernetes/tasks/main.yml](roles/collect_kubernetes/tasks/main.yml)
+  Kubernetes collection extension point.
+- [roles/analyze_common/tasks/main.yml](roles/analyze_common/tasks/main.yml)
+  Shared workload analysis.
+- [roles/analyze_openshift/tasks/main.yml](roles/analyze_openshift/tasks/main.yml)
+  OpenShift-specific analysis entry point.
+- [roles/analyze_kubernetes/tasks/main.yml](roles/analyze_kubernetes/tasks/main.yml)
+  Kubernetes analysis extension point.
+- [roles/report_common/tasks/main.yml](roles/report_common/tasks/main.yml)
+  Shared reporting extension point.
+- [roles/report_openshift/tasks/main.yml](roles/report_openshift/tasks/main.yml)
+  OpenShift scoring, rendering, and output generation.
+- [templates/openshift_cluster_health_report.md.j2](templates/openshift_cluster_health_report.md.j2)
+  OpenShift Markdown report template.
+
+## Profile Guide
+
+Use these entrypoints:
+
+- OpenShift production: [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
+- Generic Kubernetes production: [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml)
+- Generic Kubernetes development or lab: [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml)
+- Minikube or local lightweight cluster: [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml)
+- Provider-specific Kubernetes wrappers:
+  - [playbooks/aks_cluster_health_report.yml](playbooks/aks_cluster_health_report.yml)
+  - [playbooks/eks_cluster_health_report.yml](playbooks/eks_cluster_health_report.yml)
+  - [playbooks/gke_cluster_health_report.yml](playbooks/gke_cluster_health_report.yml)
+  - [playbooks/rancher_cluster_health_report.yml](playbooks/rancher_cluster_health_report.yml)
+
+For OpenShift variants:
+
+- standard OpenShift, ARO, ROSA, ROSA HCP, and SNO all use [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
+- the tool labels the deployment type in the report when the cluster signals are clear
+
+Simple profile matrix:
+
+| Use case | Playbook | Profile mode |
+| --- | --- | --- |
+| Production OpenShift | `openshift_cluster_health_report.yml` | `production` |
+| Production Kubernetes | `k8s_cluster_health_report.yml` | `production` |
+| Shared dev or lab Kubernetes | `development_k8s_cluster_health_report.yml` | `development` |
+| Local Minikube | `minikube_cluster_health_report.yml` | `lightweight` |
+
+Development wrapper defaults:
+
+- HTML and PDF off by default
+- lower collection timeout
+- smaller top-N sections
+- faster report shape for day-to-day lab use
 
 ## Prerequisites
 
 Install these programs first:
 
-- `oc`
 - `ansible-playbook`
 - `python3`
 - `openssl`
 
-You also need:
+You also need one working cluster CLI session:
 
+- OpenShift: `oc`
+- Kubernetes, AKS, EKS, GKE, Rancher, Minikube: `kubectl`
+
+Access needs depend on the playbook:
+
+OpenShift playbook:
 - a working `oc login`
 - a user with `cluster-admin`
+
+Kubernetes playbooks:
+- a working `kubectl` context
+- cluster-wide read access that lets the tool query nodes, workloads, storage, events, CRDs, and namespace-scoped objects across the cluster
 
 For Ansible:
 
@@ -109,7 +209,7 @@ For Ansible:
 
 Nice to have:
 
-- access to `openshift-monitoring/thanos-querier`
+- OpenShift: access to `openshift-monitoring/thanos-querier`
 
 Optional tools by output format:
 
@@ -131,9 +231,9 @@ Supported PDF engines are checked automatically:
 Important runtime settings:
 
 - `collection_parallelism`
-  Number of `oc` read commands to run at the same time. Default: `8`
+  Number of cluster read commands to run at the same time. Default: `8`
 - `collection_command_timeout_seconds`
-  Timeout for each `oc` collection command. Default: `300`
+  Timeout for each collection command. Default: `300`
 - `keep_collection_artifacts`
   If `true`, keep the temporary raw collection file for debugging. Default: `false`
 - `require_cluster_log_forwarder`
@@ -143,10 +243,10 @@ Important runtime settings:
 - `warn_on_ingress_without_class`
   If `true`, `Ingress` objects with no explicit class are reported. Default: `false`
 
-Before the playbook starts, the tool checks two things:
+Before the playbook starts, the tool validates the current CLI session and broad cluster access:
 
-- it stops if `oc whoami` fails
-- it stops if `oc auth can-i '*' '*' --all-namespaces` is not `yes`
+- OpenShift path: `oc whoami` must work and `oc auth can-i '*' '*' --all-namespaces` must return `yes`
+- Kubernetes path: `kubectl auth whoami` or `kubectl config current-context` must work, and `kubectl auth can-i '*' '*' --all-namespaces` must return `yes`
 
 ## Namespace Scope
 
@@ -173,24 +273,92 @@ If your environment has extra managed namespaces that should also be excluded, o
 
 ## How To Run
 
-The basic run is:
+Pick the playbook that matches the cluster you are checking.
+
+### OpenShift
+
+Use this for OpenShift, SNO, ARO, ROSA, and ROSA HCP:
 
 ```bash
-ansible-playbook playbooks/cluster_health_report.yml
+ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
-If you want a different output path or file prefix:
+### Generic Kubernetes
+
+Use this for a standard Kubernetes cluster when you want the shared Kubernetes checks:
 
 ```bash
-ansible-playbook playbooks/cluster_health_report.yml \
+ansible-playbook playbooks/k8s_cluster_health_report.yml
+```
+
+### Development Or Lab Kubernetes
+
+Use this for shared lab or development clusters when you want lighter defaults:
+
+```bash
+ansible-playbook playbooks/development_k8s_cluster_health_report.yml
+```
+
+### Provider Wrappers
+
+Use these when you want the report name and provider context to match the target platform from the start:
+
+```bash
+ansible-playbook playbooks/aks_cluster_health_report.yml
+ansible-playbook playbooks/eks_cluster_health_report.yml
+ansible-playbook playbooks/gke_cluster_health_report.yml
+ansible-playbook playbooks/rancher_cluster_health_report.yml
+ansible-playbook playbooks/minikube_cluster_health_report.yml
+```
+
+### Common Parameters
+
+These parameters work across the playbooks:
+
+- `report_output_dir`
+  Where report files are written
+- `report_basename`
+  File name prefix before cluster type, cluster name, and timestamp
+- `report_generate_html`
+  Set to `true` or `false`
+- `report_generate_pdf`
+  Set to `true` or `false`
+- `collection_parallelism`
+  Number of collection commands to run at the same time
+- `collection_command_timeout_seconds`
+  Timeout for each collection command
+- `keep_collection_artifacts`
+  Keep the temporary raw collection file for debugging
+
+Example:
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_output_dir=./reports \
-  -e report_basename=prod-cluster-health
+  -e report_basename=prod-cluster-health \
+  -e report_generate_html=false \
+  -e report_generate_pdf=false
 ```
 
-If you want to tune some report limits:
+### Report Size And Tuning Parameters
+
+Use these when you want more or less detail in the report:
+
+- `warning_event_limit`
+- `top_restart_pod_limit`
+- `top_alert_group_limit`
+- `top_event_reason_limit`
+- `top_namespace_issue_limit`
+- `top_pvc_issue_limit`
+- `top_workload_issue_limit`
+- `top_security_issue_limit`
+- `top_certificate_issue_limit`
+- `top_deprecated_api_limit`
+
+Example:
 
 ```bash
-ansible-playbook playbooks/cluster_health_report.yml \
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e warning_event_limit=25 \
   -e top_restart_pod_limit=20 \
   -e top_alert_group_limit=20 \
@@ -198,16 +366,45 @@ ansible-playbook playbooks/cluster_health_report.yml \
   -e top_pvc_issue_limit=30
 ```
 
-If you want to tune collection speed or turn on stricter best-practice checks:
+### Stricter Best-Practice Parameters
+
+These are optional and make the report stricter:
+
+- `require_cluster_log_forwarder=true`
+- `require_external_metrics_remote_write=true`
+- `warn_on_ingress_without_class=true`
+
+Example:
 
 ```bash
-ansible-playbook playbooks/cluster_health_report.yml \
-  -e collection_parallelism=6 \
-  -e collection_command_timeout_seconds=600 \
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e require_cluster_log_forwarder=true \
   -e require_external_metrics_remote_write=true \
   -e warn_on_ingress_without_class=true
 ```
+
+### Namespace Scope Parameters
+
+Use these when your environment has extra managed namespaces that should be excluded from workload-focused checks:
+
+- `platform_namespaces_regex`
+- `user_namespaces_exclude_regex`
+
+Example:
+
+```bash
+ansible-playbook playbooks/k8s_cluster_health_report.yml \
+  -e 'platform_namespaces_regex=^(default|kube-system|kube-public|kube-node-lease|kube-.*|istio-system)$' \
+  -e 'user_namespaces_exclude_regex=^(default|kube-system|kube-public|kube-node-lease|kube-.*|istio-system)$'
+```
+
+### Notes About Parameters
+
+- You do not need to pass `provider_family` when you use a provider wrapper playbook.
+- You do not need to pass `cluster_profile_mode` when you use the development or Minikube wrappers.
+- The generic Kubernetes playbook tries to detect cluster type automatically.
+- The OpenShift playbook expects an active `oc` session and cluster-admin access.
+- The Kubernetes playbooks expect a working `kubectl` context with broad read access.
 
 ## Estimated Run Time
 
