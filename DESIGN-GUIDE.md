@@ -1,4 +1,4 @@
-# Cluster Health Check Guide
+# Kubernetes Cluster Health Check Guide
 
 This guide explains the design behind the cluster health report in this repo.
 

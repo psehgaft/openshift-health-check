@@ -27,6 +27,10 @@ It is read-only. It does not make changes to the cluster.
 
 By default, it collects data in parallel so the run finishes faster. It also reports collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete.
 
+> [!IMPORTANT]
+> This tool is a reporting aid, not a replacement for operator judgment. It helps surface health signals, risks, and likely issues, but no automated report can fully understand every cluster design,
+  business requirement, or accepted exception. Review the findings critically and use your own operational judgment before making decisions.
+
 ## Design Guide
 
 The check set in this repo follows the design in [DESIGN-GUIDE.md](DESIGN-GUIDE.md).
