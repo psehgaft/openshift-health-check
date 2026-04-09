@@ -89,65 +89,52 @@ This section only reflects provider-specific collectors that matched the detecte
 {% endif %}
 {% endif %}
 
-## Key Findings
+## Operational Risk Summary
 
-{% set has_key_findings =
-  (collection_failures | default([]) | length > 0)
-  or (not_ready_nodes | default([]) | length > 0)
-  or (pressure_nodes | default([]) | length > 0)
-  or (workload_health_issues | default([]) | length > 0)
-  or (workload_probe_findings | default([]) | length > 0)
-  or (high_restart_pods | default([]) | length > 0)
-  or (security_findings | default([]) | length > 0)
-  or (workload_practice_findings | default([]) | length > 0)
-  or (pv_issues | default([]) | length > 0)
-  or (pvc_issues | default([]) | length > 0)
-  or (deprecated_crd_findings | default([]) | length > 0)
-  or (deprecated_api_lines | default([]) | length > 0)
-  or (certificate_expiry_findings | default([]) | length > 0)
-  or (provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length > 0)
-%}
-{% if not has_key_findings %}
-No major issues were detected in the checks completed by the common Kubernetes path.
-{% else %}
-{% if collection_failures | default([]) | length > 0 %}
-- Collection failures: `{{ collection_failures | length }}`
-{% endif %}
-{% if not_ready_nodes | default([]) | length > 0 %}
-- NotReady nodes: `{{ not_ready_nodes | length }}`
-{% endif %}
-{% if pressure_nodes | default([]) | length > 0 %}
-- Nodes under pressure: `{{ pressure_nodes | length }}`
-{% endif %}
-{% if workload_health_issues | default([]) | length > 0 %}
-- User workload health issues: `{{ workload_health_issues | length }}`
-{% endif %}
-{% if workload_probe_findings | default([]) | length > 0 %}
-- User workloads missing probes: `{{ workload_probe_findings | length }}`
-{% endif %}
-{% if high_restart_pods | default([]) | length > 0 %}
-- User pods with high restarts: `{{ high_restart_pods | length }}`
-{% endif %}
-{% if security_findings | default([]) | length > 0 %}
-- Security findings: `{{ security_findings | length }}`
-{% endif %}
-{% if workload_practice_findings | default([]) | length > 0 %}
-- User workload best-practice findings: `{{ workload_practice_findings | length }}`
-{% endif %}
-{% if pv_issues | default([]) | length > 0 or pvc_issues | default([]) | length > 0 %}
-- Storage issues: `{{ (pv_issues | default([]) | length) + (pvc_issues | default([]) | length) }}`
-{% endif %}
-{% if deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 %}
-- Deprecated API or CRD findings: `{{ (deprecated_crd_findings | default([]) | length) + (deprecated_api_lines | default([]) | length) }}`
-{% endif %}
-{% if certificate_expiry_findings | default([]) | length > 0 %}
-- Certificate expiry findings: `{{ certificate_expiry_findings | length }}`
-{% endif %}
-{% if provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length > 0 %}
-- Provider-specific findings: `{{ provider_specific_findings | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length }}`
-{% endif %}
-{% endif %}
-{% endif %}
+This section groups the highest-signal checks from the common Kubernetes path so the report reads as an operator summary instead of a flat findings list.
+
+### Cluster And Nodes
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| Node count | `{{ health_summary.nodes_total | default(0) }}` | `INFO` |
+| NotReady nodes | `{{ health_summary.nodes_not_ready | default(0) }}` | `{% if (health_summary.nodes_not_ready | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Nodes under pressure | `{{ health_summary.node_pressure_count | default(0) }}` | `{% if (health_summary.node_pressure_count | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Worker pool groups | `{{ cluster_current_state.worker_pool_count | default(0) }}` | `{% if (cluster_current_state.worker_pool_count | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
+| Total allocatable CPU | `{{ cluster_current_state.resources.total_cpu_millicores | default('unknown') }}` m | `{% if cluster_current_state.resources.total_cpu_millicores | default('unknown') == 'unknown' %}UNKNOWN{% else %}INFO{% endif %}` |
+| Total allocatable memory | `{{ cluster_current_state.resources.total_memory_mib | default('unknown') }}` MiB | `{% if cluster_current_state.resources.total_memory_mib | default('unknown') == 'unknown' %}UNKNOWN{% else %}INFO{% endif %}` |
+| Total allocatable ephemeral storage | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default('unknown') }}` GiB | `{% if cluster_current_state.resources.total_ephemeral_storage_gib | default('unknown') == 'unknown' %}UNKNOWN{% else %}INFO{% endif %}` |
+
+### Workloads And Storage
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| User workload health issues | `{{ health_summary.workload_health_issues | default(0) }}` | `{% if (health_summary.workload_health_issues | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| User workload probe findings | `{{ health_summary.workload_probe_findings | default(0) }}` | `{% if (health_summary.workload_probe_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Restart hotspots | `{{ health_summary.high_restart_pods | default(0) }}` | `{% if (health_summary.high_restart_pods | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| PV issues | `{{ health_summary.pv_issues | default(0) }}` | `{% if (health_summary.pv_issues | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| PVC issues | `{{ health_summary.pvc_issues | default(0) }}` | `{% if (health_summary.pvc_issues | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+
+### Security And Guardrails
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| Security findings | `{{ health_summary.security_findings | default(0) }}` | `{% if (health_summary.security_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Workload best-practice findings | `{{ health_summary.workload_practice_findings | default(0) }}` | `{% if (health_summary.workload_practice_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Namespaces without NetworkPolicy | `{{ health_summary.namespaces_without_networkpolicy | default(0) }}` | `{% if (health_summary.namespaces_without_networkpolicy | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Namespaces without ResourceQuota | `{{ health_summary.namespaces_without_resourcequota | default(0) }}` | `{% if (health_summary.namespaces_without_resourcequota | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Namespaces without LimitRange | `{{ health_summary.namespaces_without_limitrange | default(0) }}` | `{% if (health_summary.namespaces_without_limitrange | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+
+### Lifecycle, Provider, And Auditability
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| Deprecated CRD findings | `{{ health_summary.deprecated_crd_findings | default(0) }}` | `{% if (health_summary.deprecated_crd_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Deprecated API findings | `{{ health_summary.deprecated_api_lines | default(0) }}` | `{% if (health_summary.deprecated_api_lines | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Certificate expiry findings | `{{ health_summary.certificate_expiry_findings | default(0) }}` | `{% if (health_summary.certificate_expiry_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Provider-specific findings | `{{ health_summary.provider_specific_findings | default(0) }}` | `{% if (health_summary.provider_specific_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% | `{% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}WARN{% elif (collection_summary.failed_commands | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
+| Report confidence | `{{ report_confidence | default('unknown') | upper }}` | `{% if report_confidence | default('unknown') == 'low' %}WARN{% elif report_confidence | default('unknown') == 'medium' %}INFO{% else %}OK{% endif %}` |
 
 ## Suggested Next Steps
 

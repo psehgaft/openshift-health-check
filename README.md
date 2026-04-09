@@ -62,9 +62,11 @@ The report includes:
 - an overall status
 - an audit score
 - a cluster health score from `0` to `100`
+- a score legend directly above `Cluster Current State`
 - a `Cluster Current State` section near the top
+- a grouped `Operational Risk Summary` near the top
 - grouped findings
-- suggested next steps
+- suggested next steps near the end
 - execution details
 - a JSON file for dashboards, scripts, or later processing
 
@@ -82,12 +84,17 @@ Main areas:
 - cluster authentication setup and identity provider presence
 - available updates and conditional update risks
 - cluster operator health
+- one consolidated cluster-operator table with availability, progression, degradation, desired version, and version drift or mismatch against cluster desired version
 - cluster infrastructure component health such as authentication, DNS, ingress, image registry, monitoring, network, and ingress controllers
 - machine config pool health
 - node readiness and node pressure
 - node role and kubelet version spread
 - node inventory that works across UPI, ARO, and ROSA
 - current cluster state such as visibility, uptime, node counts, worker pool shapes, node architectures, OS images, and average utilization
+- normalized capacity units in the report:
+  - CPU in `m`
+  - memory in `MiB`
+  - ephemeral storage in `GiB`
 - pod density on nodes
 - workload rollout health for deployments, statefulsets, and daemonsets
 - workloads missing liveness, readiness, or startup probes
@@ -102,9 +109,19 @@ Main areas:
 - image registry risks
 - network policy and namespace hygiene
 - security and best-practice issues in pod specs
+- privileged RBAC grants for service accounts, users, and groups
+- stale-access review candidates for service accounts, users, and groups
 - likely unused resources
 - warning events
 - optional Prometheus signals such as alerts, API latency, etcd latency, CPU, memory, and pod usage
+- OpenShift control-plane signals such as:
+  - API `/readyz`
+  - API server read and write rates
+  - API server inflight requests
+  - API server stored object count
+  - API server 5xx rate and p99 latency
+  - etcd leader count and leader changes
+  - etcd WAL fsync, backend commit, and peer RTT latency
 
 The report also includes:
 
@@ -112,6 +129,7 @@ The report also includes:
 - cluster profile mode in the Kubernetes path
 - provider-specific sections for AKS, EKS, GKE, Rancher, and Minikube
 - OpenShift deployment type labels for SNO and ROSA HCP
+- cleaned-up section formatting that prefers readable tables and plain-language labels over debug-style issue dumps
 
 ## Repository Layout
 
@@ -303,6 +321,7 @@ For checks that should focus on customer workloads, the tool treats these as pla
 - `kube-public`
 - `kube-node-lease`
 - `kube-*`
+- `kubernetes-*`
 
 That default works well for OpenShift, ARO, and ROSA.
 
@@ -503,7 +522,35 @@ reports/cluster-health-my-cluster-20260402T112233Z.pdf
 
 HTML and PDF output are best-effort. If the required tools are missing, the Markdown and JSON reports are still generated.
 
+HTML and PDF rendering now use a shared report stylesheet. The PDF path prefers readability for wide tables by using:
+
+- smaller table font sizing
+- aggressive cell wrapping
+- repeated table headers
+- landscape layout when `wkhtmltopdf` is the active PDF engine
+
 Near the top of the report, the `Cluster Current State` section shows what the cluster looks like before you get into the findings. This includes version, visibility, uptime, node counts, worker pool shapes, node platform details, and average resource usage when Prometheus data is available.
+
+The `Cluster Current State` section uses normalized units:
+
+- CPU in `m`
+- memory in `MiB`
+- ephemeral storage in `GiB`
+
+Near the top of the report, the grouped `Operational Risk Summary` highlights the highest-signal checks in smaller themed tables. In the OpenShift path, those tables are grouped as:
+
+- control plane and change
+- platform and topology
+- traffic, capacity, and workloads
+- security, access, and guardrails
+- lifecycle, observability, and auditability
+
+In the generic Kubernetes path, the same idea is applied with a reduced set of fields that are safe for the shared collector:
+
+- cluster and nodes
+- workloads and storage
+- security and guardrails
+- lifecycle, provider, and auditability
 
 The `my-cluster` part comes from the cluster infrastructure name. If that is not available, the tool falls back to the current `oc` context name.
 
@@ -516,6 +563,8 @@ The report also includes a `Data Collection` section. Check that section early i
 - whether any core data sets were missing
 
 By default, the temporary raw collection file is removed automatically. Set `keep_collection_artifacts=true` only when you need it for debugging.
+
+The OpenShift report also keeps cluster-admin signals before workload-oriented sections. Workload-heavy sections such as rollout, probe, restart, and top pod usage details are lower in the report so platform health is visible first.
 
 For node inventory, the report uses cloud instance-type labels when they exist. If they do not exist, which is common in some UPI environments, it falls back to a node shape built from allocatable CPU, memory, and architecture. That keeps the node summary useful across OpenShift installation types.
 
@@ -542,12 +591,14 @@ If the report shows collection failures, be careful with the result. A cluster c
 
 ### Suggested Next Steps
 
-The report includes a `Suggested Next Steps` section so you can decide what to do first:
+The report includes a `Suggested Next Steps` section near the end so you can decide what to do first:
 
 - `immediate` means do this first
 - `next` means important, but not the first emergency action
 - `planned` means cleanup or posture work
 - `steady-state` means the cluster looks healthy and should stay on normal review
+
+Those suggestions are written as operator actions with short admin guidance, not raw finding codes.
 
 ### Cluster Health Score
 
@@ -587,14 +638,15 @@ If you are reading the report by hand, this order usually works well:
 
 1. `Cluster Current State`
 2. `Audit Rubric`
-3. `Executive Summary`
+3. `Operational Risk Summary`
 4. `Priority Findings`
-5. `Suggested Next Steps`
-6. `Upgrade Risk`
-7. `Workload Health`
+5. `Control Plane Signals` or provider-specific sections when present
+6. `Cluster Operators`
+7. `Upgrade Risk`
 8. `Storage`
-9. `Security And Best Practice Audit`
-10. `Optional Prometheus Signals`
+9. `Workload Health`
+10. `Security And Best Practice Audit`
+11. `Suggested Next Steps`
 
 ## Strong Signals And Heuristic Signals
 
@@ -615,6 +667,7 @@ Some findings are strong signals:
 Some findings are heuristic:
 
 - unused service accounts, configmaps, secrets, and CRDs
+- stale-access review candidates for service accounts, users, and groups
 - overprovisioned pods
 - image registry policy findings
 - network policy best-practice findings

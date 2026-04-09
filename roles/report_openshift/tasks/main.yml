@@ -12,6 +12,7 @@
     report_json_path: "{{ report_output_dir }}/{{ report_file_prefix }}.json"
     report_html_path: "{{ report_output_dir }}/{{ report_file_prefix }}.html"
     report_pdf_path: "{{ report_output_dir }}/{{ report_file_prefix }}.pdf"
+    report_css_path: "{{ playbook_dir }}/../templates/report.css"
 
 - name: Build base execution stats
   ansible.builtin.set_fact:
@@ -456,6 +457,26 @@
         )
       }}
 
+- name: Build PDF engine argument list
+  ansible.builtin.set_fact:
+    report_pdf_engine_argv: >-
+      {{
+        [
+          '--pdf-engine-opt=--orientation',
+          '--pdf-engine-opt=Landscape',
+          '--pdf-engine-opt=--margin-top',
+          '--pdf-engine-opt=10mm',
+          '--pdf-engine-opt=--margin-right',
+          '--pdf-engine-opt=10mm',
+          '--pdf-engine-opt=--margin-bottom',
+          '--pdf-engine-opt=10mm',
+          '--pdf-engine-opt=--margin-left',
+          '--pdf-engine-opt=10mm'
+        ]
+        if report_pdf_engine == 'wkhtmltopdf'
+        else []
+      }}
+
 - name: Capture final report completion epoch
   ansible.builtin.set_fact:
     final_report_completion_epoch: "{{ now(utc=true, fmt='%s') | int }}"
@@ -485,6 +506,8 @@
       - gfm
       - --to
       - html5
+      - --css
+      - "{{ report_css_path }}"
       - --output
       - "{{ report_html_path }}"
       - "{{ report_path }}"
@@ -497,14 +520,7 @@
 
 - name: Render final PDF report when a PDF engine is available
   ansible.builtin.command:
-    argv:
-      - pandoc
-      - --from
-      - gfm
-      - --pdf-engine={{ report_pdf_engine }}
-      - --output
-      - "{{ report_pdf_path }}"
-      - "{{ report_path }}"
+    argv: "{{ ['pandoc', '--from', 'gfm', '--css', report_css_path, '--pdf-engine=' ~ report_pdf_engine] + (report_pdf_engine_argv | default([])) + ['--output', report_pdf_path, report_path] }}"
   register: report_pdf_cmd
   changed_when: true
   failed_when: false

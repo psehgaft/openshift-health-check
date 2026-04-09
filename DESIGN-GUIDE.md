@@ -233,6 +233,20 @@ Without that context, the findings are harder to interpret.
 
 That same rule now applies across the supported cluster types. The report should identify what kind of cluster it is before it starts judging it. That is why the repo now carries cluster type in the file name and the report body, and why the Kubernetes path also shows provider and profile context.
 
+After the current-state section, the report now uses a grouped operational summary instead of one flat findings list. That is also intentional. The goal is to surface the most important signals early, but still keep them grouped by meaning so operators do not have to mentally sort a long mixed table.
+
+For OpenShift, the high-signal summary is grouped into:
+
+- control plane and change
+- platform and topology
+- traffic, capacity, and workloads
+- security, access, and guardrails
+- lifecycle, observability, and auditability
+
+For the shared Kubernetes path, the same idea applies with a smaller field set that is safe to compute across non-OpenShift clusters.
+
+The score legend is placed directly above `Cluster Current State` so an operator can interpret the score before reading the rest of the report.
+
 ### Layer 1: Platform State
 
 Start with the platform itself:
@@ -262,8 +276,13 @@ Watch:
 - API server errors
 - API server latency
 - API server readiness
+- API server read rate
+- API server write rate
+- API server inflight requests
+- API server stored object count
 - etcd fsync p99
 - etcd backend commit latency
+- etcd leader count
 - etcd leader changes
 - etcd peer RTT p99
 
@@ -372,11 +391,23 @@ Raw object dumps create noise. Operators need signal.
 That is why the report favors:
 
 - a current-state section first
+- a grouped operational summary instead of one flat mixed findings block
 - grouped summaries
 - top-N sections
 - priority findings
 - suggested next steps
 - a separate JSON artifact for automation
+
+The same thinking applies to wording. If a field is inferred from operator state, topology, labels, or observed configuration, the report should say that plainly instead of presenting it as a stronger fact than the data supports.
+
+The report should also avoid debug-log presentation. Findings are more useful when they are rendered as tables or short structured summaries with plain-language labels instead of internal issue codes.
+
+That is why newer report sections now prefer:
+
+- one consolidated table over repeated summary and detail blocks for the same data set
+- readable labels such as `Degraded` or `Not available` instead of internal issue keys
+- cluster-admin sections earlier in the report and workload-oriented sections later
+- counts in the top summary and detailed tables in the later sections
 
 ### Make Collection Quality Visible
 
@@ -415,8 +446,16 @@ Examples:
 - weak namespace hygiene
 - missing probes
 - weak observability posture
+- stale-access review candidates for service accounts, users, and groups
+- privileged RBAC grants that are operationally important but still need human interpretation
 
 These findings are useful, but they are not the same as hard failure signals.
+
+That is why the report now separates:
+
+- stronger risk signals such as control-plane, operator, node, route, storage, and certificate problems
+- access and security posture signals such as privileged RBAC or privileged pods
+- heuristic cleanup signals such as likely unused resources or stale-access review candidates
 
 That is why the report tries to:
 
@@ -424,6 +463,8 @@ That is why the report tries to:
 - label them clearly
 - group them separately
 - suggest them as cleanup or planned work instead of immediate incident work
+
+The same principle now applies to stale-access and privileged-access reporting. The report presents those as review candidates or privileged grants, not as proven misuse.
 
 ## How To Interpret The Scores
 
@@ -473,6 +514,8 @@ That split is intentional:
 
 Optional HTML and PDF exist for teams that want easy sharing, but the core outputs are still `md` and `json`.
 
+For HTML and PDF output, the repo now uses a shared stylesheet so wide tables are easier to read. The print path prefers smaller table fonts, aggressive cell wrapping, repeated headers, and landscape layout when `wkhtmltopdf` is the active PDF engine.
+
 ## Limits Of Any Health Report
 
 No point-in-time report can replace:
@@ -503,4 +546,5 @@ That is the reason for:
 - grouped summaries
 - collection completeness tracking
 - suggested next steps
+- readable tables and plain-language section labels
 - human-readable Markdown plus machine-readable JSON
