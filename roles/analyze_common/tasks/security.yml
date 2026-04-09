@@ -300,6 +300,82 @@
       }}
   changed_when: false
 
+- name: Build privileged RBAC findings
+  ansible.builtin.set_fact:
+    privileged_serviceaccount_access: "{{ privileged_serviceaccount_access | default([]) + privileged_serviceaccount_entries }}"
+    privileged_user_access: "{{ privileged_user_access | default([]) + privileged_user_entries }}"
+    privileged_group_access: "{{ privileged_group_access | default([]) + privileged_group_entries }}"
+  loop: "{{ ((clusterrolebindings | default({})).get('items', [])) + ((rolebindings | default({})).get('items', [])) }}"
+  vars:
+    binding_kind: "{{ item.kind | default('Binding') }}"
+    binding_name: "{{ item.metadata.name | default('unknown') }}"
+    binding_namespace: "{{ item.metadata.namespace | default('') }}"
+    binding_scope: "{{ 'cluster-wide' if (binding_namespace | length == 0) else ('namespace ' ~ binding_namespace) }}"
+    grant_source: "{{ (binding_kind ~ '/' ~ binding_name) if (binding_namespace | length == 0) else (binding_kind ~ '/' ~ binding_namespace ~ '/' ~ binding_name) }}"
+    role_kind: "{{ item.roleRef.kind | default('') }}"
+    role_name: "{{ item.roleRef.name | default('') }}"
+    subjects: "{{ item.subjects | default([]) }}"
+    privileged_subjects: "{{ subjects if (role_kind == 'ClusterRole' and role_name == 'cluster-admin') else [] }}"
+    non_system_serviceaccounts: >-
+      {{
+        privileged_subjects
+        | selectattr('kind', 'equalto', 'ServiceAccount')
+        | rejectattr('namespace', 'undefined')
+        | rejectattr('namespace', 'match', user_namespaces_exclude_regex)
+        | list
+      }}
+    non_system_users: >-
+      {{
+        privileged_subjects
+        | selectattr('kind', 'equalto', 'User')
+        | rejectattr('name', 'match', '^(system:|kube:|openshift:)')
+        | list
+      }}
+    non_system_groups: >-
+      {{
+        privileged_subjects
+        | selectattr('kind', 'equalto', 'Group')
+        | rejectattr('name', 'match', '^(system:|kube:|openshift:)')
+        | list
+      }}
+    privileged_serviceaccount_entries: >-
+      {{
+        non_system_serviceaccounts
+        | map('combine', {
+          'binding_name': binding_name,
+          'grant_source': grant_source,
+          'binding_scope': binding_scope,
+          'access_role': 'cluster-admin',
+          'access_level': 'privileged'
+        })
+        | list
+      }}
+    privileged_user_entries: >-
+      {{
+        non_system_users
+        | map('combine', {
+          'binding_name': binding_name,
+          'grant_source': grant_source,
+          'binding_scope': binding_scope,
+          'access_role': 'cluster-admin',
+          'access_level': 'privileged'
+        })
+        | list
+      }}
+    privileged_group_entries: >-
+      {{
+        non_system_groups
+        | map('combine', {
+          'binding_name': binding_name,
+          'grant_source': grant_source,
+          'binding_scope': binding_scope,
+          'access_role': 'cluster-admin',
+          'access_level': 'privileged'
+        })
+        | list
+      }}
+  changed_when: false
+
 - name: Check CRD instance counts
   ansible.builtin.shell: |
     set -o pipefail

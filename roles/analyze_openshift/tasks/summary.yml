@@ -31,6 +31,12 @@
     top_image_registry_findings: "{{ (image_registry_findings | default([]))[:top_security_issue_limit] }}"
     top_feature_findings: "{{ (feature_findings | default([]))[:top_security_issue_limit] }}"
     top_observability_findings: "{{ (observability_findings | default([]))[:top_security_issue_limit] }}"
+    top_privileged_serviceaccount_access: "{{ (privileged_serviceaccount_access | default([]) | sort(attribute='namespace') | sort(attribute='name'))[:top_security_issue_limit] }}"
+    top_privileged_user_access: "{{ (privileged_user_access | default([]) | sort(attribute='name'))[:top_security_issue_limit] }}"
+    top_privileged_group_access: "{{ (privileged_group_access | default([]) | sort(attribute='name'))[:top_security_issue_limit] }}"
+    top_stale_access_review_serviceaccounts: "{{ (stale_access_review_serviceaccounts | default([]) | sort(attribute='namespace') | sort(attribute='name'))[:top_security_issue_limit] }}"
+    top_stale_access_review_users: "{{ (stale_access_review_users | default([]) | unique(attribute='name') | sort(attribute='name'))[:top_security_issue_limit] }}"
+    top_stale_access_review_groups: "{{ (stale_access_review_groups | default([]) | unique(attribute='name') | sort(attribute='name'))[:top_security_issue_limit] }}"
   changed_when: false
 
 - name: Build security issue type counts
@@ -165,6 +171,9 @@
       ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) | length }}"
       infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) | length }}"
       security_findings: "{{ security_findings | default([]) | length }}"
+      privileged_serviceaccount_access: "{{ privileged_serviceaccount_access | default([]) | length }}"
+      privileged_user_access: "{{ privileged_user_access | default([]) | length }}"
+      privileged_group_access: "{{ privileged_group_access | default([]) | length }}"
       workload_practice_findings: "{{ workload_practice_findings | default([]) | length }}"
       empty_user_namespaces: "{{ empty_user_namespaces | default([]) | length }}"
       services_without_endpoints: "{{ services_without_endpoints | default([]) | length }}"
@@ -616,10 +625,14 @@
         },
         "resources": {
             "total_cpu_cores": round(total_cpu_cores, 1),
+            "total_cpu_millicores": int(round(total_cpu_cores * 1000.0)),
             "total_memory_gib": round(total_memory_bytes / (1024 ** 3), 1),
+            "total_memory_mib": int(round(total_memory_bytes / (1024 ** 2))),
             "total_ephemeral_storage_gib": round(total_disk_bytes / (1024 ** 3), 1),
             "average_cpu_cores_per_node": round(total_cpu_cores / len(data["nodes"]), 1) if data["nodes"] else 0,
+            "average_cpu_millicores_per_node": int(round((total_cpu_cores / len(data["nodes"])) * 1000.0)) if data["nodes"] else 0,
             "average_memory_gib_per_node": round((total_memory_bytes / (1024 ** 3)) / len(data["nodes"]), 1) if data["nodes"] else 0,
+            "average_memory_mib_per_node": int(round((total_memory_bytes / (1024 ** 2)) / len(data["nodes"]))) if data["nodes"] else 0,
             "average_ephemeral_storage_gib_per_node": round((total_disk_bytes / (1024 ** 3)) / len(data["nodes"]), 1) if data["nodes"] else 0,
             "average_pods_per_node": round(total_pods_scheduled / len(data["nodes"]), 1) if data["nodes"] else 0,
             "average_pod_density_pct": avg(density_by_node.values()) if density_by_node else None,
@@ -708,10 +721,14 @@
         storageclasses: "{{ (storageclasses | default({})).get('items', []) | length }}"
       resources:
         total_cpu_cores: unknown
+        total_cpu_millicores: unknown
         total_memory_gib: unknown
+        total_memory_mib: unknown
         total_ephemeral_storage_gib: unknown
         average_cpu_cores_per_node: unknown
+        average_cpu_millicores_per_node: unknown
         average_memory_gib_per_node: unknown
+        average_memory_mib_per_node: unknown
         average_ephemeral_storage_gib_per_node: unknown
         average_pods_per_node: "{{ (((pods | default({})).get('items', []) | length) / ([1, ((nodes | default({})).get('items', []) | length)] | max)) | round(1) }}"
         average_pod_density_pct: n/a

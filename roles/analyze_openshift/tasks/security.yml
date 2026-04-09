@@ -26,3 +26,65 @@
         ([{'issue': 'image-registry-not-managed', 'detail': image_registry_managed}] if image_registry_managed != 'Managed' else []) +
         ([{'issue': 'insights-operator-not-healthy', 'detail': 'cluster operator insights is unavailable or degraded'}] if ('insights' in (unavailable_operators | default([])) or 'insights' in (degraded_operators | default([]))) else []))
       }}
+
+- name: Build stale access review candidates
+  ansible.builtin.set_fact:
+    stale_access_review_serviceaccounts: "{{ likely_unused_serviceaccounts | default([]) }}"
+    stale_access_review_users: "{{ stale_access_review_users | default([]) + stale_user_entry }}"
+    stale_access_review_groups: "{{ stale_access_review_groups | default([]) + stale_group_entry }}"
+  loop: "{{ (((rolebindings | default({})).get('items', [])) + ((clusterrolebindings | default({})).get('items', []))) }}"
+  vars:
+    subjects: "{{ item.subjects | default([]) }}"
+    collected_user_names: "{{ (openshift_users | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list }}"
+    collected_group_names: "{{ (openshift_groups | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list }}"
+    stale_user_subjects: >-
+      {{
+        subjects
+        | selectattr('kind', 'equalto', 'User')
+        | rejectattr('name', 'match', '^(system:|kube:|openshift:)')
+        | rejectattr('name', 'in', collected_user_names)
+        | list
+      }}
+    stale_group_subjects: >-
+      {{
+        subjects
+        | selectattr('kind', 'equalto', 'Group')
+        | rejectattr('name', 'match', '^(system:|kube:|openshift:)')
+        | list
+      }}
+    binding_kind: "{{ item.kind | default('Binding') }}"
+    binding_namespace: "{{ item.metadata.namespace | default('') }}"
+    binding_name: "{{ item.metadata.name | default('unknown') }}"
+    binding_scope: "{{ 'cluster-wide' if (binding_namespace | length == 0) else ('namespace ' ~ binding_namespace) }}"
+    grant_source: "{{ (binding_kind ~ '/' ~ binding_name) if (binding_namespace | length == 0) else (binding_kind ~ '/' ~ binding_namespace ~ '/' ~ binding_name) }}"
+    stale_user_entry: >-
+      {{
+        stale_user_subjects
+        | map('combine', {
+          'binding_scope': binding_scope,
+          'grant_source': grant_source,
+          'reason': 'subject appears in RBAC bindings but no matching OpenShift User object was collected'
+        })
+        | list
+      }}
+    stale_group_entry: >-
+      {%- set results = [] -%}
+      {%- for subject in stale_group_subjects -%}
+      {%- set matching_group = ((openshift_groups | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', subject.name) | list | first) | default({}) -%}
+      {%- set matching_group_users = matching_group.users | default([]) -%}
+      {%- if subject.name not in collected_group_names -%}
+      {%- set _ = results.append(subject | combine({
+        'binding_scope': binding_scope,
+        'grant_source': grant_source,
+        'reason': 'subject appears in RBAC bindings but no matching OpenShift Group object was collected'
+      })) -%}
+      {%- elif (matching_group_users | length) == 0 -%}
+      {%- set _ = results.append(subject | combine({
+        'binding_scope': binding_scope,
+        'grant_source': grant_source,
+        'reason': 'matching OpenShift Group object was collected but it currently lists no members'
+      })) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ results }}
+  changed_when: false
