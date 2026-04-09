@@ -809,12 +809,12 @@ No route or ingress issues were detected.
 
 ## Cluster Operators
 
-{% if clusteroperators.items | default([]) | length == 0 %}
+{% if (clusteroperators | default({})).get('items', []) | length == 0 %}
 Cluster operator data was not collected.
 {% else %}
 | Operator | Version | Available | Progressing | Degraded |
 | --- | --- | --- | --- | --- |
-{% for item in clusteroperators.items | sort(attribute='metadata.name') %}
+{% for item in ((clusteroperators | default({})).get('items', []) | sort(attribute='metadata.name')) %}
 | `{{ item.metadata.name }}` | `{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown') }}` |
 {% endfor %}
 {% endif %}
@@ -843,24 +843,24 @@ Infrastructure component summary was not collected.
 
 ## Nodes
 
-{% if nodes.items | default([]) | length == 0 %}
+{% if (nodes | default({})).get('items', []) | length == 0 %}
 Node data was not collected.
 {% else %}
 | Node | Roles | Ready | Pressures | Kubelet | OS Image |
 | --- | --- | --- | --- | --- | --- |
-{% for item in nodes.items | sort(attribute='metadata.name') %}
+{% for item in (((nodes | default({})).get('items', [])) | sort(attribute='metadata.name')) %}
 | `{{ item.metadata.name }}` | `{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | join(', ') or 'worker' }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown') }}` | `{{ item.status.conditions | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | join(', ') or 'None' }}` | `{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}` | `{{ item.status.nodeInfo.osImage | default('unknown') }}` |
 {% endfor %}
 {% endif %}
 
 ## MachineConfigPools
 
-{% if machineconfigpools.items | default([]) | length == 0 %}
+{% if (machineconfigpools | default({})).get('items', []) | length == 0 %}
 MachineConfigPool data was not collected.
 {% else %}
 | MCP | Updated | Updating | Degraded | Machine Count | Ready Count | Updated Count |
 | --- | --- | --- | --- | --- | --- | --- |
-{% for item in machineconfigpools.items | sort(attribute='metadata.name') %}
+{% for item in (((machineconfigpools | default({})).get('items', [])) | sort(attribute='metadata.name')) %}
 | `{{ item.metadata.name }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown') }}` | `{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown') }}` | `{{ item.status.machineCount | default('n/a') }}` | `{{ item.status.readyMachineCount | default('n/a') }}` | `{{ item.status.updatedMachineCount | default('n/a') }}` |
 {% endfor %}
 {% endif %}

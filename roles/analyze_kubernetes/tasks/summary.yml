@@ -2,12 +2,12 @@
 - name: Build Kubernetes aggregate lists
   ansible.builtin.set_fact:
     resolved_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}"
-    profile_is_lightweight: "{{ (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'lightweight' }}"
-    profile_is_development: "{{ (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'development' }}"
-    profile_is_non_production: "{{ (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] }}"
+    profile_is_lightweight: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'lightweight') | bool }}"
+    profile_is_development: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'development') | bool }}"
+    profile_is_non_production: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight']) | bool }}"
     top_pod_restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit] }}"
-    high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', pod_restart_warning_threshold | default(5)) | sort(attribute='restarts', reverse=true) | list) }}"
-    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', pod_restart_warning_threshold | default(5)) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit]) }}"
+    high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list) }}"
+    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit]) }}"
     top_pvc_issues: "{{ (pvc_issues | default([]))[:top_pvc_issue_limit] }}"
     top_pv_issues: "{{ (pv_issues | default([]))[:top_pvc_issue_limit] }}"
     top_namespace_issue_summary: "{{ (namespace_issue_summary | default([]))[:top_namespace_issue_limit] }}"
@@ -69,7 +69,7 @@
           )
         }}
       kubernetes_version: "{{ (kubelet_version_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | map(attribute='key') | first) | default('unknown') }}"
-      nodes_total: "{{ nodes.items | default([]) | length }}"
+      nodes_total: "{{ (nodes | default({})).get('items', []) | length }}"
       nodes_not_ready: "{{ not_ready_nodes | default([]) | length }}"
       node_pressure_count: "{{ pressure_nodes | default([]) | length }}"
       platform_pod_issues: "{{ platform_pod_issues | default([]) | length }}"
@@ -79,19 +79,19 @@
       provider_specific_findings: "{{ (provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length) }}"
       security_findings: "{{ security_findings | default([]) | length }}"
       workload_practice_findings: "{{ workload_practice_findings | default([]) | length }}"
-      empty_user_namespaces: "{{ 0 if profile_is_non_production else (empty_user_namespaces | default([]) | length) }}"
-      services_without_endpoints: "{{ 0 if profile_is_non_production else (services_without_endpoints | default([]) | length) }}"
-      likely_unused_serviceaccounts: "{{ 0 if profile_is_non_production else (likely_unused_serviceaccounts | default([]) | length) }}"
-      likely_unused_configmaps: "{{ 0 if profile_is_non_production else (likely_unused_configmaps | default([]) | length) }}"
-      likely_unused_secrets: "{{ 0 if profile_is_non_production else (likely_unused_secrets | default([]) | length) }}"
-      likely_unused_crds: "{{ 0 if profile_is_non_production else (likely_unused_crds | default([]) | length) }}"
+      empty_user_namespaces: "{{ 0 if (profile_is_non_production | bool) else (empty_user_namespaces | default([]) | length) }}"
+      services_without_endpoints: "{{ 0 if (profile_is_non_production | bool) else (services_without_endpoints | default([]) | length) }}"
+      likely_unused_serviceaccounts: "{{ 0 if (profile_is_non_production | bool) else (likely_unused_serviceaccounts | default([]) | length) }}"
+      likely_unused_configmaps: "{{ 0 if (profile_is_non_production | bool) else (likely_unused_configmaps | default([]) | length) }}"
+      likely_unused_secrets: "{{ 0 if (profile_is_non_production | bool) else (likely_unused_secrets | default([]) | length) }}"
+      likely_unused_crds: "{{ 0 if (profile_is_non_production | bool) else (likely_unused_crds | default([]) | length) }}"
       deprecated_crd_findings: "{{ deprecated_crd_findings | default([]) | length }}"
       deprecated_api_lines: "{{ deprecated_api_lines | default([]) | length }}"
-      namespaces_without_networkpolicy: "{{ 0 if profile_is_non_production else (namespaces_without_networkpolicy | default([]) | length) }}"
-      namespaces_missing_ingress_policies: "{{ 0 if profile_is_non_production else (namespaces_missing_ingress_policies | default([]) | length) }}"
-      namespaces_missing_egress_policies: "{{ 0 if profile_is_non_production else (namespaces_missing_egress_policies | default([]) | length) }}"
-      namespaces_without_resourcequota: "{{ 0 if profile_is_non_production else (namespaces_without_resourcequota | default([]) | length) }}"
-      namespaces_without_limitrange: "{{ 0 if profile_is_non_production else (namespaces_without_limitrange | default([]) | length) }}"
+      namespaces_without_networkpolicy: "{{ 0 if (profile_is_non_production | bool) else (namespaces_without_networkpolicy | default([]) | length) }}"
+      namespaces_missing_ingress_policies: "{{ 0 if (profile_is_non_production | bool) else (namespaces_missing_ingress_policies | default([]) | length) }}"
+      namespaces_missing_egress_policies: "{{ 0 if (profile_is_non_production | bool) else (namespaces_missing_egress_policies | default([]) | length) }}"
+      namespaces_without_resourcequota: "{{ 0 if (profile_is_non_production | bool) else (namespaces_without_resourcequota | default([]) | length) }}"
+      namespaces_without_limitrange: "{{ 0 if (profile_is_non_production | bool) else (namespaces_without_limitrange | default([]) | length) }}"
       namespaces_non_active: "{{ namespace_issue_summary | default([]) | length }}"
       pv_issues: "{{ pv_issues | default([]) | length }}"
       pvc_issues: "{{ pvc_issues | default([]) | length }}"
@@ -109,14 +109,14 @@
 
     data = json.loads(r'''{{ {
       "cluster_profile": cluster_profile | default({}),
-      "nodes": nodes.items | default([]),
-      "pods": pods.items | default([]),
-      "deployments": deployments.items | default([]),
-      "statefulsets": statefulsets.items | default([]),
-      "daemonsets": daemonsets.items | default([]),
-      "ingresses": ingresses.items | default([]),
-      "namespaces": namespaces.items | default([]),
-      "storageclasses": storageclasses.items | default([]),
+      "nodes": (nodes | default({})).get('items', []),
+      "pods": (pods | default({})).get('items', []),
+      "deployments": (deployments | default({})).get('items', []),
+      "statefulsets": (statefulsets | default({})).get('items', []),
+      "daemonsets": (daemonsets | default({})).get('items', []),
+      "ingresses": (ingresses | default({})).get('items', []),
+      "namespaces": (namespaces | default({})).get('items', []),
+      "storageclasses": (storageclasses | default({})).get('items', []),
       "node_pod_counts": node_pod_counts | default({})
     } | to_json }}''')
 

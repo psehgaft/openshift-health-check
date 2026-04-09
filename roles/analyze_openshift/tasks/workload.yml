@@ -2,24 +2,24 @@
 - name: Build platform pod issue list
   ansible.builtin.set_fact:
     platform_pod_issues: "{{ platform_pod_issues | default([]) + pod_issue }}"
-  loop: "{{ pods.items | default([]) }}"
+  loop: "{{ (pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     phase: "{{ item.status.phase | default('Unknown') }}"
-    ready_container_count: "{{ item.status.containerStatuses | default([]) | selectattr('ready', 'equalto', true) | list | length }}"
-    total_container_count: "{{ item.status.containerStatuses | default([]) | length }}"
+    ready_container_count: "{{ item.status.containerStatuses | default([]) | selectattr('ready', 'equalto', true) | list | length | int }}"
+    total_container_count: "{{ item.status.containerStatuses | default([]) | length | int }}"
     pod_issue: >-
       {{
         [{
           'namespace': ns_name,
           'name': item.metadata.name,
           'phase': phase,
-          'ready': ready_container_count ~ '/' ~ total_container_count
+          'ready': (ready_container_count | int) ~ '/' ~ (total_container_count | int)
         }]
         if (
           ((ns_name is match(platform_namespaces_regex)) and (phase not in ['Running', 'Succeeded', 'Completed']))
           or
-          ((ns_name is match(platform_namespaces_regex)) and phase == 'Running' and total_container_count > 0 and ready_container_count < total_container_count)
+          ((ns_name is match(platform_namespaces_regex)) and phase == 'Running' and (total_container_count | int) > 0 and (ready_container_count | int) < (total_container_count | int))
         ) else []
       }}
   changed_when: false
@@ -27,36 +27,36 @@
 - name: Build deployment health findings
   ansible.builtin.set_fact:
     deployment_issues: "{{ deployment_issues | default([]) + issue_entry }}"
-  loop: "{{ deployments.items | default([]) }}"
+  loop: "{{ (deployments | default({})).get('items', []) }}"
   vars:
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.availableReplicas | default(0) | int }}"
     ready: "{{ item.status.readyReplicas | default(0) | int }}"
     updated: "{{ item.status.updatedReplicas | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'Deployment', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': desired, 'available': available, 'ready': ready, 'updated': updated}] if desired > 0 and (available < desired or ready < desired or updated < desired) else [] }}"
+    issue_entry: "{{ [{'kind': 'Deployment', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((available | int) < (desired | int) or (ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
   changed_when: false
 
 - name: Build statefulset health findings
   ansible.builtin.set_fact:
     statefulset_issues: "{{ statefulset_issues | default([]) + issue_entry }}"
-  loop: "{{ statefulsets.items | default([]) }}"
+  loop: "{{ (statefulsets | default({})).get('items', []) }}"
   vars:
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.currentReplicas | default(0) | int }}"
     ready: "{{ item.status.readyReplicas | default(0) | int }}"
     updated: "{{ item.status.updatedReplicas | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'StatefulSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': desired, 'available': available, 'ready': ready, 'updated': updated}] if desired > 0 and (ready < desired or updated < desired) else [] }}"
+    issue_entry: "{{ [{'kind': 'StatefulSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
   changed_when: false
 
 - name: Build daemonset health findings
   ansible.builtin.set_fact:
     daemonset_issues: "{{ daemonset_issues | default([]) + issue_entry }}"
-  loop: "{{ daemonsets.items | default([]) }}"
+  loop: "{{ (daemonsets | default({})).get('items', []) }}"
   vars:
     desired: "{{ item.status.desiredNumberScheduled | default(0) | int }}"
     available: "{{ item.status.numberReady | default(0) | int }}"
     updated: "{{ item.status.updatedNumberScheduled | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'DaemonSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': desired, 'available': available, 'ready': available, 'updated': updated}] if desired > 0 and (available < desired or updated < desired) else [] }}"
+    issue_entry: "{{ [{'kind': 'DaemonSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (available | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((available | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
   changed_when: false
 
 - name: Combine workload health findings
@@ -66,12 +66,12 @@
 - name: Build deployment probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ deployments.items | default([]) }}"
+  loop: "{{ (deployments | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
     containers: "{{ item.spec.template.spec.containers | default([]) }}"
-    is_user_namespace: "{{ not (ns_name is match(user_namespaces_exclude_regex)) }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
     missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
     missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
@@ -85,7 +85,7 @@
           'issue': 'missing-liveness-probe',
           'containers': missing_liveness_containers,
           'detail': missing_liveness_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
         ([{
           'kind': 'Deployment',
           'namespace': ns_name,
@@ -93,7 +93,7 @@
           'issue': 'missing-readiness-probe',
           'containers': missing_readiness_containers,
           'detail': missing_readiness_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
         ([{
           'kind': 'Deployment',
           'namespace': ns_name,
@@ -101,19 +101,19 @@
           'issue': 'missing-startup-probe',
           'containers': missing_startup_containers,
           'detail': missing_startup_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_startup_containers | length > 0 else []))
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
       }}
   changed_when: false
 
 - name: Build statefulset probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ statefulsets.items | default([]) }}"
+  loop: "{{ (statefulsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
     containers: "{{ item.spec.template.spec.containers | default([]) }}"
-    is_user_namespace: "{{ not (ns_name is match(user_namespaces_exclude_regex)) }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
     missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
     missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
@@ -127,7 +127,7 @@
           'issue': 'missing-liveness-probe',
           'containers': missing_liveness_containers,
           'detail': missing_liveness_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
         ([{
           'kind': 'StatefulSet',
           'namespace': ns_name,
@@ -135,7 +135,7 @@
           'issue': 'missing-readiness-probe',
           'containers': missing_readiness_containers,
           'detail': missing_readiness_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
         ([{
           'kind': 'StatefulSet',
           'namespace': ns_name,
@@ -143,19 +143,19 @@
           'issue': 'missing-startup-probe',
           'containers': missing_startup_containers,
           'detail': missing_startup_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_startup_containers | length > 0 else []))
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
       }}
   changed_when: false
 
 - name: Build daemonset probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ daemonsets.items | default([]) }}"
+  loop: "{{ (daemonsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
     containers: "{{ item.spec.template.spec.containers | default([]) }}"
-    is_user_namespace: "{{ not (ns_name is match(user_namespaces_exclude_regex)) }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
     missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
     missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
@@ -169,7 +169,7 @@
           'issue': 'missing-liveness-probe',
           'containers': missing_liveness_containers,
           'detail': missing_liveness_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
         ([{
           'kind': 'DaemonSet',
           'namespace': ns_name,
@@ -177,7 +177,7 @@
           'issue': 'missing-readiness-probe',
           'containers': missing_readiness_containers,
           'detail': missing_readiness_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
         ([{
           'kind': 'DaemonSet',
           'namespace': ns_name,
@@ -185,14 +185,14 @@
           'issue': 'missing-startup-probe',
           'containers': missing_startup_containers,
           'detail': missing_startup_containers | join(', ')
-        }] if is_user_namespace and containers | length > 0 and missing_startup_containers | length > 0 else []))
+        }] if (is_user_namespace | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
       }}
   changed_when: false
 
 - name: Build route admission findings
   ansible.builtin.set_fact:
-    service_names_by_namespace: "{{ service_names_by_namespace | default({}) | combine({ns_name: ((service_names_by_namespace[ns_name] | default([])) + [svc_name]) | unique}, recursive=True) }}"
-  loop: "{{ services.items | default([]) }}"
+    service_names_by_namespace: "{{ service_names_by_namespace | default({}) | combine({ns_name: ((((service_names_by_namespace | default({}))[ns_name] | default([])) + [svc_name]) | unique)}, recursive=True) }}"
+  loop: "{{ (services | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     svc_name: "{{ item.metadata.name | default('') }}"
@@ -201,7 +201,7 @@
 - name: Build route issue findings
   ansible.builtin.set_fact:
     route_issues: "{{ route_issues | default([]) + route_issue_entry }}"
-  loop: "{{ routes.items | default([]) }}"
+  loop: "{{ (routes | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     route_name: "{{ item.metadata.name | default('') }}"
@@ -209,7 +209,7 @@
     admitted_status: "{{ ((item.status.ingress | default([]) | map(attribute='conditions') | list | flatten | selectattr('type', 'equalto', 'Admitted') | map(attribute='status') | first) | default('Unknown')) }}"
     target_kind: "{{ item.spec.to.kind | default('Service') }}"
     target_service_name: "{{ item.spec.to.name | default('') }}"
-    missing_target_service: "{{ target_kind == 'Service' and target_service_name != '' and (target_service_name not in (service_names_by_namespace[ns_name] | default([]))) }}"
+    missing_target_service: "{{ (target_kind == 'Service') and (target_service_name != '') and (target_service_name not in (((service_names_by_namespace | default({}))[ns_name] | default([])))) }}"
     route_issue_entry: >-
       {{
         ([] +
@@ -235,7 +235,7 @@
 - name: Build ingress issue findings
   ansible.builtin.set_fact:
     ingress_issues: "{{ ingress_issues | default([]) + ingress_issue_entries }}"
-  loop: "{{ ingresses.items | default([]) }}"
+  loop: "{{ (ingresses | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     ingress_name: "{{ item.metadata.name | default('') }}"
@@ -245,7 +245,7 @@
     rule_backend_services: "{{ path_backends | map(attribute='backend.service.name') | select('defined') | list }}"
     default_backend_service: "{{ item.spec.defaultBackend.service.name | default('') }}"
     backend_service_names: "{{ (rule_backend_services + ([default_backend_service] if default_backend_service != '' else [])) | unique }}"
-    missing_backend_services: "{{ backend_service_names | difference(service_names_by_namespace[ns_name] | default([])) }}"
+    missing_backend_services: "{{ backend_service_names | difference(((service_names_by_namespace | default({}))[ns_name] | default([]))) }}"
     ingress_issue_entries: >-
       {{
         ([] +
@@ -279,14 +279,14 @@
 - name: Build route host owner map
   ansible.builtin.set_fact:
     route_host_owners: "{{ route_host_owners | default({}) | combine({item.spec.host: ((route_host_owners[item.spec.host] | default([])) + [item.metadata.namespace ~ '/' ~ item.metadata.name]) | unique}, recursive=True) }}"
-  loop: "{{ routes.items | default([]) }}"
+  loop: "{{ (routes | default({})).get('items', []) }}"
   when: (item.spec.host | default('')) != ''
   changed_when: false
 
 - name: Build ingress host owner map
   ansible.builtin.set_fact:
     ingress_host_records: "{{ ingress_host_records | default([]) + host_records }}"
-  loop: "{{ ingresses.items | default([]) }}"
+  loop: "{{ (ingresses | default({})).get('items', []) }}"
   vars:
     ingress_hosts: "{{ item.spec.rules | default([]) | map(attribute='host') | select('defined') | reject('equalto', '') | list }}"
     host_records: "{{ ingress_hosts | map('regex_replace', '^(.*)$', item.metadata.namespace ~ '/' ~ item.metadata.name ~ '|' ~ '\\1') | list }}"

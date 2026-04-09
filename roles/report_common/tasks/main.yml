@@ -3,8 +3,11 @@
   ansible.builtin.set_fact:
     report_cluster_type: "{{ resolved_provider_family if (resolved_provider_family | default(provider_family | default('generic'))) != 'generic' else (platform_family | default('kubernetes')) }}"
     report_cluster_name_source: "{{ cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim)) }}"
-    report_cluster_name: "{{ (report_cluster_name_source | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
-    report_file_prefix: "{{ report_basename }}-{{ report_cluster_type }}-{{ report_cluster_name }}-{{ report_timestamp }}"
+    report_cluster_name: "{{ ((cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim))) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
+    report_file_prefix: "{{ report_basename }}-{{ (resolved_provider_family if (resolved_provider_family | default(provider_family | default('generic'))) != 'generic' else (platform_family | default('kubernetes'))) }}-{{ ((cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim))) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
+
+- name: Define common report output files
+  ansible.builtin.set_fact:
     report_path: "{{ report_output_dir }}/{{ report_file_prefix }}.md"
     report_json_path: "{{ report_output_dir }}/{{ report_file_prefix }}.json"
     report_html_path: "{{ report_output_dir }}/{{ report_file_prefix }}.html"

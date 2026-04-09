@@ -38,6 +38,18 @@ The check set in this repo follows the design in [DESIGN-GUIDE.md](DESIGN-GUIDE.
 Use this `README.md` when you want to install, run, and read the tool.
 Use the design guide when you want to understand why the checks exist and how the report is meant to be used.
 
+## Quick Start
+
+Launch the tool from the repo root:
+
+```bash
+./scripts/setup-ansible-venv.sh
+source .venv/bin/activate
+ansible-playbook playbooks/openshift_cluster_health_report.yml
+```
+
+For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
+
 ## What This Tool Does
 
 In simple terms, the tool tries to answer two questions:
@@ -185,9 +197,35 @@ Development wrapper defaults:
 
 Install these programs first:
 
-- `ansible-playbook`
 - `python3`
 - `openssl`
+
+## Python Virtual Environment
+
+This repo is configured to run Ansible from a local virtual environment in `.venv`.
+
+Create and populate it with:
+
+```bash
+./scripts/setup-ansible-venv.sh
+```
+
+Or manually:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+mkdir -p .ansible/tmp
+```
+
+After activation, use the repo-local Ansible:
+
+```bash
+source .venv/bin/activate
+ansible-playbook --version
+```
 
 You also need one working cluster CLI session:
 
@@ -206,7 +244,7 @@ Kubernetes playbooks:
 
 For Ansible:
 
-- `ansible-core` or `ansible` must be installed and working
+- install Python dependencies from `requirements.txt` into `.venv`
 - no extra Ansible collections are required
 - no extra Ansible modules are required
 - the playbook uses only `ansible.builtin` modules
@@ -275,7 +313,7 @@ If your environment has extra managed namespaces that should also be excluded, o
 - `platform_namespaces_regex`
 - `user_namespaces_exclude_regex`
 
-## How To Run
+## Launch The Tool
 
 Pick the playbook that matches the cluster you are checking.
 
@@ -284,6 +322,7 @@ Pick the playbook that matches the cluster you are checking.
 Use this for OpenShift, SNO, ARO, ROSA, and ROSA HCP:
 
 ```bash
+. .venv/bin/activate
 ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
@@ -292,6 +331,7 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml
 Use this for a standard Kubernetes cluster when you want the shared Kubernetes checks:
 
 ```bash
+. .venv/bin/activate
 ansible-playbook playbooks/k8s_cluster_health_report.yml
 ```
 
@@ -300,6 +340,7 @@ ansible-playbook playbooks/k8s_cluster_health_report.yml
 Use this for shared lab or development clusters when you want lighter defaults:
 
 ```bash
+. .venv/bin/activate
 ansible-playbook playbooks/development_k8s_cluster_health_report.yml
 ```
 
@@ -308,6 +349,7 @@ ansible-playbook playbooks/development_k8s_cluster_health_report.yml
 Use these when you want the report name and provider context to match the target platform from the start:
 
 ```bash
+. .venv/bin/activate
 ansible-playbook playbooks/aks_cluster_health_report.yml
 ansible-playbook playbooks/eks_cluster_health_report.yml
 ansible-playbook playbooks/gke_cluster_health_report.yml

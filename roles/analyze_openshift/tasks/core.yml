@@ -51,7 +51,7 @@
     unavailable_operators: "{{ unavailable_operators + ([item.metadata.name] if available_status != 'True' else []) }}"
     progressing_operators: "{{ progressing_operators + ([item.metadata.name] if progressing_status == 'True' else []) }}"
     clusteroperator_status_map: "{{ clusteroperator_status_map | combine({item.metadata.name: {'available': available_status, 'degraded': degraded_status, 'progressing': progressing_status, 'version': operator_version}}, recursive=True) }}"
-  loop: "{{ clusteroperators.items | default([]) }}"
+  loop: "{{ (clusteroperators | default({})).get('items', []) }}"
   vars:
     available_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
     degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
@@ -63,7 +63,7 @@
   ansible.builtin.set_fact:
     ingresscontroller_summary: "{{ ingresscontroller_summary | default([]) + [summary_entry] }}"
     ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) + issue_entries }}"
-  loop: "{{ ingresscontrollers.items | default([]) }}"
+  loop: "{{ (ingresscontrollers | default({})).get('items', []) }}"
   vars:
     desired_replicas: "{{ item.spec.replicas | default((1 if (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica' else 2)) | int }}"
     available_replicas: "{{ item.status.availableReplicas | default(0) | int }}"
@@ -134,7 +134,7 @@
         progressing: "{{ clusteroperator_status_map.ingress.progressing | default('Unknown') }}"
         degraded: "{{ clusteroperator_status_map.ingress.degraded | default('Unknown') }}"
         version: "{{ clusteroperator_status_map.ingress.version | default('unknown') }}"
-        detail: "ingressControllers={{ ingresscontrollers.items | default([]) | length }}"
+        detail: "ingressControllers={{ (ingresscontrollers | default({})).get('items', []) | length }}"
       - component: insights
         available: "{{ clusteroperator_status_map.insights.available | default('Unknown') }}"
         progressing: "{{ clusteroperator_status_map.insights.progressing | default('Unknown') }}"
@@ -205,13 +205,13 @@
     pod_phase_counts: "{{ pod_phase_counts | default({}) | combine({phase: ((pod_phase_counts[phase] | default(0)) + 1)}, recursive=True) }}"
     node_pod_counts: "{{ node_pod_counts | combine({node_name: ((node_pod_counts[node_name] | default(0)) + 1)}, recursive=True) }}"
     namespace_pod_counts: "{{ namespace_pod_counts | combine({namespace_name: ((namespace_pod_counts[namespace_name] | default(0)) + 1)}, recursive=True) }}"
-  loop: "{{ pods.items | default([]) }}"
+  loop: "{{ (pods | default({})).get('items', []) }}"
   vars:
     phase: "{{ item.status.phase | default('Unknown') }}"
     node_name: "{{ item.spec.nodeName | default('unscheduled') }}"
     namespace_name: "{{ item.metadata.namespace | default('') }}"
     restart_count: "{{ item.status.containerStatuses | default([]) | map(attribute='restartCount') | list | sum }}"
-    restart_entry: "{{ [{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': phase, 'restarts': restart_count}] if restart_count | int > 0 else [] }}"
+    restart_entry: "{{ [{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': phase, 'restarts': (restart_count | int)}] if restart_count | int > 0 else [] }}"
   changed_when: false
 
 - name: Build node health facts
@@ -220,10 +220,10 @@
     pressure_nodes: "{{ pressure_nodes + ([{'name': item.metadata.name, 'pressures': pressure_types}] if pressure_types | length > 0 else []) }}"
     primary_node_role_counts: "{{ primary_node_role_counts | combine({primary_node_role: ((primary_node_role_counts[primary_node_role] | default(0)) + 1)}, recursive=True) }}"
     kubelet_version_counts: "{{ kubelet_version_counts | combine({kubelet_version: ((kubelet_version_counts[kubelet_version] | default(0)) + 1)}, recursive=True) }}"
-    openshift_control_plane_node_count: "{{ openshift_control_plane_node_count + (1 if primary_node_role in ['master', 'control-plane'] else 0) }}"
-    openshift_worker_node_count: "{{ openshift_worker_node_count + (1 if primary_node_role == 'worker' else 0) }}"
-    openshift_infra_node_count: "{{ openshift_infra_node_count + (1 if primary_node_role == 'infra' else 0) }}"
-  loop: "{{ nodes.items | default([]) }}"
+    openshift_control_plane_node_count: "{{ (openshift_control_plane_node_count | int) + (1 if primary_node_role in ['master', 'control-plane'] else 0) }}"
+    openshift_worker_node_count: "{{ (openshift_worker_node_count | int) + (1 if primary_node_role == 'worker' else 0) }}"
+    openshift_infra_node_count: "{{ (openshift_infra_node_count | int) + (1 if primary_node_role == 'infra' else 0) }}"
+  loop: "{{ (nodes | default({})).get('items', []) }}"
   vars:
     ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
     pressure_types: "{{ item.status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | list }}"
@@ -257,7 +257,7 @@
         if (
           (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
           or (
-            (nodes.items | default([]) | length) == 1
+            ((nodes | default({})).get('items', []) | length) == 1
             and (openshift_control_plane_node_count | int) == 1
           )
         )
@@ -266,7 +266,7 @@
           if (
             (cluster_profile.platform | default('unknown') | lower) == 'aws'
             and (openshift_control_plane_node_count | int) == 0
-            and (nodes.items | default([]) | length) > 0
+            and ((nodes | default({})).get('items', []) | length) > 0
           )
           else (
             'aro'
@@ -286,7 +286,7 @@
       {{
         (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
         or (
-          (nodes.items | default([]) | length) == 1
+          ((nodes | default({})).get('items', []) | length) == 1
           and (openshift_control_plane_node_count | int) == 1
         )
       }}
@@ -294,7 +294,7 @@
       {{
         (cluster_profile.platform | default('unknown') | lower) == 'aws'
         and (openshift_control_plane_node_count | int) == 0
-        and (nodes.items | default([]) | length) > 0
+        and ((nodes | default({})).get('items', []) | length) > 0
       }}
 
 - name: Extend cluster profile with deployment type
@@ -310,7 +310,7 @@
   ansible.builtin.set_fact:
     degraded_mcps: "{{ degraded_mcps + ([item.metadata.name] if degraded_status == 'True' else []) }}"
     updating_mcps: "{{ updating_mcps + ([item.metadata.name] if updating_status == 'True' else []) }}"
-  loop: "{{ machineconfigpools.items | default([]) }}"
+  loop: "{{ (machineconfigpools | default({})).get('items', []) }}"
   vars:
     degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
     updating_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) }}"
@@ -320,7 +320,7 @@
   ansible.builtin.set_fact:
     namespace_issue_summary: "{{ namespace_issue_summary | default([]) + ([{'name': item.metadata.name, 'phase': phase}] if phase != 'Active' else []) }}"
     user_namespace_names: "{{ user_namespace_names | default([]) + ([item.metadata.name] if not (item.metadata.name is match(user_namespaces_exclude_regex)) else []) }}"
-  loop: "{{ namespaces.items | default([]) }}"
+  loop: "{{ (namespaces | default({})).get('items', []) }}"
   vars:
     phase: "{{ item.status.phase | default('Unknown') }}"
   changed_when: false
@@ -328,7 +328,7 @@
 - name: Build node capacity summary
   ansible.builtin.set_fact:
     node_capacity_summary: "{{ node_capacity_summary | default([]) + [node_capacity_entry] }}"
-  loop: "{{ nodes.items | default([]) }}"
+  loop: "{{ (nodes | default({})).get('items', []) }}"
   vars:
     cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
     pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
@@ -359,9 +359,9 @@
       pods_allocatable: "{{ pods_allocatable_raw | int }}"
       scheduled_pods: "{{ scheduled_pods }}"
       pod_density_pct: "{{ (((scheduled_pods | float) / ((pods_allocatable_raw | int) if (pods_allocatable_raw | int) > 0 else 1)) * 100) | round(1) }}"
-      cpu_allocatable_millicores: "{{ cpu_allocatable_millicores }}"
-      requested_cpu_millicores: "{{ node_cpu_request_millicores[item.metadata.name] | default(0) | int }}"
-      requested_cpu_pct: "{{ (((node_cpu_request_millicores[item.metadata.name] | default(0) | float) / (cpu_allocatable_millicores if cpu_allocatable_millicores > 0 else 1)) * 100) | round(1) }}"
+      cpu_allocatable_millicores: "{{ cpu_allocatable_millicores | int }}"
+      requested_cpu_millicores: "{{ (node_cpu_request_millicores | default({}))[item.metadata.name] | default(0) | int }}"
+      requested_cpu_pct: "{{ ((((node_cpu_request_millicores | default({}))[item.metadata.name] | default(0) | float) / ((cpu_allocatable_millicores | int) if (cpu_allocatable_millicores | int) > 0 else 1)) * 100) | round(1) }}"
   changed_when: false
 
 - name: Sort node density summaries

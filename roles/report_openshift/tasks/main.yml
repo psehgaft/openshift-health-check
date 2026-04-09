@@ -3,8 +3,11 @@
   ansible.builtin.set_fact:
     report_cluster_type: "{{ cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift'))) }}"
     report_cluster_name_source: "{{ cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim) }}"
-    report_cluster_name: "{{ (report_cluster_name_source | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
-    report_file_prefix: "{{ report_basename }}-{{ report_cluster_type }}-{{ report_cluster_name }}-{{ report_timestamp }}"
+    report_cluster_name: "{{ ((cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim)) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
+    report_file_prefix: "{{ report_basename }}-{{ (cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift')))) }}-{{ ((cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim)) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
+
+- name: Define report output files
+  ansible.builtin.set_fact:
     report_path: "{{ report_output_dir }}/{{ report_file_prefix }}.md"
     report_json_path: "{{ report_output_dir }}/{{ report_file_prefix }}.json"
     report_html_path: "{{ report_output_dir }}/{{ report_file_prefix }}.html"
@@ -235,12 +238,12 @@
               'priority': 'summary',
               'summary': 'Treat this run as critical and start with platform stability.',
               'detail': 'The score and findings show serious risk. Work top-down: collection completeness, operators, nodes, traffic, certificates, then workloads.'
-            }] if (health_summary.status == 'CRITICAL' and (collection_summary.failed_commands | default(0) | int) == 0 and (degraded_operators | default([]) | length) == 0 and (unavailable_operators | default([]) | length) == 0 and (not_ready_nodes | default([]) | length) == 0 and (pressure_nodes | default([]) | length) == 0 and (route_issues | default([]) | length) == 0 and (ingress_issues | default([]) | length) == 0 and (route_host_conflicts | default([]) | length) == 0 and (ingress_host_conflicts | default([]) | length) == 0 and (expiring_certificates_critical | default([]) | length) == 0 and (conditional_updates | default([]) | length) == 0 else [])
+            }] if (health_summary.status == 'CRITICAL' and (collection_summary.failed_commands | default(0) | int) == 0 and (degraded_operators | default([]) | length) == 0 and (unavailable_operators | default([]) | length) == 0 and (not_ready_nodes | default([]) | length) == 0 and (pressure_nodes | default([]) | length) == 0 and (route_issues | default([]) | length) == 0 and (ingress_issues | default([]) | length) == 0 and (route_host_conflicts | default([]) | length) == 0 and (ingress_host_conflicts | default([]) | length) == 0 and (expiring_certificates_critical | default([]) | length) == 0 and (conditional_updates | default([]) | length) == 0) else [])
           + ([{
               'priority': 'summary',
               'summary': 'Plan near-term remediation work from the warning findings.',
               'detail': 'The cluster is usable, but warning findings should be scheduled and tracked to closure.'
-            }] if (health_summary.status == 'WARNING' and (collection_summary.failed_commands | default(0) | int) == 0 and (workload_health_issues | default([]) | length) == 0 and (workload_probe_findings | default([]) | length) == 0 and (high_restart_pods | default([]) | length) == 0 and (pv_issues | default([]) | length) == 0 and (pvc_issues | default([]) | length) == 0 and (quota_pressure_findings | default([]) | length) == 0 and (overprovisioned_pods | default([]) | length) == 0 and (empty_user_namespaces | default([]) | length) == 0 and (likely_unused_serviceaccounts | default([]) | length) == 0 and (likely_unused_configmaps | default([]) | length) == 0 and (likely_unused_secrets | default([]) | length) == 0 and (likely_unused_crds | default([]) | length) == 0 and (security_findings | default([]) | length) == 0 and (workload_practice_findings | default([]) | length) == 0 and (observability_findings | default([]) | length) == 0 else [])
+            }] if (health_summary.status == 'WARNING' and (collection_summary.failed_commands | default(0) | int) == 0 and (workload_health_issues | default([]) | length) == 0 and (workload_probe_findings | default([]) | length) == 0 and (high_restart_pods | default([]) | length) == 0 and (pv_issues | default([]) | length) == 0 and (pvc_issues | default([]) | length) == 0 and (quota_pressure_findings | default([]) | length) == 0 and (overprovisioned_pods | default([]) | length) == 0 and (empty_user_namespaces | default([]) | length) == 0 and (likely_unused_serviceaccounts | default([]) | length) == 0 and (likely_unused_configmaps | default([]) | length) == 0 and (likely_unused_secrets | default([]) | length) == 0 and (likely_unused_crds | default([]) | length) == 0 and (security_findings | default([]) | length) == 0 and (workload_practice_findings | default([]) | length) == 0 and (observability_findings | default([]) | length) == 0) else [])
         )
       }}
 

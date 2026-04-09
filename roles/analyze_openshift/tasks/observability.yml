@@ -2,7 +2,7 @@
 - name: Build warning event summaries
   ansible.builtin.set_fact:
     warning_event_reason_counts: "{{ warning_event_reason_counts | default({}) | combine({event_reason: ((warning_event_reason_counts[event_reason] | default(0)) + 1)}, recursive=True) }}"
-  loop: "{{ warning_events.items | default([]) }}"
+  loop: "{{ (warning_events | default({})).get('items', []) }}"
   vars:
     event_reason: "{{ item.reason | default('Unknown') }}"
   changed_when: false
@@ -30,7 +30,7 @@
       monitoring_operator_available: "{{ clusteroperator_status_map.monitoring.available | default('Unknown') }}"
       monitoring_operator_degraded: "{{ clusteroperator_status_map.monitoring.degraded | default('Unknown') }}"
       thanos_querier_route_found: false
-      cluster_log_forwarder_count: "{{ clusterlogforwarders.items | default([]) | length }}"
+      cluster_log_forwarder_count: "{{ (clusterlogforwarders | default({})).get('items', []) | length }}"
       log_forwarding_outputs: []
       external_log_forwarding_outputs: []
       cluster_metrics_remote_write_count: "{{ (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([])) | length) }}"
@@ -48,7 +48,7 @@
     import json
 
     data = json.loads(r'''{{ {
-      "items": clusterlogforwarders.items | default([])
+      "items": (clusterlogforwarders | default({})).get('items', [])
     } | to_json }}''')
 
     findings = []
@@ -203,14 +203,20 @@
       external_cluster_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.cluster_external_count | default(0) }}"
       external_user_workload_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.user_external_count | default(0) }}"
 
+- name: Normalize warning event timestamps
+  ansible.builtin.set_fact:
+    warning_event_items_unsorted: "{{ warning_event_items_unsorted | default([]) + [item | combine({'_sort_timestamp': ((item.lastTimestamp | default(item.eventTime | default(item.metadata.creationTimestamp | default('')))) | string)})] }}"
+  loop: "{{ (warning_events | default({})).get('items', []) }}"
+  changed_when: false
+
 - name: Sort warning events
   ansible.builtin.set_fact:
-    warning_event_items: "{{ (warning_events.items | default([])) | sort(attribute='lastTimestamp', reverse=true) | list }}"
-    recent_warning_events: "{{ ((warning_events.items | default([])) | sort(attribute='lastTimestamp', reverse=true) | list)[:warning_event_limit] }}"
+    warning_event_items: "{{ (warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list }}"
+    recent_warning_events: "{{ ((warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list)[:warning_event_limit] }}"
 
 - name: Mark Prometheus capability
   ansible.builtin.set_fact:
-    prom_available: "{{ thanos_route_cmd.rc == 0 and oc_token_cmd.rc == 0 and (thanos_route_cmd.stdout | trim | length > 0) }}"
+    prom_available: "{{ (thanos_route_cmd.rc == 0 and oc_token_cmd.rc == 0 and (thanos_route_cmd.stdout | trim | length > 0)) | bool }}"
     prom_base_url: "https://{{ thanos_route_cmd.stdout | trim }}"
 
 - name: Query Prometheus signals
@@ -226,7 +232,7 @@
     return_content: true
   register: prom_query_results
   failed_when: false
-  when: prom_available
+  when: prom_available | bool
   loop:
     - { name: "firing_alerts", query: "{{ prom_queries.firing_alerts }}" }
     - { name: "etcd_wal_fsync", query: "{{ prom_queries.etcd_wal_fsync_p99_ms }}" }
@@ -265,9 +271,9 @@
 
 - name: Build Prometheus alert summaries
   ansible.builtin.set_fact:
-    firing_alerts_by_severity: "{{ firing_alerts_by_severity | default({}) | combine({severity: ((firing_alerts_by_severity[severity] | default(0)) + 1)}, recursive=True) }}"
-    firing_alert_name_counts: "{{ firing_alert_name_counts | default({}) | combine({alert_name: ((firing_alert_name_counts[alert_name] | default(0)) + 1)}, recursive=True) }}"
-    firing_alert_namespace_counts: "{{ firing_alert_namespace_counts | default({}) | combine({alert_namespace: ((firing_alert_namespace_counts[alert_namespace] | default(0)) + 1)}, recursive=True) }}"
+    firing_alerts_by_severity: "{{ firing_alerts_by_severity | default({}) | combine({severity: ((((firing_alerts_by_severity | default({}))[severity] | default(0)) + 1))}, recursive=True) }}"
+    firing_alert_name_counts: "{{ firing_alert_name_counts | default({}) | combine({alert_name: ((((firing_alert_name_counts | default({}))[alert_name] | default(0)) + 1))}, recursive=True) }}"
+    firing_alert_namespace_counts: "{{ firing_alert_namespace_counts | default({}) | combine({alert_namespace: ((((firing_alert_namespace_counts | default({}))[alert_namespace] | default(0)) + 1))}, recursive=True) }}"
   loop: "{{ firing_alerts | default([]) }}"
   vars:
     severity: "{{ item.metric.severity | default('unknown') }}"
@@ -277,8 +283,8 @@
 
 - name: Build utilization summaries
   ansible.builtin.set_fact:
-    low_cpu_nodes: "{{ low_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': cpu_value}] if cpu_value < 20 else []) }}"
-    high_cpu_nodes: "{{ high_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': cpu_value}] if cpu_value > 85 else []) }}"
+    low_cpu_nodes: "{{ low_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (cpu_value | float)}] if (cpu_value | float) < 20 else []) }}"
+    high_cpu_nodes: "{{ high_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (cpu_value | float)}] if (cpu_value | float) > 85 else []) }}"
   loop: "{{ node_cpu_utilization_results | default([]) }}"
   vars:
     cpu_value: "{{ (item.value[1] | float | round(1)) }}"
@@ -286,8 +292,8 @@
 
 - name: Build memory summaries
   ansible.builtin.set_fact:
-    low_memory_nodes: "{{ low_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': mem_value}] if mem_value < 30 else []) }}"
-    high_memory_nodes: "{{ high_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': mem_value}] if mem_value > 85 else []) }}"
+    low_memory_nodes: "{{ low_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (mem_value | float)}] if (mem_value | float) < 30 else []) }}"
+    high_memory_nodes: "{{ high_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (mem_value | float)}] if (mem_value | float) > 85 else []) }}"
   loop: "{{ node_memory_utilization_results | default([]) }}"
   vars:
     mem_value: "{{ (item.value[1] | float | round(1)) }}"
@@ -295,8 +301,8 @@
 
 - name: Build pod density summaries
   ansible.builtin.set_fact:
-    high_pod_density_nodes: "{{ high_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': density_value}] if density_value > pod_density_warn_pct else []) }}"
-    critical_pod_density_nodes: "{{ critical_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': density_value}] if density_value > pod_density_critical_pct else []) }}"
+    high_pod_density_nodes: "{{ high_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': (density_value | float)}] if (density_value | float) > (pod_density_warn_pct | float) else []) }}"
+    critical_pod_density_nodes: "{{ critical_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': (density_value | float)}] if (density_value | float) > (pod_density_critical_pct | float) else []) }}"
   loop: "{{ kubelet_pod_density_results | default([]) }}"
   vars:
     density_value: "{{ (item.value[1] | float | round(1)) }}"
@@ -304,11 +310,11 @@
 
 - name: Build certificate expiry severity buckets
   ansible.builtin.set_fact:
-    expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) + ([item | combine({'days_remaining': expiry_days})] if expiry_days <= certificate_expiry_warn_days else []) }}"
-    expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) + ([item | combine({'days_remaining': expiry_days})] if expiry_days <= certificate_expiry_critical_days else []) }}"
+    expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) + ([item | combine({'days_remaining': (expiry_days | float)})] if (expiry_days | float) <= (certificate_expiry_warn_days | float) else []) }}"
+    expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) + ([item | combine({'days_remaining': (expiry_days | float)})] if (expiry_days | float) <= (certificate_expiry_critical_days | float) else []) }}"
   loop: "{{ certificate_expiry_findings | default([]) }}"
   vars:
-    expiry_days: "{{ (((item.not_after | to_datetime('%b %d %H:%M:%S %Y %Z')) - (report_generated_at | to_datetime)).total_seconds() / 86400) | round(1) }}"
+    expiry_days: "{{ (((item.not_after | to_datetime('%b %d %H:%M:%S %Y %Z')) - (report_generated_at | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).total_seconds() / 86400) | round(1) }}"
   changed_when: false
 
 - name: Build overprovisioned pod findings from Prometheus usage
@@ -318,7 +324,7 @@
     import math
 
     data = json.loads(r'''{{ {
-      "pods": pods.items | default([]),
+      "pods": (pods | default({})).get('items', []),
       "cpu_usage": pod_cpu_usage_all_results | default([]),
       "memory_usage": pod_memory_usage_all_results | default([]),
       "exclude_regex": user_namespaces_exclude_regex
@@ -414,7 +420,7 @@
   register: overprovisioned_pods_cmd
   changed_when: false
   failed_when: false
-  when: prom_available
+  when: prom_available | bool
 
 - name: Normalize overprovisioned pod findings
   ansible.builtin.set_fact:
@@ -425,7 +431,7 @@
     python3 - <<'PY'
     import json
 
-    quotas = json.loads(r'''{{ resourcequotas.items | default([]) | to_json }}''')
+    quotas = json.loads(r'''{{ (resourcequotas | default({})).get('items', []) | to_json }}''')
 
     def parse_qty(val):
         if val is None:
