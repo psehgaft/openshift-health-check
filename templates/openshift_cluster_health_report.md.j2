@@ -7,6 +7,14 @@
 - User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
 - Overall status: `{{ health_summary.status }}`
 
+## Health Score Legend
+
+| Score Range | Rating | Meaning |
+| --- | --- | --- |
+{% for item in cluster_health_score_legend %}
+| `{{ item.min }}-{{ item.max }}` | `{{ item.label }}` | {{ item.meaning }} |
+{% endfor %}
+
 ## Cluster Current State
 
 {% if cluster_current_state_build_error | default('') | length > 0 %}
@@ -203,14 +211,6 @@ No MachineConfigPool data found.
 
 Confidence note: {{ report_confidence_detail | default('not available') }}.
 
-### Health Score Legend
-
-| Score Range | Rating | Meaning |
-| --- | --- | --- |
-{% for item in cluster_health_score_legend %}
-| `{{ item.min }}-{{ item.max }}` | `{{ item.label }}` | {{ item.meaning }} |
-{% endfor %}
-
 | Check | Severity | Score | Findings |
 | --- | --- | --- | --- |
 {% for check in audit_checks %}
@@ -238,10 +238,6 @@ This section is an inventory of collected counts, not a ranked findings list.
 | NotReady nodes | `{{ health_summary.nodes_not_ready }}` |
 | Nodes under pressure | `{{ health_summary.node_pressure_count }}` |
 | Degraded MCPs | `{{ health_summary.mcps_degraded }}` |
-| User workload rollout issues | `{{ health_summary.workload_health_issues }}` |
-| User workloads missing probes | `{{ health_summary.workload_probe_findings }}` |
-| Platform pod issues | `{{ health_summary.platform_pod_issues }}` |
-| User pods with high restarts | `{{ health_summary.high_restart_pods }}` |
 | Route issues | `{{ health_summary.route_issues }}` |
 | Ingress issues | `{{ health_summary.ingress_issues }}` |
 | Route host conflicts | `{{ health_summary.route_host_conflicts }}` |
@@ -256,6 +252,7 @@ This section is an inventory of collected counts, not a ranked findings list.
 | Certificates expiring <= 30d | `{{ health_summary.expiring_certificates_warning }}` |
 | Certificates expiring <= 7d | `{{ health_summary.expiring_certificates_critical }}` |
 | Observability findings | `{{ health_summary.observability_findings }}` |
+| Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% |
 | Collection command failures | `{{ health_summary.collection_failed_commands | default(0) }}` |
 | Core collection failures | `{{ health_summary.collection_core_failed_commands | default(0) }}` |
 | Collection timeouts | `{{ health_summary.collection_timed_out_commands | default(0) }}` |
@@ -321,10 +318,6 @@ All collection commands completed successfully.
   or (not_ready_nodes | default([]) | length > 0)
   or (pressure_nodes | default([]) | length > 0)
   or (degraded_mcps | default([]) | length > 0)
-  or (workload_health_issues | default([]) | length > 0)
-  or (workload_probe_findings | default([]) | length > 0)
-  or (overprovisioned_pods | default([]) | length > 0)
-  or (high_restart_pods | default([]) | length > 0)
   or (route_issues | default([]) | length > 0)
   or (ingress_issues | default([]) | length > 0)
   or (route_host_conflicts | default([]) | length > 0)
@@ -334,16 +327,6 @@ All collection commands completed successfully.
   or (ingresscontroller_issues | default([]) | length > 0)
   or (observability_findings | default([]) | length > 0)
   or (collection_failures | default([]) | length > 0)
-  or (security_findings | default([]) | length > 0)
-  or (workload_practice_findings | default([]) | length > 0)
-  or (image_registry_findings | default([]) | length > 0)
-  or (feature_findings | default([]) | length > 0)
-  or (empty_user_namespaces | default([]) | length > 0)
-  or (services_without_endpoints | default([]) | length > 0)
-  or (likely_unused_serviceaccounts | default([]) | length > 0)
-  or (likely_unused_configmaps | default([]) | length > 0)
-  or (likely_unused_secrets | default([]) | length > 0)
-  or (likely_unused_crds | default([]) | length > 0)
   or (deprecated_crd_findings | default([]) | length > 0)
   or (deprecated_api_lines | default([]) | length > 0)
   or (pv_issues | default([]) | length > 0)
@@ -404,43 +387,6 @@ No actionable findings were detected from the checks this run could perform.
 {% endif %}
 {% endif %}
 
-{% if top_workload_health_issues | default([]) | length > 0 %}
-### Workload Rollout Issues
-{% for item in top_workload_health_issues %}
-- `{{ item.kind }} {{ item.namespace }}/{{ item.name }}` desired=`{{ item.desired }}` ready=`{{ item.ready }}` updated=`{{ item.updated }}`
-{% endfor %}
-{% if (workload_health_issues | default([]) | length) > (top_workload_health_issues | length) %}
-- additional workload issues omitted: `{{ (workload_health_issues | length) - (top_workload_health_issues | length) }}`
-{% endif %}
-{% endif %}
-
-{% if top_workload_probe_findings | default([]) | length > 0 %}
-### Workloads Missing Probes
-{% for item in top_workload_probe_findings %}
-- `{{ item.kind }} {{ item.namespace }}/{{ item.name }}` `{{ item.issue }}` containers=`{{ item.detail }}` 
-{% endfor %}
-{% if (workload_probe_findings | default([]) | length) > (top_workload_probe_findings | length) %}
-- additional probe findings omitted: `{{ (workload_probe_findings | length) - (top_workload_probe_findings | length) }}`
-{% endif %}
-{% endif %}
-
-{% if top_overprovisioned_pods | default([]) | length > 0 %}
-### Overprovisioned User Pod Candidates
-{% for item in top_overprovisioned_pods %}
-- `{{ item.namespace }}/{{ item.pod }}` cpu_req=`{{ item.cpu_request_millicores }}m` cpu_use=`{{ item.cpu_usage_millicores }}m` mem_req=`{{ item.memory_request_mib }}Mi` mem_use=`{{ item.memory_usage_mib }}Mi`
-{% endfor %}
-{% endif %}
-
-{% if top_high_restart_pods | default([]) | length > 0 %}
-### User Pods With High Restarts
-{% for item in top_high_restart_pods %}
-- `{{ item.namespace }}/{{ item.name }}` phase=`{{ item.phase }}` restarts=`{{ item.restarts }}`
-{% endfor %}
-{% if (high_restart_pods | default([]) | length) > (top_high_restart_pods | length) %}
-- additional high restart pods omitted: `{{ (high_restart_pods | length) - (top_high_restart_pods | length) }}`
-{% endif %}
-{% endif %}
-
 {% if route_issues | default([]) | length > 0 %}
 ### Route Issues
 {% for item in top_route_issues %}
@@ -496,57 +442,6 @@ No actionable findings were detected from the checks this run could perform.
 {% if (observability_findings | default([]) | length) > (top_observability_findings | length) %}
 - additional observability findings omitted: `{{ (observability_findings | length) - (top_observability_findings | length) }}`
 {% endif %}
-{% endif %}
-
-{% if top_security_findings | default([]) | length > 0 %}
-### Security Findings
-{% for item in top_security_findings %}
-- `{{ item.namespace }}/{{ item.pod }}` `{{ item.issue }}`: `{{ item.detail }}`
-{% endfor %}
-{% if (security_findings | default([]) | length) > (top_security_findings | length) %}
-- additional security findings omitted: `{{ (security_findings | length) - (top_security_findings | length) }}`
-{% endif %}
-{% endif %}
-
-{% if top_workload_practice_findings | default([]) | length > 0 %}
-### Workload Practice Findings
-{% for item in top_workload_practice_findings %}
-- `{{ item.namespace }}/{{ item.pod }}` `{{ item.issue }}`: `{{ item.detail }}`
-{% endfor %}
-{% if (workload_practice_findings | default([]) | length) > (top_workload_practice_findings | length) %}
-- additional practice findings omitted: `{{ (workload_practice_findings | length) - (top_workload_practice_findings | length) }}`
-{% endif %}
-
-{% if top_image_registry_findings | default([]) | length > 0 or top_feature_findings | default([]) | length > 0 %}
-### Image Registry And Feature Findings
-{% for item in top_image_registry_findings | default([]) %}
-- image registry: `{{ item.issue }}` `{{ item.detail }}`
-{% endfor %}
-{% for item in top_feature_findings | default([]) %}
-- feature: `{{ item.issue }}` `{{ item.detail }}`
-{% endfor %}
-{% endif %}
-
-{% if empty_user_namespaces | default([]) | length > 0 or top_services_without_endpoints | default([]) | length > 0 or top_likely_unused_configmaps | default([]) | length > 0 or top_likely_unused_secrets | default([]) | length > 0 %}
-### Unused Resource Heuristics
-{% if empty_user_namespaces | default([]) | length > 0 %}
-- empty user namespaces: `{{ empty_user_namespaces | join(', ') }}`
-{% endif %}
-{% for item in top_services_without_endpoints | default([]) %}
-- service without endpoints: `{{ item.namespace }}/{{ item.name }}` type=`{{ item.type }}` endpoints=`{{ item.endpoint_count }}`
-{% endfor %}
-{% for item in top_likely_unused_serviceaccounts | default([]) %}
-- likely unused service account: `{{ item.namespace }}/{{ item.name }}`
-{% endfor %}
-{% for item in top_likely_unused_configmaps | default([]) %}
-- likely unused configmap: `{{ item.namespace }}/{{ item.name }}`
-{% endfor %}
-{% for item in top_likely_unused_secrets | default([]) %}
-- likely unused secret: `{{ item.namespace }}/{{ item.name }}` type=`{{ item.type }}`
-{% endfor %}
-{% for item in top_likely_unused_crds | default([]) %}
-- likely unused CRD: `{{ item.name }}` group=`{{ item.group }}` instances=`{{ item.count }}`
-{% endfor %}
 {% endif %}
 {% endif %}
 
@@ -667,178 +562,6 @@ Cluster update history was not returned.
 {% endif %}
 {% if high_memory_nodes | default([]) | length > 0 %}
 - high memory utilization nodes (`>85%`): `{{ high_memory_nodes | length }}`
-{% endif %}
-{% endif %}
-
-## Workload Health
-
-{% if workload_health_issues | default([]) | length == 0 and workload_probe_findings | default([]) | length == 0 %}
-No deployment, statefulset, or daemonset rollout or probe coverage issues were detected in the collected user workload objects.
-{% else %}
-Workload-oriented checks in this section exclude namespaces matched by `user_namespaces_exclude_regex`, including `openshift-*`.
-
-{% if workload_health_issues | default([]) | length > 0 %}
-| Kind | Namespace | Name | Desired | Ready | Updated |
-| --- | --- | --- | --- | --- | --- |
-{% for item in top_workload_health_issues %}
-| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.desired }}` | `{{ item.ready }}` | `{{ item.updated }}` |
-{% endfor %}
-{% endif %}
-
-{% if workload_probe_issue_type_counts | default({}) | length > 0 %}
-### Probe Coverage Summary
-
-| Missing Probe Type | Count |
-| --- | --- |
-{% for item in (workload_probe_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
-| `{{ item.key }}` | `{{ item.value }}` |
-{% endfor %}
-{% endif %}
-
-{% if top_workload_probe_findings | default([]) | length > 0 %}
-### Probe Coverage Samples
-
-| Kind | Namespace | Name | Missing Probe Type | Containers |
-| --- | --- | --- | --- | --- |
-{% for item in top_workload_probe_findings %}
-| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.issue }}` | `{{ item.detail }}` |
-{% endfor %}
-{% endif %}
-{% endif %}
-
-{% if top_high_restart_pods | default([]) | length > 0 %}
-### High Restart Pod Summary
-
-Pods in this section are limited to non-platform namespaces and have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
-
-| Namespace | Pod | Phase | Restarts |
-| --- | --- | --- | --- |
-{% for pod in top_high_restart_pods %}
-| `{{ pod.namespace }}` | `{{ pod.name }}` | `{{ pod.phase }}` | `{{ pod.restarts }}` |
-{% endfor %}
-{% endif %}
-
-{% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
-### Top User Pod CPU Usage
-
-These Prometheus samples exclude namespaces matching `openshift-*`.
-
-| Namespace | Pod | CPU cores |
-| --- | --- | --- |
-{% for item in top_pod_cpu_usage_summary[:15] %}
-| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ (item.value[1] | float) | round(3) }}` |
-{% endfor %}
-{% endif %}
-
-{% if top_pod_memory_usage_summary | default([]) | length > 0 %}
-### Top User Pod Memory Usage
-
-These Prometheus samples exclude namespaces matching `openshift-*`.
-
-| Namespace | Pod | Memory MiB |
-| --- | --- | --- |
-{% for item in top_pod_memory_usage_summary[:15] %}
-| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}` |
-{% endfor %}
-{% endif %}
-
-## Security And Best Practice Audit
-
-### Namespace Hygiene
-
-{% if namespaces_without_networkpolicy | default([]) | length > 0 %}
-- namespaces without `NetworkPolicy`: `{{ namespaces_without_networkpolicy | join(', ') }}`
-{% elif user_namespace_names | default([]) | length > 0 %}
-- all evaluated user namespaces had at least one `NetworkPolicy` (`{{ user_namespace_names | length }}` namespaces checked)
-{% else %}
-- no user namespaces were in scope for the `NetworkPolicy` hygiene check
-{% endif %}
-
-{% if namespaces_missing_ingress_policies | default([]) | length > 0 %}
-- namespaces with some `NetworkPolicy` objects but no ingress policy coverage: `{{ namespaces_missing_ingress_policies | join(', ') }}`
-{% endif %}
-
-{% if namespaces_missing_egress_policies | default([]) | length > 0 %}
-- namespaces with some `NetworkPolicy` objects but no egress policy coverage: `{{ namespaces_missing_egress_policies | join(', ') }}`
-{% endif %}
-
-{% if namespaces_without_resourcequota | default([]) | length > 0 %}
-- namespaces without `ResourceQuota`: `{{ namespaces_without_resourcequota | join(', ') }}`
-{% elif user_namespace_names | default([]) | length > 0 %}
-- all evaluated user namespaces had at least one `ResourceQuota` (`{{ user_namespace_names | length }}` namespaces checked)
-{% else %}
-- no user namespaces were in scope for the `ResourceQuota` hygiene check
-{% endif %}
-
-{% if namespaces_without_limitrange | default([]) | length > 0 %}
-- namespaces without `LimitRange`: `{{ namespaces_without_limitrange | join(', ') }}`
-{% elif user_namespace_names | default([]) | length > 0 %}
-- all evaluated user namespaces had at least one `LimitRange` (`{{ user_namespace_names | length }}` namespaces checked)
-{% else %}
-- no user namespaces were in scope for the `LimitRange` hygiene check
-{% endif %}
-
-{% if (security_issue_type_counts | default({}) | length) > 0 %}
-### Security Finding Summary
-
-| Finding | Count |
-| --- | --- |
-{% for item in (security_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
-| `{{ item.key }}` | `{{ item.value }}` |
-{% endfor %}
-{% endif %}
-
-{% if (workload_practice_issue_type_counts | default({}) | length) > 0 %}
-### Workload Practice Summary
-
-| Finding | Count |
-| --- | --- |
-{% for item in (workload_practice_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
-| `{{ item.key }}` | `{{ item.value }}` |
-{% endfor %}
-{% endif %}
-
-## Network And Route Health
-
-{% if route_issues | default([]) | length == 0 and ingress_issues | default([]) | length == 0 and route_host_conflicts | default([]) | length == 0 and ingress_host_conflicts | default([]) | length == 0 %}
-{% if ((routes | default({})).get('items', []) | length) == 0 and ((ingresses | default({})).get('items', []) | length) == 0 %}
-No `Route` or `Ingress` objects were collected, so this section had no objects to evaluate.
-{% else %}
-No route or ingress issues were detected in the collected `Route` and `Ingress` objects.
-{% endif %}
-{% else %}
-{% if top_route_issues | default([]) | length > 0 %}
-### Route Issue Samples
-
-| Namespace | Route | Host | Issue | Detail |
-| --- | --- | --- | --- | --- |
-{% for item in top_route_issues %}
-| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.host }}` | `{{ item.issue }}` | `{{ item.detail }}` |
-{% endfor %}
-{% endif %}
-
-{% if top_ingress_issues | default([]) | length > 0 %}
-### Ingress Issue Samples
-
-| Namespace | Ingress | Hosts | Issue | Detail |
-| --- | --- | --- | --- | --- |
-{% for item in top_ingress_issues %}
-| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.host or 'none' }}` | `{{ item.issue }}` | `{{ item.detail }}` |
-{% endfor %}
-{% endif %}
-
-{% if top_route_host_conflicts | default([]) | length > 0 %}
-### Route Host Conflicts
-{% for item in top_route_host_conflicts %}
-- host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
-{% endfor %}
-{% endif %}
-
-{% if top_ingress_host_conflicts | default([]) | length > 0 %}
-### Ingress Host Conflicts
-{% for item in top_ingress_host_conflicts %}
-- host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
-{% endfor %}
 {% endif %}
 {% endif %}
 
@@ -1113,6 +836,178 @@ Prometheus-backed control-plane metrics were not attempted because the `thanos-q
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
+
+## Network And Route Health
+
+{% if route_issues | default([]) | length == 0 and ingress_issues | default([]) | length == 0 and route_host_conflicts | default([]) | length == 0 and ingress_host_conflicts | default([]) | length == 0 %}
+{% if ((routes | default({})).get('items', []) | length) == 0 and ((ingresses | default({})).get('items', []) | length) == 0 %}
+No `Route` or `Ingress` objects were collected, so this section had no objects to evaluate.
+{% else %}
+No route or ingress issues were detected in the collected `Route` and `Ingress` objects.
+{% endif %}
+{% else %}
+{% if top_route_issues | default([]) | length > 0 %}
+### Route Issue Samples
+
+| Namespace | Route | Host | Issue | Detail |
+| --- | --- | --- | --- | --- |
+{% for item in top_route_issues %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.host }}` | `{{ item.issue }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_ingress_issues | default([]) | length > 0 %}
+### Ingress Issue Samples
+
+| Namespace | Ingress | Hosts | Issue | Detail |
+| --- | --- | --- | --- | --- |
+{% for item in top_ingress_issues %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.host or 'none' }}` | `{{ item.issue }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_route_host_conflicts | default([]) | length > 0 %}
+### Route Host Conflicts
+{% for item in top_route_host_conflicts %}
+- host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
+{% endfor %}
+{% endif %}
+
+{% if top_ingress_host_conflicts | default([]) | length > 0 %}
+### Ingress Host Conflicts
+{% for item in top_ingress_host_conflicts %}
+- host=`{{ item.host }}` owners=`{{ item.owners | join(', ') }}`
+{% endfor %}
+{% endif %}
+{% endif %}
+
+## Workload Health
+
+{% if workload_health_issues | default([]) | length == 0 and workload_probe_findings | default([]) | length == 0 %}
+No deployment, statefulset, or daemonset rollout or probe coverage issues were detected in the collected user workload objects.
+{% else %}
+Workload-oriented checks in this section exclude namespaces matched by `user_namespaces_exclude_regex`, including `openshift-*`.
+
+{% if workload_health_issues | default([]) | length > 0 %}
+| Kind | Namespace | Name | Desired | Ready | Updated |
+| --- | --- | --- | --- | --- | --- |
+{% for item in top_workload_health_issues %}
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.desired }}` | `{{ item.ready }}` | `{{ item.updated }}` |
+{% endfor %}
+{% endif %}
+
+{% if workload_probe_issue_type_counts | default({}) | length > 0 %}
+### Probe Coverage Summary
+
+| Missing Probe Type | Count |
+| --- | --- |
+{% for item in (workload_probe_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_workload_probe_findings | default([]) | length > 0 %}
+### Probe Coverage Samples
+
+| Kind | Namespace | Name | Missing Probe Type | Containers |
+| --- | --- | --- | --- | --- |
+{% for item in top_workload_probe_findings %}
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.issue }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+{% endif %}
+
+{% if top_high_restart_pods | default([]) | length > 0 %}
+### High Restart Pod Summary
+
+Pods in this section are limited to non-platform namespaces and have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
+
+| Namespace | Pod | Phase | Restarts |
+| --- | --- | --- | --- |
+{% for pod in top_high_restart_pods %}
+| `{{ pod.namespace }}` | `{{ pod.name }}` | `{{ pod.phase }}` | `{{ pod.restarts }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
+### Top User Pod CPU Usage
+
+These Prometheus samples exclude namespaces matching `openshift-*`.
+
+| Namespace | Pod | CPU cores |
+| --- | --- | --- |
+{% for item in top_pod_cpu_usage_summary[:15] %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ (item.value[1] | float) | round(3) }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_pod_memory_usage_summary | default([]) | length > 0 %}
+### Top User Pod Memory Usage
+
+These Prometheus samples exclude namespaces matching `openshift-*`.
+
+| Namespace | Pod | Memory MiB |
+| --- | --- | --- |
+{% for item in top_pod_memory_usage_summary[:15] %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}` |
+{% endfor %}
+{% endif %}
+
+## Security And Best Practice Audit
+
+### Namespace Hygiene
+
+{% if namespaces_without_networkpolicy | default([]) | length > 0 %}
+- namespaces without `NetworkPolicy`: `{{ namespaces_without_networkpolicy | join(', ') }}`
+{% elif user_namespace_names | default([]) | length > 0 %}
+- all evaluated user namespaces had at least one `NetworkPolicy` (`{{ user_namespace_names | length }}` namespaces checked)
+{% else %}
+- no user namespaces were in scope for the `NetworkPolicy` hygiene check
+{% endif %}
+
+{% if namespaces_missing_ingress_policies | default([]) | length > 0 %}
+- namespaces with some `NetworkPolicy` objects but no ingress policy coverage: `{{ namespaces_missing_ingress_policies | join(', ') }}`
+{% endif %}
+
+{% if namespaces_missing_egress_policies | default([]) | length > 0 %}
+- namespaces with some `NetworkPolicy` objects but no egress policy coverage: `{{ namespaces_missing_egress_policies | join(', ') }}`
+{% endif %}
+
+{% if namespaces_without_resourcequota | default([]) | length > 0 %}
+- namespaces without `ResourceQuota`: `{{ namespaces_without_resourcequota | join(', ') }}`
+{% elif user_namespace_names | default([]) | length > 0 %}
+- all evaluated user namespaces had at least one `ResourceQuota` (`{{ user_namespace_names | length }}` namespaces checked)
+{% else %}
+- no user namespaces were in scope for the `ResourceQuota` hygiene check
+{% endif %}
+
+{% if namespaces_without_limitrange | default([]) | length > 0 %}
+- namespaces without `LimitRange`: `{{ namespaces_without_limitrange | join(', ') }}`
+{% elif user_namespace_names | default([]) | length > 0 %}
+- all evaluated user namespaces had at least one `LimitRange` (`{{ user_namespace_names | length }}` namespaces checked)
+{% else %}
+- no user namespaces were in scope for the `LimitRange` hygiene check
+{% endif %}
+
+{% if (security_issue_type_counts | default({}) | length) > 0 %}
+### Security Finding Summary
+
+| Finding | Count |
+| --- | --- |
+{% for item in (security_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if (workload_practice_issue_type_counts | default({}) | length) > 0 %}
+### Workload Practice Summary
+
+| Finding | Count |
+| --- | --- |
+{% for item in (workload_practice_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
 {% endif %}
 
 ## Notes
