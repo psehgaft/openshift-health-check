@@ -104,10 +104,11 @@
 - name: Build Kubernetes current state
   ansible.builtin.shell: |
     python3 - <<'PY'
+    import base64
     import json
     from collections import Counter, defaultdict
 
-    data = json.loads(r'''{{ {
+    data = json.loads(base64.b64decode(r'''{{ ({
       "cluster_profile": cluster_profile | default({}),
       "nodes": (nodes | default({})).get('items', []),
       "pods": (pods | default({})).get('items', []),
@@ -118,7 +119,7 @@
       "namespaces": (namespaces | default({})).get('items', []),
       "storageclasses": (storageclasses | default({})).get('items', []),
       "node_pod_counts": node_pod_counts | default({})
-    } | to_json }}''')
+    } | to_json | b64encode }}''').decode("utf-8"))
 
     def parse_cpu(value):
         if value in (None, ""):
@@ -309,4 +310,44 @@
 
 - name: Normalize Kubernetes current state
   ansible.builtin.set_fact:
-    cluster_current_state: "{{ cluster_current_state_cmd.stdout | from_json if (cluster_current_state_cmd.rc == 0 and (cluster_current_state_cmd.stdout | default('') | length > 0)) else {} }}"
+    cluster_current_state_build_error: "{{ '' if (cluster_current_state_cmd.rc == 0 and (cluster_current_state_cmd.stdout | default('') | length > 0)) else (cluster_current_state_cmd.stderr | default(cluster_current_state_cmd.stdout | default('cluster current state builder returned no output')) | trim) }}"
+    cluster_current_state: "{{ cluster_current_state_cmd.stdout | from_json if (cluster_current_state_cmd.rc == 0 and (cluster_current_state_cmd.stdout | default('') | length > 0)) else cluster_current_state_fallback }}"
+  vars:
+    cluster_current_state_fallback:
+      kubernetes_version: "{{ (kubelet_version_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | map(attribute='key') | first) | default('unknown') }}"
+      cluster_visibility: unknown
+      api_visibility: unknown
+      ingress_visibility: unknown
+      installed_at: unknown
+      uptime_days: unknown
+      uptime_human: unknown
+      worker_pool_count: 0
+      node_counts:
+        total: "{{ (nodes | default({})).get('items', []) | length }}"
+        control_plane: "{{ (primary_node_role_counts | default({})).get('master', 0) | int + (primary_node_role_counts | default({})).get('control-plane', 0) | int }}"
+        worker: "{{ ((primary_node_role_counts | default({})).get('worker', 0) | int) }}"
+        infra: "{{ ((primary_node_role_counts | default({})).get('infra', 0) | int) }}"
+        other: "{{ [0, ((nodes | default({})).get('items', []) | length) - (((primary_node_role_counts | default({})).get('master', 0) | int) + ((primary_node_role_counts | default({})).get('control-plane', 0) | int) + ((primary_node_role_counts | default({})).get('worker', 0) | int) + ((primary_node_role_counts | default({})).get('infra', 0) | int))] | max }}"
+      object_counts:
+        namespaces: "{{ (namespaces | default({})).get('items', []) | length }}"
+        pods: "{{ (pods | default({})).get('items', []) | length }}"
+        running_pods: "{{ (pods | default({})).get('items', []) | selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+        deployments: "{{ (deployments | default({})).get('items', []) | length }}"
+        statefulsets: "{{ (statefulsets | default({})).get('items', []) | length }}"
+        daemonsets: "{{ (daemonsets | default({})).get('items', []) | length }}"
+        ingresses: "{{ (ingresses | default({})).get('items', []) | length }}"
+        storageclasses: "{{ (storageclasses | default({})).get('items', []) | length }}"
+      resources:
+        total_cpu_cores: unknown
+        total_memory_gib: unknown
+        total_ephemeral_storage_gib: unknown
+        average_cpu_cores_per_node: unknown
+        average_memory_gib_per_node: unknown
+        average_ephemeral_storage_gib_per_node: unknown
+        average_pods_per_node: "{{ (((pods | default({})).get('items', []) | length) / ([1, ((nodes | default({})).get('items', []) | length)] | max)) | round(1) }}"
+      node_architectures: []
+      provider_types: []
+      os_images: []
+      container_runtimes: []
+      node_roles: []
+      worker_pools: []

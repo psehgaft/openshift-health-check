@@ -13,6 +13,42 @@
     report_html_path: "{{ report_output_dir }}/{{ report_file_prefix }}.html"
     report_pdf_path: "{{ report_output_dir }}/{{ report_file_prefix }}.pdf"
 
+- name: Build common collection confidence facts
+  ansible.builtin.set_fact:
+    collection_success_rate_pct: "{{ ((((collection_summary.succeeded_commands | default(0) | float) / ((collection_summary.command_count | default(0) | float) if (collection_summary.command_count | default(0) | float) > 0 else 1.0)) * 100) | round(1)) }}"
+    report_confidence: >-
+      {{
+        'low'
+        if (
+          (collection_summary.core_failed_commands | default(0) | int) > 0
+          or (cluster_current_state_build_error | default('') | trim | length > 0)
+        )
+        else (
+          'medium'
+          if (
+            (collection_summary.failed_commands | default(0) | int) > 0
+            or (collection_summary.timed_out_commands | default(0) | int) > 0
+          )
+          else 'high'
+        )
+      }}
+    report_confidence_detail: >-
+      {{
+        'core collection commands failed or the detailed state summarizer fell back to direct fact counts'
+        if (
+          (collection_summary.core_failed_commands | default(0) | int) > 0
+          or (cluster_current_state_build_error | default('') | trim | length > 0)
+        )
+        else (
+          'some non-core collection commands failed or timed out, but the main health signals were collected'
+          if (
+            (collection_summary.failed_commands | default(0) | int) > 0
+            or (collection_summary.timed_out_commands | default(0) | int) > 0
+          )
+          else 'all planned collection commands completed and the synthesized state data was built successfully'
+        )
+      }}
+
 - name: Build common execution stats
   ansible.builtin.set_fact:
     execution_stats:
@@ -36,11 +72,14 @@
         pdf: false
       collection:
         command_count: "{{ collection_summary.command_count | default(0) }}"
+        success_rate_pct: "{{ collection_success_rate_pct }}"
         parallelism: "{{ collection_summary.parallelism | default(0) }}"
         timeout_seconds: "{{ collection_summary.timeout_seconds | default(0) }}"
         failed_commands: "{{ collection_summary.failed_commands | default(0) }}"
         timed_out_commands: "{{ collection_summary.timed_out_commands | default(0) }}"
         core_failed_commands: "{{ collection_summary.core_failed_commands | default(0) }}"
+      report_confidence: "{{ report_confidence }}"
+      report_confidence_detail: "{{ report_confidence_detail }}"
 
 - name: Build common audit rubric
   ansible.builtin.set_fact:
@@ -186,6 +225,9 @@
         provider_specific_findings: "{{ top_provider_specific_findings | default([]) }}"
       metrics:
         collection_summary: "{{ collection_summary | default({}) }}"
+        collection_success_rate_pct: "{{ collection_success_rate_pct }}"
+        report_confidence: "{{ report_confidence }}"
+        report_confidence_detail: "{{ report_confidence_detail }}"
         node_capacity_summary_by_density_desc: "{{ node_capacity_summary_by_density_desc | default([]) }}"
         provider_nodepool_summary: "{{ provider_nodepool_summary | default([]) }}"
         provider_component_summary: "{{ provider_component_summary | default([]) }}"

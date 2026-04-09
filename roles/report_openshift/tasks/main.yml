@@ -174,6 +174,42 @@
         label: Critical
         meaning: Serious cluster health problems or blocking risks are present.
 
+- name: Build report confidence facts
+  ansible.builtin.set_fact:
+    collection_success_rate_pct: "{{ ((((collection_summary.succeeded_commands | default(0) | float) / ((collection_summary.command_count | default(0) | float) if (collection_summary.command_count | default(0) | float) > 0 else 1.0)) * 100) | round(1)) }}"
+    report_confidence: >-
+      {{
+        'low'
+        if (
+          (collection_summary.core_failed_commands | default(0) | int) > 0
+          or (cluster_current_state_build_error | default('') | trim | length > 0)
+        )
+        else (
+          'medium'
+          if (
+            (collection_summary.failed_commands | default(0) | int) > 0
+            or (collection_summary.timed_out_commands | default(0) | int) > 0
+          )
+          else 'high'
+        )
+      }}
+    report_confidence_detail: >-
+      {{
+        'core collection commands failed or the detailed state summarizer fell back to direct fact counts'
+        if (
+          (collection_summary.core_failed_commands | default(0) | int) > 0
+          or (cluster_current_state_build_error | default('') | trim | length > 0)
+        )
+        else (
+          'some non-core collection commands failed or timed out, but the main health signals were collected'
+          if (
+            (collection_summary.failed_commands | default(0) | int) > 0
+            or (collection_summary.timed_out_commands | default(0) | int) > 0
+          )
+          else 'all planned collection commands completed and the synthesized state data was built successfully'
+        )
+      }}
+
 - name: Build suggested next steps
   ansible.builtin.set_fact:
     suggested_next_steps: >-
@@ -257,6 +293,7 @@
         api_server: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
         user: "{{ oc_user_cmd.stdout | default('unknown') | trim }}"
         cluster_type: "{{ report_cluster_type }}"
+        report_confidence: "{{ report_confidence }}"
         local_user: "{{ ansible_env.USER | default(ansible_user_id | default('unknown')) }}"
         local_hostname: "{{ ansible_hostname | default('unknown') }}"
       cluster_profile: "{{ cluster_profile }}"
@@ -310,12 +347,20 @@
         expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) }}"
       metrics:
         collection_summary: "{{ collection_summary | default({}) }}"
+        collection_success_rate_pct: "{{ collection_success_rate_pct }}"
+        report_confidence: "{{ report_confidence }}"
+        report_confidence_detail: "{{ report_confidence_detail }}"
         infrastructure_component_summary: "{{ infrastructure_component_summary | default([]) }}"
         ingresscontroller_summary: "{{ ingresscontroller_summary | default([]) }}"
         observability_forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
+        apiserver_readyz_status: "{{ apiserver_readyz_status | default('unavailable') }}"
+        apiserver_readyz_failed_checks: "{{ apiserver_readyz_failed_checks | default(0) }}"
         etcd_wal_fsync_p99_ms: "{{ etcd_wal_fsync_p99_ms | default('') }}"
+        etcd_backend_commit_p99_ms: "{{ etcd_backend_commit_p99_ms | default('') }}"
+        etcd_leader_changes_5m: "{{ etcd_leader_changes_5m | default('') }}"
         etcd_peer_rtt_p99_ms: "{{ etcd_peer_rtt_p99_ms | default('') }}"
         apiserver_request_p99_seconds: "{{ apiserver_request_p99_seconds | default('') }}"
+        apiserver_request_5xx_rate: "{{ apiserver_request_5xx_rate | default('') }}"
         top_alert_groups: "{{ top_alert_groups | default([]) }}"
         top_event_reasons: "{{ top_event_reasons | default([]) }}"
         top_pod_cpu_usage_summary: "{{ top_pod_cpu_usage_summary | default([]) }}"

@@ -24,6 +24,12 @@
   changed_when: false
   failed_when: false
 
+- name: Attempt API server readyz check
+  ansible.builtin.command: oc get --raw=/readyz?verbose
+  register: apiserver_readyz_cmd
+  changed_when: false
+  failed_when: false
+
 - name: Build observability forwarding summary
   ansible.builtin.set_fact:
     observability_forwarding_summary:
@@ -236,8 +242,11 @@
   loop:
     - { name: "firing_alerts", query: "{{ prom_queries.firing_alerts }}" }
     - { name: "etcd_wal_fsync", query: "{{ prom_queries.etcd_wal_fsync_p99_ms }}" }
+    - { name: "etcd_backend_commit", query: "{{ prom_queries.etcd_backend_commit_p99_ms }}" }
+    - { name: "etcd_leader_changes", query: "{{ prom_queries.etcd_leader_changes_5m }}" }
     - { name: "etcd_peer_rtt", query: "{{ prom_queries.etcd_peer_rtt_p99_ms }}" }
     - { name: "apiserver_latency", query: "{{ prom_queries.apiserver_request_p99_seconds }}" }
+    - { name: "apiserver_5xx_rate", query: "{{ prom_queries.apiserver_request_5xx_rate }}" }
     - { name: "node_cpu_utilization", query: "{{ prom_queries.node_cpu_utilization }}" }
     - { name: "node_memory_utilization", query: "{{ prom_queries.node_memory_utilization }}" }
     - { name: "node_disk_utilization", query: "{{ prom_queries.node_disk_utilization }}" }
@@ -258,8 +267,13 @@
   ansible.builtin.set_fact:
     firing_alerts: "{{ prom_result_map.firing_alerts | default([]) }}"
     etcd_wal_fsync_p99_ms: "{{ (prom_result_map.etcd_wal_fsync[0].value[1]) if (prom_result_map.etcd_wal_fsync | default([]) | length > 0) else '' }}"
+    etcd_backend_commit_p99_ms: "{{ (prom_result_map.etcd_backend_commit[0].value[1]) if (prom_result_map.etcd_backend_commit | default([]) | length > 0) else '' }}"
+    etcd_leader_changes_5m: "{{ (prom_result_map.etcd_leader_changes[0].value[1]) if (prom_result_map.etcd_leader_changes | default([]) | length > 0) else '' }}"
     etcd_peer_rtt_p99_ms: "{{ (prom_result_map.etcd_peer_rtt[0].value[1]) if (prom_result_map.etcd_peer_rtt | default([]) | length > 0) else '' }}"
     apiserver_request_p99_seconds: "{{ (prom_result_map.apiserver_latency[0].value[1]) if (prom_result_map.apiserver_latency | default([]) | length > 0) else '' }}"
+    apiserver_request_5xx_rate: "{{ (prom_result_map.apiserver_5xx_rate[0].value[1]) if (prom_result_map.apiserver_5xx_rate | default([]) | length > 0) else '' }}"
+    apiserver_readyz_status: "{{ 'ok' if (apiserver_readyz_cmd.rc | default(1)) == 0 else ('failed' if (apiserver_readyz_cmd.stdout | default('') | trim | length > 0 or apiserver_readyz_cmd.stderr | default('') | trim | length > 0) else 'unavailable') }}"
+    apiserver_readyz_failed_checks: "{{ ((apiserver_readyz_cmd.stdout | default('')) ~ '\n' ~ (apiserver_readyz_cmd.stderr | default(''))) | regex_findall('(?im)\\bfailed\\b') | length }}"
     node_cpu_utilization_results: "{{ prom_result_map.node_cpu_utilization | default([]) }}"
     node_memory_utilization_results: "{{ prom_result_map.node_memory_utilization | default([]) }}"
     node_disk_utilization_results: "{{ prom_result_map.node_disk_utilization | default([]) }}"

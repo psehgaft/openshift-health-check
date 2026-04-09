@@ -216,7 +216,7 @@
 
 - name: Build node health facts
   ansible.builtin.set_fact:
-    not_ready_nodes: "{{ not_ready_nodes + ([item.metadata.name] if ready_status != 'True' else []) }}"
+    not_ready_nodes: "{{ not_ready_nodes + ([item.metadata.name] if not node_is_ready else []) }}"
     pressure_nodes: "{{ pressure_nodes + ([{'name': item.metadata.name, 'pressures': pressure_types}] if pressure_types | length > 0 else []) }}"
     primary_node_role_counts: "{{ primary_node_role_counts | combine({primary_node_role: ((primary_node_role_counts[primary_node_role] | default(0)) + 1)}, recursive=True) }}"
     kubelet_version_counts: "{{ kubelet_version_counts | combine({kubelet_version: ((kubelet_version_counts[kubelet_version] | default(0)) + 1)}, recursive=True) }}"
@@ -226,6 +226,7 @@
   loop: "{{ (nodes | default({})).get('items', []) }}"
   vars:
     ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
+    node_is_ready: "{{ (ready_status | string | lower) in ['true', 'ready'] }}"
     pressure_types: "{{ item.status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | list }}"
     node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
     primary_node_role: >-

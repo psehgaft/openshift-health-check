@@ -10,11 +10,20 @@ Generated at: `{{ report_completed_at | default(report_generated_at) }}`
 - Status: `{{ health_summary.status | default('UNKNOWN') }}`
 - Audit score: `{{ audit_score_total | default(0) }}/{{ audit_score_max | default(0) }}`
 - Cluster health score: `{{ cluster_health_score | default(0) }}/100 ({{ cluster_health_score_label | default('Unknown') }})`
+- Report confidence: `{{ report_confidence | default('unknown') | upper }}`
 - Context: `{{ oc_context_cmd.stdout | default('unknown') | trim }}`
 - API server: `{{ oc_server_cmd.stdout | default('unknown') | trim }}`
 - User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
 
+Confidence note: {{ report_confidence_detail | default('not available') }}.
+
 ## Cluster Current State
+
+{% if cluster_current_state_build_error | default('') | length > 0 %}
+State summary note:
+- detailed cluster current state synthesis hit an internal parsing error and fell back to direct fact counts
+- fallback detail: `{{ cluster_current_state_build_error | replace('\n', ' ') | truncate(240, true, '...') }}`
+{% endif %}
 
 | Item | Value |
 | --- | --- |
@@ -143,7 +152,9 @@ Profile note: this report used a non-production profile, so some hygiene and unu
 | Python | `{{ execution_stats.local_python | default('unknown') }}` |
 | Ansible | `{{ execution_stats.ansible_version | default('unknown') }}` |
 | Collection command count | `{{ execution_stats.collection.command_count | default(0) }}` |
+| Collection success rate | `{{ execution_stats.collection.success_rate_pct | default(0) }}`% |
 | Collection parallelism | `{{ execution_stats.collection.parallelism | default(0) }}` |
 | Collection timeout seconds | `{{ execution_stats.collection.timeout_seconds | default(0) }}` |
 | Failed collection commands | `{{ execution_stats.collection.failed_commands | default(0) }}` |
 | Timed out collection commands | `{{ execution_stats.collection.timed_out_commands | default(0) }}` |
+| Report confidence | `{{ execution_stats.report_confidence | default('unknown') | upper }}` |
