@@ -233,14 +233,15 @@ This section is an inventory of collected counts, not a ranked findings list.
 | Degraded operators | `{{ health_summary.operators_degraded }}` |
 | Progressing operators | `{{ health_summary.operators_progressing | default(0) }}` |
 | Unavailable operators | `{{ health_summary.operators_unavailable }}` |
+| Operator version mismatches | `{{ health_summary.operator_version_mismatches | default(0) }}` |
 | Nodes | `{{ health_summary.nodes_total }}` total |
 | NotReady nodes | `{{ health_summary.nodes_not_ready }}` |
 | Nodes under pressure | `{{ health_summary.node_pressure_count }}` |
 | Degraded MCPs | `{{ health_summary.mcps_degraded }}` |
-| Workload rollout issues | `{{ health_summary.workload_health_issues }}` |
-| Workloads missing probes | `{{ health_summary.workload_probe_findings }}` |
+| User workload rollout issues | `{{ health_summary.workload_health_issues }}` |
+| User workloads missing probes | `{{ health_summary.workload_probe_findings }}` |
 | Platform pod issues | `{{ health_summary.platform_pod_issues }}` |
-| Pods with high restarts | `{{ health_summary.high_restart_pods }}` |
+| User pods with high restarts | `{{ health_summary.high_restart_pods }}` |
 | Route issues | `{{ health_summary.route_issues }}` |
 | Ingress issues | `{{ health_summary.ingress_issues }}` |
 | Route host conflicts | `{{ health_summary.route_host_conflicts }}` |
@@ -322,6 +323,7 @@ All collection commands completed successfully.
   or (degraded_mcps | default([]) | length > 0)
   or (workload_health_issues | default([]) | length > 0)
   or (workload_probe_findings | default([]) | length > 0)
+  or (overprovisioned_pods | default([]) | length > 0)
   or (high_restart_pods | default([]) | length > 0)
   or (route_issues | default([]) | length > 0)
   or (ingress_issues | default([]) | length > 0)
@@ -334,7 +336,20 @@ All collection commands completed successfully.
   or (collection_failures | default([]) | length > 0)
   or (security_findings | default([]) | length > 0)
   or (workload_practice_findings | default([]) | length > 0)
+  or (image_registry_findings | default([]) | length > 0)
+  or (feature_findings | default([]) | length > 0)
+  or (empty_user_namespaces | default([]) | length > 0)
+  or (services_without_endpoints | default([]) | length > 0)
+  or (likely_unused_serviceaccounts | default([]) | length > 0)
+  or (likely_unused_configmaps | default([]) | length > 0)
+  or (likely_unused_secrets | default([]) | length > 0)
+  or (likely_unused_crds | default([]) | length > 0)
+  or (deprecated_crd_findings | default([]) | length > 0)
+  or (deprecated_api_lines | default([]) | length > 0)
+  or (pv_issues | default([]) | length > 0)
   or (pvc_issues | default([]) | length > 0)
+  or (expiring_certificates_warning | default([]) | length > 0)
+  or (expiring_certificates_critical | default([]) | length > 0)
   or (recent_warning_events | default([]) | length > 0)
   or (firing_alerts | default([]) | length > 0)
 %}
@@ -410,14 +425,14 @@ No actionable findings were detected from the checks this run could perform.
 {% endif %}
 
 {% if top_overprovisioned_pods | default([]) | length > 0 %}
-### Overprovisioned Pod Candidates
+### Overprovisioned User Pod Candidates
 {% for item in top_overprovisioned_pods %}
 - `{{ item.namespace }}/{{ item.pod }}` cpu_req=`{{ item.cpu_request_millicores }}m` cpu_use=`{{ item.cpu_usage_millicores }}m` mem_req=`{{ item.memory_request_mib }}Mi` mem_use=`{{ item.memory_usage_mib }}Mi`
 {% endfor %}
 {% endif %}
 
 {% if top_high_restart_pods | default([]) | length > 0 %}
-### Pods With High Restarts
+### User Pods With High Restarts
 {% for item in top_high_restart_pods %}
 - `{{ item.namespace }}/{{ item.name }}` phase=`{{ item.phase }}` restarts=`{{ item.restarts }}`
 {% endfor %}
@@ -658,8 +673,10 @@ Cluster update history was not returned.
 ## Workload Health
 
 {% if workload_health_issues | default([]) | length == 0 and workload_probe_findings | default([]) | length == 0 %}
-No deployment, statefulset, or daemonset rollout or probe coverage issues were detected in the collected workload objects.
+No deployment, statefulset, or daemonset rollout or probe coverage issues were detected in the collected user workload objects.
 {% else %}
+Workload-oriented checks in this section exclude namespaces matched by `user_namespaces_exclude_regex`, including `openshift-*`.
+
 {% if workload_health_issues | default([]) | length > 0 %}
 | Kind | Namespace | Name | Desired | Ready | Updated |
 | --- | --- | --- | --- | --- | --- |
@@ -692,7 +709,7 @@ No deployment, statefulset, or daemonset rollout or probe coverage issues were d
 {% if top_high_restart_pods | default([]) | length > 0 %}
 ### High Restart Pod Summary
 
-Pods in this section have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
+Pods in this section are limited to non-platform namespaces and have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
 
 | Namespace | Pod | Phase | Restarts |
 | --- | --- | --- | --- |
@@ -702,7 +719,9 @@ Pods in this section have restart count greater than or equal to `{{ pod_restart
 {% endif %}
 
 {% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
-### Top Pod CPU Usage
+### Top User Pod CPU Usage
+
+These Prometheus samples exclude namespaces matching `openshift-*`.
 
 | Namespace | Pod | CPU cores |
 | --- | --- | --- |
@@ -712,7 +731,9 @@ Pods in this section have restart count greater than or equal to `{{ pod_restart
 {% endif %}
 
 {% if top_pod_memory_usage_summary | default([]) | length > 0 %}
-### Top Pod Memory Usage
+### Top User Pod Memory Usage
+
+These Prometheus samples exclude namespaces matching `openshift-*`.
 
 | Namespace | Pod | Memory MiB |
 | --- | --- | --- |
@@ -826,6 +847,20 @@ No route or ingress issues were detected in the collected `Route` and `Ingress` 
 {% if (clusteroperators | default({})).get('items', []) | length == 0 %}
 Cluster operator data was not collected.
 {% else %}
+{% if cluster_operator_version_mismatches | default([]) | length > 0 %}
+Operator version mismatch note:
+- these entries report an operator version different from `ClusterVersion.status.desired.version`
+- this is version drift, not a direct proof that an operator is unsupported or unsafe
+
+### Operator Version Mismatches
+
+| Operator | Operator Version | Cluster Desired Version | Available | Progressing | Degraded |
+| --- | --- | --- | --- | --- | --- |
+{% for item in cluster_operator_version_mismatches %}
+| `{{ item.name }}` | `{{ item.operator_version }}` | `{{ item.cluster_version }}` | `{{ item.available }}` | `{{ item.progressing }}` | `{{ item.degraded }}` |
+{% endfor %}
+{% endif %}
+
 | Operator | Version | Available | Progressing | Degraded |
 | --- | --- | --- | --- | --- |
 {% for item in ((clusteroperators | default({})).get('items', []) | sort(attribute='metadata.name')) %}

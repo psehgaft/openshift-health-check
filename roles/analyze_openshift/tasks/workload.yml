@@ -29,11 +29,13 @@
     deployment_issues: "{{ deployment_issues | default([]) + issue_entry }}"
   loop: "{{ (deployments | default({})).get('items', []) }}"
   vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.availableReplicas | default(0) | int }}"
     ready: "{{ item.status.readyReplicas | default(0) | int }}"
     updated: "{{ item.status.updatedReplicas | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'Deployment', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((available | int) < (desired | int) or (ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
+    issue_entry: "{{ [{'kind': 'Deployment', 'namespace': ns_name, 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (is_user_namespace and (desired | int) > 0 and ((available | int) < (desired | int) or (ready | int) < (desired | int) or (updated | int) < (desired | int))) else [] }}"
   changed_when: false
 
 - name: Build statefulset health findings
@@ -41,11 +43,13 @@
     statefulset_issues: "{{ statefulset_issues | default([]) + issue_entry }}"
   loop: "{{ (statefulsets | default({})).get('items', []) }}"
   vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.currentReplicas | default(0) | int }}"
     ready: "{{ item.status.readyReplicas | default(0) | int }}"
     updated: "{{ item.status.updatedReplicas | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'StatefulSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
+    issue_entry: "{{ [{'kind': 'StatefulSet', 'namespace': ns_name, 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (is_user_namespace and (desired | int) > 0 and ((ready | int) < (desired | int) or (updated | int) < (desired | int))) else [] }}"
   changed_when: false
 
 - name: Build daemonset health findings
@@ -53,10 +57,12 @@
     daemonset_issues: "{{ daemonset_issues | default([]) + issue_entry }}"
   loop: "{{ (daemonsets | default({})).get('items', []) }}"
   vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     desired: "{{ item.status.desiredNumberScheduled | default(0) | int }}"
     available: "{{ item.status.numberReady | default(0) | int }}"
     updated: "{{ item.status.updatedNumberScheduled | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'DaemonSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (available | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((available | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
+    issue_entry: "{{ [{'kind': 'DaemonSet', 'namespace': ns_name, 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (available | int), 'updated': (updated | int)}] if (is_user_namespace and (desired | int) > 0 and ((available | int) < (desired | int) or (updated | int) < (desired | int))) else [] }}"
   changed_when: false
 
 - name: Combine workload health findings

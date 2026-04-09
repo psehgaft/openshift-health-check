@@ -37,9 +37,9 @@ State summary note:
 | Pod count | `{{ cluster_current_state.object_counts.pods | default(0) }}` |
 | Running pods | `{{ cluster_current_state.object_counts.running_pods | default(0) }}` |
 | Average pods per node | `{{ cluster_current_state.resources.average_pods_per_node | default(0) }}` |
-| Total CPU cores | `{{ cluster_current_state.resources.total_cpu_cores | default(0) }}` |
-| Total memory GiB | `{{ cluster_current_state.resources.total_memory_gib | default(0) }}` |
-| Total ephemeral storage GiB | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default(0) }}` |
+| Total allocatable CPU cores | `{{ cluster_current_state.resources.total_cpu_cores | default(0) }}` |
+| Total allocatable memory GiB | `{{ cluster_current_state.resources.total_memory_gib | default(0) }}` |
+| Total allocatable ephemeral storage GiB | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default(0) }}` |
 
 {% if cluster_current_state.worker_pools | default([]) | length > 0 %}
 ### Worker Pools
@@ -49,10 +49,14 @@ State summary note:
 {% for item in cluster_current_state.worker_pools %}
 | `{{ item.type }}` | `{{ item.provider }}` | `{{ item.architecture }}` | `{{ item.nodes }}` | `{{ item.zones | join(', ') }}` |
 {% endfor %}
+{% else %}
+Worker pool groups could not be derived from the collected node inventory.
 {% endif %}
 
 {% if provider_nodepool_summary | default([]) | length > 0 or provider_component_summary | default([]) | length > 0 %}
 ## Provider Platform
+
+This section only reflects provider-specific collectors that matched the detected cluster flavor.
 
 {% if provider_current_state.details | default([]) | length > 0 %}
 ### Provider Current State
@@ -87,6 +91,25 @@ State summary note:
 
 ## Key Findings
 
+{% set has_key_findings =
+  (collection_failures | default([]) | length > 0)
+  or (not_ready_nodes | default([]) | length > 0)
+  or (pressure_nodes | default([]) | length > 0)
+  or (workload_health_issues | default([]) | length > 0)
+  or (workload_probe_findings | default([]) | length > 0)
+  or (high_restart_pods | default([]) | length > 0)
+  or (security_findings | default([]) | length > 0)
+  or (workload_practice_findings | default([]) | length > 0)
+  or (pv_issues | default([]) | length > 0)
+  or (pvc_issues | default([]) | length > 0)
+  or (deprecated_crd_findings | default([]) | length > 0)
+  or (deprecated_api_lines | default([]) | length > 0)
+  or (certificate_expiry_findings | default([]) | length > 0)
+  or (provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length > 0)
+%}
+{% if not has_key_findings %}
+No major issues were detected in the checks completed by the common Kubernetes path.
+{% else %}
 {% if collection_failures | default([]) | length > 0 %}
 - Collection failures: `{{ collection_failures | length }}`
 {% endif %}
@@ -97,19 +120,19 @@ State summary note:
 - Nodes under pressure: `{{ pressure_nodes | length }}`
 {% endif %}
 {% if workload_health_issues | default([]) | length > 0 %}
-- Workload health issues: `{{ workload_health_issues | length }}`
+- User workload health issues: `{{ workload_health_issues | length }}`
 {% endif %}
 {% if workload_probe_findings | default([]) | length > 0 %}
-- Workloads missing probes: `{{ workload_probe_findings | length }}`
+- User workloads missing probes: `{{ workload_probe_findings | length }}`
 {% endif %}
 {% if high_restart_pods | default([]) | length > 0 %}
-- High restart pods: `{{ high_restart_pods | length }}`
+- User pods with high restarts: `{{ high_restart_pods | length }}`
 {% endif %}
 {% if security_findings | default([]) | length > 0 %}
 - Security findings: `{{ security_findings | length }}`
 {% endif %}
 {% if workload_practice_findings | default([]) | length > 0 %}
-- Workload best-practice findings: `{{ workload_practice_findings | length }}`
+- User workload best-practice findings: `{{ workload_practice_findings | length }}`
 {% endif %}
 {% if pv_issues | default([]) | length > 0 or pvc_issues | default([]) | length > 0 %}
 - Storage issues: `{{ (pv_issues | default([]) | length) + (pvc_issues | default([]) | length) }}`
@@ -118,20 +141,23 @@ State summary note:
 - Deprecated API or CRD findings: `{{ (deprecated_crd_findings | default([]) | length) + (deprecated_api_lines | default([]) | length) }}`
 {% endif %}
 {% if certificate_expiry_findings | default([]) | length > 0 %}
-- TLS secrets with captured certificate expiry data: `{{ certificate_expiry_findings | length }}`
+- Certificate expiry findings: `{{ certificate_expiry_findings | length }}`
 {% endif %}
 {% if provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length > 0 %}
 - Provider-specific findings: `{{ provider_specific_findings | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length }}`
 {% endif %}
-{% if (collection_failures | default([]) | length) == 0 and (not_ready_nodes | default([]) | length) == 0 and (pressure_nodes | default([]) | length) == 0 and (workload_health_issues | default([]) | length) == 0 and (workload_probe_findings | default([]) | length) == 0 and (high_restart_pods | default([]) | length) == 0 and (security_findings | default([]) | length) == 0 and (workload_practice_findings | default([]) | length) == 0 and (pv_issues | default([]) | length) == 0 and (pvc_issues | default([]) | length) == 0 and (deprecated_crd_findings | default([]) | length) == 0 and (deprecated_api_lines | default([]) | length) == 0 %}
-- No major issues were detected in the checks used by the common Kubernetes path.
+{% endif %}
 {% endif %}
 
 ## Suggested Next Steps
 
+{% if suggested_next_steps | default([]) | length == 0 %}
+No specific next steps were generated for this run.
+{% else %}
 {% for item in suggested_next_steps | default([]) %}
 - `{{ item.priority }}`: {{ item.summary }} {{ item.detail }}
 {% endfor %}
+{% endif %}
 
 {% if (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] %}
 Profile note: this report used a non-production profile, so some hygiene and unused-resource findings do not reduce the score the same way they do in production.

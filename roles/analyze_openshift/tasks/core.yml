@@ -194,6 +194,11 @@
     kubelet_version_counts: {}
     node_pod_counts: {}
     namespace_pod_counts: {}
+    pod_object_counts:
+      total: 0
+      running: 0
+      user_total: 0
+      user_running: 0
     node_cpu_request_millicores: {}
     openshift_control_plane_node_count: 0
     openshift_worker_node_count: 0
@@ -205,13 +210,19 @@
     pod_phase_counts: "{{ pod_phase_counts | default({}) | combine({phase: ((pod_phase_counts[phase] | default(0)) + 1)}, recursive=True) }}"
     node_pod_counts: "{{ node_pod_counts | combine({node_name: ((node_pod_counts[node_name] | default(0)) + 1)}, recursive=True) }}"
     namespace_pod_counts: "{{ namespace_pod_counts | combine({namespace_name: ((namespace_pod_counts[namespace_name] | default(0)) + 1)}, recursive=True) }}"
+    pod_object_counts:
+      total: "{{ (pod_object_counts.total | default(0) | int) + 1 }}"
+      running: "{{ (pod_object_counts.running | default(0) | int) + (1 if phase == 'Running' else 0) }}"
+      user_total: "{{ (pod_object_counts.user_total | default(0) | int) + (1 if is_user_namespace else 0) }}"
+      user_running: "{{ (pod_object_counts.user_running | default(0) | int) + (1 if (is_user_namespace and phase == 'Running') else 0) }}"
   loop: "{{ (pods | default({})).get('items', []) }}"
   vars:
     phase: "{{ item.status.phase | default('Unknown') }}"
     node_name: "{{ item.spec.nodeName | default('unscheduled') }}"
     namespace_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (namespace_name is match(user_namespaces_exclude_regex))) | bool }}"
     restart_count: "{{ item.status.containerStatuses | default([]) | map(attribute='restartCount') | list | sum }}"
-    restart_entry: "{{ [{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': phase, 'restarts': (restart_count | int)}] if restart_count | int > 0 else [] }}"
+    restart_entry: "{{ [{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': phase, 'restarts': (restart_count | int)}] if (is_user_namespace and (restart_count | int > 0)) else [] }}"
   changed_when: false
 
 - name: Build node health facts

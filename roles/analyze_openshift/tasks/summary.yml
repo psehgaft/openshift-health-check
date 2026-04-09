@@ -51,6 +51,31 @@
   loop: "{{ workload_probe_findings | default([]) }}"
   changed_when: false
 
+- name: Build cluster operator version mismatch list
+  ansible.builtin.set_fact:
+    cluster_operator_version_mismatches: "{{ cluster_operator_version_mismatches | default([]) + mismatch_entry }}"
+  loop: "{{ (clusteroperators | default({})).get('items', []) }}"
+  vars:
+    desired_version: "{{ clusterversion.status.desired.version | default('unknown') }}"
+    operator_version: "{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}"
+    mismatch_entry: >-
+      {{
+        [{
+          'name': item.metadata.name | default('unknown'),
+          'operator_version': operator_version,
+          'cluster_version': desired_version,
+          'available': ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')),
+          'progressing': ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')),
+          'degraded': ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown'))
+        }]
+        if (
+          desired_version not in ['unknown', '']
+          and operator_version not in ['unknown', '']
+          and operator_version != desired_version
+        ) else []
+      }}
+  changed_when: false
+
 - name: Build health summary
   ansible.builtin.set_fact:
     health_summary:
@@ -121,6 +146,7 @@
       operators_degraded: "{{ degraded_operators | default([]) | length }}"
       operators_progressing: "{{ progressing_operators | default([]) | length }}"
       operators_unavailable: "{{ unavailable_operators | default([]) | length }}"
+      operator_version_mismatches: "{{ cluster_operator_version_mismatches | default([]) | length }}"
       nodes_total: "{{ (nodes | default({})).get('items', []) | length }}"
       nodes_not_ready: "{{ not_ready_nodes | default([]) | length }}"
       node_pressure_count: "{{ pressure_nodes | default([]) | length }}"
@@ -182,17 +208,17 @@
     data = json.loads(base64.b64decode(r'''{{ {
       "cluster_profile": cluster_profile | default({}),
       "clusterversion": clusterversion | default({}),
-      "clusteroperators": (clusteroperators | default({})).get('items', []),
       "nodes": (nodes | default({})).get('items', []),
-      "pods": (pods | default({})).get('items', []),
-      "deployments": (deployments | default({})).get('items', []),
-      "statefulsets": (statefulsets | default({})).get('items', []),
-      "daemonsets": (daemonsets | default({})).get('items', []),
-      "routes": (routes | default({})).get('items', []),
-      "ingresses": (ingresses | default({})).get('items', []),
-      "namespaces": (namespaces | default({})).get('items', []),
-      "storageclasses": (storageclasses | default({})).get('items', []),
-      "machineconfigpools": (machineconfigpools | default({})).get('items', []),
+      "pod_object_counts": pod_object_counts | default({}),
+      "deployment_count": ((deployments | default({})).get('items', []) | length),
+      "statefulset_count": ((statefulsets | default({})).get('items', []) | length),
+      "daemonset_count": ((daemonsets | default({})).get('items', []) | length),
+      "route_count": ((routes | default({})).get('items', []) | length),
+      "ingress_count": ((ingresses | default({})).get('items', []) | length),
+      "namespace_count": ((namespaces | default({})).get('items', []) | length),
+      "storageclass_count": ((storageclasses | default({})).get('items', []) | length),
+      "machineconfigpool_count": ((machineconfigpools | default({})).get('items', []) | length),
+      "machineconfigpools": machineconfigpools | default({'items': []}),
       "ingresscontrollers": (ingresscontrollers | default({})).get('items', []),
       "node_pod_counts": node_pod_counts | default({}),
       "node_cpu_utilization_results": node_cpu_utilization_results | default([]),
@@ -203,6 +229,8 @@
       "cv_available": cv_available | default('Unknown'),
       "cv_progressing": cv_progressing | default('Unknown'),
       "cv_failing": cv_failing | default('Unknown'),
+      "insights_available": ((clusteroperator_status_map | default({})).get('insights', {})).get('available', 'Unknown'),
+      "insights_degraded": ((clusteroperator_status_map | default({})).get('insights', {})).get('degraded', 'Unknown'),
       "openshift_deployment_type": cluster_profile.deployment_type | default('openshift'),
       "openshift_is_sno": cluster_profile.is_sno | default(false),
       "openshift_is_hosted_control_plane": cluster_profile.is_hosted_control_plane | default(false)
@@ -449,11 +477,6 @@
         total_disk_bytes += parse_binary_bytes(allocatable.get("ephemeral-storage", "0"))
         total_pods_scheduled += int(data["node_pod_counts"].get(node_name, 0) or 0)
 
-    running_pods = 0
-    for pod in data["pods"]:
-        if ((pod.get("status", {}) or {}).get("phase", "Unknown")) == "Running":
-            running_pods += 1
-
     default_ingress = None
     for ic in data["ingresscontrollers"]:
         if (ic.get("metadata", {}) or {}).get("name") == "default":
@@ -517,17 +540,13 @@
     primary_kube_version = kube_versions[0]["version"] if kube_versions else "unknown"
     kubernetes_version_state = "mixed" if len(kubelet_counts) > 1 else "uniform"
 
-    clusteroperators = {item.get("metadata", {}).get("name", ""): item for item in data["clusteroperators"]}
-    insights_operator = clusteroperators.get("insights", {})
-    insights_conditions = {
-        cond.get("type"): cond.get("status")
-        for cond in ((insights_operator.get("status", {}) or {}).get("conditions", []) or [])
-    }
-    if not insights_operator:
+    insights_available = data.get("insights_available", "Unknown")
+    insights_degraded = data.get("insights_degraded", "Unknown")
+    if insights_available == "Unknown" and insights_degraded == "Unknown":
         insights_status = "unknown"
-    elif insights_conditions.get("Available") == "True" and insights_conditions.get("Degraded") != "True":
+    elif insights_available == "True" and insights_degraded != "True":
         insights_status = "enabled and healthy"
-    elif insights_conditions.get("Degraded") == "True":
+    elif insights_degraded == "True":
         insights_status = "enabled but degraded"
     else:
         insights_status = "configured but not healthy"
@@ -545,7 +564,7 @@
         })
 
     mcp_summary = []
-    for item in data["machineconfigpools"]:
+    for item in ((data.get("machineconfigpools", {}) or {}).get("items", []) or []):
         status = item.get("status", {}) or {}
         mcp_summary.append({
             "name": (item.get("metadata", {}) or {}).get("name", "unknown"),
@@ -554,7 +573,7 @@
             "updated_machine_count": int(status.get("updatedMachineCount", 0) or 0),
             "degraded_machine_count": int(status.get("degradedMachineCount", 0) or 0),
         })
-    mcp_summary.sort(key=lambda item: item["name"])
+    mcp_summary.sort(key=lambda item: str(item.get("name", "unknown")))
 
     result = {
         "ocp_version": (((cv.get("status", {}) or {}).get("desired", {}) or {}).get("version", "unknown")),
@@ -575,7 +594,7 @@
         "installed_at": installed_at or "unknown",
         "uptime_days": uptime_days if uptime_days is not None else "unknown",
         "uptime_human": uptime_human,
-        "machineconfigpool_count": len(data["machineconfigpools"]),
+        "machineconfigpool_count": int(data.get("machineconfigpool_count", 0) or 0),
         "worker_pool_count": len(worker_pools),
         "node_counts": {
             "total": len(data["nodes"]),
@@ -585,15 +604,15 @@
             "other": other_nodes,
         },
         "object_counts": {
-            "namespaces": len(data["namespaces"]),
-            "pods": len(data["pods"]),
-            "running_pods": running_pods,
-            "deployments": len(data["deployments"]),
-            "statefulsets": len(data["statefulsets"]),
-            "daemonsets": len(data["daemonsets"]),
-            "routes": len(data["routes"]),
-            "ingresses": len(data["ingresses"]),
-            "storageclasses": len(data["storageclasses"]),
+            "namespaces": int(data.get("namespace_count", 0) or 0),
+            "pods": int((data["pod_object_counts"] or {}).get("total", 0) or 0),
+            "running_pods": int((data["pod_object_counts"] or {}).get("running", 0) or 0),
+            "deployments": int(data.get("deployment_count", 0) or 0),
+            "statefulsets": int(data.get("statefulset_count", 0) or 0),
+            "daemonsets": int(data.get("daemonset_count", 0) or 0),
+            "routes": int(data.get("route_count", 0) or 0),
+            "ingresses": int(data.get("ingress_count", 0) or 0),
+            "storageclasses": int(data.get("storageclass_count", 0) or 0),
         },
         "resources": {
             "total_cpu_cores": round(total_cpu_cores, 1),
@@ -625,6 +644,8 @@
     print(json.dumps(result))
     PY
   register: cluster_current_state_cmd
+  async: 120
+  poll: 1
   changed_when: false
   failed_when: false
 
