@@ -12,6 +12,11 @@
     top_pv_issues: "{{ (pv_issues | default([]))[:top_pvc_issue_limit] }}"
     top_namespace_issue_summary: "{{ (namespace_issue_summary | default([]))[:top_namespace_issue_limit] }}"
     top_workload_health_issues: "{{ (workload_health_issues | default([]))[:top_workload_issue_limit] }}"
+    top_unhealthy_user_pods: "{{ (unhealthy_user_pods | default([]))[:top_workload_issue_limit] }}"
+    top_high_replica_workloads: "{{ (high_replica_workloads | default([]) | sort(attribute='replicas', reverse=true) | list)[:top_workload_issue_limit] }}"
+    top_orphan_pods: "{{ (orphan_pods | default([]))[:top_workload_issue_limit] }}"
+    top_workload_label_governance_findings: "{{ (workload_label_governance_findings | default([]))[:top_workload_issue_limit] }}"
+    top_workload_resource_findings: "{{ (workload_resource_findings | default([]))[:top_workload_issue_limit] }}"
     top_workload_probe_findings: "{{ (workload_probe_findings | default([]))[:top_workload_issue_limit] }}"
     top_security_findings: "{{ (security_findings | default([]))[:top_security_issue_limit] }}"
     top_workload_practice_findings: "{{ (workload_practice_findings | default([]))[:top_security_issue_limit] }}"
@@ -40,11 +45,16 @@
             if (
               (pressure_nodes | default([]) | length > 0)
               or (platform_pod_issues | default([]) | length > 0)
+              or (unhealthy_user_pods | default([]) | length > 0)
               or (high_restart_pods | default([]) | length > 0)
               or (namespace_issue_summary | default([]) | length > 0)
               or (pvc_issues | default([]) | length > 0)
               or (pv_issues | default([]) | length > 0)
               or (workload_health_issues | default([]) | length > 0)
+              or (high_replica_workloads | default([]) | length > 0)
+              or (orphan_pods | default([]) | length > 0)
+              or (workload_label_governance_findings | default([]) | length > 0)
+              or (workload_resource_findings | default([]) | length > 0)
               or (workload_probe_findings | default([]) | length > 0)
               or (security_findings | default([]) | length > 0)
               or (workload_practice_findings | default([]) | length > 0)
@@ -59,6 +69,11 @@
               or ((not profile_is_non_production | bool) and (namespaces_missing_egress_policies | default([]) | length > 0))
               or ((not profile_is_non_production | bool) and (namespaces_without_limitrange | default([]) | length > 0))
               or ((not profile_is_non_production | bool) and (namespaces_without_resourcequota | default([]) | length > 0))
+              or (topology_resilience.single_zone_worker_pool_count | default(0) | int > 0)
+              or (topology_resilience.worker_nodes_without_zone_label | default(0) | int > 0)
+              or (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool)
+              or not (storage_posture_summary.has_external_storage_provider | default(false) | bool)
+              or (storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool)
               or (deprecated_crd_findings | default([]) | length > 0)
               or (deprecated_api_lines | default([]) | length > 0)
               or (certificate_expiry_findings | default([]) | length > 0)
@@ -73,8 +88,13 @@
       nodes_not_ready: "{{ not_ready_nodes | default([]) | length }}"
       node_pressure_count: "{{ pressure_nodes | default([]) | length }}"
       platform_pod_issues: "{{ platform_pod_issues | default([]) | length }}"
+      unhealthy_user_pods: "{{ unhealthy_user_pods | default([]) | length }}"
       high_restart_pods: "{{ high_restart_pods | default([]) | length }}"
       workload_health_issues: "{{ workload_health_issues | default([]) | length }}"
+      high_replica_workloads: "{{ high_replica_workloads | default([]) | length }}"
+      orphan_pods: "{{ orphan_pods | default([]) | length }}"
+      workload_label_governance_findings: "{{ workload_label_governance_findings | default([]) | length }}"
+      workload_resource_findings: "{{ workload_resource_findings | default([]) | length }}"
       workload_probe_findings: "{{ workload_probe_findings | default([]) | length }}"
       provider_specific_findings: "{{ (provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length) }}"
       security_findings: "{{ security_findings | default([]) | length }}"
@@ -92,9 +112,21 @@
       namespaces_missing_egress_policies: "{{ 0 if (profile_is_non_production | bool) else (namespaces_missing_egress_policies | default([]) | length) }}"
       namespaces_without_resourcequota: "{{ 0 if (profile_is_non_production | bool) else (namespaces_without_resourcequota | default([]) | length) }}"
       namespaces_without_limitrange: "{{ 0 if (profile_is_non_production | bool) else (namespaces_without_limitrange | default([]) | length) }}"
+      worker_failure_domains_observed: "{{ topology_resilience.worker_failure_domains_observed | default([]) | length }}"
+      worker_nodes_without_zone_label: "{{ topology_resilience.worker_nodes_without_zone_label | default(0) }}"
+      single_zone_worker_pool_count: "{{ topology_resilience.single_zone_worker_pool_count | default(0) }}"
+      worker_zone_spread_unbalanced: "{{ topology_resilience.worker_zone_spread_unbalanced | default(false) }}"
       namespaces_non_active: "{{ namespace_issue_summary | default([]) | length }}"
       pv_issues: "{{ pv_issues | default([]) | length }}"
       pvc_issues: "{{ pvc_issues | default([]) | length }}"
+      external_storage_providers: "{{ storage_posture_summary.external_storageclass_count | default(0) }}"
+      external_persistent_volume_backends: "{{ storage_posture_summary.external_pv_count | default(0) }}"
+      local_storageclasses: "{{ storage_posture_summary.local_storageclass_count | default(0) }}"
+      local_persistent_volumes: "{{ storage_posture_summary.local_pv_count | default(0) }}"
+      hostpath_workloads: "{{ storage_posture_summary.hostpath_workload_count | default(0) }}"
+      ephemeral_storage_workloads: "{{ storage_posture_summary.ephemeral_workload_count | default(0) }}"
+      has_external_storage_provider: "{{ storage_posture_summary.has_external_storage_provider | default(false) }}"
+      local_or_ephemeral_only_risk: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}"
       certificate_expiry_findings: "{{ certificate_expiry_findings | default([]) | length }}"
       collection_failed_commands: "{{ collection_summary.failed_commands | default(0) }}"
       collection_core_failed_commands: "{{ collection_summary.core_failed_commands | default(0) }}"
@@ -105,6 +137,7 @@
   ansible.builtin.shell: |
     python3 - <<'PY'
     import base64
+    import ipaddress
     import json
     from collections import Counter, defaultdict
 
@@ -118,7 +151,10 @@
       "ingresses": (ingresses | default({})).get('items', []),
       "namespaces": (namespaces | default({})).get('items', []),
       "storageclasses": (storageclasses | default({})).get('items', []),
-      "node_pod_counts": node_pod_counts | default({})
+      "node_pod_counts": node_pod_counts | default({}),
+      "service_ip_capacity_summary": service_ip_capacity_summary | default({}),
+      "pod_ip_capacity_summary": pod_ip_capacity_summary | default({}),
+      "node_ip_capacity_summary": node_ip_capacity_summary | default({})
     } | to_json | b64encode }}''').decode("utf-8"))
 
     def parse_cpu(value):
@@ -260,6 +296,62 @@
         if ((pod.get("status", {}) or {}).get("phase", "Unknown")) == "Running":
             running_pods += 1
 
+    def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity):
+        cluster_networks = (cluster_profile or {}).get("cluster_networks", []) or []
+        network_slot_details = []
+        total_node_slots = 0
+
+        for item in cluster_networks:
+            if isinstance(item, dict):
+                cidr = item.get("cidr") or item.get("CIDR")
+                host_prefix = item.get("hostPrefix")
+            else:
+                cidr = str(item)
+                host_prefix = None
+            try:
+                network = ipaddress.ip_network(str(cidr), strict=False)
+            except Exception:
+                continue
+            try:
+                host_prefix_int = int(host_prefix)
+            except Exception:
+                host_prefix_int = None
+            node_slots = "unknown"
+            if host_prefix_int is not None and host_prefix_int >= network.prefixlen:
+                node_slots = int(2 ** (host_prefix_int - network.prefixlen))
+                total_node_slots += node_slots
+            network_slot_details.append({
+                "cidr": str(network),
+                "host_prefix": host_prefix if host_prefix is not None else "unknown",
+                "node_slots": node_slots,
+            })
+
+        max_nodes_by_pod_network = total_node_slots if total_node_slots > 0 else "unknown"
+        additional_nodes_by_pod_network = max(total_node_slots - node_count, 0) if total_node_slots > 0 else "unknown"
+        pod_network_headroom_pct = round((max(total_node_slots - node_count, 0) / total_node_slots) * 100.0, 1) if total_node_slots > 0 else "unknown"
+
+        node_ip_available = (node_ip_capacity or {}).get("available_ips", "unknown")
+        if isinstance(node_ip_available, bool):
+            node_ip_available = "unknown"
+        if isinstance(node_ip_available, (int, float)):
+            effective_additional_nodes = min(max(total_node_slots - node_count, 0), int(node_ip_available)) if total_node_slots > 0 else int(node_ip_available)
+        else:
+            effective_additional_nodes = additional_nodes_by_pod_network if total_node_slots > 0 else "unknown"
+
+        return {
+            "current_nodes": int(node_count),
+            "max_nodes_by_pod_network": max_nodes_by_pod_network,
+            "additional_nodes_by_pod_network": additional_nodes_by_pod_network,
+            "pod_network_headroom_pct": pod_network_headroom_pct,
+            "node_ip_ranges": (node_ip_capacity or {}).get("range_list", []) or [],
+            "node_ips_taken": (node_ip_capacity or {}).get("taken_ips", 0),
+            "node_ips_available": node_ip_available,
+            "effective_additional_nodes": effective_additional_nodes,
+            "network_slot_details": network_slot_details,
+        }
+
+    node_growth_capacity = build_node_growth_capacity(data.get("cluster_profile", {}) or {}, len(data["nodes"]), data.get("node_ip_capacity_summary", {}) or {})
+
     result = {
         "kubernetes_version": (summarize_counter(kubelet_counts, "version", "count", limit=10)[0]["version"] if kubelet_counts else "unknown"),
         "cluster_visibility": "unknown",
@@ -299,6 +391,12 @@
             "average_ephemeral_storage_gib_per_node": round((total_disk_bytes / (1024 ** 3)) / len(data["nodes"]), 1) if data["nodes"] else 0,
             "average_pods_per_node": round(total_pods_scheduled / len(data["nodes"]), 1) if data["nodes"] else 0,
         },
+        "ip_capacity": {
+            "services": data.get("service_ip_capacity_summary", {}) or {},
+            "pods": data.get("pod_ip_capacity_summary", {}) or {},
+            "nodes": data.get("node_ip_capacity_summary", {}) or {},
+        },
+        "node_growth_capacity": node_growth_capacity,
         "node_architectures": summarize_counter(arch_counts, "architecture", "count", limit=10),
         "provider_types": summarize_counter(provider_counts, "provider", "count", limit=10),
         "os_images": summarize_counter(os_image_counts, "os_image", "count", limit=10),
@@ -353,9 +451,85 @@
         average_memory_mib_per_node: unknown
         average_ephemeral_storage_gib_per_node: unknown
         average_pods_per_node: "{{ (((pods | default({})).get('items', []) | length) / ([1, ((nodes | default({})).get('items', []) | length)] | max)) | round(1) }}"
+      ip_capacity:
+        services: "{{ service_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"
+        pods: "{{ pod_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"
+        nodes: "{{ node_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"
+      node_growth_capacity:
+        current_nodes: "{{ (nodes | default({})).get('items', []) | length }}"
+        max_nodes_by_pod_network: unknown
+        additional_nodes_by_pod_network: unknown
+        pod_network_headroom_pct: unknown
+        node_ip_ranges: "{{ node_ip_capacity_summary.range_list | default([]) }}"
+        node_ips_taken: "{{ node_ip_capacity_summary.taken_ips | default(0) }}"
+        node_ips_available: "{{ node_ip_capacity_summary.available_ips | default('unknown') }}"
+        effective_additional_nodes: unknown
+        network_slot_details: []
       node_architectures: []
       provider_types: []
       os_images: []
       container_runtimes: []
       node_roles: []
       worker_pools: []
+
+- name: Build Kubernetes topology resilience summary
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import base64
+    import json
+    from collections import Counter
+
+    data = json.loads(base64.b64decode(r'''{{ {
+      "nodes": (nodes | default({})).get('items', []),
+      "worker_pools": (cluster_current_state.worker_pools | default([]))
+    } | to_json | b64encode }}''').decode("utf-8"))
+
+    worker_zone_counts = Counter()
+    unlabeled_worker_nodes = 0
+    for node in data.get("nodes", []):
+        meta = node.get("metadata", {}) or {}
+        labels = meta.get("labels", {}) or {}
+        roles = []
+        for key in labels:
+            if key.startswith("node-role.kubernetes.io/"):
+                roles.append(key.replace("node-role.kubernetes.io/", "", 1) or "worker")
+        primary_role = "worker"
+        if "master" in roles:
+            primary_role = "master"
+        elif "control-plane" in roles:
+            primary_role = "control-plane"
+        elif "infra" in roles:
+            primary_role = "infra"
+        elif "worker" in roles:
+            primary_role = "worker"
+        elif roles:
+            primary_role = sorted(roles)[0]
+        if primary_role != "worker":
+            continue
+        zone = labels.get("topology.kubernetes.io/zone") or labels.get("failure-domain.beta.kubernetes.io/zone")
+        if zone:
+            worker_zone_counts[str(zone)] += 1
+        else:
+            unlabeled_worker_nodes += 1
+
+    worker_pools = data.get("worker_pools", []) or []
+    single_zone_pools = [p for p in worker_pools if len(p.get("zones", []) or []) <= 1]
+    zone_counts = list(worker_zone_counts.values())
+    zone_spread_unbalanced = (max(zone_counts) - min(zone_counts) > 1) if len(zone_counts) > 1 else False
+
+    print(json.dumps({
+        "worker_failure_domains_observed": sorted(worker_zone_counts.keys()),
+        "worker_zone_counts": [{"zone": z, "nodes": worker_zone_counts[z]} for z in sorted(worker_zone_counts.keys())],
+        "worker_nodes_without_zone_label": unlabeled_worker_nodes,
+        "single_zone_worker_pools": [{"type": p.get("type", "unknown"), "nodes": p.get("nodes", 0), "zones": p.get("zones", [])} for p in single_zone_pools],
+        "single_zone_worker_pool_count": len(single_zone_pools),
+        "worker_zone_spread_unbalanced": zone_spread_unbalanced,
+    }))
+    PY
+  register: topology_resilience_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize Kubernetes topology resilience summary
+  ansible.builtin.set_fact:
+    topology_resilience: "{{ topology_resilience_cmd.stdout | from_json if (topology_resilience_cmd.rc == 0 and (topology_resilience_cmd.stdout | default('') | length > 0)) else {'worker_failure_domains_observed': [], 'worker_zone_counts': [], 'worker_nodes_without_zone_label': 0, 'single_zone_worker_pools': [], 'single_zone_worker_pool_count': 0, 'worker_zone_spread_unbalanced': false} }}"

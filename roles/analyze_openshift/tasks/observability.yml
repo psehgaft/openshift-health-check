@@ -37,8 +37,12 @@
       monitoring_operator_degraded: "{{ clusteroperator_status_map.monitoring.degraded | default('Unknown') }}"
       thanos_querier_route_found: false
       cluster_log_forwarder_count: "{{ (clusterlogforwarders | default({})).get('items', []) | length }}"
+      alertmanagerconfig_count: "{{ (alertmanagerconfigs | default({})).get('items', []) | length }}"
       log_forwarding_outputs: []
       external_log_forwarding_outputs: []
+      external_alert_receivers: []
+      external_alert_receiver_count: 0
+      external_alert_delivery_configured: false
       cluster_metrics_remote_write_count: "{{ (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([])) | length) }}"
       user_workload_metrics_remote_write_count: "{{ (((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([])) | length) }}"
       external_cluster_metrics_remote_write_count: 0
@@ -192,20 +196,91 @@
   ansible.builtin.set_fact:
     observability_metrics_forwarding_data: "{{ observability_metrics_forwarding_cmd.stdout | from_json if (observability_metrics_forwarding_cmd.rc == 0 and (observability_metrics_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'cluster_external_count': 0, 'user_external_count': 0} }}"
 
+- name: Build external alert delivery findings
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+
+    data = json.loads(r'''{{ {
+      "items": (alertmanagerconfigs | default({})).get('items', [])
+    } | to_json }}''')
+
+    findings = []
+    receivers = []
+    supported_receiver_keys = [
+        ("slackConfigs", "slack"),
+        ("pagerdutyConfigs", "pagerduty"),
+        ("opsgenieConfigs", "opsgenie"),
+        ("victorOpsConfigs", "victorops"),
+        ("webhookConfigs", "webhook"),
+        ("wechatConfigs", "wechat"),
+        ("emailConfigs", "email"),
+    ]
+
+    def describe_target(receiver_type, cfg):
+        if receiver_type == "slack":
+            return cfg.get("channel") or "configured"
+        if receiver_type == "webhook":
+            return cfg.get("url") or "secret-or-config-ref"
+        if receiver_type == "email":
+            return cfg.get("to") or "configured"
+        if receiver_type in {"pagerduty", "opsgenie", "victorops", "wechat"}:
+            return "configured"
+        return "configured"
+
+    for item in data.get("items", []):
+        meta = item.get("metadata", {}) or {}
+        namespace = meta.get("namespace", "")
+        config_name = meta.get("name", "")
+        for receiver in (item.get("spec", {}) or {}).get("receivers", []) or []:
+            receiver_name = receiver.get("name", "unnamed")
+            for key, receiver_type in supported_receiver_keys:
+                for cfg in receiver.get(key, []) or []:
+                    receivers.append({
+                        "namespace": namespace,
+                        "alertmanagerconfig": config_name,
+                        "receiver": receiver_name,
+                        "type": receiver_type,
+                        "target": describe_target(receiver_type, cfg),
+                    })
+
+    if not receivers:
+        findings.append({
+            "issue": "external-alert-delivery-not-configured",
+            "detail": "no AlertmanagerConfig receiver was found for supported external channels such as email, Slack, PagerDuty, Opsgenie, VictorOps, webhook, or WeChat"
+        })
+
+    print(json.dumps({
+        "findings": findings,
+        "receivers": receivers,
+        "external_alert_receiver_count": len(receivers),
+        "external_alert_delivery_configured": len(receivers) > 0
+    }))
+    PY
+  register: observability_alert_delivery_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize external alert delivery findings
+  ansible.builtin.set_fact:
+    observability_alert_delivery_data: "{{ observability_alert_delivery_cmd.stdout | from_json if (observability_alert_delivery_cmd.rc == 0 and (observability_alert_delivery_cmd.stdout | default('') | length > 0)) else {'findings': [], 'receivers': [], 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false} }}"
+
 - name: Build observability findings and summary
   ansible.builtin.set_fact:
-    observability_findings: "{{ (observability_log_forwarding_data.findings | default([])) + (observability_metrics_forwarding_data.findings | default([])) + observability_platform_findings }}"
+    observability_findings: "{{ (observability_log_forwarding_data.findings | default([])) + (observability_metrics_forwarding_data.findings | default([])) + (observability_alert_delivery_data.findings | default([])) + observability_platform_findings }}"
     observability_forwarding_summary: "{{ observability_forwarding_summary | combine(observability_forwarding_updates, recursive=True) }}"
   vars:
     observability_platform_findings: >-
       {{
         ([] +
-        ([{'issue': 'monitoring-operator-not-healthy', 'detail': 'monitoring cluster operator is unavailable or degraded'}] if (clusteroperator_status_map.monitoring.available | default('Unknown')) != 'True' or (clusteroperator_status_map.monitoring.degraded | default('False')) == 'True' else []) +
-        ([{'issue': 'thanos-querier-route-unavailable', 'detail': 'thanos-querier route could not be discovered'}] if not (thanos_route_cmd.rc == 0 and (thanos_route_cmd.stdout | default('') | trim | length > 0)) else []))
+        ([{'issue': 'monitoring-operator-not-healthy', 'detail': 'monitoring cluster operator is unavailable or degraded'}] if (clusteroperator_status_map.monitoring.available | default('Unknown')) != 'True' or (clusteroperator_status_map.monitoring.degraded | default('False')) == 'True' else []))
       }}
     observability_forwarding_updates:
       log_forwarding_outputs: "{{ observability_log_forwarding_data.outputs | default([]) }}"
       external_log_forwarding_outputs: "{{ observability_log_forwarding_data.external_outputs | default([]) }}"
+      external_alert_receivers: "{{ observability_alert_delivery_data.receivers | default([]) }}"
+      external_alert_receiver_count: "{{ observability_alert_delivery_data.external_alert_receiver_count | default(0) }}"
+      external_alert_delivery_configured: "{{ observability_alert_delivery_data.external_alert_delivery_configured | default(false) }}"
       external_cluster_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.cluster_external_count | default(0) }}"
       external_user_workload_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.user_external_count | default(0) }}"
 
@@ -220,55 +295,95 @@
     warning_event_items: "{{ (warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list }}"
     recent_warning_events: "{{ ((warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list)[:warning_event_limit] }}"
 
-- name: Mark Prometheus capability
-  ansible.builtin.set_fact:
-    prom_available: "{{ (thanos_route_cmd.rc == 0 and oc_token_cmd.rc == 0 and (thanos_route_cmd.stdout | trim | length > 0)) | bool }}"
-    prom_base_url: "https://{{ thanos_route_cmd.stdout | trim }}"
+- name: Create Prometheus query input file
+  ansible.builtin.tempfile:
+    state: file
+    prefix: openshift-prom-query-
+    suffix: .json
+  register: prom_query_input_file
 
-- name: Query Prometheus signals
-  ansible.builtin.uri:
-    url: "{{ prom_base_url }}/api/v1/query"
-    method: POST
-    validate_certs: false
-    headers:
-      Authorization: "Bearer {{ oc_token_cmd.stdout | trim }}"
-    body_format: form-urlencoded
-    body:
-      query: "{{ item.query }}"
-    return_content: true
-  register: prom_query_results
-  failed_when: false
-  when: prom_available | bool
-  loop:
-    - { name: "firing_alerts", query: "{{ prom_queries.firing_alerts }}" }
-    - { name: "etcd_wal_fsync", query: "{{ prom_queries.etcd_wal_fsync_p99_ms }}" }
-    - { name: "etcd_backend_commit", query: "{{ prom_queries.etcd_backend_commit_p99_ms }}" }
-    - { name: "etcd_leader_changes", query: "{{ prom_queries.etcd_leader_changes_5m }}" }
-    - { name: "etcd_members_reporting_leader", query: "{{ prom_queries.etcd_members_reporting_leader }}" }
-    - { name: "etcd_leader_count", query: "{{ prom_queries.etcd_leader_count }}" }
-    - { name: "etcd_peer_rtt", query: "{{ prom_queries.etcd_peer_rtt_p99_ms }}" }
-    - { name: "apiserver_latency", query: "{{ prom_queries.apiserver_request_p99_seconds }}" }
-    - { name: "apiserver_5xx_rate", query: "{{ prom_queries.apiserver_request_5xx_rate }}" }
-    - { name: "apiserver_read_rate", query: "{{ prom_queries.apiserver_request_read_rate }}" }
-    - { name: "apiserver_write_rate", query: "{{ prom_queries.apiserver_request_write_rate }}" }
-    - { name: "apiserver_read_inflight", query: "{{ prom_queries.apiserver_current_read_inflight }}" }
-    - { name: "apiserver_write_inflight", query: "{{ prom_queries.apiserver_current_write_inflight }}" }
-    - { name: "apiserver_storage_objects", query: "{{ prom_queries.apiserver_storage_objects_total }}" }
-    - { name: "node_cpu_utilization", query: "{{ prom_queries.node_cpu_utilization }}" }
-    - { name: "node_memory_utilization", query: "{{ prom_queries.node_memory_utilization }}" }
-    - { name: "node_disk_utilization", query: "{{ prom_queries.node_disk_utilization }}" }
-    - { name: "kubelet_pod_density", query: "{{ prom_queries.kubelet_pod_density }}" }
-    - { name: "top_pod_cpu_usage", query: "{{ prom_queries.top_pod_cpu_usage }}" }
-    - { name: "top_pod_memory_usage", query: "{{ prom_queries.top_pod_memory_usage }}" }
-    - { name: "pod_cpu_usage_all", query: "{{ prom_queries.pod_cpu_usage_all }}" }
-    - { name: "pod_memory_usage_all", query: "{{ prom_queries.pod_memory_usage_all }}" }
+- name: Write Prometheus query input
+  ansible.builtin.copy:
+    dest: "{{ prom_query_input_file.path }}"
+    mode: "0600"
+    content: >-
+      {{
+        {
+          "route_host": (thanos_route_cmd.stdout | default('') | trim),
+          "bearer_token": (oc_token_cmd.stdout | default('') | trim),
+          "timeout_seconds": 30,
+          "queries": [
+            {"name": "firing_alerts", "query": prom_queries.firing_alerts},
+            {"name": "etcd_wal_fsync", "query": prom_queries.etcd_wal_fsync_p99_ms},
+            {"name": "etcd_backend_commit", "query": prom_queries.etcd_backend_commit_p99_ms},
+            {"name": "etcd_leader_changes", "query": prom_queries.etcd_leader_changes_5m},
+            {"name": "etcd_members_reporting_leader", "query": prom_queries.etcd_members_reporting_leader},
+            {"name": "etcd_leader_count", "query": prom_queries.etcd_leader_count},
+            {"name": "etcd_peer_rtt", "query": prom_queries.etcd_peer_rtt_p99_ms},
+            {"name": "apiserver_latency", "query": prom_queries.apiserver_request_p99_seconds},
+            {"name": "apiserver_5xx_rate", "query": prom_queries.apiserver_request_5xx_rate},
+            {"name": "apiserver_read_rate", "query": prom_queries.apiserver_request_read_rate},
+            {"name": "apiserver_write_rate", "query": prom_queries.apiserver_request_write_rate},
+            {"name": "apiserver_read_inflight", "query": prom_queries.apiserver_current_read_inflight},
+            {"name": "apiserver_write_inflight", "query": prom_queries.apiserver_current_write_inflight},
+            {"name": "apiserver_storage_objects", "query": prom_queries.apiserver_storage_objects_total},
+            {"name": "node_cpu_utilization", "query": prom_queries.node_cpu_utilization},
+            {"name": "node_memory_utilization", "query": prom_queries.node_memory_utilization},
+            {"name": "node_disk_utilization", "query": prom_queries.node_disk_utilization},
+            {"name": "kubelet_pod_density", "query": prom_queries.kubelet_pod_density},
+            {"name": "top_pod_cpu_usage", "query": prom_queries.top_pod_cpu_usage},
+            {"name": "top_pod_memory_usage", "query": prom_queries.top_pod_memory_usage},
+            {"name": "pod_cpu_usage_all", "query": prom_queries.pod_cpu_usage_all},
+            {"name": "pod_memory_usage_all", "query": prom_queries.pod_memory_usage_all},
+            {"name": "controlplane_to_worker_network_latency", "query": prom_queries.controlplane_to_worker_network_latency_ms | default('')},
+            {"name": "worker_to_worker_network_latency", "query": prom_queries.worker_to_worker_network_latency_ms | default('')}
+          ]
+        } | to_json
+      }}
 
-- name: Normalize Prometheus payloads
-  ansible.builtin.set_fact:
-    prom_result_map: "{{ prom_result_map | default({}) | combine({item.item.name: (item.json.data.result | default([]))}, recursive=True) }}"
-  loop: "{{ prom_query_results.results | default([]) }}"
-  when: item.status | default(0) == 200
+- name: Run Prometheus signal helper
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/query_prometheus_signals.py"
+      - "{{ prom_query_input_file.path }}"
+  register: prom_query_helper_cmd
   changed_when: false
+  failed_when: false
+
+- name: Remove Prometheus query input file
+  ansible.builtin.file:
+    path: "{{ prom_query_input_file.path }}"
+    state: absent
+  when: prom_query_input_file is defined and (prom_query_input_file.path | default('') | length > 0)
+  changed_when: false
+
+- name: Normalize Prometheus helper output
+  ansible.builtin.set_fact:
+    prom_query_helper_data: "{{ prom_query_helper_cmd.stdout | from_json if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {'prom_available': false, 'transport': 'unavailable', 'route_working': false, 'proxy_working': false, 'route_error': '', 'proxy_error': '', 'results': {}} }}"
+    prom_available: "{{ ((prom_query_helper_cmd.stdout | from_json).prom_available) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else false }}"
+    prom_result_map: "{{ ((prom_query_helper_cmd.stdout | from_json).results) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
+    prom_collection_transport: "{{ ((prom_query_helper_cmd.stdout | from_json).transport) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else 'unavailable' }}"
+
+- name: Record Prometheus query availability finding
+  ansible.builtin.set_fact:
+    observability_findings: "{{ (observability_findings | default([])) + [{'issue': 'prometheus-query-endpoint-unavailable', 'detail': prom_query_error_detail}] }}"
+  vars:
+    prom_query_error_detail: >-
+      {{
+        'neither thanos route nor API proxy query path was usable'
+        ~ (
+          '; route=' ~ (prom_query_helper_data.route_error | default('n/a'))
+          if (prom_query_helper_data.route_error | default('') | length) > 0
+          else ''
+        )
+        ~ (
+          '; proxy=' ~ (prom_query_helper_data.proxy_error | default('n/a'))
+          if (prom_query_helper_data.proxy_error | default('') | length) > 0
+          else ''
+        )
+      }}
+  when: not (prom_available | default(false) | bool)
 
 - name: Extract Prometheus summaries
   ansible.builtin.set_fact:
@@ -286,6 +401,9 @@
     apiserver_current_read_inflight: "{{ (prom_result_map.apiserver_read_inflight[0].value[1]) if (prom_result_map.apiserver_read_inflight | default([]) | length > 0) else '' }}"
     apiserver_current_write_inflight: "{{ (prom_result_map.apiserver_write_inflight[0].value[1]) if (prom_result_map.apiserver_write_inflight | default([]) | length > 0) else '' }}"
     apiserver_storage_objects_total: "{{ (prom_result_map.apiserver_storage_objects[0].value[1]) if (prom_result_map.apiserver_storage_objects | default([]) | length > 0) else '' }}"
+    controlplane_to_controlplane_network_latency_ms: "{{ (prom_result_map.etcd_peer_rtt[0].value[1]) if (prom_result_map.etcd_peer_rtt | default([]) | length > 0) else '' }}"
+    controlplane_to_worker_network_latency_ms: "{{ (prom_result_map.controlplane_to_worker_network_latency[0].value[1]) if (prom_result_map.controlplane_to_worker_network_latency | default([]) | length > 0) else '' }}"
+    worker_to_worker_network_latency_ms: "{{ (prom_result_map.worker_to_worker_network_latency[0].value[1]) if (prom_result_map.worker_to_worker_network_latency | default([]) | length > 0) else '' }}"
     apiserver_readyz_status: "{{ 'ok' if (apiserver_readyz_cmd.rc | default(1)) == 0 else ('failed' if (apiserver_readyz_cmd.stdout | default('') | trim | length > 0 or apiserver_readyz_cmd.stderr | default('') | trim | length > 0) else 'unavailable') }}"
     apiserver_readyz_failed_checks: "{{ ((apiserver_readyz_cmd.stdout | default('')) ~ '\n' ~ (apiserver_readyz_cmd.stderr | default(''))) | regex_findall('(?im)\\bfailed\\b') | length }}"
     node_cpu_utilization_results: "{{ prom_result_map.node_cpu_utilization | default([]) }}"

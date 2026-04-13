@@ -122,6 +122,17 @@ Main areas:
   - API server 5xx rate and p99 latency
   - etcd leader count and leader changes
   - etcd WAL fsync, backend commit, and peer RTT latency
+- worker-pool, MachineSet, and failure-domain spread checks
+- service, pod, and node IP capacity summaries
+- node growth headroom from pod-network allocation
+- external alert delivery detection from `AlertmanagerConfig`
+- external storage provider detection and local-or-ephemeral-only risk
+- external log forwarding and external metrics remote write posture
+- internal image registry use in workloads
+- pipeline, build, and DeploymentConfig inventory on OpenShift
+- privileged access and stale-access review candidates
+- node-to-node and control-plane latency rows in milliseconds where supported
+
 
 The report also includes:
 
@@ -130,6 +141,116 @@ The report also includes:
 - provider-specific sections for AKS, EKS, GKE, Rancher, and Minikube
 - OpenShift deployment type labels for SNO and ROSA HCP
 - cleaned-up section formatting that prefers readable tables and plain-language labels over debug-style issue dumps
+
+
+## Signal Notes
+
+The report prefers signals that are cluster-local, explainable, and actionable.
+
+Use these rules when reading it:
+
+- `direct`: the signal comes from a collected object or metric and is rendered directly
+- `derived`: the signal is computed from collected data using a documented heuristic
+- `unknown`: the cluster did not expose enough data to support a defensible value
+
+Important examples:
+
+- Node growth headroom:
+  - `derived`
+  - estimated from pod-network CIDRs and `hostPrefix` when present
+  - limited by node IP availability when node IP ranges are known
+  - remains `unknown` when those network allocation details are not available
+- Service, pod, and node IP capacity:
+  - `direct` for observed used IPs
+  - `derived` for total and available IPs from configured CIDRs
+  - remains `unknown` when the relevant CIDRs are not exposed in cluster config
+- Control-plane-to-control-plane latency:
+  - `derived` from etcd peer RTT
+  - shown in milliseconds
+- Control-plane-to-worker and worker-to-worker latency:
+  - `direct` only when the cluster exposes a matching Prometheus latency metric
+  - otherwise shown as `unavailable`
+- External alert delivery:
+  - `direct`
+  - inferred from discovered `AlertmanagerConfig` receivers for supported external channels
+  - this shows configured delivery targets, not guaranteed runtime reachability
+- External storage provider detection:
+  - `derived`
+  - inferred from `StorageClass` provisioners and PV backends
+  - local `hostPath`, local PVs, and ephemeral volumes are treated as local-only indicators
+- Topology resilience:
+  - `derived`
+  - computed from node zone labels, worker-pool grouping, and OpenShift MachineSet replica distribution
+  - warns on single-zone worker groups, missing zone labels, and imbalanced spread
+- Security and workload-practice findings:
+  - `direct` from collected pod and workload specs
+  - scope excludes platform namespaces for user-workload checks
+
+## OpenShift Review Coverage
+
+The OpenShift path is designed to support a structured cluster review, but not every topic can be proven from cluster-state data alone.
+
+Use this rule when reading the report:
+
+- `direct`: the report collects and evaluates cluster-local data for this area
+- `partial`: the report provides useful signals, but not a full end-to-end assessment
+- `manual`: this area still needs process review, interviews, or external system evidence
+
+### Infrastructure And Cluster Health
+
+| Review area | Coverage | Current support |
+| --- | --- | --- |
+| OpenShift Container Platform | `direct` | ClusterVersion, update history, conditional update risks, operator health, MCP health, current-state and topology sections |
+| Platform infrastructure dependencies | `partial` | Platform, topology, storage classes, PV/PVC health, route/ingress health, DNS/network/ingress operator health, worker-pool and node-shape signals |
+| Node and operator status | `direct` | Node readiness, pressure, kubelet spread, cluster operators, infrastructure component inventory, consolidated operator table |
+| API services and etcd health | `direct` | API `/readyz`, API latency, 5xx, read/write rates, inflight requests, stored object count, etcd leader count, leader changes, WAL fsync, backend commit, peer RTT |
+| Capability and readiness for common disaster scenarios | `partial` | Topology, route and ingress health, storage health, observability forwarding, collection confidence, control-plane health, but not a full backup and restore audit |
+| Environment patching process | `partial` | Current version, update history, conditional update risks, MCP state, operator drift; the human patching workflow itself is not inferred from cluster state |
+
+### Application Development Practices Related To OpenShift
+
+| Review area | Coverage | Current support |
+| --- | --- | --- |
+| Build and deploy practices | `partial` | Workload rollout health, probe coverage, restart hotspots, resource requests and limits, image-registry findings; this does not fully audit Dockerfiles or build pipelines |
+| Pipeline usage | `partial` | OpenShift path inventories `Pipeline`, `PipelineRun`, failed `PipelineRun` status, and `BuildConfig` trigger posture; full CI/CD process maturity still needs human review |
+| Liveness, readiness, requests, limits, and project quotas | `direct` | Probe findings, rollout findings, missing requests and limits, namespace quotas, LimitRange, NetworkPolicy, quota-pressure signals |
+| Capacity planning | `partial` | Current allocatable capacity, pod density, top CPU and memory consumers, average utilization, quota pressure, restart hotspots; future growth still requires platform and application planning input |
+
+### Security Posture Check
+
+| Review area | Coverage | Current support |
+| --- | --- | --- |
+| Examine compliance requirements | `manual` | The report surfaces useful evidence such as privileged access, certificates, observability, and lifecycle issues, but it does not map findings to a formal compliance framework by itself |
+| Identity and group management | `direct` | OAuth identity provider presence, privileged access review, stale-access review candidates for users, groups, and service accounts |
+| Certificate policies | `partial` | TLS secret expiry checks and certificate aging signals; policy conformance beyond collected certs is still manual |
+| Security Context Constraints (SCC) | `partial` | OpenShift path inventories SCCs and surfaces high-risk SCC grants; full SCC policy review still needs human assessment |
+| Secrets management | `partial` | Secret reference heuristics, likely unused secrets, TLS secret expiry findings; full external secret lifecycle and policy review is still manual |
+| Container image management | `partial` | Image registry exposure and policy findings, image pruner state, image registry management state, and internal image-registry use in workloads; registry signing, scanning, and external image governance remain manual unless surfaced elsewhere in-cluster |
+
+The tool is strongest as a structured evidence-gathering report. It is explicit about which areas are backed by cluster-local evidence and which still need human review.
+
+## Signal Catalog
+
+This section maps the main report signals to their reason for inclusion and the main condition behind them.
+
+| Signal family | Why it is collected | Main condition or reasoning |
+| --- | --- | --- |
+| ClusterVersion and update risk | upgrade safety and change readiness | `Available`, `Progressing`, `Failing`, available updates, conditional risks, and update history are first-class OpenShift lifecycle signals |
+| Cluster operators and infrastructure components | control-plane and platform health | operators should normally report `Available=True`, `Progressing=False`, `Degraded=False` |
+| API and etcd metrics | control-plane responsiveness and stability | latency, 5xx, inflight requests, leader changes, and peer RTT are high-signal failure predictors |
+| Node readiness and pressure | platform continuity | `NotReady`, `MemoryPressure`, `DiskPressure`, and `PIDPressure` are treated as urgent platform signals |
+| Worker-pool and failure-domain spread | resilience during zone or node failure | the report warns when worker groups are single-zone, zone labels are missing, or MachineSets are uneven |
+| Service, pod, and node IP capacity | network exhaustion risk | each node needs an IP, workloads need pod IPs, and services need service IPs; remaining IP space is surfaced when CIDRs are known |
+| Node growth headroom | scaling readiness | estimated from pod-network slot math plus known node IP availability; kept `unknown` if the cluster does not expose enough network allocation detail |
+| Storage posture | persistence and resilience | warns when no external storage provider is detected or when local or ephemeral storage appears to be the only option |
+| Workload rollout, probes, and restarts | application resilience | rollout gaps, missing probes, unhealthy pods, and restart hotspots indicate weak workload recovery behavior |
+| Namespace hygiene | noisy-neighbor protection and baseline guardrails | user namespaces should normally have `NetworkPolicy`, `ResourceQuota`, and `LimitRange` |
+| Resource requests and limits | scheduling and capacity hygiene | missing requests and limits weaken bin packing, quota control, and capacity planning |
+| Build, pipeline, and image posture | delivery discipline | OpenShift path inventories builds, pipelines, triggers, and image-registry usage to support application-delivery review |
+| Privileged access and SCC grants | least privilege review | privileged RBAC subjects and risky SCC grants are surfaced because they materially affect platform risk |
+| Stale-access review candidates | access cleanup | these are conservative review candidates, not proofs of inactivity |
+| External log, metrics, and alert delivery | operational readiness and incident response | the report checks whether logs, metrics, and alert receivers appear to reach destinations outside the cluster |
+| Certificates and deprecated APIs | lifecycle and outage prevention | expiring certificates and deprecated APIs are early indicators of avoidable future failures |
 
 ## Repository Layout
 
@@ -477,9 +598,9 @@ Run time depends on cluster size, API speed, network latency, and whether Promet
 
 As a rough guide:
 
-- small cluster: about `1` to `5` minutes
-- medium cluster: about `5` to `10` minutes
-- large cluster: about `10` to `30` minutes
+- small cluster: about `5` to `15` minutes
+- medium cluster: about `15` to `30` minutes
+- large cluster: about `30` to `60` minutes
 
 Runs usually take longer when:
 
@@ -541,16 +662,16 @@ Near the top of the report, the grouped `Operational Risk Summary` highlights th
 
 - control plane and change
 - platform and topology
-- traffic, capacity, and workloads
+- traffic and capacity
 - security, access, and guardrails
 - lifecycle, observability, and auditability
 
 In the generic Kubernetes path, the same idea is applied with a reduced set of fields that are safe for the shared collector:
 
 - cluster and nodes
-- workloads and storage
-- security and guardrails
 - lifecycle, provider, and auditability
+- security and guardrails
+- workloads and storage
 
 The `my-cluster` part comes from the cluster infrastructure name. If that is not available, the tool falls back to the current `oc` context name.
 
@@ -573,7 +694,7 @@ For example:
 - on ARO and ROSA, you will usually see cloud instance types
 - on many UPI clusters, you may see allocatable shapes instead
 
-Both are expected. The goal is to keep the node summary useful even when cloud labels are missing.
+Both are expected. The node summary stays usable even when cloud labels are missing.
 
 ## How To Read The Report
 

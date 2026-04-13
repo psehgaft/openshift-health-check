@@ -1,23 +1,108 @@
+{% macro status_badge(value) -%}
+{%- set text = value | string -%}
+{%- set key = text | trim | upper -%}
+{%- if key in ['CRITICAL', 'FAILED', 'FAIL', 'ERROR', 'DEGRADED'] -%}
+<span class="status-critical">{{ text }}</span>
+{%- elif key in ['WARNING', 'WARN', 'LOW', 'POOR'] -%}
+<span class="status-warn">{{ text }}</span>
+{%- elif key in ['HEALTHY', 'OK', 'PASS', 'PASSED', 'TRUE', 'ALIGNED', 'EXCELLENT', 'GOOD', 'HIGH'] -%}
+<span class="status-ok">{{ text }}</span>
+{%- elif key in ['INFO', 'FAIR', 'MEDIUM'] -%}
+<span class="status-info">{{ text }}</span>
+{%- elif key in ['UNKNOWN', 'UNAVAILABLE', 'N/A', 'NONE'] -%}
+<span class="status-unknown">{{ text }}</span>
+{%- else -%}
+{{ text }}
+{%- endif -%}
+{%- endmacro %}
+
 # Kubernetes Cluster Health Report
 
-Generated at: `{{ report_completed_at | default(report_generated_at) }}`
+## Report Context
 
-## Summary
-
+- Generated at: `{{ report_completed_at | default(report_generated_at) }}`
 - Cluster type: `{{ report_cluster_type | default(provider_family | default(platform_family | default('kubernetes'))) }}`
 - Cluster type detection: `{{ cluster_type_detection_source | default('unknown') }}`
 - Cluster profile mode: `{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}`
-- Status: `{{ health_summary.status | default('UNKNOWN') }}`
-- Audit score: `{{ audit_score_total | default(0) }}/{{ audit_score_max | default(0) }}`
-- Cluster health score: `{{ cluster_health_score | default(0) }}/100 ({{ cluster_health_score_label | default('Unknown') }})`
-- Report confidence: `{{ report_confidence | default('unknown') | upper }}`
 - Context: `{{ oc_context_cmd.stdout | default('unknown') | trim }}`
 - API server: `{{ oc_server_cmd.stdout | default('unknown') | trim }}`
 - User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
 
-Confidence note: {{ report_confidence_detail | default('not available') }}.
+## At A Glance
 
-## Cluster Current State
+{% set top_risk_areas = [] %}
+{% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}
+{% set _ = top_risk_areas.append('core collection gaps reduce confidence in the report') %}
+{% endif %}
+{% if (not_ready_nodes | default([]) | length) > 0 or (pressure_nodes | default([]) | length) > 0 %}
+{% set _ = top_risk_areas.append('node readiness or pressure issues are present') %}
+{% endif %}
+{% if (pv_issues | default([]) | length) > 0 or (pvc_issues | default([]) | length) > 0 %}
+{% set _ = top_risk_areas.append('storage issues need review') %}
+{% endif %}
+{% if (workload_health_issues | default([]) | length) > 0 or (unhealthy_user_pods | default([]) | length) > 0 or (workload_probe_findings | default([]) | length) > 0 or (high_restart_pods | default([]) | length) > 0 %}
+{% set _ = top_risk_areas.append('workload resilience gaps were detected') %}
+{% endif %}
+{% if (security_findings | default([]) | length) > 0 or (workload_practice_findings | default([]) | length) > 0 %}
+{% set _ = top_risk_areas.append('security or workload guardrail findings require follow-up') %}
+{% endif %}
+{% if (deprecated_crd_findings | default([]) | length) > 0 or (deprecated_api_lines | default([]) | length) > 0 or (certificate_expiry_findings | default([]) | length) > 0 %}
+{% set _ = top_risk_areas.append('lifecycle or certificate findings need review') %}
+{% endif %}
+{% if (provider_specific_findings | default([]) | length) > 0 %}
+{% set _ = top_risk_areas.append('provider-specific platform findings were detected') %}
+{% endif %}
+
+| Summary | Value |
+| --- | --- |
+| Overall status | {{ status_badge(health_summary.status | default('UNKNOWN')) }} |
+| Health score | `{{ cluster_health_score | default(0) }}/100` ({{ status_badge(cluster_health_score_label | default('Unknown')) }}) |
+| Report confidence | {{ status_badge(report_confidence | default('unknown') | upper) }} |
+| Collection completeness | {% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}{{ status_badge('WARN') }} core gaps{% elif (collection_summary.failed_commands | default(0) | int) > 0 %}{{ status_badge('INFO') }} partial{% else %}{{ status_badge('OK') }} complete{% endif %} |
+| Timed out commands | `{{ collection_summary.timed_out_commands | default(0) }}` |
+| First recommended action | {% if suggested_next_steps | default([]) | length > 0 %}{{ suggested_next_steps[0].summary }}{% else %}Continue normal review cadence and monitor for drift.{% endif %} |
+
+{% if top_risk_areas | length == 0 %}
+Primary concerns:
+- no major risk themes were detected in this run
+{% else %}
+Primary concerns:
+{% for item in top_risk_areas[:5] %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+### Recommended Next Steps
+
+{% if suggested_next_steps | default([]) | length == 0 %}
+No specific next steps were generated for this run.
+{% else %}
+| Priority | Recommended Action | Admin Guidance |
+| --- | --- | --- |
+{% for item in suggested_next_steps[:8] %}
+| `{{ item.priority }}` | {{ item.summary }} | {{ item.detail }} |
+{% endfor %}
+{% endif %}
+
+## Health Scoring
+
+| Metric | Value |
+| --- | --- |
+| Cluster health score | `{{ cluster_health_score | default(0) }}/100` |
+| Cluster health rating | {{ status_badge(cluster_health_score_label | default('Unknown')) }} |
+| Score | `{{ audit_score_total | default(0) }}/{{ audit_score_max | default(0) }}` |
+| Report confidence | {{ status_badge(report_confidence | default('unknown') | upper) }} |
+| Confidence note | {{ report_confidence_detail | default('not available') }} |
+| Critical checks | `{{ audit_critical_checks | default([]) | length }}` |
+| Warning checks | `{{ audit_warning_checks | default([]) | length }}` |
+
+| Check | Severity | Score | Findings |
+| --- | --- | --- | --- |
+{% for check in audit_checks | default([]) %}
+| `{{ check.title }}` | `{{ check.severity }}` | `{{ check.score }}/{{ check.max_score }}` | `{{ check.findings_count }}` |
+{% endfor %}
+
+## Current State Snapshot
 
 {% if cluster_current_state_build_error | default('') | length > 0 %}
 State summary note:
@@ -41,6 +126,28 @@ State summary note:
 | Total allocatable memory MiB | `{{ cluster_current_state.resources.total_memory_mib | default(0) }}` |
 | Total allocatable ephemeral storage GiB | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default(0) }}` |
 
+## Node Growth Headroom
+
+| Signal | Value |
+| --- | --- |
+| Current nodes | `{{ cluster_current_state.node_growth_capacity.current_nodes | default(cluster_current_state.node_counts.total | default(0)) }}` |
+| Estimated max nodes from pod network | `{{ cluster_current_state.node_growth_capacity.max_nodes_by_pod_network | default('unknown') }}` |
+| Additional node slots from pod network | `{{ cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | default('unknown') }}` |
+| Pod network headroom | `{{ cluster_current_state.node_growth_capacity.pod_network_headroom_pct | default('unknown') }}`% |
+| Effective additional nodes limited by IP and pod network | `{{ cluster_current_state.node_growth_capacity.effective_additional_nodes | default('unknown') }}` |
+| Node IPs available | `{{ cluster_current_state.node_growth_capacity.node_ips_available | default('unknown') }}` |
+| Service IPs out of range | `{{ cluster_current_state.ip_capacity.services.observed_out_of_range_count | default(0) }}` |
+| Pod IPs out of range | `{{ cluster_current_state.ip_capacity.pods.observed_out_of_range_count | default(0) }}` |
+| Node IPs out of range | `{{ cluster_current_state.ip_capacity.nodes.observed_out_of_range_count | default(0) }}` |
+
+{% if cluster_current_state.node_growth_capacity.network_slot_details | default([]) | length > 0 %}
+| Pod Network CIDR | Host Prefix | Node Slots |
+| --- | --- | ---: |
+{% for item in cluster_current_state.node_growth_capacity.network_slot_details %}
+| `{{ item.cidr }}` | `{{ item.host_prefix }}` | `{{ item.node_slots }}` |
+{% endfor %}
+{% endif %}
+
 {% if cluster_current_state.worker_pools | default([]) | length > 0 %}
 ### Worker Pools
 
@@ -53,8 +160,37 @@ State summary note:
 Worker pool groups could not be derived from the collected node inventory.
 {% endif %}
 
+## Failure Domain And Zone Spread
+
+| Signal | Value |
+| --- | --- |
+| Worker failure domains observed | `{{ topology_resilience.worker_failure_domains_observed | default([]) | join(', ') or 'unknown' }}` |
+| Worker nodes without zone label | `{{ topology_resilience.worker_nodes_without_zone_label | default(0) }}` |
+| Worker pool groups limited to one zone | `{{ topology_resilience.single_zone_worker_pool_count | default(0) }}` |
+| Worker zone spread imbalance detected | `{{ topology_resilience.worker_zone_spread_unbalanced | default(false) }}` |
+
+{% if topology_resilience.worker_zone_counts | default([]) | length > 0 %}
+### Worker Nodes By Failure Domain
+
+| Failure Domain | Worker Nodes |
+| --- | ---: |
+{% for item in topology_resilience.worker_zone_counts %}
+| `{{ item.zone }}` | `{{ item.nodes }}` |
+{% endfor %}
+{% endif %}
+
+{% if topology_resilience.single_zone_worker_pools | default([]) | length > 0 %}
+### Worker Pool Groups Limited To One Zone
+
+| Type | Provider | Architecture | Zone |
+| --- | --- | --- | --- |
+{% for item in topology_resilience.single_zone_worker_pools %}
+| `{{ item.type }}` | `{{ item.provider }}` | `{{ item.architecture }}` | `{{ item.zones | default([]) | join(', ') or 'unknown' }}` |
+{% endfor %}
+{% endif %}
+
 {% if provider_nodepool_summary | default([]) | length > 0 or provider_component_summary | default([]) | length > 0 %}
-## Provider Platform
+## Platform Component Detail
 
 This section only reflects provider-specific collectors that matched the detected cluster flavor.
 
@@ -84,7 +220,7 @@ This section only reflects provider-specific collectors that matched the detecte
 | Kind | Namespace | Name | Ready | Desired | Healthy |
 | --- | --- | --- | ---: | ---: | --- |
 {% for item in provider_component_summary %}
-| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.ready }}` | `{{ item.desired }}` | `{{ item.healthy }}` |
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.ready }}` | `{{ item.desired }}` | {{ status_badge('OK' if item.healthy in ['True', true, 'healthy', 'Healthy'] else ('WARN' if item.healthy in ['False', false, 'unhealthy', 'Unhealthy'] else 'UNKNOWN')) }} |
 {% endfor %}
 {% endif %}
 {% endif %}
@@ -93,64 +229,138 @@ This section only reflects provider-specific collectors that matched the detecte
 
 This section groups the highest-signal checks from the common Kubernetes path so the report reads as an operator summary instead of a flat findings list.
 
+Status guide:
+- {{ status_badge('OK') }} means no immediate issue was detected in that signal
+- {{ status_badge('WARN') }} means the signal needs investigation or remediation
+- {{ status_badge('INFO') }} means the row is mainly context or non-failing posture information
+- {{ status_badge('UNKNOWN') }} means the signal was not available or could not be derived confidently
+
 ### Cluster And Nodes
 
 | Signal | Current Value | Status |
 | --- | --- | --- |
-| Node count | `{{ health_summary.nodes_total | default(0) }}` | `INFO` |
-| NotReady nodes | `{{ health_summary.nodes_not_ready | default(0) }}` | `{% if (health_summary.nodes_not_ready | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Nodes under pressure | `{{ health_summary.node_pressure_count | default(0) }}` | `{% if (health_summary.node_pressure_count | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Worker pool groups | `{{ cluster_current_state.worker_pool_count | default(0) }}` | `{% if (cluster_current_state.worker_pool_count | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
-| Total allocatable CPU | `{{ cluster_current_state.resources.total_cpu_millicores | default('unknown') }}` m | `{% if cluster_current_state.resources.total_cpu_millicores | default('unknown') == 'unknown' %}UNKNOWN{% else %}INFO{% endif %}` |
-| Total allocatable memory | `{{ cluster_current_state.resources.total_memory_mib | default('unknown') }}` MiB | `{% if cluster_current_state.resources.total_memory_mib | default('unknown') == 'unknown' %}UNKNOWN{% else %}INFO{% endif %}` |
-| Total allocatable ephemeral storage | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default('unknown') }}` GiB | `{% if cluster_current_state.resources.total_ephemeral_storage_gib | default('unknown') == 'unknown' %}UNKNOWN{% else %}INFO{% endif %}` |
-
-### Workloads And Storage
-
-| Signal | Current Value | Status |
-| --- | --- | --- |
-| User workload health issues | `{{ health_summary.workload_health_issues | default(0) }}` | `{% if (health_summary.workload_health_issues | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| User workload probe findings | `{{ health_summary.workload_probe_findings | default(0) }}` | `{% if (health_summary.workload_probe_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Restart hotspots | `{{ health_summary.high_restart_pods | default(0) }}` | `{% if (health_summary.high_restart_pods | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| PV issues | `{{ health_summary.pv_issues | default(0) }}` | `{% if (health_summary.pv_issues | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| PVC issues | `{{ health_summary.pvc_issues | default(0) }}` | `{% if (health_summary.pvc_issues | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-
-### Security And Guardrails
-
-| Signal | Current Value | Status |
-| --- | --- | --- |
-| Security findings | `{{ health_summary.security_findings | default(0) }}` | `{% if (health_summary.security_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Workload best-practice findings | `{{ health_summary.workload_practice_findings | default(0) }}` | `{% if (health_summary.workload_practice_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Namespaces without NetworkPolicy | `{{ health_summary.namespaces_without_networkpolicy | default(0) }}` | `{% if (health_summary.namespaces_without_networkpolicy | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Namespaces without ResourceQuota | `{{ health_summary.namespaces_without_resourcequota | default(0) }}` | `{% if (health_summary.namespaces_without_resourcequota | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Namespaces without LimitRange | `{{ health_summary.namespaces_without_limitrange | default(0) }}` | `{% if (health_summary.namespaces_without_limitrange | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Node count | `{{ health_summary.nodes_total | default(0) }}` | {{ status_badge('INFO') }} |
+| NotReady nodes | `{{ health_summary.nodes_not_ready | default(0) }}` | {{ status_badge('WARN' if (health_summary.nodes_not_ready | default(0) | int) > 0 else 'OK') }} |
+| Nodes under pressure | `{{ health_summary.node_pressure_count | default(0) }}` | {{ status_badge('WARN' if (health_summary.node_pressure_count | default(0) | int) > 0 else 'OK') }} |
+| Worker pool groups | `{{ cluster_current_state.worker_pool_count | default(0) }}` | {{ status_badge('INFO' if (cluster_current_state.worker_pool_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Worker failure domains observed | `{{ topology_resilience.worker_failure_domains_observed | default([]) | length }}` | {{ status_badge('OK' if (topology_resilience.worker_failure_domains_observed | default([]) | length) > 1 else ('WARN' if (cluster_current_state.node_counts.worker | default(0) | int) > 1 else 'INFO')) }} |
+| Worker pools limited to one zone | `{{ topology_resilience.single_zone_worker_pool_count | default(0) }}` | {{ status_badge('WARN' if (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 else 'OK') }} |
+| Worker nodes without zone label | `{{ topology_resilience.worker_nodes_without_zone_label | default(0) }}` | {{ status_badge('WARN' if (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 else 'OK') }} |
+| Worker zone spread imbalance | `{{ topology_resilience.worker_zone_spread_unbalanced | default(false) }}` | {{ status_badge('WARN' if topology_resilience.worker_zone_spread_unbalanced | default(false) else 'OK') }} |
+| Total allocatable CPU | `{{ cluster_current_state.resources.total_cpu_millicores | default('unknown') }}` m | {{ status_badge('UNKNOWN' if cluster_current_state.resources.total_cpu_millicores | default('unknown') == 'unknown' else 'INFO') }} |
+| Total allocatable memory | `{{ cluster_current_state.resources.total_memory_mib | default('unknown') }}` MiB | {{ status_badge('UNKNOWN' if cluster_current_state.resources.total_memory_mib | default('unknown') == 'unknown' else 'INFO') }} |
+| Total allocatable ephemeral storage | `{{ cluster_current_state.resources.total_ephemeral_storage_gib | default('unknown') }}` GiB | {{ status_badge('UNKNOWN' if cluster_current_state.resources.total_ephemeral_storage_gib | default('unknown') == 'unknown' else 'INFO') }} |
+| Service IP ranges | `{{ cluster_current_state.ip_capacity.services.range_count | default(0) }}` | {{ status_badge('INFO' if (cluster_current_state.ip_capacity.services.range_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Service IPs available | `{{ cluster_current_state.ip_capacity.services.available_ips | default('unknown') }}` | {{ status_badge('UNKNOWN' if cluster_current_state.ip_capacity.services.available_ips | default('unknown') == 'unknown' else ('WARN' if (cluster_current_state.ip_capacity.services.available_ips | int) == 0 else 'INFO')) }} |
+| Service IPs out of range | `{{ cluster_current_state.ip_capacity.services.observed_out_of_range_count | default(0) }}` | {{ status_badge('WARN' if (cluster_current_state.ip_capacity.services.observed_out_of_range_count | default(0) | int) > 0 else 'OK') }} |
+| Pod IP ranges | `{{ cluster_current_state.ip_capacity.pods.range_count | default(0) }}` | {{ status_badge('INFO' if (cluster_current_state.ip_capacity.pods.range_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Pod IPs available | `{{ cluster_current_state.ip_capacity.pods.available_ips | default('unknown') }}` | {{ status_badge('UNKNOWN' if cluster_current_state.ip_capacity.pods.available_ips | default('unknown') == 'unknown' else ('WARN' if (cluster_current_state.ip_capacity.pods.available_ips | int) == 0 else 'INFO')) }} |
+| Pod IPs out of range | `{{ cluster_current_state.ip_capacity.pods.observed_out_of_range_count | default(0) }}` | {{ status_badge('WARN' if (cluster_current_state.ip_capacity.pods.observed_out_of_range_count | default(0) | int) > 0 else 'OK') }} |
+| Estimated max nodes from pod network | `{{ cluster_current_state.node_growth_capacity.max_nodes_by_pod_network | default('unknown') }}` | {{ status_badge('UNKNOWN' if cluster_current_state.node_growth_capacity.max_nodes_by_pod_network | default('unknown') == 'unknown' else 'INFO') }} |
+| Additional node slots from pod network | `{{ cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | default('unknown') }}` | {{ status_badge('UNKNOWN' if cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | default('unknown') == 'unknown' else ('WARN' if (cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | int) <= 3 else 'INFO')) }} |
+| Node IPs available | `{{ cluster_current_state.node_growth_capacity.node_ips_available | default('unknown') }}` | {{ status_badge('UNKNOWN' if cluster_current_state.node_growth_capacity.node_ips_available | default('unknown') == 'unknown' else ('WARN' if (cluster_current_state.node_growth_capacity.node_ips_available | int) <= 3 else 'INFO')) }} |
+| Node IPs out of range | `{{ cluster_current_state.ip_capacity.nodes.observed_out_of_range_count | default(0) }}` | {{ status_badge('WARN' if (cluster_current_state.ip_capacity.nodes.observed_out_of_range_count | default(0) | int) > 0 else 'OK') }} |
 
 ### Lifecycle, Provider, And Auditability
 
 | Signal | Current Value | Status |
 | --- | --- | --- |
-| Deprecated CRD findings | `{{ health_summary.deprecated_crd_findings | default(0) }}` | `{% if (health_summary.deprecated_crd_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Deprecated API findings | `{{ health_summary.deprecated_api_lines | default(0) }}` | `{% if (health_summary.deprecated_api_lines | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Certificate expiry findings | `{{ health_summary.certificate_expiry_findings | default(0) }}` | `{% if (health_summary.certificate_expiry_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Provider-specific findings | `{{ health_summary.provider_specific_findings | default(0) }}` | `{% if (health_summary.provider_specific_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% | `{% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}WARN{% elif (collection_summary.failed_commands | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
-| Report confidence | `{{ report_confidence | default('unknown') | upper }}` | `{% if report_confidence | default('unknown') == 'low' %}WARN{% elif report_confidence | default('unknown') == 'medium' %}INFO{% else %}OK{% endif %}` |
+| Deprecated CRD findings | `{{ health_summary.deprecated_crd_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.deprecated_crd_findings | default(0) | int) > 0 else 'OK') }} |
+| Deprecated API findings | `{{ health_summary.deprecated_api_lines | default(0) }}` | {{ status_badge('WARN' if (health_summary.deprecated_api_lines | default(0) | int) > 0 else 'OK') }} |
+| Certificate expiry findings | `{{ health_summary.certificate_expiry_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.certificate_expiry_findings | default(0) | int) > 0 else 'OK') }} |
+| Provider-specific findings | `{{ health_summary.provider_specific_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.provider_specific_findings | default(0) | int) > 0 else 'OK') }} |
+| Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% | {{ status_badge('WARN' if (collection_summary.core_failed_commands | default(0) | int) > 0 else ('INFO' if (collection_summary.failed_commands | default(0) | int) > 0 else 'OK')) }} |
+| Report confidence | `{{ report_confidence | default('unknown') | upper }}` | {{ status_badge('WARN' if report_confidence | default('unknown') == 'low' else ('INFO' if report_confidence | default('unknown') == 'medium' else 'OK')) }} |
 
-## Suggested Next Steps
+### Security And Guardrails
 
-{% if suggested_next_steps | default([]) | length == 0 %}
-No specific next steps were generated for this run.
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| Security findings | `{{ health_summary.security_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.security_findings | default(0) | int) > 0 else 'OK') }} |
+| Workload best-practice findings | `{{ health_summary.workload_practice_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_practice_findings | default(0) | int) > 0 else 'OK') }} |
+| Namespaces without NetworkPolicy | `{{ health_summary.namespaces_without_networkpolicy | default(0) }}` | {{ status_badge('WARN' if (health_summary.namespaces_without_networkpolicy | default(0) | int) > 0 else 'OK') }} |
+| Namespaces without ResourceQuota | `{{ health_summary.namespaces_without_resourcequota | default(0) }}` | {{ status_badge('WARN' if (health_summary.namespaces_without_resourcequota | default(0) | int) > 0 else 'OK') }} |
+| Namespaces without LimitRange | `{{ health_summary.namespaces_without_limitrange | default(0) }}` | {{ status_badge('WARN' if (health_summary.namespaces_without_limitrange | default(0) | int) > 0 else 'OK') }} |
+
+### Workloads And Storage
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| User workload health issues | `{{ health_summary.workload_health_issues | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_health_issues | default(0) | int) > 0 else 'OK') }} |
+| Unhealthy user pods | `{{ health_summary.unhealthy_user_pods | default(0) }}` | {{ status_badge('WARN' if (health_summary.unhealthy_user_pods | default(0) | int) > 0 else 'OK') }} |
+| Workloads with >10 replicas | `{{ health_summary.high_replica_workloads | default(0) }}` | {{ status_badge('INFO' if (health_summary.high_replica_workloads | default(0) | int) > 0 else 'OK') }} |
+| Pods without parent owner | `{{ health_summary.orphan_pods | default(0) }}` | {{ status_badge('WARN' if (health_summary.orphan_pods | default(0) | int) > 0 else 'OK') }} |
+| Workloads missing recommended app labels | `{{ health_summary.workload_label_governance_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_label_governance_findings | default(0) | int) > 0 else 'OK') }} |
+| Workloads missing resource requests or limits | `{{ health_summary.workload_resource_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_resource_findings | default(0) | int) > 0 else 'OK') }} |
+| User workload probe findings | `{{ health_summary.workload_probe_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_probe_findings | default(0) | int) > 0 else 'OK') }} |
+| Restart hotspots | `{{ health_summary.high_restart_pods | default(0) }}` | {{ status_badge('WARN' if (health_summary.high_restart_pods | default(0) | int) > 0 else 'OK') }} |
+| External storage providers detected | `{{ health_summary.external_storage_providers | default(0) }}` | {{ status_badge('OK' if (health_summary.external_storage_providers | default(0) | int) > 0 or (health_summary.external_persistent_volume_backends | default(0) | int) > 0 else 'WARN') }} |
+| Local or ephemeral storage only risk | `{{ health_summary.local_or_ephemeral_only_risk | default(false) }}` | {{ status_badge('WARN' if health_summary.local_or_ephemeral_only_risk | default(false) else 'OK') }} |
+| PV issues | `{{ health_summary.pv_issues | default(0) }}` | {{ status_badge('WARN' if (health_summary.pv_issues | default(0) | int) > 0 else 'OK') }} |
+| PVC issues | `{{ health_summary.pvc_issues | default(0) }}` | {{ status_badge('WARN' if (health_summary.pvc_issues | default(0) | int) > 0 else 'OK') }} |
+
+## Security And Governance Detail
+
+### Namespace Hygiene
+
+This review covers user namespaces only. Namespaces matching `openshift-*`, `kubernetes-*`, and `kube-*` are excluded.
+
+| Check | Result | Detail |
+| --- | --- | --- |
+| `NetworkPolicy coverage` | {% if namespaces_without_networkpolicy | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_networkpolicy | default([]) | length > 0 %}`{{ namespaces_without_networkpolicy | join(', ') }}`{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `NetworkPolicy` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `NetworkPolicy` hygiene check{% endif %} |
+| `ResourceQuota coverage` | {% if namespaces_without_resourcequota | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_resourcequota | default([]) | length > 0 %}`{{ namespaces_without_resourcequota | join(', ') }}`{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `ResourceQuota` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `ResourceQuota` hygiene check{% endif %} |
+| `LimitRange coverage` | {% if namespaces_without_limitrange | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_limitrange | default([]) | length > 0 %}`{{ namespaces_without_limitrange | join(', ') }}`{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `LimitRange` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `LimitRange` hygiene check{% endif %} |
+
+### Storage Posture
+
+| Signal | Value |
+| --- | --- |
+| External storage providers detected | `{{ storage_posture_summary.external_storageclass_count | default(0) }}` |
+| External persistent volume backends | `{{ storage_posture_summary.external_pv_count | default(0) }}` |
+| Default external StorageClasses | `{{ storage_posture_summary.default_external_storageclass_count | default(0) }}` |
+| Local StorageClasses | `{{ storage_posture_summary.local_storageclass_count | default(0) }}` |
+| Local persistent volumes | `{{ storage_posture_summary.local_pv_count | default(0) }}` |
+| Workloads using hostPath storage | `{{ storage_posture_summary.hostpath_workload_count | default(0) }}` |
+| Workloads using ephemeral storage volumes | `{{ storage_posture_summary.ephemeral_workload_count | default(0) }}` |
+| External storage provider detected | `{{ storage_posture_summary.has_external_storage_provider | default(false) }}` |
+| Local or ephemeral storage only risk | `{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}` |
+
+{% if storage_posture_summary.external_storageclass_names | default([]) | length > 0 %}
+Detected external StorageClasses: `{{ storage_posture_summary.external_storageclass_names | join(', ') }}`
+{% elif storage_posture_summary.has_external_storage_provider | default(false) %}
+External persistent storage backends were detected from persistent volumes, but no external StorageClass names were derived.
 {% else %}
-{% for item in suggested_next_steps | default([]) %}
-- `{{ item.priority }}`: {{ item.summary }} {{ item.detail }}
+No external persistent storage provider was detected from StorageClasses or persistent volume backends.
+{% endif %}
+
+{% if top_workload_resource_findings | default([]) | length > 0 %}
+## Workload Delivery Detail
+
+### Workload Resource Practices
+
+| Kind | Namespace | Workload | Check | Containers |
+| --- | --- | --- | --- | --- |
+{% for item in top_workload_resource_findings %}
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{% if item.issue == 'workload-missing-resource-requests' %}Missing resource requests{% elif item.issue == 'workload-missing-resource-limits' %}Missing resource limits{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
 {% endif %}
 
+{% if top_unhealthy_user_pods | default([]) | length > 0 %}
+### Unhealthy User Pods
+
+| Namespace | Pod | Phase | Ready |
+| --- | --- | --- | --- |
+{% for item in top_unhealthy_user_pods %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.ready }}` |
+{% endfor %}
+{% endif %}
+
+## Appendix: Notes
 {% if (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] %}
 Profile note: this report used a non-production profile, so some hygiene and unused-resource findings do not reduce the score the same way they do in production.
 {% endif %}
 
-## Execution Stats
+## Appendix: Execution Stats
 
 | Item | Value |
 | --- | --- |

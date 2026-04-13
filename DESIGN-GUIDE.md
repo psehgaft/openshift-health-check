@@ -32,7 +32,7 @@ The design is layered on purpose:
 - provider-aware sections where safe cluster-local signals exist
 - profile-aware scoring so development and lightweight clusters are not judged like production by default
 
-OpenShift is still the deepest path in the repo. The Kubernetes path is broader now, but it intentionally stays conservative unless the cluster exposes strong local signals for a provider or platform feature.
+OpenShift is still the deepest path in the repo. The Kubernetes path is broader now, but it stays conservative unless the cluster exposes strong local signals for a provider or platform feature.
 
 ## Best-Practice Sources
 
@@ -87,17 +87,7 @@ This repo does not try to copy one vendor document line by line. It turns the co
 
 Rancher-managed Kubernetes and Minikube are supported cluster types in the repo, but the current best-practice model for those paths is still driven mostly by the shared Kubernetes guidance above, not by a deep Rancher-specific or Minikube-specific source set.
 
-It pulls together guidance from:
-
-- Red Hat
-- IBM Cloud
-- Kubernetes and CNCF
-- GitHub OpenShift runbooks
-- AKS
-- EKS
-- GKE
-
-The best-practice checks in the repo are therefore a synthesis of those sources, not a direct copy of any single document.
+The best-practice checks in the repo are a synthesis of those sources, not a direct copy of any single document.
 
 ## The Basic Idea
 
@@ -139,6 +129,59 @@ At a minimum, a useful cluster health check should cover:
 
 If a solution skips most of that, it may still be useful as a quick script, but it is not really a full cluster health review.
 
+## Review Scope Mapping
+
+The OpenShift path is intended to support a real platform review, not just a pass or fail health check. That said, the design separates three kinds of review coverage:
+
+- `direct`: the report can support the review area with cluster-local data and clear findings
+- `partial`: the report can provide strong supporting signals, but not a complete judgment
+- `manual`: the review area depends on process, external systems, or evidence outside the cluster
+
+That distinction matters because several important customer review topics are not purely technical cluster-state questions.
+
+### Infrastructure And Cluster Health
+
+- OpenShift Container Platform: `direct`
+  Signals include ClusterVersion, operator state, MCP state, topology, lifecycle, and current-state context.
+- Platform infrastructure dependencies: `partial`
+  The report can speak to platform, node shape, failure-domain spread, IP headroom, storage classes, storage posture, PV/PVC health, route and ingress health, and core platform operators. It cannot directly validate the underlying hypervisor, SAN, firewall, or upstream network design beyond the signals visible in-cluster.
+- Node and operator status: `direct`
+  This is a first-class area in the design.
+- API services and etcd health: `direct`
+  This is a first-class area in the design.
+- Capability and readiness for common disaster scenarios: `partial`
+  The report helps with resilience signals such as topology, control-plane health, storage health, route and ingress continuity, and observability forwarding. It does not prove backup and restore readiness by itself.
+- Environment patching process: `partial`
+  The report can show current version, update history, conditional risks, and MCP state. It cannot prove the governance or process quality of patch execution on its own.
+
+### Application Development Practices Related To OpenShift
+
+- Build and deploy practices: `partial`
+  The report checks rollout health, probe coverage, resource requests and limits, restart hotspots, build inventory, pipeline signals, and image-registry posture. It does not inspect every container build workflow or image construction practice.
+- Pipeline usage: `partial`
+  The OpenShift path inventories `Pipeline`, `PipelineRun`, failed `PipelineRun` state, and `BuildConfig` trigger posture, but does not prove CI/CD process quality on its own.
+- Liveness, readiness, requests, limits, and project quotas: `direct`
+  These are already first-class checks in the report.
+- Capacity planning: `partial`
+  The report shows current capacity and current stress signals. Projected growth still requires application and infrastructure planning outside the cluster report.
+
+### Security Posture Check
+
+- Examine compliance requirements: `manual`
+  The report can provide evidence, but not a formal control mapping by itself.
+- Identity and group management: `direct`
+  The report checks identity provider presence, privileged grants, and stale-access review candidates.
+- Certificate policies: `partial`
+  The report can show certificate expiry and related risks, but policy compliance is broader than expiry dates.
+- Security Context Constraints (SCC): `partial`
+  The OpenShift path inventories SCCs and high-risk SCC grants, but a full SCC policy review still requires human assessment.
+- Secrets management: `partial`
+  The report includes secret reference heuristics, likely unused secrets, and TLS secret expiry. Full lifecycle, rotation, vault integration, and policy compliance are broader than those checks.
+- Container image management: `partial`
+  The report evaluates image-registry posture, internal image-registry use in workloads, and some registry policy risks, but not the full external image governance chain.
+
+The design goal is not to overclaim. The report should help an assessor move faster, show strong technical evidence, and clearly identify where human review is still required.
+
 ## What The Different Sources Agree On
 
 ### Red Hat
@@ -169,6 +212,12 @@ Useful target values:
 
 - etcd fsync p99 under `10 ms`
 - etcd peer RTT p99 under `50 ms`
+
+Those thresholds are reflected directly in the OpenShift report:
+
+- etcd WAL fsync p99 warns above `10 ms`
+- etcd peer RTT p99 warns above `50 ms`
+- API server p99 latency warns above `1 s` and is displayed in `ms`
 
 ### IBM Cloud
 
@@ -216,11 +265,18 @@ The common pattern is hard to miss:
 - keep alert design tight
 - include lifecycle and upgrade risk
 
+The current report extends that same model into cluster-network and scaling posture:
+
+- IP exhaustion risk is treated as a health and growth concern
+- failure-domain spread is treated as a resilience concern
+- external alert delivery is treated as an operational readiness concern
+- external storage presence is treated as a persistence and disaster-readiness concern
+
 ## The Health Model Behind This Tool
 
 The easiest way to think about this is as a layered model.
 
-Before the tool shows problems, it now shows the current state of the cluster near the top of the report. That is intentional. Operators usually need quick context first:
+Before the tool shows problems, it shows the current state of the cluster near the top of the report. Operators usually need quick context first:
 
 - what version is this cluster on
 - how big is it
@@ -231,19 +287,27 @@ Before the tool shows problems, it now shows the current state of the cluster ne
 
 Without that context, the findings are harder to interpret.
 
-That same rule now applies across the supported cluster types. The report should identify what kind of cluster it is before it starts judging it. That is why the repo now carries cluster type in the file name and the report body, and why the Kubernetes path also shows provider and profile context.
+That same rule now applies across the supported cluster types. The report identifies what kind of cluster it is before it starts evaluating it. That is why the repo carries cluster type in the file name and the report body, and why the Kubernetes path also shows provider and profile context.
 
-After the current-state section, the report now uses a grouped operational summary instead of one flat findings list. That is also intentional. The goal is to surface the most important signals early, but still keep them grouped by meaning so operators do not have to mentally sort a long mixed table.
+After the current-state section, the report uses a grouped operational summary instead of one flat findings list. This surfaces the highest-signal checks early without forcing operators to sort through a long mixed table.
 
 For OpenShift, the high-signal summary is grouped into:
 
 - control plane and change
 - platform and topology
-- traffic, capacity, and workloads
+- traffic and capacity
 - security, access, and guardrails
 - lifecycle, observability, and auditability
 
 For the shared Kubernetes path, the same idea applies with a smaller field set that is safe to compute across non-OpenShift clusters.
+
+The summary now also includes cluster-growth and topology signals when available:
+
+- service, pod, and node IP capacity
+- estimated node growth headroom from pod-network allocation
+- worker-pool and MachineSet zone spread
+- external storage posture
+- external alert delivery posture
 
 The score legend is placed directly above `Cluster Current State` so an operator can interpret the score before reading the rest of the report.
 
@@ -265,7 +329,110 @@ In a healthy cluster:
 - all needed nodes are ready
 - no node is under lasting pressure
 
-This is the fastest way to answer, "is the platform obviously unhealthy?"
+Platform state also now includes topology and scaling posture because those are early indicators of resilience problems:
+
+- worker nodes should be spread across failure domains where the platform supports them
+- worker-pool groups should not collapse into a single zone unintentionally
+- MachineSet replicas should not be heavily skewed across zones
+- the cluster should still have network and IP headroom to add more nodes when scale-out is needed
+
+## Signal Catalog
+
+This section explains why the main signals exist and what conditions the report uses behind them.
+
+### Version, Operators, And Control Plane
+
+- `ClusterVersion`, update history, and conditional update risk:
+  - reason: patching and upgrade readiness
+  - condition: OpenShift-native lifecycle objects are trusted first
+- cluster operators and platform component status:
+  - reason: OpenShift operator state is one of the strongest built-in health signals
+  - condition: healthy state is normally `Available=True`, `Progressing=False`, `Degraded=False`
+- API `/readyz`, API latency, 5xx, request rates, inflight requests, and stored object count:
+  - reason: control-plane responsiveness and overload detection
+  - condition: Prometheus-backed fields render when monitoring access is available
+- etcd leader count, leader changes, WAL fsync, backend commit, and peer RTT:
+  - reason: control-plane stability and storage-path health
+  - condition: OpenShift monitoring exposes these metrics through Prometheus
+
+### Topology, Network, And Growth
+
+- worker-pool and failure-domain spread:
+  - reason: resilience during zone or rack failure
+  - condition: derived from worker node zone labels and worker-pool grouping
+- MachineSet spread and replica balance:
+  - reason: OpenShift worker capacity should stay distributed across zones
+  - condition: derived from MachineSet zone labels and replica counts
+- service, pod, and node IP capacity:
+  - reason: service creation, workload scheduling, and node growth all depend on available IP space
+  - condition: total and available IPs are derived from known CIDRs; observed used IPs are direct counts
+- node growth headroom:
+  - reason: operators need to know how many more nodes can be added before network allocation becomes the limit
+  - condition: estimated from pod-network CIDRs and `hostPrefix` when available, then constrained by known node IP availability
+  - if those details are not exposed, the report keeps the value as `unknown`
+
+### Storage And Persistence
+
+- storage classes, PVs, PVCs, and quota pressure:
+  - reason: persistence and namespace-level storage pressure are critical platform signals
+  - condition: direct inventory plus simple unhealthy phase checks
+- external storage provider detection:
+  - reason: clusters should not rely only on local or ephemeral storage for persistent workloads
+  - condition: inferred from `StorageClass` provisioners and PV backend types
+- local-or-ephemeral-only risk:
+  - reason: local `hostPath`, local PVs, and ephemeral volumes alone are weak persistence signals
+  - condition: warns when those patterns are present but no external persistent storage provider is detected
+
+### Observability, Alerting, And Delivery
+
+- monitoring operator health and Thanos route availability:
+  - reason: without monitoring access, many later signals become weaker or unavailable
+  - condition: based on operator conditions and route discovery
+- external log forwarding:
+  - reason: incident data should survive cluster-local failures
+  - condition: `ClusterLogForwarder` outputs are classified as external vs cluster-local
+- external metrics remote write:
+  - reason: external retention and off-cluster analysis improve resilience and auditability
+  - condition: based on cluster-monitoring and user-workload-monitoring config
+- external alert delivery:
+  - reason: alerts should reach the teams who need them outside the cluster
+  - condition: based on discovered `AlertmanagerConfig` receivers for supported external channels such as email, Slack, PagerDuty, Opsgenie, webhook, VictorOps, and WeChat
+  - this proves configured delivery targets, not runtime reachability
+
+### Workloads, Guardrails, And Security
+
+- rollout health, unhealthy user pods, restart hotspots, and probe coverage:
+  - reason: these are practical application resilience signals
+  - condition: evaluated only for user workload namespaces, excluding platform namespaces
+- large replica workloads:
+  - reason: very large replica counts can be intentional, but they are worth review because they can amplify scheduling, network, and failure-domain issues
+  - condition: default review threshold is greater than `10` desired replicas
+- pods without parent owners:
+  - reason: ownerless pods often indicate drift, debugging leftovers, or weak deployment discipline
+  - condition: pods without `ownerReferences`, excluding completed pods
+- workload label governance:
+  - reason: recommended Kubernetes and OpenShift labels help ownership, operations, and reporting
+  - condition: checks for recommended application labels and, on OpenShift `DeploymentConfig`, runtime labels
+- namespace hygiene:
+  - reason: `NetworkPolicy`, `ResourceQuota`, and `LimitRange` reduce noisy-neighbor risk
+  - condition: checks user namespaces only, excluding platform namespaces
+- privileged access, SCC grants, and stale-access review:
+  - reason: least privilege and access cleanup are important platform review topics
+  - condition: privileged grants are direct RBAC and SCC findings; stale-access items are conservative review candidates, not proofs of inactivity
+
+## Unknown And Unavailable Values
+
+The report uses `unknown` or `unavailable` in several places by design.
+
+- `unknown` means the cluster did not expose enough object data to compute a defensible derived value
+- `unavailable` usually means the signal depends on an active metric query that was not available in the current run
+
+Examples:
+
+- IP totals and available counts stay `unknown` when the relevant CIDRs are not exposed
+- node growth headroom stays `unknown` when pod-network allocation details are missing
+- control-plane-to-worker and worker-to-worker latency stay `unavailable` unless the cluster exposes a suitable Prometheus metric
+- report confidence drops when collection failures or fallback synthesis paths reduce certainty
 
 ### Layer 2: Control Plane And etcd
 

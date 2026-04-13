@@ -69,6 +69,105 @@
   ansible.builtin.set_fact:
     workload_health_issues: "{{ (deployment_issues | default([])) + (statefulset_issues | default([])) + (daemonset_issues | default([])) }}"
 
+- name: Build deploymentconfig health findings
+  ansible.builtin.set_fact:
+    deploymentconfig_issues: "{{ deploymentconfig_issues | default([]) + issue_entry }}"
+  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    desired: "{{ item.spec.replicas | default(1) | int }}"
+    available: "{{ item.status.availableReplicas | default(0) | int }}"
+    ready: "{{ item.status.readyReplicas | default(0) | int }}"
+    updated: "{{ item.status.updatedReplicas | default(0) | int }}"
+    issue_entry: "{{ [{'kind': 'DeploymentConfig', 'namespace': ns_name, 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (is_user_namespace and (desired | int) > 0 and ((available | int) < (desired | int) or (ready | int) < (desired | int) or (updated | int) < (desired | int))) else [] }}"
+  changed_when: false
+
+- name: Merge deploymentconfig health findings
+  ansible.builtin.set_fact:
+    workload_health_issues: "{{ (workload_health_issues | default([])) + (deploymentconfig_issues | default([])) }}"
+
+- name: Build deploymentconfig high replica review findings
+  ansible.builtin.set_fact:
+    high_replica_workloads: "{{ (high_replica_workloads | default([])) + replica_review_entry }}"
+  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    desired_replicas: "{{ item.spec.replicas | default(1) | int }}"
+    replica_review_entry: >-
+      {{
+        [{
+          'kind': 'DeploymentConfig',
+          'namespace': ns_name,
+          'name': item.metadata.name | default('unknown'),
+          'replicas': desired_replicas
+        }]
+        if ((is_user_namespace | bool) and (desired_replicas | int) > 10) else []
+      }}
+  changed_when: false
+
+- name: Build deploymentconfig ownership label review findings
+  ansible.builtin.set_fact:
+    workload_label_governance_findings: "{{ (workload_label_governance_findings | default([])) + label_review_entry }}"
+  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    missing_parts: >-
+      {{
+        ([] +
+        (['app.kubernetes.io/name'] if (labels.get('app.kubernetes.io/name', '') | length) == 0 else []) +
+        (['app.kubernetes.io/instance'] if (labels.get('app.kubernetes.io/instance', '') | length) == 0 else []) +
+        (['app.kubernetes.io/component'] if (labels.get('app.kubernetes.io/component', '') | length) == 0 else []) +
+        (['app.kubernetes.io/part-of'] if (labels.get('app.kubernetes.io/part-of', '') | length) == 0 else []) +
+        (['app.kubernetes.io/managed-by'] if (labels.get('app.kubernetes.io/managed-by', '') | length) == 0 else []) +
+        (['app.openshift.io/runtime'] if (labels.get('app.openshift.io/runtime', '') | length) == 0 else []))
+      }}
+    label_review_entry: >-
+      {{
+        [{
+          'kind': 'DeploymentConfig',
+          'namespace': ns_name,
+          'name': item.metadata.name | default('unknown'),
+          'detail': missing_parts | join('; ')
+        }]
+        if ((is_user_namespace | bool) and (missing_parts | length > 0)) else []
+      }}
+  changed_when: false
+
+- name: Build deploymentconfig resource requirement findings
+  ansible.builtin.set_fact:
+    workload_resource_findings: "{{ (workload_resource_findings | default([])) + resource_entries }}"
+  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    pod_spec: "{{ item.spec.template.spec | default({}) }}"
+    containers: "{{ (pod_spec.containers | default([])) + (pod_spec.initContainers | default([])) }}"
+    containers_without_requests: "{{ containers | rejectattr('resources.requests', 'defined') | map(attribute='name') | list }}"
+    containers_without_limits: "{{ containers | rejectattr('resources.limits', 'defined') | map(attribute='name') | list }}"
+    resource_entries: >-
+      {{
+        ([] +
+        ([{
+          'kind': 'DeploymentConfig',
+          'namespace': ns_name,
+          'name': item.metadata.name | default('unknown'),
+          'issue': 'workload-missing-resource-requests',
+          'detail': containers_without_requests | join(', ')
+        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_requests | length > 0 else []) +
+        ([{
+          'kind': 'DeploymentConfig',
+          'namespace': ns_name,
+          'name': item.metadata.name | default('unknown'),
+          'issue': 'workload-missing-resource-limits',
+          'detail': containers_without_limits | join(', ')
+        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_limits | length > 0 else []))
+      }}
+  changed_when: false
+
 - name: Build deployment probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"

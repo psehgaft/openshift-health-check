@@ -35,41 +35,35 @@
   changed_when: false
 
 - name: Build pod CPU request map
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create temporary pod CPU request map input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-pod-cpu-
+        suffix: .json
+      register: pod_cpu_request_map_input_file
 
-    data = json.loads(r'''{{ (pods | default({})).get('items', []) | to_json }}''')
+    - name: Write pod CPU request map input data
+      ansible.builtin.copy:
+        dest: "{{ pod_cpu_request_map_input_file.path }}"
+        content: "{{ (pods | default({})).get('items', []) | to_json }}"
+        mode: "0600"
 
-    def parse_cpu_to_millicores(value):
-        if value in (None, ""):
-            return 0.0
-        s = str(value).strip()
-        if s.endswith("m"):
-            try:
-                return float(s[:-1])
-            except Exception:
-                return 0.0
-        try:
-            return float(s) * 1000.0
-        except Exception:
-            return 0.0
-
-    result = {}
-    for pod in data:
-        ns = pod.get("metadata", {}).get("namespace", "")
-        name = pod.get("metadata", {}).get("name", "")
-        containers = (pod.get("spec", {}).get("containers", []) or []) + (pod.get("spec", {}).get("initContainers", []) or [])
-        total = 0.0
-        for container in containers:
-            total += parse_cpu_to_millicores(((container.get("resources", {}) or {}).get("requests", {}) or {}).get("cpu"))
-        result[f"{ns}/{name}"] = round(total, 3)
-
-    print(json.dumps(result))
-    PY
-  register: pod_cpu_request_map_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run pod CPU request map helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_pod_cpu_request_map.py"
+          - "{{ pod_cpu_request_map_input_file.path }}"
+      register: pod_cpu_request_map_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary pod CPU request map input file
+      ansible.builtin.file:
+        path: "{{ pod_cpu_request_map_input_file.path }}"
+        state: absent
+      when: pod_cpu_request_map_input_file is defined and (pod_cpu_request_map_input_file.path | default('') | length > 0)
 
 - name: Normalize pod CPU request map
   ansible.builtin.set_fact:
@@ -110,6 +104,48 @@
         ([{'namespace': ns_name, 'pod': item.metadata.name, 'issue': 'missing-resource-limits', 'detail': containers_without_limits | join(', ')}] if (is_user_namespace | bool) and containers_without_limits | length > 0 else []))
       }}
   changed_when: false
+
+- name: Build storage usage and literal sensitive string findings
+  block:
+    - name: Create temporary storage and sensitive findings input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-storage-sensitive-
+        suffix: .json
+      register: storage_and_sensitive_findings_input_file
+
+    - name: Write storage and sensitive findings input data
+      ansible.builtin.copy:
+        dest: "{{ storage_and_sensitive_findings_input_file.path }}"
+        content: >-
+          {{
+            {
+              "pods": (pods | default({})).get('items', []),
+              "exclude_regex": user_namespaces_exclude_regex | default('^$')
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run storage and sensitive findings helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_storage_and_sensitive_findings.py"
+          - "{{ storage_and_sensitive_findings_input_file.path }}"
+      register: storage_and_sensitive_findings_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary storage and sensitive findings input file
+      ansible.builtin.file:
+        path: "{{ storage_and_sensitive_findings_input_file.path }}"
+        state: absent
+      when: storage_and_sensitive_findings_input_file is defined and (storage_and_sensitive_findings_input_file.path | default('') | length > 0)
+
+- name: Normalize storage usage and literal sensitive string findings
+  ansible.builtin.set_fact:
+    security_findings: "{{ (security_findings | default([])) + (((storage_and_sensitive_findings_cmd.stdout | from_json).security_findings) if (storage_and_sensitive_findings_cmd.rc == 0 and (storage_and_sensitive_findings_cmd.stdout | default('') | length > 0)) else []) }}"
+    workload_practice_findings: "{{ (workload_practice_findings | default([])) + (((storage_and_sensitive_findings_cmd.stdout | from_json).workload_practice_findings) if (storage_and_sensitive_findings_cmd.rc == 0 and (storage_and_sensitive_findings_cmd.stdout | default('') | length > 0)) else []) }}"
 
 - name: Build CRD deprecation findings
   ansible.builtin.set_fact:
@@ -160,6 +196,77 @@
         ) else []
       }}
   changed_when: false
+
+- name: Build effective cluster profile for IP capacity analysis
+  ansible.builtin.set_fact:
+    ip_capacity_cluster_profile: >-
+      {{
+        (cluster_profile | default({})) | combine(
+          {
+            'service_networks': (
+              ((cluster_profile | default({})).get('service_networks', []))
+              if (((cluster_profile | default({})).get('service_networks', []) | length) > 0)
+              else ((network_config | default({})).get('spec', {}).get('serviceNetwork', []))
+            ),
+            'cluster_networks': (
+              ((cluster_profile | default({})).get('cluster_networks', []))
+              if (((cluster_profile | default({})).get('cluster_networks', []) | length) > 0)
+              else ((network_config | default({})).get('spec', {}).get('clusterNetwork', []))
+            ),
+            'machine_networks': (
+              ((cluster_profile | default({})).get('machine_networks', []))
+              if (((cluster_profile | default({})).get('machine_networks', []) | length) > 0)
+              else []
+            )
+          },
+          recursive=True
+        )
+      }}
+
+- name: Build service and pod IP capacity summaries
+  block:
+    - name: Create temporary IP capacity summary input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-ip-capacity-
+        suffix: .json
+      register: ip_capacity_summary_input_file
+
+    - name: Write IP capacity summary input data
+      ansible.builtin.copy:
+        dest: "{{ ip_capacity_summary_input_file.path }}"
+        content: >-
+          {{
+            {
+              "cluster_profile": ip_capacity_cluster_profile | default(cluster_profile | default({})),
+              "services": (services | default({})).get('items', []),
+              "pods": (pods | default({})).get('items', []),
+              "nodes": (nodes | default({})).get('items', [])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run IP capacity summary helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_ip_capacity_summary.py"
+          - "{{ ip_capacity_summary_input_file.path }}"
+      register: ip_capacity_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary IP capacity summary input file
+      ansible.builtin.file:
+        path: "{{ ip_capacity_summary_input_file.path }}"
+        state: absent
+      when: ip_capacity_summary_input_file is defined and (ip_capacity_summary_input_file.path | default('') | length > 0)
+
+- name: Normalize service and pod IP capacity summaries
+  ansible.builtin.set_fact:
+    service_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).service_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
+    pod_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).pod_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
+    node_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).node_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
 
 - name: Build referenced configmap and secret names from pods
   ansible.builtin.set_fact:
@@ -376,38 +483,78 @@
       }}
   changed_when: false
 
-- name: Check CRD instance counts
-  ansible.builtin.shell: |
-    set -o pipefail
-    {{ kube_cli | default('oc') }} get '{{ item.spec.names.plural }}.{{ item.spec.group }}' -A -o json 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); print(len(data.get("items", [])))'
-  register: crd_instance_count_cmd
+- name: Build namespaced CRD count targets
+  ansible.builtin.set_fact:
+    namespaced_crd_count_targets: "{{ (namespaced_crd_count_targets | default([])) + [crd_count_target] }}"
   loop: "{{ (crds | default({})).get('items', []) }}"
-  changed_when: false
-  failed_when: false
+  vars:
+    crd_count_target:
+      name: "{{ item.metadata.name | default('') }}"
+      group: "{{ item.spec.group | default('') }}"
+      plural: "{{ item.spec.names.plural | default('') }}"
   when:
     - item.spec is defined
     - item.spec.names is defined
     - item.spec.group is defined
     - item.spec.scope | default('Namespaced') == 'Namespaced'
+  changed_when: false
+
+- name: Check CRD instance counts
+  block:
+    - name: Create temporary CRD instance count input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-crd-counts-
+        suffix: .json
+      register: crd_instance_count_input_file
+
+    - name: Write CRD instance count input data
+      ansible.builtin.copy:
+        dest: "{{ crd_instance_count_input_file.path }}"
+        content: >-
+          {{
+            {
+              "kube_cli": kube_cli | default('oc'),
+              "timeout_seconds": collection_command_timeout_seconds | default(300),
+              "parallelism": analysis_parallelism | default(collection_parallelism | default(8)),
+              "crds": namespaced_crd_count_targets | default([])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run batched CRD instance count helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/batch_crd_instance_counts.py"
+          - "{{ crd_instance_count_input_file.path }}"
+      register: crd_instance_count_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary CRD instance count input file
+      ansible.builtin.file:
+        path: "{{ crd_instance_count_input_file.path }}"
+        state: absent
+      when: crd_instance_count_input_file is defined and (crd_instance_count_input_file.path | default('') | length > 0)
 
 - name: Build likely unused custom resource definitions
   ansible.builtin.set_fact:
     likely_unused_crds: "{{ likely_unused_crds | default([]) + crd_issue_entry }}"
-  loop: "{{ crd_instance_count_cmd.results | default([]) }}"
+  loop: "{{ (crd_instance_count_cmd.stdout | from_json).results if (crd_instance_count_cmd.rc == 0 and (crd_instance_count_cmd.stdout | default('') | length > 0)) else [] }}"
   vars:
-    crd_result_item: "{{ item.item | default({}) }}"
     crd_issue_entry: >-
       {{
         [{
-          'name': crd_result_item.metadata.name | default(''),
-          'group': crd_result_item.spec.group | default(''),
-          'plural': crd_result_item.spec.names.plural | default(''),
-          'count': (item.stdout | default('0') | int)
+          'name': item.name | default(''),
+          'group': item.group | default(''),
+          'plural': item.plural | default(''),
+          'count': (item.count | default(0) | int)
         }]
         if (
           (item.rc | default(1) | int) == 0
-          and (item.stdout | default('0') | int) == 0
-          and not ((crd_result_item.spec.group | default('')) is match('^(openshift.io|operator.openshift.io|config.openshift.io|machine.openshift.io|monitoring.coreos.com|apiextensions.k8s.io|rbac.authorization.k8s.io|authorization.openshift.io|route.openshift.io|image.openshift.io|build.openshift.io|apps.openshift.io|project.openshift.io|template.openshift.io|k8s.io)$'))
+          and (item.count | default(0) | int) == 0
+          and not ((item.group | default('')) is match('^(openshift.io|operator.openshift.io|config.openshift.io|machine.openshift.io|monitoring.coreos.com|apiextensions.k8s.io|rbac.authorization.k8s.io|authorization.openshift.io|route.openshift.io|image.openshift.io|build.openshift.io|apps.openshift.io|project.openshift.io|template.openshift.io|k8s.io)$'))
         ) else []
       }}
   changed_when: false
@@ -424,6 +571,49 @@
       volume_binding_mode: "{{ item.volumeBindingMode | default('Immediate') }}"
       reclaim_policy: "{{ item.reclaimPolicy | default('Delete') }}"
   changed_when: false
+
+- name: Build storage posture summary
+  block:
+    - name: Create temporary storage posture summary input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-storage-posture-
+        suffix: .json
+      register: storage_posture_summary_input_file
+
+    - name: Write storage posture summary input data
+      ansible.builtin.copy:
+        dest: "{{ storage_posture_summary_input_file.path }}"
+        content: >-
+          {{
+            {
+              "storageclasses": storageclass_summary | default([]),
+              "persistentvolumes": (persistentvolumes | default({})).get('items', []),
+              "security_findings": security_findings | default([]),
+              "workload_practice_findings": workload_practice_findings | default([])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run storage posture summary helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_storage_posture_summary.py"
+          - "{{ storage_posture_summary_input_file.path }}"
+      register: storage_posture_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary storage posture summary input file
+      ansible.builtin.file:
+        path: "{{ storage_posture_summary_input_file.path }}"
+        state: absent
+      when: storage_posture_summary_input_file is defined and (storage_posture_summary_input_file.path | default('') | length > 0)
+
+- name: Normalize storage posture summary
+  ansible.builtin.set_fact:
+    storage_posture_summary: "{{ storage_posture_summary_cmd.stdout | from_json if (storage_posture_summary_cmd.rc == 0 and (storage_posture_summary_cmd.stdout | default('') | length > 0)) else {'external_storageclass_count': 0, 'local_storageclass_count': 0, 'default_external_storageclass_count': 0, 'external_storageclass_names': [], 'local_storageclass_names': [], 'external_pv_count': 0, 'local_pv_count': 0, 'hostpath_workload_count': 0, 'ephemeral_workload_count': 0, 'has_external_storage_provider': false, 'local_or_ephemeral_only_risk': false, 'findings': []} }}"
 
 - name: Build PV summary
   ansible.builtin.set_fact:
@@ -443,22 +633,62 @@
     pvc_phase: "{{ item.status.phase | default('Unknown') }}"
   changed_when: false
 
-- name: Collect TLS secret certificate expiry with openssl
-  ansible.builtin.shell: |
-    printf '%s' '{{ item.data["tls.crt"] | default("") }}' | base64 -d | openssl x509 -noout -enddate | sed 's/^notAfter=//'
-  register: tls_secret_cert_expiry_cmd
+- name: Build TLS secret expiry targets
+  ansible.builtin.set_fact:
+    tls_secret_expiry_targets: "{{ (tls_secret_expiry_targets | default([])) + [tls_secret_expiry_target] }}"
   loop: "{{ (secrets | default({})).get('items', []) }}"
-  changed_when: false
-  failed_when: false
+  vars:
+    tls_secret_expiry_target:
+      namespace: "{{ item.metadata.namespace | default('') }}"
+      name: "{{ item.metadata.name | default('') }}"
+      type: "{{ item.type | default('') }}"
+      tls_crt: "{{ item.data['tls.crt'] | default('') }}"
   when:
     - (item.type | default('')) == 'kubernetes.io/tls'
     - item.data is defined
     - item.data['tls.crt'] is defined
+  changed_when: false
+
+- name: Collect TLS secret certificate expiry with openssl
+  block:
+    - name: Create temporary TLS secret expiry input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-tls-expiry-
+        suffix: .json
+      register: tls_secret_cert_expiry_input_file
+
+    - name: Write TLS secret expiry input data
+      ansible.builtin.copy:
+        dest: "{{ tls_secret_cert_expiry_input_file.path }}"
+        content: >-
+          {{
+            {
+              "timeout_seconds": 20,
+              "parallelism": analysis_parallelism | default(collection_parallelism | default(8)),
+              "secrets": tls_secret_expiry_targets | default([])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run batched TLS secret expiry helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/batch_tls_secret_expiry.py"
+          - "{{ tls_secret_cert_expiry_input_file.path }}"
+      register: tls_secret_cert_expiry_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary TLS secret expiry input file
+      ansible.builtin.file:
+        path: "{{ tls_secret_cert_expiry_input_file.path }}"
+        state: absent
+      when: tls_secret_cert_expiry_input_file is defined and (tls_secret_cert_expiry_input_file.path | default('') | length > 0)
 
 - name: Build certificate expiry findings
   ansible.builtin.set_fact:
-    certificate_expiry_findings: "{{ certificate_expiry_findings | default([]) + ([{'namespace': tls_result_item.metadata.namespace | default(''), 'name': tls_result_item.metadata.name | default(''), 'type': tls_result_item.type | default(''), 'not_after': item.stdout | default('')}] if (item.rc | default(1) | int) == 0 and (item.stdout | default('') | length > 0) else []) }}"
-  loop: "{{ tls_secret_cert_expiry_cmd.results | default([]) }}"
-  vars:
-    tls_result_item: "{{ item.item | default({}) }}"
+    certificate_expiry_findings: "{{ certificate_expiry_findings | default([]) + ([{'namespace': item.namespace | default(''), 'name': item.name | default(''), 'type': item.type | default(''), 'not_after': item.not_after | default('')}] if (item.rc | default(1) | int) == 0 and (item.not_after | default('') | length > 0) else []) }}"
+  loop: "{{ (tls_secret_cert_expiry_cmd.stdout | from_json).results if (tls_secret_cert_expiry_cmd.rc == 0 and (tls_secret_cert_expiry_cmd.stdout | default('') | length > 0)) else [] }}"
   changed_when: false

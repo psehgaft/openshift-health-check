@@ -66,10 +66,10 @@
         findings_count: "{{ (not_ready_nodes | default([]) | length) + (pressure_nodes | default([]) | length) }}"
       - id: workloads
         title: Workload Health
-        severity: "{{ 'warning' if workload_health_issues | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or high_restart_pods | default([]) | length > 0 or overprovisioned_pods | default([]) | length > 0 else 'pass' }}"
-        score: "{{ 5 if workload_health_issues | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or high_restart_pods | default([]) | length > 0 or overprovisioned_pods | default([]) | length > 0 else 8 }}"
+        severity: "{{ 'warning' if workload_health_issues | default([]) | length > 0 or high_replica_workloads | default([]) | length > 0 or orphan_pods | default([]) | length > 0 or workload_label_governance_findings | default([]) | length > 0 or workload_resource_findings | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or unhealthy_user_pods | default([]) | length > 0 or high_restart_pods | default([]) | length > 0 or overprovisioned_pods | default([]) | length > 0 else 'pass' }}"
+        score: "{{ 5 if workload_health_issues | default([]) | length > 0 or high_replica_workloads | default([]) | length > 0 or orphan_pods | default([]) | length > 0 or workload_label_governance_findings | default([]) | length > 0 or workload_resource_findings | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or unhealthy_user_pods | default([]) | length > 0 or high_restart_pods | default([]) | length > 0 or overprovisioned_pods | default([]) | length > 0 else 8 }}"
         max_score: 8
-        findings_count: "{{ (workload_health_issues | default([]) | length) + (workload_probe_findings | default([]) | length) + (platform_pod_issues | default([]) | length) + (high_restart_pods | default([]) | length) + (overprovisioned_pods | default([]) | length) }}"
+        findings_count: "{{ (workload_health_issues | default([]) | length) + (high_replica_workloads | default([]) | length) + (orphan_pods | default([]) | length) + (workload_label_governance_findings | default([]) | length) + (workload_resource_findings | default([]) | length) + (workload_probe_findings | default([]) | length) + (platform_pod_issues | default([]) | length) + (unhealthy_user_pods | default([]) | length) + (high_restart_pods | default([]) | length) + (overprovisioned_pods | default([]) | length) }}"
       - id: routes_network
         title: Network And Routes
         severity: "{{ 'critical' if route_issues | default([]) | length > 0 or ingress_issues | default([]) | length > 0 or route_host_conflicts | default([]) | length > 0 or ingress_host_conflicts | default([]) | length > 0 else 'pass' }}"
@@ -239,24 +239,54 @@
             }] if (route_issues | default([]) | length > 0 or ingress_issues | default([]) | length > 0 or route_host_conflicts | default([]) | length > 0 or ingress_host_conflicts | default([]) | length > 0) else [])
           + ([{
               'priority': 'immediate',
+              'summary': 'Resolve unavailable APIService registrations.',
+              'detail': 'Review aggregated API services that are not reporting `Available=True`, verify their backing services and CA bundles, and restore registration health before relying on dependent platform features.'
+            }] if (apiservice_issues | default([]) | length > 0) else [])
+          + ([{
+              'priority': 'immediate',
               'summary': 'Resolve certificate expiry and upgrade-blocking risks.',
               'detail': 'Renew secrets nearing expiry, review conditional update risks, and confirm the cluster is upgrade-ready before scheduling version changes.'
             }] if (expiring_certificates_critical | default([]) | length > 0 or conditional_updates | default([]) | length > 0) else [])
           + ([{
               'priority': 'next',
+              'summary': 'Rebalance worker capacity across failure domains and MachineSets.',
+              'detail': 'Review worker pool groups limited to one zone, nodes or MachineSets missing zone labels, and uneven MachineSet replica counts so worker capacity remains spread across availability zones during failures.'
+            }] if ((topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 or (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 or (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) or (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 or (topology_resilience.machineset_replica_unbalanced | default(false) | bool)) else [])
+          + ([{
+              'priority': 'next',
               'summary': 'Harden workload rollout health and probe coverage.',
               'detail': 'Fix rollout gaps, add missing liveness/readiness/startup probes, and investigate restart hotspots so workloads fail fast and recover predictably.'
-            }] if (workload_health_issues | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or high_restart_pods | default([]) | length > 0) else [])
+            }] if (workload_health_issues | default([]) | length > 0 or high_replica_workloads | default([]) | length > 0 or orphan_pods | default([]) | length > 0 or workload_label_governance_findings | default([]) | length > 0 or workload_resource_findings | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or unhealthy_user_pods | default([]) | length > 0 or high_restart_pods | default([]) | length > 0) else [])
           + ([{
               'priority': 'next',
               'summary': 'Review storage health and namespace quota pressure.',
               'detail': 'Resolve PV/PVC phase problems, confirm storage class behavior, and raise or rebalance quotas for namespaces approaching hard limits.'
             }] if (pv_issues | default([]) | length > 0 or pvc_issues | default([]) | length > 0 or quota_pressure_findings | default([]) | length > 0) else [])
           + ([{
+              'priority': 'next',
+              'summary': 'Review node growth headroom before adding more nodes.',
+              'detail': 'Check the estimated max nodes from pod-network allocation, remaining node slots, and node IP availability so cluster scaling does not exhaust network space.'
+            }] if ((cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | default('unknown')) != 'unknown' and (cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | int) <= 3) or ((cluster_current_state.node_growth_capacity.node_ips_available | default('unknown')) != 'unknown' and (cluster_current_state.node_growth_capacity.node_ips_available | int) <= 3) else [])
+          + ([{
+              'priority': 'next',
+              'summary': 'Add or validate an external persistent storage provider.',
+              'detail': 'The cluster did not show evidence of external persistent storage from StorageClasses or PV backends. Review whether workloads rely on local hostPath, local PVs, or ephemeral volumes only, and add a supported shared or external storage provider where persistence is required.'
+            }] if (not (storage_posture_summary.has_external_storage_provider | default(false) | bool) or (storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool)) else [])
+          + ([{
               'priority': 'planned',
               'summary': 'Use the report for hygiene, rightsizing, and policy cleanup.',
               'detail': 'After platform health is stable, review overprovisioned workloads, unused-resource heuristics, privileged RBAC grants, and other security/best-practice findings to reduce risk, waste, and operational drift.'
             }] if (overprovisioned_pods | default([]) | length > 0 or empty_user_namespaces | default([]) | length > 0 or likely_unused_serviceaccounts | default([]) | length > 0 or likely_unused_configmaps | default([]) | length > 0 or likely_unused_secrets | default([]) | length > 0 or likely_unused_crds | default([]) | length > 0 or security_findings | default([]) | length > 0 or privileged_serviceaccount_access | default([]) | length > 0 or privileged_user_access | default([]) | length > 0 or privileged_group_access | default([]) | length > 0 or workload_practice_findings | default([]) | length > 0) else [])
+          + ([{
+              'priority': 'planned',
+              'summary': 'Review SCC, image management, and pipeline posture.',
+              'detail': 'Inspect high-risk SCC grants, image-registry posture, build configuration triggers, and failed pipeline runs so delivery workflows and admission posture align with platform policy.'
+            }] if (scc_grant_findings | default([]) | length > 0 or image_registry_findings | default([]) | length > 0 or failed_pipelineruns | default([]) | length > 0 or buildconfigs_without_triggers | default([]) | length > 0) else [])
+          + ([{
+              'priority': 'planned',
+              'summary': 'Validate resilience and compliance tooling coverage.',
+              'detail': 'Review recovery signals such as snapshot class and data protection coverage, and inspect any non-compliant ComplianceSuite results or missing suite coverage before treating posture as complete.'
+            }] if ((compliancesuites | default({})).get('items', []) | length > 0 or (volumesnapshotclasses | default({})).get('items', []) | length > 0 or (dataprotectionapplications | default({})).get('items', []) | length > 0) else [])
           + ([{
               'priority': 'planned',
               'summary': 'Improve observability coverage and external forwarding posture.',
@@ -280,7 +310,7 @@
               'priority': 'summary',
               'summary': 'Plan near-term remediation from the warning findings.',
               'detail': 'The cluster is currently usable, but warning items should be assigned, tracked to closure, and revisited in the next report run.'
-            }] if (health_summary.status == 'WARNING' and (collection_summary.failed_commands | default(0) | int) == 0 and (workload_health_issues | default([]) | length) == 0 and (workload_probe_findings | default([]) | length) == 0 and (high_restart_pods | default([]) | length) == 0 and (pv_issues | default([]) | length) == 0 and (pvc_issues | default([]) | length) == 0 and (quota_pressure_findings | default([]) | length) == 0 and (overprovisioned_pods | default([]) | length) == 0 and (empty_user_namespaces | default([]) | length) == 0 and (likely_unused_serviceaccounts | default([]) | length) == 0 and (likely_unused_configmaps | default([]) | length) == 0 and (likely_unused_secrets | default([]) | length) == 0 and (likely_unused_crds | default([]) | length) == 0 and (security_findings | default([]) | length) == 0 and (workload_practice_findings | default([]) | length) == 0 and (observability_findings | default([]) | length) == 0) else [])
+            }] if (health_summary.status == 'WARNING' and (collection_summary.failed_commands | default(0) | int) == 0 and (workload_health_issues | default([]) | length) == 0 and (high_replica_workloads | default([]) | length) == 0 and (orphan_pods | default([]) | length) == 0 and (workload_label_governance_findings | default([]) | length) == 0 and (workload_probe_findings | default([]) | length) == 0 and (high_restart_pods | default([]) | length) == 0 and (pv_issues | default([]) | length) == 0 and (pvc_issues | default([]) | length) == 0 and (quota_pressure_findings | default([]) | length) == 0 and (overprovisioned_pods | default([]) | length) == 0 and (empty_user_namespaces | default([]) | length) == 0 and (likely_unused_serviceaccounts | default([]) | length) == 0 and (likely_unused_configmaps | default([]) | length) == 0 and (likely_unused_secrets | default([]) | length) == 0 and (likely_unused_crds | default([]) | length) == 0 and (security_findings | default([]) | length) == 0 and (workload_practice_findings | default([]) | length) == 0 and (observability_findings | default([]) | length) == 0) else [])
         )
       }}
 
@@ -318,11 +348,19 @@
         not_ready_nodes: "{{ not_ready_nodes | default([]) }}"
         pressure_nodes: "{{ pressure_nodes | default([]) }}"
         infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) }}"
+        apiservice_issues: "{{ top_apiservice_issues | default([]) }}"
         ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) }}"
         workload_health_issues: "{{ top_workload_health_issues | default([]) }}"
+        unhealthy_user_pods: "{{ top_unhealthy_user_pods | default([]) }}"
         workload_probe_findings: "{{ top_workload_probe_findings | default([]) }}"
         high_restart_pods: "{{ top_high_restart_pods | default([]) }}"
+        high_replica_workloads: "{{ top_high_replica_workloads | default([]) }}"
+        orphan_pods: "{{ top_orphan_pods | default([]) }}"
+        workload_label_governance_findings: "{{ top_workload_label_governance_findings | default([]) }}"
+        workload_resource_findings: "{{ top_workload_resource_findings | default([]) }}"
         overprovisioned_pods: "{{ top_overprovisioned_pods | default([]) }}"
+        failed_pipelineruns: "{{ top_failed_pipelineruns | default([]) }}"
+        buildconfigs_without_triggers: "{{ top_buildconfigs_without_triggers | default([]) }}"
         quota_pressure_findings: "{{ top_quota_pressure_findings | default([]) }}"
         route_issues: "{{ top_route_issues | default([]) }}"
         ingress_issues: "{{ top_ingress_issues | default([]) }}"
@@ -338,7 +376,10 @@
         likely_unused_secrets: "{{ top_likely_unused_secrets | default([]) }}"
         likely_unused_crds: "{{ top_likely_unused_crds | default([]) }}"
         image_registry_findings: "{{ top_image_registry_findings | default([]) }}"
+        internal_registry_workloads: "{{ top_internal_registry_workloads | default([]) }}"
         feature_findings: "{{ top_feature_findings | default([]) }}"
+        scc_grant_findings: "{{ top_scc_grant_findings | default([]) }}"
+        compliance_suite_findings: "{{ top_compliance_suite_findings | default([]) }}"
         observability_findings: "{{ top_observability_findings | default([]) }}"
         deprecated_crd_findings: "{{ top_deprecated_crd_findings | default([]) }}"
         deprecated_api_lines: "{{ top_deprecated_api_lines | default([]) }}"
@@ -354,6 +395,14 @@
         infrastructure_component_summary: "{{ infrastructure_component_summary | default([]) }}"
         ingresscontroller_summary: "{{ ingresscontroller_summary | default([]) }}"
         observability_forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
+        apiservice_issues: "{{ apiservice_issues | default([]) }}"
+        secret_type_counts: "{{ secret_type_counts | default({}) }}"
+        buildconfig_strategy_counts: "{{ buildconfig_strategy_counts | default({}) }}"
+        pipelinerun_status_counts: "{{ pipelinerun_status_counts | default({}) }}"
+        compliance_result_counts: "{{ compliance_result_counts | default({}) }}"
+        compliance_suite_summary: "{{ compliance_suite_summary | default([]) }}"
+        scc_posture_summary: "{{ scc_posture_summary | default([]) }}"
+        dataprotectionapplication_summary: "{{ dataprotectionapplication_summary | default([]) }}"
         apiserver_readyz_status: "{{ apiserver_readyz_status | default('unavailable') }}"
         apiserver_readyz_failed_checks: "{{ apiserver_readyz_failed_checks | default(0) }}"
         etcd_wal_fsync_p99_ms: "{{ etcd_wal_fsync_p99_ms | default('') }}"
@@ -375,79 +424,41 @@
         top_pod_memory_usage_summary: "{{ top_pod_memory_usage_summary | default([]) }}"
         node_capacity_summary_by_density_desc: "{{ node_capacity_summary_by_density_desc | default([]) }}"
 
-- name: Detect pandoc
-  ansible.builtin.shell: command -v pandoc
-  register: pandoc_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Detect wkhtmltopdf
-  ansible.builtin.shell: command -v wkhtmltopdf
-  register: wkhtmltopdf_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Detect weasyprint
-  ansible.builtin.shell: command -v weasyprint
-  register: weasyprint_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Detect prince
-  ansible.builtin.shell: command -v prince
-  register: prince_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Detect tectonic
-  ansible.builtin.shell: command -v tectonic
-  register: tectonic_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Detect xelatex
-  ansible.builtin.shell: command -v xelatex
-  register: xelatex_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Detect lualatex
-  ansible.builtin.shell: command -v lualatex
-  register: lualatex_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Detect pdflatex
-  ansible.builtin.shell: command -v pdflatex
-  register: pdflatex_cmd
+- name: Detect report conversion tools
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/detect_report_tools.py"
+  register: report_tool_detection_cmd
   changed_when: false
   failed_when: false
 
 - name: Build report conversion capability facts
   ansible.builtin.set_fact:
-    report_pandoc_available: "{{ pandoc_cmd.rc == 0 }}"
+    report_tool_detection: "{{ report_tool_detection_cmd.stdout | from_json if (report_tool_detection_cmd.rc == 0 and (report_tool_detection_cmd.stdout | default('') | length > 0)) else {} }}"
+    report_pandoc_available: "{{ (report_tool_detection.pandoc.found | default(false)) | bool }}"
     report_pdf_engine: >-
       {{
         'wkhtmltopdf'
-        if wkhtmltopdf_cmd.rc == 0
+        if (report_tool_detection.wkhtmltopdf.found | default(false))
         else (
           'weasyprint'
-          if weasyprint_cmd.rc == 0
+          if (report_tool_detection.weasyprint.found | default(false))
           else (
             'prince'
-            if prince_cmd.rc == 0
+            if (report_tool_detection.prince.found | default(false))
             else (
               'tectonic'
-              if tectonic_cmd.rc == 0
+              if (report_tool_detection.tectonic.found | default(false))
               else (
                 'xelatex'
-                if xelatex_cmd.rc == 0
+                if (report_tool_detection.xelatex.found | default(false))
                 else (
                   'lualatex'
-                  if lualatex_cmd.rc == 0
+                  if (report_tool_detection.lualatex.found | default(false))
                   else (
                     'pdflatex'
-                    if pdflatex_cmd.rc == 0
+                    if (report_tool_detection.pdflatex.found | default(false))
                     else ''
                   )
                 )
@@ -531,8 +542,28 @@
 
 - name: Update generated format status
   ansible.builtin.set_fact:
-    execution_stats: "{{ execution_stats | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True) }}"
-    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': (report_html_cmd is defined and report_html_cmd.rc == 0), 'pdf': (report_pdf_cmd is defined and report_pdf_cmd.rc == 0)}}, recursive=True))}, recursive=True) }}"
+    execution_stats: "{{ execution_stats | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True) }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True))}, recursive=True) }}"
+    report_pdf_status_reason: >-
+      {{
+        'generated'
+        if ((report_pdf_cmd.rc | default(1)) == 0)
+        else (
+          'skipped: pandoc not found'
+          if not (report_pandoc_available | bool)
+          else (
+            'skipped: no supported PDF engine found'
+            if (report_pdf_engine | default('') | length) == 0
+            else (
+              'skipped: PDF generation disabled'
+              if not (report_generate_pdf | bool)
+              else (
+                'failed: ' ~ ((report_pdf_cmd.stderr | default(report_pdf_cmd.stdout | default('unknown error')) | trim) or 'unknown error')
+              )
+            )
+          )
+        )
+      }}
 
 - name: Write final JSON report
   ansible.builtin.copy:
@@ -546,7 +577,7 @@
       - "Health report generated: {{ report_path }}"
       - "JSON report generated: {{ report_json_path }}"
       - "HTML report generated: {{ report_html_path if (execution_stats.report_formats_generated.html | default(false)) else 'skipped' }}"
-      - "PDF report generated: {{ report_pdf_path if (execution_stats.report_formats_generated.pdf | default(false)) else 'skipped' }}"
+      - "PDF report generated: {{ report_pdf_path if (execution_stats.report_formats_generated.pdf | default(false)) else report_pdf_status_reason }}"
       - "Overall status: {{ health_summary.status }}"
       - "Audit score: {{ audit_score_total }}/{{ audit_score_max }}"
       - "Cluster health score: {{ cluster_health_score }}/100 ({{ cluster_health_score_label }})"
