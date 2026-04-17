@@ -1,6 +1,7 @@
 ---
 - name: Build Kubernetes aggregate lists
   ansible.builtin.set_fact:
+    scored_workload_practice_findings: "{{ workload_practice_findings | default([]) | rejectattr('issue', 'equalto', 'missing-pod-disruption-budget') | list }}"
     resolved_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}"
     profile_is_lightweight: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'lightweight') | bool }}"
     profile_is_development: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'development') | bool }}"
@@ -57,7 +58,7 @@
               or (workload_resource_findings | default([]) | length > 0)
               or (workload_probe_findings | default([]) | length > 0)
               or (security_findings | default([]) | length > 0)
-              or (workload_practice_findings | default([]) | length > 0)
+              or (scored_workload_practice_findings | default([]) | length > 0)
               or ((not profile_is_non_production | bool) and (empty_user_namespaces | default([]) | length > 0))
               or ((not profile_is_non_production | bool) and (services_without_endpoints | default([]) | length > 0))
               or ((not profile_is_non_production | bool) and (likely_unused_serviceaccounts | default([]) | length > 0))
@@ -96,9 +97,12 @@
       workload_label_governance_findings: "{{ workload_label_governance_findings | default([]) | length }}"
       workload_resource_findings: "{{ workload_resource_findings | default([]) | length }}"
       workload_probe_findings: "{{ workload_probe_findings | default([]) | length }}"
+      multi_replica_workloads_checked: "{{ workload_resilience_data.multi_replica_workload_count | default(0) }}"
+      multi_replica_workloads_without_pdb: "{{ workload_resilience_data.multi_replica_workloads_without_pdb | default(0) }}"
+      multi_replica_workloads_without_spread_policy: "{{ workload_resilience_data.multi_replica_workloads_without_spread_policy | default(0) }}"
       provider_specific_findings: "{{ (provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length) }}"
       security_findings: "{{ security_findings | default([]) | length }}"
-      workload_practice_findings: "{{ workload_practice_findings | default([]) | length }}"
+      workload_practice_findings: "{{ scored_workload_practice_findings | default([]) | length }}"
       empty_user_namespaces: "{{ 0 if (profile_is_non_production | bool) else (empty_user_namespaces | default([]) | length) }}"
       services_without_endpoints: "{{ 0 if (profile_is_non_production | bool) else (services_without_endpoints | default([]) | length) }}"
       likely_unused_serviceaccounts: "{{ 0 if (profile_is_non_production | bool) else (likely_unused_serviceaccounts | default([]) | length) }}"

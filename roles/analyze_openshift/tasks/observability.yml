@@ -43,6 +43,9 @@
       external_alert_receivers: []
       external_alert_receiver_count: 0
       external_alert_delivery_configured: false
+      alert_routing_to_external_receiver_configured: false
+      alertmanagerconfigs_with_external_routes: 0
+      alertmanagerconfigs_without_route_receivers: 0
       cluster_metrics_remote_write_count: "{{ (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([])) | length) }}"
       user_workload_metrics_remote_write_count: "{{ (((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([])) | length) }}"
       external_cluster_metrics_remote_write_count: 0
@@ -228,14 +231,26 @@
             return "configured"
         return "configured"
 
+    def collect_route_receivers(route_obj, result):
+        route_obj = route_obj or {}
+        receiver = route_obj.get("receiver")
+        if receiver:
+            result.add(str(receiver))
+        for child in route_obj.get("routes", []) or []:
+            collect_route_receivers(child, result)
+
+    configs_with_external_routes = 0
+    configs_without_route_receivers = 0
     for item in data.get("items", []):
         meta = item.get("metadata", {}) or {}
         namespace = meta.get("namespace", "")
         config_name = meta.get("name", "")
+        external_receiver_names = set()
         for receiver in (item.get("spec", {}) or {}).get("receivers", []) or []:
             receiver_name = receiver.get("name", "unnamed")
             for key, receiver_type in supported_receiver_keys:
                 for cfg in receiver.get(key, []) or []:
+                    external_receiver_names.add(receiver_name)
                     receivers.append({
                         "namespace": namespace,
                         "alertmanagerconfig": config_name,
@@ -243,6 +258,23 @@
                         "type": receiver_type,
                         "target": describe_target(receiver_type, cfg),
                     })
+
+        route_receivers = set()
+        collect_route_receivers((item.get("spec", {}) or {}).get("route") or {}, route_receivers)
+        routed_external_receivers = sorted(route_receivers.intersection(external_receiver_names))
+        if external_receiver_names and routed_external_receivers:
+            configs_with_external_routes += 1
+        elif external_receiver_names and not route_receivers:
+            configs_without_route_receivers += 1
+            findings.append({
+                "issue": "alertmanagerconfig-route-missing",
+                "detail": f"{namespace}/{config_name} defines external receivers but no route receiver was configured"
+            })
+        elif external_receiver_names and not routed_external_receivers:
+            findings.append({
+                "issue": "external-alert-receiver-not-routed",
+                "detail": f"{namespace}/{config_name} defines external receivers that are not referenced by any route"
+            })
 
     if not receivers:
         findings.append({
@@ -254,7 +286,10 @@
         "findings": findings,
         "receivers": receivers,
         "external_alert_receiver_count": len(receivers),
-        "external_alert_delivery_configured": len(receivers) > 0
+        "external_alert_delivery_configured": len(receivers) > 0,
+        "alert_routing_to_external_receiver_configured": configs_with_external_routes > 0,
+        "alertmanagerconfigs_with_external_routes": configs_with_external_routes,
+        "alertmanagerconfigs_without_route_receivers": configs_without_route_receivers
     }))
     PY
   register: observability_alert_delivery_cmd
@@ -263,7 +298,7 @@
 
 - name: Normalize external alert delivery findings
   ansible.builtin.set_fact:
-    observability_alert_delivery_data: "{{ observability_alert_delivery_cmd.stdout | from_json if (observability_alert_delivery_cmd.rc == 0 and (observability_alert_delivery_cmd.stdout | default('') | length > 0)) else {'findings': [], 'receivers': [], 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false} }}"
+    observability_alert_delivery_data: "{{ observability_alert_delivery_cmd.stdout | from_json if (observability_alert_delivery_cmd.rc == 0 and (observability_alert_delivery_cmd.stdout | default('') | length > 0)) else {'findings': [], 'receivers': [], 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false, 'alert_routing_to_external_receiver_configured': false, 'alertmanagerconfigs_with_external_routes': 0, 'alertmanagerconfigs_without_route_receivers': 0} }}"
 
 - name: Build observability findings and summary
   ansible.builtin.set_fact:
@@ -281,6 +316,9 @@
       external_alert_receivers: "{{ observability_alert_delivery_data.receivers | default([]) }}"
       external_alert_receiver_count: "{{ observability_alert_delivery_data.external_alert_receiver_count | default(0) }}"
       external_alert_delivery_configured: "{{ observability_alert_delivery_data.external_alert_delivery_configured | default(false) }}"
+      alert_routing_to_external_receiver_configured: "{{ observability_alert_delivery_data.alert_routing_to_external_receiver_configured | default(false) }}"
+      alertmanagerconfigs_with_external_routes: "{{ observability_alert_delivery_data.alertmanagerconfigs_with_external_routes | default(0) }}"
+      alertmanagerconfigs_without_route_receivers: "{{ observability_alert_delivery_data.alertmanagerconfigs_without_route_receivers | default(0) }}"
       external_cluster_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.cluster_external_count | default(0) }}"
       external_user_workload_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.user_external_count | default(0) }}"
 

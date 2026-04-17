@@ -50,7 +50,7 @@
 - name: Build operator facts
   ansible.builtin.set_fact:
     degraded_operators: "{{ degraded_operators + ([item.metadata.name] if degraded_status == 'True' else []) }}"
-    unavailable_operators: "{{ unavailable_operators + ([item.metadata.name] if available_status != 'True' else []) }}"
+    unavailable_operators: "{{ unavailable_operators + ([item.metadata.name] if available_status == 'False' else []) }}"
     progressing_operators: "{{ progressing_operators + ([item.metadata.name] if progressing_status == 'True' else []) }}"
     clusteroperator_status_map: "{{ clusteroperator_status_map | combine({item.metadata.name: {'available': available_status, 'degraded': degraded_status, 'progressing': progressing_status, 'version': operator_version}}, recursive=True) }}"
   loop: "{{ (clusteroperators | default({})).get('items', []) }}"
@@ -89,7 +89,7 @@
           'component': 'ingresscontroller/' ~ (item.metadata.name | default('unknown')),
           'issue': 'ingresscontroller-unavailable',
           'detail': 'available=' ~ ic_available_status ~ ' availableReplicas=' ~ (available_replicas | string) ~ '/' ~ (desired_replicas | string)
-        }] if ic_available_status != 'True' or available_replicas < desired_replicas else []) +
+        }] if ic_available_status == 'False' or available_replicas < desired_replicas else []) +
         ([{
           'component': 'ingresscontroller/' ~ (item.metadata.name | default('unknown')),
           'issue': 'ingresscontroller-degraded',
@@ -174,7 +174,7 @@
           'component': item.component,
           'issue': 'component-unavailable',
           'detail': 'available=' ~ (item.available | string)
-        }] if item.available != 'True' else []) +
+        }] if item.available == 'False' else []) +
         ([{
           'component': item.component,
           'issue': 'component-degraded',

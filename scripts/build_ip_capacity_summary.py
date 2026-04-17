@@ -4,6 +4,47 @@ import json
 import sys
 
 
+def infer_network_from_ips(ip_texts):
+    ip_objects = []
+    for ip_text in ip_texts:
+        try:
+            ip_objects.append(ipaddress.ip_address(ip_text))
+        except Exception:
+            pass
+    if not ip_objects:
+        return []
+
+    families = {}
+    for ip_obj in ip_objects:
+        families.setdefault(ip_obj.version, []).append(ip_obj)
+
+    inferred = []
+    for family_ips in families.values():
+        min_int = min(int(ip) for ip in family_ips)
+        max_int = max(int(ip) for ip in family_ips)
+        max_prefixlen = family_ips[0].max_prefixlen
+        differing_bits = min_int ^ max_int
+        prefixlen = max_prefixlen
+        while differing_bits:
+            differing_bits >>= 1
+            prefixlen -= 1
+        network_int = min_int & ~((1 << (max_prefixlen - prefixlen)) - 1) if prefixlen < max_prefixlen else min_int
+        inferred.append(str(ipaddress.ip_network((network_int, prefixlen), strict=False)))
+    return inferred
+
+
+def dedupe_preserve_order(values):
+    seen = set()
+    result = []
+    for value in values:
+        text = str(value)
+        if text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
 def normalize_cidrs(raw):
     cidrs = []
     for item in raw or []:
@@ -15,6 +56,19 @@ def normalize_cidrs(raw):
             value = None
         if value:
             cidrs.append(str(value))
+    return cidrs
+
+
+def collect_cidrs_by_keys(raw, key_names):
+    cidrs = []
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if str(key).lower() in key_names:
+                cidrs.extend(normalize_cidrs(value if isinstance(value, list) else [value]))
+            cidrs.extend(collect_cidrs_by_keys(value, key_names))
+    elif isinstance(raw, list):
+        for item in raw:
+            cidrs.extend(collect_cidrs_by_keys(item, key_names))
     return cidrs
 
 
@@ -67,7 +121,28 @@ def unique_node_internal_ips(nodes):
     return sorted(values)
 
 
-def summarize(cidrs, observed_ips):
+def extract_node_cidrs(data):
+    cluster_profile = data.get("cluster_profile", {}) or {}
+    cluster_profile_cidrs = normalize_cidrs(cluster_profile.get("machine_networks", []))
+    if cluster_profile_cidrs:
+        return dedupe_preserve_order(cluster_profile_cidrs), "cluster_profile.machine_networks"
+
+    key_names = {"machinenetwork", "machinenetworks", "machinecidr", "machinecidrs"}
+    cluster_defined_cidrs = []
+    for source_name in ("infrastructure", "network_config"):
+        cluster_defined_cidrs.extend(collect_cidrs_by_keys(data.get(source_name, {}), key_names))
+    cluster_defined_cidrs = dedupe_preserve_order(cluster_defined_cidrs)
+    if cluster_defined_cidrs:
+        return cluster_defined_cidrs, "cluster-config"
+
+    inferred_node_cidrs = infer_network_from_ips(unique_node_internal_ips(data.get("nodes", [])))
+    if inferred_node_cidrs:
+        return inferred_node_cidrs, "observed-node-ips"
+
+    return [], "not-found"
+
+
+def summarize(cidrs, observed_ips, source="unknown"):
     networks = parse_networks(cidrs)
     entries = []
     observed_inside = set()
@@ -104,6 +179,7 @@ def summarize(cidrs, observed_ips):
         })
 
     return {
+        "source": source,
         "ranges": entries,
         "range_count": len(entries),
         "range_list": [item["cidr"] for item in entries],
@@ -126,12 +202,12 @@ def main() -> int:
 
     service_cidrs = normalize_cidrs((data.get("cluster_profile", {}) or {}).get("service_networks", []))
     pod_cidrs = normalize_cidrs((data.get("cluster_profile", {}) or {}).get("cluster_networks", []))
-    node_cidrs = normalize_cidrs((data.get("cluster_profile", {}) or {}).get("machine_networks", []))
+    node_cidrs, node_cidr_source = extract_node_cidrs(data)
 
     result = {
-        "service_ip_capacity_summary": summarize(service_cidrs, unique_service_ips(data.get("services", []))),
-        "pod_ip_capacity_summary": summarize(pod_cidrs, unique_pod_ips(data.get("pods", []))),
-        "node_ip_capacity_summary": summarize(node_cidrs, unique_node_internal_ips(data.get("nodes", []))),
+        "service_ip_capacity_summary": summarize(service_cidrs, unique_service_ips(data.get("services", [])), source="cluster_profile.service_networks"),
+        "pod_ip_capacity_summary": summarize(pod_cidrs, unique_pod_ips(data.get("pods", [])), source="cluster_profile.cluster_networks"),
+        "node_ip_capacity_summary": summarize(node_cidrs, unique_node_internal_ips(data.get("nodes", [])), source=node_cidr_source),
     }
     print(json.dumps(result))
     return 0

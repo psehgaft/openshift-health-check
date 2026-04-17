@@ -289,6 +289,9 @@ Status guide:
 | User workload health issues | `{{ health_summary.workload_health_issues | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_health_issues | default(0) | int) > 0 else 'OK') }} |
 | Unhealthy user pods | `{{ health_summary.unhealthy_user_pods | default(0) }}` | {{ status_badge('WARN' if (health_summary.unhealthy_user_pods | default(0) | int) > 0 else 'OK') }} |
 | Workloads with >10 replicas | `{{ health_summary.high_replica_workloads | default(0) }}` | {{ status_badge('INFO' if (health_summary.high_replica_workloads | default(0) | int) > 0 else 'OK') }} |
+| Multi-replica workloads checked | `{{ health_summary.multi_replica_workloads_checked | default(0) }}` | {{ status_badge('INFO' if (health_summary.multi_replica_workloads_checked | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Multi-replica workloads without PDB | `{{ health_summary.multi_replica_workloads_without_pdb | default(0) }}` | {{ status_badge('WARN' if (health_summary.multi_replica_workloads_without_pdb | default(0) | int) > 0 else 'OK') }} |
+| Multi-replica workloads without spread policy | `{{ health_summary.multi_replica_workloads_without_spread_policy | default(0) }}` | {{ status_badge('WARN' if (health_summary.multi_replica_workloads_without_spread_policy | default(0) | int) > 0 else 'OK') }} |
 | Pods without parent owner | `{{ health_summary.orphan_pods | default(0) }}` | {{ status_badge('WARN' if (health_summary.orphan_pods | default(0) | int) > 0 else 'OK') }} |
 | Workloads missing recommended app labels | `{{ health_summary.workload_label_governance_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_label_governance_findings | default(0) | int) > 0 else 'OK') }} |
 | Workloads missing resource requests or limits | `{{ health_summary.workload_resource_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_resource_findings | default(0) | int) > 0 else 'OK') }} |
@@ -342,6 +345,18 @@ No external persistent storage provider was detected from StorageClasses or pers
 | --- | --- | --- | --- | --- |
 {% for item in top_workload_resource_findings %}
 | `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{% if item.issue == 'workload-missing-resource-requests' %}Missing resource requests{% elif item.issue == 'workload-missing-resource-limits' %}Missing resource limits{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_workload_practice_findings | default([]) | length > 0 %}
+## Workload Delivery Detail
+
+### Workload Resilience Practices
+
+| Namespace | Workload | Check | Detail |
+| --- | --- | --- | --- |
+{% for item in top_workload_practice_findings %}
+| `{{ item.namespace }}` | `{{ item.pod | default((item.kind | default('Workload')) ~ '/' ~ (item.name | default('unknown'))) }}` | `{% if item.issue == 'missing-resource-requests' %}Missing resource requests{% elif item.issue == 'missing-resource-limits' %}Missing resource limits{% elif item.issue == 'ephemeral-storage-volume' %}Ephemeral storage volumes{% elif item.issue == 'missing-pod-disruption-budget' %}Missing PodDisruptionBudget{% elif item.issue == 'missing-workload-spread-policy' %}Missing workload spread policy{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
 {% endif %}
 

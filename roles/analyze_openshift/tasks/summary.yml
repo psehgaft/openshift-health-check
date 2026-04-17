@@ -1,6 +1,7 @@
 ---
 - name: Build aggregate lists
   ansible.builtin.set_fact:
+    scored_workload_practice_findings: "{{ workload_practice_findings | default([]) | rejectattr('issue', 'equalto', 'missing-pod-disruption-budget') | list }}"
     default_storageclasses: "{{ storageclass_summary | default([]) | selectattr('is_default', 'equalto', true) | list }}"
     top_pod_restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit] }}"
     high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list) }}"
@@ -41,6 +42,8 @@
     top_failed_pipelineruns: "{{ (failed_pipelineruns | default([]))[:top_workload_issue_limit] }}"
     top_buildconfigs_without_triggers: "{{ (buildconfigs_without_triggers | default([]))[:top_workload_issue_limit] }}"
     top_compliance_suite_findings: "{{ (compliance_suite_findings | default([]))[:top_security_issue_limit] }}"
+    top_backup_posture_findings: "{{ (backup_posture_findings | default([]))[:top_security_issue_limit] }}"
+    top_machine_healthcheck_findings: "{{ (machine_healthcheck_findings | default([]))[:top_security_issue_limit] }}"
     top_scc_grant_findings: "{{ (scc_grant_findings | default([]))[:top_security_issue_limit] }}"
     top_privileged_serviceaccount_access: "{{ (privileged_serviceaccount_access | default([]) | sort(attribute='namespace') | sort(attribute='name'))[:top_security_issue_limit] }}"
     top_privileged_user_access: "{{ (privileged_user_access | default([]) | sort(attribute='name'))[:top_security_issue_limit] }}"
@@ -138,7 +141,7 @@
               or (overprovisioned_pods | default([]) | length > 0)
               or (quota_pressure_findings | default([]) | length > 0)
               or (security_findings | default([]) | length > 0)
-              or (workload_practice_findings | default([]) | length > 0)
+              or (scored_workload_practice_findings | default([]) | length > 0)
               or (empty_user_namespaces | default([]) | length > 0)
               or (services_without_endpoints | default([]) | length > 0)
               or (likely_unused_serviceaccounts | default([]) | length > 0)
@@ -150,6 +153,8 @@
               or (failed_pipelineruns | default([]) | length > 0)
               or (scc_grant_findings | default([]) | length > 0)
               or (compliance_suite_findings | default([]) | length > 0)
+              or (backup_posture_findings | default([]) | length > 0)
+              or (machine_healthcheck_findings | default([]) | length > 0)
               or (namespaces_without_networkpolicy | default([]) | length > 0)
               or (namespaces_missing_ingress_policies | default([]) | length > 0)
               or (namespaces_missing_egress_policies | default([]) | length > 0)
@@ -193,6 +198,9 @@
       workload_label_governance_findings: "{{ workload_label_governance_findings | default([]) | length }}"
       workload_resource_findings: "{{ workload_resource_findings | default([]) | length }}"
       workload_probe_findings: "{{ workload_probe_findings | default([]) | length }}"
+      multi_replica_workloads_checked: "{{ workload_resilience_data.multi_replica_workload_count | default(0) }}"
+      multi_replica_workloads_without_pdb: "{{ workload_resilience_data.multi_replica_workloads_without_pdb | default(0) }}"
+      multi_replica_workloads_without_spread_policy: "{{ workload_resilience_data.multi_replica_workloads_without_spread_policy | default(0) }}"
       overprovisioned_pods: "{{ overprovisioned_pods | default([]) | length }}"
       quota_pressure_findings: "{{ quota_pressure_findings | default([]) | length }}"
       route_issues: "{{ route_issues | default([]) | length }}"
@@ -208,7 +216,7 @@
       privileged_serviceaccount_access: "{{ privileged_serviceaccount_access | default([]) | length }}"
       privileged_user_access: "{{ privileged_user_access | default([]) | length }}"
       privileged_group_access: "{{ privileged_group_access | default([]) | length }}"
-      workload_practice_findings: "{{ workload_practice_findings | default([]) | length }}"
+      workload_practice_findings: "{{ scored_workload_practice_findings | default([]) | length }}"
       empty_user_namespaces: "{{ empty_user_namespaces | default([]) | length }}"
       services_without_endpoints: "{{ services_without_endpoints | default([]) | length }}"
       likely_unused_serviceaccounts: "{{ likely_unused_serviceaccounts | default([]) | length }}"
@@ -230,6 +238,13 @@
       dataprotectionapplications: "{{ (dataprotectionapplications | default({})).get('items', []) | length }}"
       compliancesuites: "{{ (compliancesuites | default({})).get('items', []) | length }}"
       compliance_suite_findings: "{{ compliance_suite_findings | default([]) | length }}"
+      backupstoragelocations: "{{ (backupstoragelocations | default({})).get('items', []) | length }}"
+      velero_schedules: "{{ (schedules | default({})).get('items', []) | length }}"
+      successful_backups: "{{ backup_posture_data.successful_backup_count | default(0) }}"
+      completed_restores: "{{ backup_posture_data.completed_restore_count | default(0) }}"
+      backup_posture_findings: "{{ backup_posture_findings | default([]) | length }}"
+      machinehealthchecks: "{{ (machinehealthchecks | default({})).get('items', []) | length }}"
+      machine_healthcheck_findings: "{{ machine_healthcheck_findings | default([]) | length }}"
       deprecated_crd_findings: "{{ deprecated_crd_findings | default([]) | length }}"
       deprecated_api_lines: "{{ deprecated_api_lines | default([]) | length }}"
       namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) | length }}"

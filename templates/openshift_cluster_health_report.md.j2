@@ -153,7 +153,7 @@ State summary note:
 
 Collection notes:
 - service and pod ranges are derived from collected network configuration plus observed Service and Pod objects
-- node IP range headroom is currently `not collected` unless a machine network source is wired into analysis
+- node IP ranges are derived from collected machine-network CIDRs when available, or inferred from observed node InternalIPs as a fallback
 {% if cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-services') | list | length > 0 or cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-pods') | list | length > 0 %}
 - sanity check:
   {% for item in cluster_current_state_sanity_findings | default([]) if item.area in ['ip-capacity-services', 'ip-capacity-pods'] %}`{{ item.detail }}`{% if not loop.last %}; {% endif %}{% endfor %}
@@ -167,15 +167,15 @@ Collection notes:
 | Pod IP ranges | `{{ cluster_current_state.ip_capacity.pods.range_list | default([]) | join(', ') or 'unknown' }}` |
 | Pod IPs taken | `{{ cluster_current_state.ip_capacity.pods.taken_ips | default(0) }}` |
 | Pod IPs available | `{{ cluster_current_state.ip_capacity.pods.available_ips | default('unknown') }}` |
-| Node IP ranges | `{{ cluster_current_state.ip_capacity.nodes.range_list | default([]) | join(', ') or 'not collected' }}` |
+| Node IP ranges | `{{ cluster_current_state.ip_capacity.nodes.range_list | default([]) | join(', ') or 'unknown' }}` |
 | Node IPs taken | `{{ cluster_current_state.ip_capacity.nodes.taken_ips | default(0) }}` |
-| Node IPs available | `{{ cluster_current_state.ip_capacity.nodes.available_ips if cluster_current_state.ip_capacity.nodes.available_ips | default('unknown') != 'unknown' else 'not collected' }}` |
+| Node IPs available | `{{ cluster_current_state.ip_capacity.nodes.available_ips | default('unknown') }}` |
 
 ### Node Growth Headroom
 
 Collection notes:
 - pod-network headroom is derived from `clusterNetwork[*].cidr` and `hostPrefix`
-- node IP headroom remains `not collected` until a machine network source is collected
+- node IP headroom uses collected machine-network CIDRs when available, or inferred node ranges from observed InternalIPs as a fallback
 
 | Signal | Value |
 | --- | --- |
@@ -184,7 +184,7 @@ Collection notes:
 | Additional node slots from pod network | `{{ cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | default('unknown') }}` |
 | Pod network headroom | `{{ cluster_current_state.node_growth_capacity.pod_network_headroom_pct | default('unknown') }}`% |
 | Effective additional nodes limited by IP and pod network | `{{ cluster_current_state.node_growth_capacity.effective_additional_nodes | default('unknown') }}` |
-| Node IPs available | `{{ cluster_current_state.node_growth_capacity.node_ips_available if cluster_current_state.node_growth_capacity.node_ips_available | default('unknown') != 'unknown' else 'not collected' }}` |
+| Node IPs available | `{{ cluster_current_state.node_growth_capacity.node_ips_available | default('unknown') }}` |
 
 {% if cluster_current_state.node_growth_capacity.network_slot_details | default([]) | length > 0 %}
 Node slot estimate details:
@@ -448,6 +448,9 @@ Collection notes:
 | Ingress host conflicts | `{{ health_summary.ingress_host_conflicts | default(0) }}` | {{ status_badge('WARN' if (health_summary.ingress_host_conflicts | default(0) | int) > 0 else 'OK') }} |
 | Services without endpoints | `{{ health_summary.services_without_endpoints | default(0) }}` | {{ status_badge('WARN' if (health_summary.services_without_endpoints | default(0) | int) > 0 else 'OK') }} |
 | Workloads with >10 replicas | `{{ health_summary.high_replica_workloads | default(0) }}` | {{ status_badge('INFO' if (health_summary.high_replica_workloads | default(0) | int) > 0 else 'OK') }} |
+| Multi-replica workloads checked | `{{ health_summary.multi_replica_workloads_checked | default(0) }}` | {{ status_badge('INFO' if (health_summary.multi_replica_workloads_checked | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Multi-replica workloads without PDB | `{{ health_summary.multi_replica_workloads_without_pdb | default(0) }}` | {{ status_badge('WARN' if (health_summary.multi_replica_workloads_without_pdb | default(0) | int) > 0 else 'OK') }} |
+| Multi-replica workloads without spread policy | `{{ health_summary.multi_replica_workloads_without_spread_policy | default(0) }}` | {{ status_badge('WARN' if (health_summary.multi_replica_workloads_without_spread_policy | default(0) | int) > 0 else 'OK') }} |
 | Pods without parent owner | `{{ health_summary.orphan_pods | default(0) }}` | {{ status_badge('WARN' if (health_summary.orphan_pods | default(0) | int) > 0 else 'OK') }} |
 | Workloads missing recommended app labels | `{{ health_summary.workload_label_governance_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.workload_label_governance_findings | default(0) | int) > 0 else 'OK') }} |
 | Critical pod density nodes | `{{ health_summary.critical_pod_density_nodes | default(0) }}` | {{ status_badge('WARN' if (health_summary.critical_pod_density_nodes | default(0) | int) > 0 else 'OK') }} |
@@ -502,11 +505,10 @@ Collection notes:
 | Deprecated API resources | `{{ health_summary.deprecated_api_lines | default(0) }}` | `{% if (health_summary.deprecated_api_lines | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
 | External log forwarding outputs | `{{ observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length }}` | `{% if (observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length) > 0 %}OK{% else %}WARN{% endif %}` |
 | External alert delivery receivers | `{{ observability_forwarding_summary.external_alert_receiver_count | default(0) }}` | `{% if (observability_forwarding_summary.external_alert_receiver_count | default(0) | int) > 0 %}OK{% else %}WARN{% endif %}` |
+| Alert routing to external receiver configured | `{{ observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false) }}` | `{% if observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false) %}OK{% else %}WARN{% endif %}` |
 | External cluster metrics remote write targets | `{{ observability_forwarding_summary.external_cluster_metrics_remote_write_count | default(0) }}` | `{% if (observability_forwarding_summary.external_cluster_metrics_remote_write_count | default(0) | int) > 0 %}OK{% else %}WARN{% endif %}` |
 | External user workload metrics remote write targets | `{{ observability_forwarding_summary.external_user_workload_metrics_remote_write_count | default(0) }}` | `{% if (observability_forwarding_summary.external_user_workload_metrics_remote_write_count | default(0) | int) > 0 %}OK{% else %}WARN{% endif %}` |
 | Compliance suite findings | `{{ health_summary.compliance_suite_findings | default(0) }}` | `{% if (health_summary.compliance_suite_findings | default(0) | int) > 0 %}WARN{% elif (health_summary.compliancesuites | default(0) | int) > 0 %}OK{% else %}UNKNOWN{% endif %}` |
-| VolumeSnapshotClasses | `{{ health_summary.volumesnapshotclasses | default(0) }}` | `{% if (health_summary.volumesnapshotclasses | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
-| DataProtectionApplications | `{{ health_summary.dataprotectionapplications | default(0) }}` | `{% if (health_summary.dataprotectionapplications | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
 | Empty user namespaces | `{{ health_summary.empty_user_namespaces | default(0) }}` | `{% if (health_summary.empty_user_namespaces | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
 | Likely unused service accounts | `{{ health_summary.likely_unused_serviceaccounts | default(0) }}` | `{% if (health_summary.likely_unused_serviceaccounts | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
 | Likely unused configmaps | `{{ health_summary.likely_unused_configmaps | default(0) }}` | `{% if (health_summary.likely_unused_configmaps | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
@@ -516,6 +518,20 @@ Collection notes:
 | Firing alerts | `{{ health_summary.firing_alerts | default(0) }}` | `{% if (health_summary.firing_alerts | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
 | Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% | `{% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}WARN{% elif (collection_summary.failed_commands | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
 | Report confidence | `{{ report_confidence | default('unknown') | upper }}` | `{% if report_confidence | default('unknown') == 'low' %}WARN{% elif report_confidence | default('unknown') == 'medium' %}INFO{% else %}OK{% endif %}` |
+
+### Recovery And Remediation
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| VolumeSnapshotClasses | `{{ health_summary.volumesnapshotclasses | default(0) }}` | `{% if (health_summary.volumesnapshotclasses | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
+| DataProtectionApplications | `{{ health_summary.dataprotectionapplications | default(0) }}` | `{% if (health_summary.dataprotectionapplications | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
+| BackupStorageLocations | `{{ health_summary.backupstoragelocations | default(0) }}` | `{% if (health_summary.backupstoragelocations | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
+| Velero schedules | `{{ health_summary.velero_schedules | default(0) }}` | `{% if (health_summary.velero_schedules | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
+| Successful backups | `{{ health_summary.successful_backups | default(0) }}` | `{% if (health_summary.successful_backups | default(0) | int) > 0 %}OK{% else %}WARN{% endif %}` |
+| Completed restores | `{{ health_summary.completed_restores | default(0) }}` | `{% if (health_summary.completed_restores | default(0) | int) > 0 %}OK{% else %}WARN{% endif %}` |
+| Backup posture findings | `{{ health_summary.backup_posture_findings | default(0) }}` | `{% if (health_summary.backup_posture_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| MachineHealthChecks | `{{ health_summary.machinehealthchecks | default(0) }}` | `{% if (health_summary.machinehealthchecks | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
+| Machine remediation findings | `{{ health_summary.machine_healthcheck_findings | default(0) }}` | `{% if (health_summary.machine_healthcheck_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
 
 ## Platform Component Detail
 
@@ -546,6 +562,56 @@ No APIService availability issues were detected in the collected registration ob
 | --- | --- | --- | --- | --- |
 {% for item in dataprotectionapplication_summary %}
 | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.reconciled }}` | `{{ item.reason }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_backup_posture_findings | default([]) | length > 0 %}
+### Backup Posture Findings
+
+| Check | Result | Detail |
+| --- | --- | --- |
+{% for item in top_backup_posture_findings %}
+| `{% if item.issue == 'backup-tooling-not-detected' %}Backup tooling{% elif item.issue == 'backup-storage-location-missing' %}Backup storage location{% elif item.issue == 'backup-storage-location-unavailable' %}Backup storage location{% elif item.issue == 'backup-schedule-missing' %}Backup schedule{% elif item.issue == 'backup-schedule-paused' %}Backup schedule{% elif item.issue == 'successful-backup-missing' %}Successful backup{% elif item.issue == 'successful-backup-stale' %}Successful backup freshness{% elif item.issue == 'restore-evidence-missing' %}Restore evidence{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue in ['backup-tooling-not-detected', 'backup-storage-location-missing', 'backup-schedule-missing', 'successful-backup-missing', 'restore-evidence-missing'] %}missing{% elif item.issue in ['backup-storage-location-unavailable', 'backup-schedule-paused', 'successful-backup-stale'] %}review{% else %}review{% endif %}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if backup_storage_location_summary | default([]) | length > 0 %}
+### Backup Storage Locations
+
+| Namespace | Name | Provider | Default | Available | Bucket | Prefix |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in backup_storage_location_summary %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.provider }}` | `{{ item.default }}` | `{{ item.available }}` | `{{ item.bucket or 'unknown' }}` | `{{ item.prefix or '' }}` |
+{% endfor %}
+{% endif %}
+
+{% if backup_schedule_summary | default([]) | length > 0 %}
+### Backup Schedules
+
+| Namespace | Name | Paused | Schedule | Last Backup | Storage Location |
+| --- | --- | --- | --- | --- | --- |
+{% for item in backup_schedule_summary %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.paused }}` | `{{ item.schedule or 'unknown' }}` | `{{ item.last_backup or 'never' }}` | `{{ item.storage_location or 'default' }}` |
+{% endfor %}
+{% endif %}
+
+{% if backup_summary | default([]) | length > 0 %}
+### Recent Backups
+
+| Namespace | Name | Phase | Storage Location | Completed | Warnings | Errors |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in backup_summary %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.storage_location or 'default' }}` | `{{ item.completion_timestamp or 'unknown' }}` | `{{ item.warnings }}` | `{{ item.errors }}` |
+{% endfor %}
+{% endif %}
+
+{% if restore_summary | default([]) | length > 0 %}
+### Recent Restores
+
+| Namespace | Name | Phase | Backup | Completed | Warnings | Errors |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in restore_summary %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.backup_name or 'unknown' }}` | `{{ item.completion_timestamp or 'unknown' }}` | `{{ item.warnings }}` | `{{ item.errors }}` |
 {% endfor %}
 {% endif %}
 
@@ -640,6 +706,26 @@ MachineConfigPool data was not collected.
 | --- | --- | --- | --- | --- | --- | --- |
 {% for item in (((machineconfigpools | default({})).get('items', [])) | sort(attribute='metadata.name')) %}
 | `{{ item.metadata.name }}` | {{ status_badge('OK' if ((item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if ((item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | `{{ item.status.machineCount | default('n/a') }}` | `{{ item.status.readyMachineCount | default('n/a') }}` | `{{ item.status.updatedMachineCount | default('n/a') }}` |
+{% endfor %}
+{% endif %}
+
+{% if machinehealthcheck_summary | default([]) | length > 0 %}
+### Machine Health Checks
+
+| Namespace | Name | Paused | Max Unhealthy | Expected Machines | Current Healthy | Empty Selector |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in machinehealthcheck_summary %}
+| `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.paused }}` | `{{ item.max_unhealthy or 'unknown' }}` | `{{ item.expected_machines }}` | `{{ item.current_healthy }}` | `{{ item.selector_empty }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_machine_healthcheck_findings | default([]) | length > 0 %}
+### Machine Remediation Findings
+
+| Check | Result | Detail |
+| --- | --- | --- |
+{% for item in top_machine_healthcheck_findings %}
+| `{% if item.issue == 'machinehealthcheck-missing' %}MachineHealthCheck coverage{% elif item.issue == 'machinehealthcheck-paused' %}MachineHealthCheck state{% elif item.issue == 'machinehealthcheck-selector-empty' %}MachineHealthCheck selector{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue == 'machinehealthcheck-missing' %}missing{% elif item.issue == 'machinehealthcheck-paused' %}paused{% elif item.issue == 'machinehealthcheck-selector-empty' %}invalid{% else %}review{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
 {% endif %}
 
@@ -771,6 +857,9 @@ No deprecated CRD versions or deprecated API resources were identified from the 
 | External log forwarding outputs | `{{ observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length }}` |
 | External alert delivery configured | `{{ observability_forwarding_summary.external_alert_delivery_configured | default(false) }}` |
 | External alert delivery receivers | `{{ observability_forwarding_summary.external_alert_receiver_count | default(0) }}` |
+| Alert routing to external receiver configured | `{{ observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false) }}` |
+| AlertmanagerConfigs with external routes | `{{ observability_forwarding_summary.alertmanagerconfigs_with_external_routes | default(0) }}` |
+| AlertmanagerConfigs without route receiver | `{{ observability_forwarding_summary.alertmanagerconfigs_without_route_receivers | default(0) }}` |
 | Cluster metrics remote write targets | `{{ observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) }}` |
 | External cluster metrics remote write targets | `{{ observability_forwarding_summary.external_cluster_metrics_remote_write_count | default(0) }}` |
 | User workload metrics remote write targets | `{{ observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) }}` |
@@ -784,7 +873,7 @@ No observability setup gaps were detected from the collected data.
 | Check | Result | Detail |
 | --- | --- | --- |
 {% for item in top_observability_findings %}
-| `{% if item.issue == 'monitoring-operator-not-healthy' %}Monitoring operator{% elif item.issue == 'thanos-querier-route-unavailable' %}Thanos querier route{% elif item.issue == 'missing-clusterlogforwarder' %}ClusterLogForwarder{% elif item.issue == 'clusterlogforwarder-without-outputs' %}ClusterLogForwarder outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}ClusterLogForwarder pipelines{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}External log forwarding{% elif item.issue == 'external-alert-delivery-not-configured' %}External alert delivery{% elif item.issue == 'cluster-metrics-remote-write-missing' %}Cluster metrics remote write{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}Cluster metrics remote write{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}User workload metrics remote write{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}User workload metrics remote write{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue == 'monitoring-operator-not-healthy' %}not healthy{% elif item.issue == 'thanos-querier-route-unavailable' %}not found{% elif item.issue == 'missing-clusterlogforwarder' %}missing{% elif item.issue == 'clusterlogforwarder-without-outputs' %}no outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}missing output refs{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}cluster-local only{% elif item.issue == 'external-alert-delivery-not-configured' %}not configured{% elif item.issue == 'cluster-metrics-remote-write-missing' %}missing{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}cluster-local only{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}missing{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}cluster-local only{% else %}review{% endif %}` | {{ item.detail }} |
+| `{% if item.issue == 'monitoring-operator-not-healthy' %}Monitoring operator{% elif item.issue == 'thanos-querier-route-unavailable' %}Thanos querier route{% elif item.issue == 'missing-clusterlogforwarder' %}ClusterLogForwarder{% elif item.issue == 'clusterlogforwarder-without-outputs' %}ClusterLogForwarder outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}ClusterLogForwarder pipelines{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}External log forwarding{% elif item.issue == 'external-alert-delivery-not-configured' %}External alert delivery{% elif item.issue == 'alertmanagerconfig-route-missing' %}Alertmanager route wiring{% elif item.issue == 'external-alert-receiver-not-routed' %}Alertmanager route wiring{% elif item.issue == 'cluster-metrics-remote-write-missing' %}Cluster metrics remote write{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}Cluster metrics remote write{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}User workload metrics remote write{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}User workload metrics remote write{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue == 'monitoring-operator-not-healthy' %}not healthy{% elif item.issue == 'thanos-querier-route-unavailable' %}not found{% elif item.issue == 'missing-clusterlogforwarder' %}missing{% elif item.issue == 'clusterlogforwarder-without-outputs' %}no outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}missing output refs{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}cluster-local only{% elif item.issue == 'external-alert-delivery-not-configured' %}not configured{% elif item.issue == 'alertmanagerconfig-route-missing' %}missing route{% elif item.issue == 'external-alert-receiver-not-routed' %}not routed{% elif item.issue == 'cluster-metrics-remote-write-missing' %}missing{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}cluster-local only{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}missing{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}cluster-local only{% else %}review{% endif %}` | {{ item.detail }} |
 {% endfor %}
 {% endif %}
 
@@ -1252,7 +1341,7 @@ This section groups access, workload, namespace, SCC, image, secret, and hygiene
 | Finding | Count |
 | --- | --- |
 {% for item in (security_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
-| `{% if item.key == 'privileged-containers' %}Privileged containers{% elif item.key == 'host-network' %}Host network{% elif item.key == 'host-pid' %}Host PID{% elif item.key == 'host-ipc' %}Host IPC{% elif item.key == 'hostpath-volume' %}Local hostPath storage{% elif item.key == 'run-as-root' %}Run as root{% elif item.key == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.key == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.key }}{% endif %}` | `{{ item.value }}` |
+| `{% if item.key == 'privileged-containers' %}Privileged containers{% elif item.key == 'host-network' %}Host network{% elif item.key == 'host-pid' %}Host PID{% elif item.key == 'host-ipc' %}Host IPC{% elif item.key == 'hostpath-volume' %}Local hostPath storage{% elif item.key == 'run-as-root' %}Run as root{% elif item.key == 'missing-seccomp-profile' %}Missing seccomp profile{% elif item.key == 'unconfined-seccomp-profile' %}Unconfined seccomp profile{% elif item.key == 'allow-privilege-escalation-not-disabled' %}Privilege escalation not disabled{% elif item.key == 'run-as-non-root-not-enforced' %}Run as non-root not enforced{% elif item.key == 'read-only-root-filesystem-not-enabled' %}Read-only root filesystem not enabled{% elif item.key == 'capabilities-not-fully-dropped' %}Capabilities not fully dropped{% elif item.key == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.key == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.key }}{% endif %}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
 
@@ -1262,7 +1351,7 @@ This section groups access, workload, namespace, SCC, image, secret, and hygiene
 | Finding | Count |
 | --- | --- |
 {% for item in (workload_practice_issue_type_counts | dict2items | sort(attribute='value', reverse=true)) %}
-| `{% if item.key == 'missing-resource-requests' %}Missing resource requests{% elif item.key == 'missing-resource-limits' %}Missing resource limits{% elif item.key == 'ephemeral-storage-volume' %}Ephemeral storage volumes{% else %}{{ item.key }}{% endif %}` | `{{ item.value }}` |
+| `{% if item.key == 'missing-resource-requests' %}Missing resource requests{% elif item.key == 'missing-resource-limits' %}Missing resource limits{% elif item.key == 'ephemeral-storage-volume' %}Ephemeral storage volumes{% elif item.key == 'missing-pod-disruption-budget' %}Missing PodDisruptionBudget{% elif item.key == 'missing-workload-spread-policy' %}Missing workload spread policy{% else %}{{ item.key }}{% endif %}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
 
@@ -1283,7 +1372,7 @@ This section groups access, workload, namespace, SCC, image, secret, and hygiene
 | Namespace | Pod | Check | Detail |
 | --- | --- | --- | --- |
 {% for item in top_security_findings %}
-| `{{ item.namespace }}` | `{{ item.pod }}` | `{% if item.issue == 'privileged-containers' %}Privileged containers{% elif item.issue == 'host-network' %}Host network{% elif item.issue == 'host-pid' %}Host PID{% elif item.issue == 'host-ipc' %}Host IPC{% elif item.issue == 'hostpath-volume' %}Local hostPath storage{% elif item.issue == 'run-as-root' %}Run as root{% elif item.issue == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.issue == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
+| `{{ item.namespace }}` | `{{ item.pod }}` | `{% if item.issue == 'privileged-containers' %}Privileged containers{% elif item.issue == 'host-network' %}Host network{% elif item.issue == 'host-pid' %}Host PID{% elif item.issue == 'host-ipc' %}Host IPC{% elif item.issue == 'hostpath-volume' %}Local hostPath storage{% elif item.issue == 'run-as-root' %}Run as root{% elif item.issue == 'missing-seccomp-profile' %}Missing seccomp profile{% elif item.issue == 'unconfined-seccomp-profile' %}Unconfined seccomp profile{% elif item.issue == 'allow-privilege-escalation-not-disabled' %}Privilege escalation not disabled{% elif item.issue == 'run-as-non-root-not-enforced' %}Run as non-root not enforced{% elif item.issue == 'read-only-root-filesystem-not-enabled' %}Read-only root filesystem not enabled{% elif item.issue == 'capabilities-not-fully-dropped' %}Capabilities not fully dropped{% elif item.issue == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.issue == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
 {% if (security_findings | default([]) | length) > (top_security_findings | length) %}
 - additional pod security findings omitted: `{{ (security_findings | length) - (top_security_findings | length) }}`
@@ -1402,7 +1491,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 | Namespace | Pod | Check | Detail |
 | --- | --- | --- | --- |
 {% for item in top_workload_practice_findings %}
-| `{{ item.namespace }}` | `{{ item.pod }}` | `{% if item.issue == 'missing-resource-requests' %}Missing resource requests{% elif item.issue == 'missing-resource-limits' %}Missing resource limits{% elif item.issue == 'ephemeral-storage-volume' %}Ephemeral storage volumes{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
+| `{{ item.namespace }}` | `{{ item.pod | default((item.kind | default('Workload')) ~ '/' ~ (item.name | default('unknown'))) }}` | `{% if item.issue == 'missing-resource-requests' %}Missing resource requests{% elif item.issue == 'missing-resource-limits' %}Missing resource limits{% elif item.issue == 'ephemeral-storage-volume' %}Ephemeral storage volumes{% elif item.issue == 'missing-pod-disruption-budget' %}Missing PodDisruptionBudget{% elif item.issue == 'missing-workload-spread-policy' %}Missing workload spread policy{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
 {% endif %}
 
