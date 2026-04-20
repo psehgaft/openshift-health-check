@@ -426,6 +426,7 @@ The report uses `unknown` or `unavailable` in several places by design.
 
 - `unknown` means the cluster did not expose enough object data to compute a defensible derived value
 - `unavailable` usually means the signal depends on an active metric query that was not available in the current run
+- `not applicable` means the report checked for an optional API or config object that is simply not present on this cluster
 
 Examples:
 
@@ -433,6 +434,7 @@ Examples:
 - node growth headroom stays `unknown` when pod-network allocation details are missing
 - control-plane-to-worker and worker-to-worker latency stay `unavailable` unless the cluster exposes a suitable Prometheus metric
 - report confidence drops when collection failures or fallback synthesis paths reduce certainty
+- optional collectors for absent APIs or config objects are surfaced separately and do not count as hard collection failures
 
 ### Layer 2: Control Plane And etcd
 
@@ -584,6 +586,7 @@ This tool treats collection quality as part of the result:
 
 - command failures are tracked
 - timeouts are shown
+- optional collectors that are not relevant to the current cluster are shown separately as not applicable
 - core collection failures affect scoring
 - the report tells you when it may be incomplete
 

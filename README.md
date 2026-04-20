@@ -26,6 +26,7 @@ Report file names include the cluster type and cluster name.
 It is read-only. It does not make changes to the cluster.
 
 By default, it collects data in parallel so the run finishes faster. It also reports collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete.
+Optional collectors that target APIs or config objects which are not installed on the cluster are tracked separately as not applicable, rather than counted as hard collection failures.
 
 > [!IMPORTANT]
 > This tool is a reporting aid, not a replacement for operator judgment. It helps surface health signals, risks, and likely issues, but no automated report can fully understand every cluster design,
@@ -152,6 +153,7 @@ Use these rules when reading it:
 - `direct`: the signal comes from a collected object or metric and is rendered directly
 - `derived`: the signal is computed from collected data using a documented heuristic
 - `unknown`: the cluster did not expose enough data to support a defensible value
+- `not applicable`: the report looked for an optional feature or API that is not installed or not configured on this cluster
 
 Important examples:
 
@@ -174,6 +176,10 @@ Important examples:
   - `direct`
   - inferred from discovered `AlertmanagerConfig` receivers for supported external channels
   - this shows configured delivery targets, not guaranteed runtime reachability
+- Collection completeness:
+  - `direct`
+  - based on command execution results from the current run
+  - optional collectors for APIs or config objects that are absent are shown as not applicable and do not reduce the success rate
 - External storage provider detection:
   - `derived`
   - inferred from `StorageClass` provisioners and PV backends
@@ -709,6 +715,8 @@ The report starts with one overall status:
 This is the fast summary.
 
 If the report shows collection failures, be careful with the result. A cluster can look healthier than it really is when part of the data could not be collected.
+
+If the report shows optional collectors as skipped or not applicable, read those as feature absence, not as a broken run. Examples include clusters without Tekton, OADP or Velero CRDs, or clusters that do not define optional monitoring configmaps.
 
 ### Suggested Next Steps
 
