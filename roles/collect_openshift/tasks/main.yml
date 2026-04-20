@@ -79,6 +79,23 @@
         argv: ["oc", "-n", "openshift-monitoring", "get", "configmap", "cluster-monitoring-config", "-o", "json"]
       - name: user_workload_monitoring_config
         argv: ["oc", "-n", "openshift-user-workload-monitoring", "get", "configmap", "user-workload-monitoring-config", "-o", "json"]
+    openshift_optional_missing_resource_commands:
+      - pipelines
+      - pipelineruns
+      - volumesnapshotclasses
+      - dataprotectionapplications
+      - backupstoragelocations
+      - schedules
+      - backups
+      - restores
+      - compliancesuites
+      - machinesets
+      - machinehealthchecks
+      - alertmanagerconfigs
+      - clusterlogforwarders
+    openshift_optional_missing_object_commands:
+      - cluster_monitoring_config
+      - user_workload_monitoring_config
 
 - name: Collect OpenShift-specific data in parallel
   ansible.builtin.shell: |
@@ -147,28 +164,72 @@
   ansible.builtin.set_fact:
     openshift_collected_commands: "{{ openshift_collected_commands_cmd.stdout | from_json if (openshift_collected_commands_cmd.rc == 0 and (openshift_collected_commands_cmd.stdout | default('') | length > 0)) else {} }}"
 
+- name: Capture OpenShift optional collection skips
+  ansible.builtin.set_fact:
+    collection_skipped_optional_commands: "{{ (collection_skipped_optional_commands | default([])) + [collection_skip_entry] }}"
+  loop: "{{ openshift_collected_commands | default({}) | dict2items }}"
+  vars:
+    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
+    optional_missing_resource_failure: >-
+      {{
+        (item.key in (openshift_optional_missing_resource_commands | default([])))
+        and ("the server doesn't have a resource type" in collection_failure_stderr_lower)
+      }}
+    optional_missing_object_failure: >-
+      {{
+        (item.key in (openshift_optional_missing_object_commands | default([])))
+        and ('error from server (notfound)' in collection_failure_stderr_lower)
+      }}
+    collection_skip_entry:
+      name: "{{ item.key }}"
+      rc: "{{ item.value.rc | default(1) }}"
+      category: "{{ 'optional-api-missing' if optional_missing_resource_failure else 'optional-object-missing' }}"
+      detail: "{{ collection_failure_stderr }}"
+  when:
+    - (item.value.rc | default(1) | int) != 0
+    - optional_missing_resource_failure or optional_missing_object_failure
+  changed_when: false
+
 - name: Merge OpenShift-specific collection failures
   ansible.builtin.set_fact:
     collection_failures: "{{ (collection_failures | default([])) + [collection_failure_entry] }}"
   loop: "{{ openshift_collected_commands | default({}) | dict2items }}"
   vars:
+    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
+    optional_missing_resource_failure: >-
+      {{
+        (item.key in (openshift_optional_missing_resource_commands | default([])))
+        and ("the server doesn't have a resource type" in collection_failure_stderr_lower)
+      }}
+    optional_missing_object_failure: >-
+      {{
+        (item.key in (openshift_optional_missing_object_commands | default([])))
+        and ('error from server (notfound)' in collection_failure_stderr_lower)
+      }}
     collection_failure_entry:
       name: "{{ item.key }}"
       rc: "{{ item.value.rc | default(1) }}"
       timed_out: "{{ item.value.timed_out | default(false) }}"
-      stderr: "{{ item.value.stderr | default('') | trim }}"
-  when: (item.value.rc | default(1) | int) != 0
+      stderr: "{{ collection_failure_stderr }}"
+  when:
+    - (item.value.rc | default(1) | int) != 0
+    - not optional_missing_resource_failure
+    - not optional_missing_object_failure
   changed_when: false
 
 - name: Merge OpenShift-specific collection summary
   ansible.builtin.set_fact:
     collection_summary:
       command_count: "{{ (collection_summary.command_count | default(0) | int) + (openshift_collection_commands | length) }}"
+      applicable_command_count: "{{ [0, (((collection_summary.command_count | default(0) | int) + (openshift_collection_commands | length)) - (collection_skipped_optional_commands | default([]) | length))] | max }}"
       parallelism: "{{ collection_summary.parallelism | default(collection_parallelism | int) }}"
       timeout_seconds: "{{ collection_summary.timeout_seconds | default(collection_command_timeout_seconds | int) }}"
       failed_commands: "{{ collection_failures | default([]) | length }}"
+      optional_skipped_commands: "{{ collection_skipped_optional_commands | default([]) | length }}"
       timed_out_commands: "{{ collection_failures | default([]) | selectattr('timed_out', 'equalto', true) | list | length }}"
-      succeeded_commands: "{{ [0, ((collection_summary.command_count | default(0) | int) + (openshift_collection_commands | length)) - (collection_failures | default([]) | length)] | max }}"
+      succeeded_commands: "{{ [0, (((collection_summary.command_count | default(0) | int) + (openshift_collection_commands | length)) - (collection_failures | default([]) | length) - (collection_skipped_optional_commands | default([]) | length))] | max }}"
       core_failed_commands: "{{ (collection_failures | default([]) | selectattr('name', 'in', (collection_core_command_names + openshift_collection_core_command_names)) | list | length) }}"
   changed_when: false
 

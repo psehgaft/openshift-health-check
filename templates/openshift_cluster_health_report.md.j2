@@ -1628,11 +1628,13 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 | Signal | Value |
 | --- | --- |
 | Commands attempted | `{{ collection_summary.command_count | default(0) }}` |
+| Applicable commands | `{{ collection_summary.applicable_command_count | default(collection_summary.command_count | default(0)) }}` |
 | Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% |
 | Collector parallelism | `{{ collection_summary.parallelism | default(0) }}` |
 | Per-command timeout | `{{ collection_summary.timeout_seconds | default(0) }}` seconds |
 | Successful commands | `{{ collection_summary.succeeded_commands | default(0) }}` |
 | Failed commands | `{{ collection_summary.failed_commands | default(0) }}` |
+| Optional commands skipped as not applicable | `{{ collection_summary.optional_skipped_commands | default(collection_skipped_optional_commands | default([]) | length) }}` |
 | Timed out commands | `{{ collection_summary.timed_out_commands | default(0) }}` |
 | Core command failures | `{{ collection_summary.core_failed_commands | default(0) }}` |
 
@@ -1643,6 +1645,14 @@ All collection commands completed successfully.
 | --- | --- | --- | --- |
 {% for item in collection_failures %}
 | `{{ item.name }}` | `{{ item.rc }}` | `{{ item.timed_out }}` | {{ item.stderr or 'n/a' }} |
+{% endfor %}
+{% endif %}
+
+{% if collection_skipped_optional_commands | default([]) | length > 0 %}
+| Optional Collector | Category | Detail |
+| --- | --- | --- |
+{% for item in collection_skipped_optional_commands %}
+| `{{ item.name }}` | `{{ item.category }}` | {{ item.detail or 'n/a' }} |
 {% endfor %}
 {% endif %}
 
