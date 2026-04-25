@@ -4,7 +4,7 @@
     networkpolicy_namespace_counts: "{{ networkpolicy_namespace_counts | default({}) | combine({item.metadata.namespace | default(''): ((networkpolicy_namespace_counts[item.metadata.namespace | default('')] | default(0)) + 1)}, recursive=True) }}"
     ingress_policy_namespace_counts: "{{ ingress_policy_namespace_counts | default({}) | combine({item.metadata.namespace | default(''): ((ingress_policy_namespace_counts[item.metadata.namespace | default('')] | default(0)) + ingress_policy_increment)}, recursive=True) }}"
     egress_policy_namespace_counts: "{{ egress_policy_namespace_counts | default({}) | combine({item.metadata.namespace | default(''): ((egress_policy_namespace_counts[item.metadata.namespace | default('')] | default(0)) + egress_policy_increment)}, recursive=True) }}"
-  loop: "{{ (networkpolicies | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.networkpolicies | default({})).get('items', []) }}"
   vars:
     policy_types: "{{ item.spec.policyTypes | default(['Ingress']) }}"
     ingress_policy_increment: "{{ 1 if 'Ingress' in policy_types else 0 }}"
@@ -14,13 +14,13 @@
 - name: Build namespace resource quota counts
   ansible.builtin.set_fact:
     resourcequota_namespace_counts: "{{ resourcequota_namespace_counts | default({}) | combine({item.metadata.namespace | default(''): ((resourcequota_namespace_counts[item.metadata.namespace | default('')] | default(0)) + 1)}, recursive=True) }}"
-  loop: "{{ (resourcequotas | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.resourcequotas | default({})).get('items', []) }}"
   changed_when: false
 
 - name: Build namespace limitrange counts
   ansible.builtin.set_fact:
     limitrange_namespace_counts: "{{ limitrange_namespace_counts | default({}) | combine({item.metadata.namespace | default(''): ((limitrange_namespace_counts[item.metadata.namespace | default('')] | default(0)) + 1)}, recursive=True) }}"
-  loop: "{{ (limitranges | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.limitranges | default({})).get('items', []) }}"
   changed_when: false
 
 - name: Build namespace hygiene findings
@@ -29,8 +29,8 @@
     namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) + ([item] if (((resourcequota_namespace_counts | default({}))[item] | default(0) | int) == 0) else []) }}"
     namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) + ([item] if (((limitrange_namespace_counts | default({}))[item] | default(0) | int) == 0) else []) }}"
     empty_user_namespaces: "{{ empty_user_namespaces | default([]) + ([item] if (((namespace_pod_counts | default({}))[item] | default(0) | int) == 0) else []) }}"
-    namespaces_missing_ingress_policies: "{{ namespaces_missing_ingress_policies | default([]) + ([item] if ((((networkpolicy_namespace_counts | default({}))[item] | default(0) | int) > 0) and (((ingress_policy_namespace_counts | default({}))[item] | default(0) | int) == 0) else []) }}"
-    namespaces_missing_egress_policies: "{{ namespaces_missing_egress_policies | default([]) + ([item] if ((((networkpolicy_namespace_counts | default({}))[item] | default(0) | int) > 0) and (((egress_policy_namespace_counts | default({}))[item] | default(0) | int) == 0) else []) }}"
+    namespaces_missing_ingress_policies: "{{ namespaces_missing_ingress_policies | default([]) + ([item] if ((((networkpolicy_namespace_counts | default({}))[item] | default(0) | int) > 0) and (((ingress_policy_namespace_counts | default({}))[item] | default(0) | int) == 0)) else []) }}"
+    namespaces_missing_egress_policies: "{{ namespaces_missing_egress_policies | default([]) + ([item] if ((((networkpolicy_namespace_counts | default({}))[item] | default(0) | int) > 0) and (((egress_policy_namespace_counts | default({}))[item] | default(0) | int) == 0)) else []) }}"
   loop: "{{ user_namespace_names | default([]) }}"
   changed_when: false
 
@@ -46,7 +46,7 @@
     - name: Write pod CPU request map input data
       ansible.builtin.copy:
         dest: "{{ pod_cpu_request_map_input_file.path }}"
-        content: "{{ (pods | default({})).get('items', []) | to_json }}"
+        content: "{{ (analysis_graph.pods | default({})).get('items', []) | to_json }}"
         mode: "0600"
 
     - name: Run pod CPU request map helper
@@ -74,7 +74,7 @@
     security_findings: "{{ security_findings | default([]) + security_entries }}"
     workload_practice_findings: "{{ workload_practice_findings | default([]) + practice_entries }}"
     node_cpu_request_millicores: "{{ (node_cpu_request_millicores | default({})) | combine({node_name: (((node_cpu_request_millicores | default({}))[node_name] | default(0)) + cpu_request_total_millicores)}, recursive=True) }}"
-  loop: "{{ (pods | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     node_name: "{{ item.spec.nodeName | default('unscheduled') }}"
@@ -112,7 +112,7 @@
     import re
 
     data = json.loads(r'''{{ {
-      "pods": (pods | default({})).get('items', []),
+      "pods": (analysis_graph.pods | default({})).get('items', []),
       "exclude_regex": user_namespaces_exclude_regex | default('^$')
     } | to_json }}''')
 
@@ -215,7 +215,7 @@
         content: >-
           {{
             {
-              "pods": (pods | default({})).get('items', []),
+              "pods": (analysis_graph.pods | default({})).get('items', []),
               "exclude_regex": user_namespaces_exclude_regex | default('^$')
             } | to_json
           }}
@@ -245,7 +245,7 @@
 - name: Build CRD deprecation findings
   ansible.builtin.set_fact:
     deprecated_crd_findings: "{{ deprecated_crd_findings | default([]) + deprecated_entry }}"
-  loop: "{{ (crds | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.crds | default({})).get('items', []) }}"
   vars:
     deprecated_versions: "{{ item.spec.versions | default([]) | selectattr('deprecated', 'defined') | selectattr('deprecated', 'equalto', true) | map(attribute='name') | list }}"
     deprecated_entry: "{{ [{'name': item.metadata.name, 'group': item.spec.group | default(''), 'versions': deprecated_versions | join(', ')}] if deprecated_versions | length > 0 else [] }}"
@@ -253,12 +253,12 @@
 
 - name: Build deprecated API resource findings
   ansible.builtin.set_fact:
-    deprecated_api_lines: "{{ api_resources_cmd.stdout_lines | default([]) | select('search', 'DEPRECATED') | list }}"
+    deprecated_api_lines: "{{ (api_resources_cmd.stdout_lines | default([])) | select('search', 'DEPRECATED') | list }}"
 
 - name: Build endpoint map
   ansible.builtin.set_fact:
     service_endpoint_address_counts: "{{ service_endpoint_address_counts | default({}) | combine({endpoint_key: endpoint_count}, recursive=True) }}"
-  loop: "{{ (endpoints | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.endpoints | default({})).get('items', []) }}"
   vars:
     endpoint_key: "{{ (item.metadata.namespace | default('')) ~ '/' ~ (item.metadata.name | default('')) }}"
     endpoint_count: >-
@@ -272,7 +272,7 @@
 - name: Build service without endpoint findings
   ansible.builtin.set_fact:
     services_without_endpoints: "{{ services_without_endpoints | default([]) + service_issue_entry }}"
-  loop: "{{ (services | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.services | default({})).get('items', []) }}"
   vars:
     service_ns: "{{ item.metadata.namespace | default('') }}"
     service_name: "{{ item.metadata.name | default('') }}"
@@ -306,12 +306,12 @@
             'service_networks': (
               ((cluster_profile | default({})).get('service_networks', []))
               if (((cluster_profile | default({})).get('service_networks', []) | length) > 0)
-              else ((network_config | default({})).get('spec', {}).get('serviceNetwork', []))
+              else ((analysis_graph.network_config | default({})).get('spec', {}).get('serviceNetwork', []))
             ),
             'cluster_networks': (
               ((cluster_profile | default({})).get('cluster_networks', []))
               if (((cluster_profile | default({})).get('cluster_networks', []) | length) > 0)
-              else ((network_config | default({})).get('spec', {}).get('clusterNetwork', []))
+              else ((analysis_graph.network_config | default({})).get('spec', {}).get('clusterNetwork', []))
             ),
             'machine_networks': (
               ((cluster_profile | default({})).get('machine_networks', []))
@@ -339,11 +339,11 @@
           {{
             {
               "cluster_profile": ip_capacity_cluster_profile | default(cluster_profile | default({})),
-              "infrastructure": infrastructure | default({}),
-              "network_config": network_config | default({}),
-              "services": (services | default({})).get('items', []),
-              "pods": (pods | default({})).get('items', []),
-              "nodes": (nodes | default({})).get('items', [])
+              "infrastructure": analysis_graph.infrastructure | default({}),
+              "network_config": analysis_graph.network_config | default({}),
+              "services": (analysis_graph.services | default({})).get('items', []),
+              "pods": (analysis_graph.pods | default({})).get('items', []),
+              "nodes": (analysis_graph.nodes | default({})).get('items', [])
             } | to_json
           }}
         mode: "0600"
@@ -375,7 +375,7 @@
     referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
     referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
     referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
-  loop: "{{ (pods | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     volume_configmap_names: "{{ item.spec.volumes | default([]) | selectattr('configMap', 'defined') | map(attribute='configMap.name') | select('defined') | list }}"
@@ -396,7 +396,7 @@
     referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
     referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
     referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
-  loop: "{{ (deployments | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     pod_spec: "{{ item.spec.template.spec | default({}) }}"
@@ -417,7 +417,7 @@
     referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
     referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
     referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
-  loop: "{{ (statefulsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     pod_spec: "{{ item.spec.template.spec | default({}) }}"
@@ -438,7 +438,7 @@
     referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
     referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
     referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
-  loop: "{{ (daemonsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     pod_spec: "{{ item.spec.template.spec | default({}) }}"
@@ -457,7 +457,7 @@
 - name: Build likely unused configmap findings
   ansible.builtin.set_fact:
     likely_unused_configmaps: "{{ likely_unused_configmaps | default([]) + configmap_issue_entry }}"
-  loop: "{{ (configmaps | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.configmaps | default({})).get('items', []) }}"
   vars:
     cm_ns: "{{ item.metadata.namespace | default('') }}"
     cm_name: "{{ item.metadata.name | default('') }}"
@@ -474,7 +474,7 @@
 - name: Build likely unused service account findings
   ansible.builtin.set_fact:
     likely_unused_serviceaccounts: "{{ likely_unused_serviceaccounts | default([]) + serviceaccount_issue_entry }}"
-  loop: "{{ (serviceaccounts | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.serviceaccounts | default({})).get('items', []) }}"
   vars:
     sa_ns: "{{ item.metadata.namespace | default('') }}"
     sa_name: "{{ item.metadata.name | default('') }}"
@@ -492,7 +492,7 @@
 - name: Build likely unused secret findings
   ansible.builtin.set_fact:
     likely_unused_secrets: "{{ likely_unused_secrets | default([]) + secret_issue_entry }}"
-  loop: "{{ (secrets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
   vars:
     secret_ns: "{{ item.metadata.namespace | default('') }}"
     secret_name: "{{ item.metadata.name | default('') }}"
@@ -514,7 +514,7 @@
     privileged_serviceaccount_access: "{{ privileged_serviceaccount_access | default([]) + privileged_serviceaccount_entries }}"
     privileged_user_access: "{{ privileged_user_access | default([]) + privileged_user_entries }}"
     privileged_group_access: "{{ privileged_group_access | default([]) + privileged_group_entries }}"
-  loop: "{{ ((clusterrolebindings | default({})).get('items', [])) + ((rolebindings | default({})).get('items', [])) }}"
+  loop: "{{ ((analysis_graph.clusterrolebindings | default({})).get('items', [])) + ((analysis_graph.rolebindings | default({})).get('items', [])) }}"
   vars:
     binding_kind: "{{ item.kind | default('Binding') }}"
     binding_name: "{{ item.metadata.name | default('unknown') }}"
@@ -588,7 +588,7 @@
 - name: Build namespaced CRD count targets
   ansible.builtin.set_fact:
     namespaced_crd_count_targets: "{{ (namespaced_crd_count_targets | default([])) + [crd_count_target] }}"
-  loop: "{{ (crds | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.crds | default({})).get('items', []) }}"
   vars:
     crd_count_target:
       name: "{{ item.metadata.name | default('') }}"
@@ -664,7 +664,7 @@
 - name: Build storage summaries
   ansible.builtin.set_fact:
     storageclass_summary: "{{ storageclass_summary | default([]) + [sc_entry] }}"
-  loop: "{{ (storageclasses | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.storageclasses | default({})).get('items', []) }}"
   vars:
     sc_entry:
       name: "{{ item.metadata.name }}"
@@ -690,7 +690,7 @@
           {{
             {
               "storageclasses": storageclass_summary | default([]),
-              "persistentvolumes": (persistentvolumes | default({})).get('items', []),
+              "persistentvolumes": (analysis_graph.persistentvolumes | default({})).get('items', []),
               "security_findings": security_findings | default([]),
               "workload_practice_findings": workload_practice_findings | default([])
             } | to_json
@@ -721,7 +721,7 @@
   ansible.builtin.set_fact:
     pv_phase_counts: "{{ pv_phase_counts | default({}) | combine({pv_phase: ((pv_phase_counts[pv_phase] | default(0)) + 1)}, recursive=True) }}"
     pv_issues: "{{ pv_issues | default([]) + ([{'name': item.metadata.name, 'phase': pv_phase, 'storageClassName': item.spec.storageClassName | default(''), 'claimRef': ((item.spec.claimRef.namespace | default('')) ~ '/' ~ (item.spec.claimRef.name | default(''))) if (item.spec.claimRef is defined) else ''}] if pv_phase not in ['Bound', 'Available'] else []) }}"
-  loop: "{{ (persistentvolumes | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.persistentvolumes | default({})).get('items', []) }}"
   vars:
     pv_phase: "{{ item.status.phase | default('Unknown') }}"
   changed_when: false
@@ -730,7 +730,7 @@
   ansible.builtin.set_fact:
     pvc_phase_counts: "{{ pvc_phase_counts | default({}) | combine({pvc_phase: ((pvc_phase_counts[pvc_phase] | default(0)) + 1)}, recursive=True) }}"
     pvc_issues: "{{ pvc_issues | default([]) + ([{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': pvc_phase, 'storageClassName': item.spec.storageClassName | default(''), 'volumeName': item.spec.volumeName | default('')}] if pvc_phase != 'Bound' else []) }}"
-  loop: "{{ (persistentvolumeclaims | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.persistentvolumeclaims | default({})).get('items', []) }}"
   vars:
     pvc_phase: "{{ item.status.phase | default('Unknown') }}"
   changed_when: false
@@ -738,7 +738,7 @@
 - name: Build TLS secret expiry targets
   ansible.builtin.set_fact:
     tls_secret_expiry_targets: "{{ (tls_secret_expiry_targets | default([])) + [tls_secret_expiry_target] }}"
-  loop: "{{ (secrets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
   vars:
     tls_secret_expiry_target:
       namespace: "{{ item.metadata.namespace | default('') }}"

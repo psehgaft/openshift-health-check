@@ -1,17 +1,15 @@
 ---
 - name: Build image registry exposure and policy findings
-  ansible.builtin.set_fact:
-    image_registry_findings: "{{ image_registry_findings | default([]) + image_registry_finding_entries }}"
-    feature_findings: "{{ feature_findings | default([]) + feature_finding_entries }}"
   vars:
-    allowed_imports: "{{ image_config.spec.allowedRegistriesForImport | default([]) }}"
-    registry_sources: "{{ image_config.spec.registrySources | default({}) }}"
+    graph: "{{ analysis_graph | default({}) }}"
+    allowed_imports: "{{ graph.image_config.spec.allowedRegistriesForImport | default([]) }}"
+    registry_sources: "{{ graph.image_config.spec.registrySources | default({}) }}"
     allowed_registries: "{{ registry_sources.allowedRegistries | default([]) }}"
     blocked_registries: "{{ registry_sources.blockedRegistries | default([]) }}"
     insecure_registries: "{{ registry_sources.insecureRegistries | default([]) }}"
-    public_default_route: "{{ image_registry_config.spec.defaultRoute | default(false) }}"
-    pruner_suspended: "{{ image_pruner_config.spec.suspend | default(false) }}"
-    image_registry_managed: "{{ image_registry_config.spec.managementState | default('Managed') }}"
+    public_default_route: "{{ graph.image_registry_config.spec.defaultRoute | default(false) }}"
+    pruner_suspended: "{{ graph.image_pruner_config.spec.suspend | default(false) }}"
+    image_registry_managed: "{{ graph.image_registry_config.spec.managementState | default('Managed') }}"
     image_registry_finding_entries: >-
       {{
         ([] +
@@ -26,6 +24,9 @@
         ([{'issue': 'image-registry-not-managed', 'detail': image_registry_managed}] if image_registry_managed != 'Managed' else []) +
         ([{'issue': 'insights-operator-not-healthy', 'detail': 'cluster operator insights is unavailable or degraded'}] if ('insights' in (unavailable_operators | default([])) or 'insights' in (degraded_operators | default([]))) else []))
       }}
+  ansible.builtin.set_fact:
+    image_registry_findings: "{{ image_registry_findings | default([]) + image_registry_finding_entries }}"
+    feature_findings: "{{ feature_findings | default([]) + feature_finding_entries }}"
 
 - name: Build internal image registry workload usage findings
   ansible.builtin.shell: |
@@ -35,9 +36,9 @@
     import re
 
     data = json.loads(base64.b64decode(r'''{{ {
-      "deployments": (deployments | default({})).get('items', []),
-      "statefulsets": (statefulsets | default({})).get('items', []),
-      "daemonsets": (daemonsets | default({})).get('items', []),
+      "deployments": (analysis_graph.deployments | default({})).get('items', []),
+      "statefulsets": (analysis_graph.statefulsets | default({})).get('items', []),
+      "daemonsets": (analysis_graph.daemonsets | default({})).get('items', []),
       "exclude_regex": user_namespaces_exclude_regex | default('^$')
     } | to_json | b64encode }}''').decode("utf-8"))
 
@@ -102,11 +103,11 @@
     stale_access_review_serviceaccounts: "{{ likely_unused_serviceaccounts | default([]) }}"
     stale_access_review_users: "{{ stale_access_review_users | default([]) + stale_user_entry }}"
     stale_access_review_groups: "{{ stale_access_review_groups | default([]) + stale_group_entry }}"
-  loop: "{{ (((rolebindings | default({})).get('items', [])) + ((clusterrolebindings | default({})).get('items', []))) }}"
+  loop: "{{ (((analysis_graph.rolebindings | default({})).get('items', [])) + ((analysis_graph.clusterrolebindings | default({})).get('items', []))) }}"
   vars:
     subjects: "{{ item.subjects | default([]) }}"
-    collected_user_names: "{{ (openshift_users | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list }}"
-    collected_group_names: "{{ (openshift_groups | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list }}"
+    collected_user_names: "{{ (analysis_graph.users | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list }}"
+    collected_group_names: "{{ (analysis_graph.groups | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list }}"
     stale_user_subjects: >-
       {{
         subjects
@@ -140,7 +141,7 @@
     stale_group_entry: >-
       {%- set results = [] -%}
       {%- for subject in stale_group_subjects -%}
-      {%- set matching_group = ((openshift_groups | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', subject.name) | list | first) | default({}) -%}
+      {%- set matching_group = ((analysis_graph.groups | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', subject.name) | list | first) | default({}) -%}
       {%- set matching_group_users = matching_group.users | default([], true) -%}
       {%- if subject.name not in collected_group_names -%}
       {%- set _ = results.append(subject | combine({

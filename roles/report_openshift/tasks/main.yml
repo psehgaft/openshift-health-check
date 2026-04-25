@@ -14,34 +14,10 @@
     report_pdf_path: "{{ report_output_dir }}/{{ report_file_prefix }}.pdf"
     report_css_path: "{{ playbook_dir }}/../templates/report.css"
 
-- name: Build base execution stats
-  ansible.builtin.set_fact:
-    execution_stats:
-      started_at: "{{ report_generated_at }}"
-      completed_at: "{{ report_generated_at }}"
-      duration_seconds: 0
-      duration_minutes: 0
-      ocp_user: "{{ oc_user_cmd.stdout | default('unknown') | trim }}"
-      local_user: "{{ ansible_env.USER | default(ansible_user_id | default('unknown')) }}"
-      local_hostname: "{{ ansible_hostname | default('unknown') }}"
-      local_fqdn: "{{ ansible_fqdn | default(ansible_hostname | default('unknown')) }}"
-      local_os: "{{ ansible_distribution | default('unknown') }} {{ ansible_distribution_version | default('') | trim }}"
-      local_python: "{{ ansible_python_version | default('unknown') }}"
-      ansible_version: "{{ ansible_version.full | default('unknown') }}"
-      context: "{{ oc_context_cmd.stdout | default('unknown') | trim }}"
-      api_server: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
-      report_formats_generated:
-        markdown: true
-        json: true
-        html: false
-        pdf: false
-      collection:
-        command_count: "{{ collection_summary.command_count | default(0) }}"
-        parallelism: "{{ collection_summary.parallelism | default(0) }}"
-        timeout_seconds: "{{ collection_summary.timeout_seconds | default(0) }}"
-        failed_commands: "{{ collection_summary.failed_commands | default(0) }}"
-        timed_out_commands: "{{ collection_summary.timed_out_commands | default(0) }}"
-        core_failed_commands: "{{ collection_summary.core_failed_commands | default(0) }}"
+- name: Build base live OpenShift execution stats
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_live_openshift_execution_stats.yml
 
 - name: Build audit rubric
   ansible.builtin.set_fact:
@@ -49,10 +25,10 @@
     audit_checks:
       - id: cluster_version
         title: Cluster Version State
-        severity: "{{ 'critical' if cv_available != 'True' or cv_failing == 'True' else ('warning' if cv_progressing == 'True' else 'pass') }}"
-        score: "{{ 0 if cv_available != 'True' or cv_failing == 'True' else (6 if cv_progressing == 'True' else 10) }}"
+        severity: "{{ 'critical' if (cv_failing == 'True' or (cv_available == 'False' and cv_progressing != 'True')) else ('warning' if (cv_progressing == 'True' or cv_available == 'Unknown') else 'pass') }}"
+        score: "{{ 0 if (cv_failing == 'True' or (cv_available == 'False' and cv_progressing != 'True')) else (6 if (cv_progressing == 'True' or cv_available == 'Unknown') else 10) }}"
         max_score: 10
-        findings_count: "{{ (1 if cv_available != 'True' or cv_failing == 'True' else 0) + (1 if cv_progressing == 'True' else 0) }}"
+        findings_count: "{{ (1 if (cv_failing == 'True' or (cv_available == 'False' and cv_progressing != 'True')) else 0) + (1 if (cv_progressing == 'True' or cv_available == 'Unknown') else 0) }}"
       - id: operators
         title: Cluster Operators
         severity: "{{ 'critical' if (degraded_operators | default([]) | length > 0 or unavailable_operators | default([]) | length > 0) else ('warning' if progressing_operators | default([]) | length > 0 else 'pass') }}"
@@ -67,10 +43,10 @@
         findings_count: "{{ (not_ready_nodes | default([]) | length) + (pressure_nodes | default([]) | length) }}"
       - id: workloads
         title: Workload Health
-        severity: "{{ 'warning' if workload_health_issues | default([]) | length > 0 or high_replica_workloads | default([]) | length > 0 or orphan_pods | default([]) | length > 0 or workload_label_governance_findings | default([]) | length > 0 or workload_resource_findings | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or unhealthy_user_pods | default([]) | length > 0 or high_restart_pods | default([]) | length > 0 or overprovisioned_pods | default([]) | length > 0 else 'pass' }}"
-        score: "{{ 5 if workload_health_issues | default([]) | length > 0 or high_replica_workloads | default([]) | length > 0 or orphan_pods | default([]) | length > 0 or workload_label_governance_findings | default([]) | length > 0 or workload_resource_findings | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0 or platform_pod_issues | default([]) | length > 0 or unhealthy_user_pods | default([]) | length > 0 or high_restart_pods | default([]) | length > 0 or overprovisioned_pods | default([]) | length > 0 else 8 }}"
+        severity: "{{ 'critical' if (workload_health_issues | default([]) | length > 0 or unhealthy_user_pods | default([]) | length > 0) else ('warning' if (high_restart_pods | default([]) | length > 0 or high_replica_workloads | default([]) | length > 0 or orphan_pods | default([]) | length > 0 or workload_label_governance_findings | default([]) | length > 0 or workload_resource_findings | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0) else 'pass') }}"
+        score: "{{ 2 if (workload_health_issues | default([]) | length > 0 or unhealthy_user_pods | default([]) | length > 0) else (5 if (high_restart_pods | default([]) | length > 0 or high_replica_workloads | default([]) | length > 0 or orphan_pods | default([]) | length > 0 or workload_label_governance_findings | default([]) | length > 0 or workload_resource_findings | default([]) | length > 0 or workload_probe_findings | default([]) | length > 0) else 8) }}"
         max_score: 8
-        findings_count: "{{ (workload_health_issues | default([]) | length) + (high_replica_workloads | default([]) | length) + (orphan_pods | default([]) | length) + (workload_label_governance_findings | default([]) | length) + (workload_resource_findings | default([]) | length) + (workload_probe_findings | default([]) | length) + (platform_pod_issues | default([]) | length) + (unhealthy_user_pods | default([]) | length) + (high_restart_pods | default([]) | length) + (overprovisioned_pods | default([]) | length) }}"
+        findings_count: "{{ (workload_health_issues | default([]) | length) + (high_replica_workloads | default([]) | length) + (orphan_pods | default([]) | length) + (workload_label_governance_findings | default([]) | length) + (workload_resource_findings | default([]) | length) + (workload_probe_findings | default([]) | length) + (unhealthy_user_pods | default([]) | length) + (high_restart_pods | default([]) | length) }}"
       - id: routes_network
         title: Network And Routes
         severity: "{{ 'critical' if route_issues | default([]) | length > 0 or ingress_issues | default([]) | length > 0 or route_host_conflicts | default([]) | length > 0 or ingress_host_conflicts | default([]) | length > 0 else 'pass' }}"
@@ -97,10 +73,10 @@
         findings_count: "{{ (pv_issues | default([]) | length) + (pvc_issues | default([]) | length) + (quota_pressure_findings | default([]) | length) }}"
       - id: lifecycle
         title: Upgrade, API, And Certificate Lifecycle
-        severity: "{{ 'critical' if expiring_certificates_critical | default([]) | length > 0 else ('warning' if (conditional_updates | default([]) | length > 0 or deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 or expiring_certificates_warning | default([]) | length > 0) else 'pass') }}"
-        score: "{{ 0 if expiring_certificates_critical | default([]) | length > 0 else (6 if (conditional_updates | default([]) | length > 0 or deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 or expiring_certificates_warning | default([]) | length > 0) else 14) }}"
+        severity: "{{ 'critical' if (expiring_certificates_critical | default([]) | length > 0 or (live_cluster_compare_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0) or (live_managed_gate_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)) else ('warning' if (conditional_updates | default([]) | length > 0 or deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 or expiring_certificates_warning | default([]) | length > 0 or live_cluster_compare_findings | default([]) | length > 0 or live_managed_gate_findings | default([]) | length > 0) else 'pass') }}"
+        score: "{{ 0 if (expiring_certificates_critical | default([]) | length > 0 or (live_cluster_compare_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0) or (live_managed_gate_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)) else (6 if (conditional_updates | default([]) | length > 0 or deprecated_crd_findings | default([]) | length > 0 or deprecated_api_lines | default([]) | length > 0 or expiring_certificates_warning | default([]) | length > 0 or live_cluster_compare_findings | default([]) | length > 0 or live_managed_gate_findings | default([]) | length > 0) else 14) }}"
         max_score: 14
-        findings_count: "{{ (conditional_updates | default([]) | length) + (deprecated_crd_findings | default([]) | length) + (deprecated_api_lines | default([]) | length) + (expiring_certificates_warning | default([]) | length) }}"
+        findings_count: "{{ (conditional_updates | default([]) | length) + (deprecated_crd_findings | default([]) | length) + (deprecated_api_lines | default([]) | length) + (expiring_certificates_warning | default([]) | length) + (live_cluster_compare_findings | default([]) | length) + (live_managed_gate_findings | default([]) | length) }}"
       - id: performance_density
         title: Performance And Density
         severity: "{{ 'critical' if critical_pod_density_nodes | default([]) | length > 0 else ('warning' if (high_pod_density_nodes | default([]) | length > 0 or high_cpu_nodes | default([]) | length > 0 or high_memory_nodes | default([]) | length > 0) else 'pass') }}"
@@ -125,12 +101,18 @@
         score: "{{ 4 if ((backup_posture_findings | default([]) | length) > 0 or (machine_healthcheck_findings | default([]) | length) > 0) else 8 }}"
         max_score: 8
         findings_count: "{{ (backup_posture_findings | default([]) | length) + (machine_healthcheck_findings | default([]) | length) }}"
+      - id: day2_posture
+        title: Production Day 2 Posture
+        severity: "{{ 'warning' if ((scored_day2_posture_findings | default([]) | length > 0) or (live_advisor_findings | default([]) | length > 0) or (live_inspect_findings | default([]) | length > 0) or (live_sosreport_findings | default([]) | length > 0)) else 'pass' }}"
+        score: "{{ 4 if ((scored_day2_posture_findings | default([]) | length > 0) or (live_advisor_findings | default([]) | length > 0) or (live_inspect_findings | default([]) | length > 0) or (live_sosreport_findings | default([]) | length > 0)) else 8 }}"
+        max_score: 8
+        findings_count: "{{ (scored_day2_posture_findings | default([]) | length) + (live_advisor_findings | default([]) | length) + (live_inspect_findings | default([]) | length) + (live_sosreport_findings | default([]) | length) }}"
       - id: collection_completeness
         title: Data Collection Completeness
-        severity: "{{ 'critical' if (collection_summary.core_failed_commands | default(0) | int > 0) else ('warning' if (collection_summary.failed_commands | default(0) | int > 0) else 'pass') }}"
-        score: "{{ 0 if (collection_summary.core_failed_commands | default(0) | int > 0) else (4 if (collection_summary.failed_commands | default(0) | int > 0) else 8) }}"
+        severity: "{{ 'critical' if (report_collection.core_failed_commands | default(0) | int > 0) else ('warning' if (report_collection.failed_commands | default(0) | int > 0) else 'pass') }}"
+        score: "{{ 0 if (report_collection.core_failed_commands | default(0) | int > 0) else (4 if (report_collection.failed_commands | default(0) | int > 0) else 8) }}"
         max_score: 8
-        findings_count: "{{ collection_summary.failed_commands | default(0) }}"
+        findings_count: "{{ report_collection.failed_commands | default(0) }}"
 
 - name: Build audit score summary
   ansible.builtin.set_fact:
@@ -184,19 +166,19 @@
 
 - name: Build report confidence facts
   ansible.builtin.set_fact:
-    collection_success_rate_pct: "{{ ((((collection_summary.succeeded_commands | default(0) | float) / ((collection_summary.applicable_command_count | default(collection_summary.command_count | default(0)) | float) if (collection_summary.applicable_command_count | default(collection_summary.command_count | default(0)) | float) > 0 else 1.0)) * 100) | round(1)) }}"
+    report_collection_success_rate_pct: "{{ ((((report_collection.succeeded_commands | default(0) | float) / ((report_collection.applicable_command_count | default(report_collection.command_count | default(0)) | float) if (report_collection.applicable_command_count | default(report_collection.command_count | default(0)) | float) > 0 else 1.0)) * 100) | round(1)) }}"
     report_confidence: >-
       {{
         'low'
         if (
-          (collection_summary.core_failed_commands | default(0) | int) > 0
+          (report_collection.core_failed_commands | default(0) | int) > 0
           or (cluster_current_state_build_error | default('') | trim | length > 0)
         )
         else (
           'medium'
           if (
-            (collection_summary.failed_commands | default(0) | int) > 0
-            or (collection_summary.timed_out_commands | default(0) | int) > 0
+            (report_collection.failed_commands | default(0) | int) > 0
+            or (report_collection.timed_out_commands | default(0) | int) > 0
           )
           else 'high'
         )
@@ -205,14 +187,15 @@
       {{
         'core collection commands failed or the detailed state summarizer fell back to direct fact counts'
         if (
-          (collection_summary.core_failed_commands | default(0) | int) > 0
+          (report_collection.core_failed_commands | default(0) | int) > 0
           or (cluster_current_state_build_error | default('') | trim | length > 0)
         )
         else (
-          'some non-core collection commands failed or timed out, but the main health signals were collected'
+          'some non-core collection commands failed, timed out, or were denied by RBAC; rerun with cluster-admin for full report detail'
           if (
-            (collection_summary.failed_commands | default(0) | int) > 0
-            or (collection_summary.timed_out_commands | default(0) | int) > 0
+            (report_collection.failed_commands | default(0) | int) > 0
+            or (report_collection.timed_out_commands | default(0) | int) > 0
+            or ((report_collection_skipped_optional_commands | default([]) | selectattr('category', 'equalto', 'optional-access-denied') | list | length) > 0)
           )
           else 'all planned collection commands completed and the synthesized state data was built successfully'
         )
@@ -229,7 +212,16 @@
       'summary': 'Fix collection failures and rerun the report.',
       'detail': 'Start with failed or timed out commands in Data Collection, confirm `oc` access and permissions, then rerun so later sections reflect complete data.'
     }] }}"
-  when: (collection_summary.failed_commands | default(0) | int) > 0
+  when: (report_collection.failed_commands | default(0) | int) > 0
+
+- name: Add suggested next step for access-denied detail collection
+  ansible.builtin.set_fact:
+    suggested_next_steps: "{{ suggested_next_steps + [{
+      'priority': 'planned',
+      'summary': 'Rerun with cluster-admin to collect full report detail.',
+      'detail': 'Some optional queries were denied by RBAC in this run. The report is still usable, but cluster-admin access is recommended if you want complete identity, SCC, monitoring, GitOps, and other platform-detail sections.'
+    }] }}"
+  when: (report_collection_skipped_optional_commands | default([]) | selectattr('category', 'equalto', 'optional-access-denied') | list | length) > 0
 
 - name: Add suggested next step for operator degradation
   ansible.builtin.set_fact:
@@ -339,6 +331,14 @@
     }] }}"
   when: machine_healthcheck_findings | default([]) | length > 0
 
+- name: Add suggested next step for production Day 2 posture
+  ansible.builtin.set_fact:
+    suggested_next_steps: "{{ suggested_next_steps + [{
+      'priority': 'planned',
+      'summary': 'Close production Day 2 platform gaps.',
+      'detail': 'Review the Day 2 posture section for missing GitOps, external secrets integration, monitoring persistence, external telemetry forwarding, autoscaling, backup, compliance, identity, and Insights capabilities expected on a production OpenShift cluster.'
+    }] }}"
+  when: scored_day2_posture_findings | default([]) | length > 0
 - name: Add suggested next step for hygiene and policy cleanup
   ansible.builtin.set_fact:
     suggested_next_steps: "{{ suggested_next_steps + [{
@@ -364,7 +364,9 @@
       'summary': 'Validate resilience and compliance tooling coverage.',
       'detail': 'Review recovery signals such as snapshot class and data protection coverage, and inspect any non-compliant ComplianceSuite results or missing suite coverage before treating posture as complete.'
     }] }}"
-  when: ((compliancesuites | default({})).get('items', []) | length > 0) or ((volumesnapshotclasses | default({})).get('items', []) | length > 0) or ((dataprotectionapplications | default({})).get('items', []) | length > 0)
+  vars:
+    graph: "{{ analysis_graph | default({}) }}"
+  when: ((graph.compliancesuites | default({})).get('items', []) | length > 0) or ((graph.volumesnapshotclasses | default({})).get('items', []) | length > 0) or ((graph.dataprotectionapplications | default({})).get('items', []) | length > 0)
 
 - name: Add suggested next step for observability posture
   ansible.builtin.set_fact:
@@ -383,7 +385,7 @@
       'detail': 'No major health risks were detected in this run; keep periodic reviews, compare future reports, and investigate meaningful score or signal drift early.'
     }] }}"
   when:
-    - (collection_summary.failed_commands | default(0) | int) == 0
+    - (report_collection.failed_commands | default(0) | int) == 0
     - health_summary.status == 'HEALTHY'
     - (cluster_health_score | float) >= 85
 
@@ -396,7 +398,7 @@
     }] }}"
   when:
     - health_summary.status == 'CRITICAL'
-    - (collection_summary.failed_commands | default(0) | int) == 0
+    - (report_collection.failed_commands | default(0) | int) == 0
     - (degraded_operators | default([]) | length) == 0
     - (unavailable_operators | default([]) | length) == 0
     - (not_ready_nodes | default([]) | length) == 0
@@ -417,7 +419,7 @@
     }] }}"
   when:
     - health_summary.status == 'WARNING'
-    - (collection_summary.failed_commands | default(0) | int) == 0
+    - (report_collection.failed_commands | default(0) | int) == 0
     - (workload_health_issues | default([]) | length) == 0
     - (high_replica_workloads | default([]) | length) == 0
     - (orphan_pods | default([]) | length) == 0
@@ -437,277 +439,55 @@
     - (scored_workload_practice_findings | default([]) | length) == 0
     - (observability_findings | default([]) | length) == 0
 
-- name: Build audit report payload
-  ansible.builtin.set_fact:
-    audit_report:
-      metadata:
-        generated_at: "{{ report_generated_at }}"
-        completed_at: "{{ report_generated_at }}"
-        context: "{{ oc_context_cmd.stdout | default('unknown') | trim }}"
-        api_server: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
-        user: "{{ oc_user_cmd.stdout | default('unknown') | trim }}"
-        cluster_type: "{{ report_cluster_type }}"
-        report_confidence: "{{ report_confidence }}"
-        local_user: "{{ ansible_env.USER | default(ansible_user_id | default('unknown')) }}"
-        local_hostname: "{{ ansible_hostname | default('unknown') }}"
-      cluster_profile: "{{ cluster_profile }}"
-      cluster_current_state: "{{ cluster_current_state | default({}) }}"
-      health_summary: "{{ health_summary }}"
-      execution_stats: {}
-      suggested_next_steps: "{{ suggested_next_steps }}"
-      audit:
-        score_total: "{{ audit_score_total }}"
-        score_max: "{{ audit_score_max }}"
-        cluster_health_score: "{{ cluster_health_score }}"
-        cluster_health_score_label: "{{ cluster_health_score_label }}"
-        cluster_health_score_legend: "{{ cluster_health_score_legend }}"
-        critical_checks: "{{ audit_critical_checks }}"
-        warning_checks: "{{ audit_warning_checks }}"
-        checks: "{{ audit_checks }}"
-      findings:
-        collection_failures: "{{ collection_failures | default([]) }}"
-        degraded_operators: "{{ degraded_operators | default([]) }}"
-        unavailable_operators: "{{ unavailable_operators | default([]) }}"
-        not_ready_nodes: "{{ not_ready_nodes | default([]) }}"
-        pressure_nodes: "{{ pressure_nodes | default([]) }}"
-        infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) }}"
-        apiservice_issues: "{{ top_apiservice_issues | default([]) }}"
-        ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) }}"
-        workload_health_issues: "{{ top_workload_health_issues | default([]) }}"
-        unhealthy_user_pods: "{{ top_unhealthy_user_pods | default([]) }}"
-        workload_probe_findings: "{{ top_workload_probe_findings | default([]) }}"
-        high_restart_pods: "{{ top_high_restart_pods | default([]) }}"
-        high_replica_workloads: "{{ top_high_replica_workloads | default([]) }}"
-        orphan_pods: "{{ top_orphan_pods | default([]) }}"
-        workload_label_governance_findings: "{{ top_workload_label_governance_findings | default([]) }}"
-        workload_resource_findings: "{{ top_workload_resource_findings | default([]) }}"
-        overprovisioned_pods: "{{ top_overprovisioned_pods | default([]) }}"
-        failed_pipelineruns: "{{ top_failed_pipelineruns | default([]) }}"
-        buildconfigs_without_triggers: "{{ top_buildconfigs_without_triggers | default([]) }}"
-        quota_pressure_findings: "{{ top_quota_pressure_findings | default([]) }}"
-        route_issues: "{{ top_route_issues | default([]) }}"
-        ingress_issues: "{{ top_ingress_issues | default([]) }}"
-        route_host_conflicts: "{{ top_route_host_conflicts | default([]) }}"
-        ingress_host_conflicts: "{{ top_ingress_host_conflicts | default([]) }}"
-        auth_findings: "{{ auth_findings | default([]) }}"
-        security_findings: "{{ top_security_findings | default([]) }}"
-        workload_practice_findings: "{{ top_workload_practice_findings | default([]) }}"
-        empty_user_namespaces: "{{ empty_user_namespaces | default([]) }}"
-        services_without_endpoints: "{{ top_services_without_endpoints | default([]) }}"
-        likely_unused_serviceaccounts: "{{ top_likely_unused_serviceaccounts | default([]) }}"
-        likely_unused_configmaps: "{{ top_likely_unused_configmaps | default([]) }}"
-        likely_unused_secrets: "{{ top_likely_unused_secrets | default([]) }}"
-        likely_unused_crds: "{{ top_likely_unused_crds | default([]) }}"
-        image_registry_findings: "{{ top_image_registry_findings | default([]) }}"
-        internal_registry_workloads: "{{ top_internal_registry_workloads | default([]) }}"
-        feature_findings: "{{ top_feature_findings | default([]) }}"
-        scc_grant_findings: "{{ top_scc_grant_findings | default([]) }}"
-        compliance_suite_findings: "{{ top_compliance_suite_findings | default([]) }}"
-        backup_posture_findings: "{{ top_backup_posture_findings | default([]) }}"
-        machine_healthcheck_findings: "{{ top_machine_healthcheck_findings | default([]) }}"
-        observability_findings: "{{ top_observability_findings | default([]) }}"
-        deprecated_crd_findings: "{{ top_deprecated_crd_findings | default([]) }}"
-        deprecated_api_lines: "{{ top_deprecated_api_lines | default([]) }}"
-        pv_issues: "{{ top_pv_issues | default([]) }}"
-        pvc_issues: "{{ top_pvc_issues | default([]) }}"
-        expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) }}"
-        expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) }}"
-      metrics:
-        collection_summary: "{{ collection_summary | default({}) }}"
-        collection_success_rate_pct: "{{ collection_success_rate_pct }}"
-        report_confidence: "{{ report_confidence }}"
-        report_confidence_detail: "{{ report_confidence_detail }}"
-        infrastructure_component_summary: "{{ infrastructure_component_summary | default([]) }}"
-        ingresscontroller_summary: "{{ ingresscontroller_summary | default([]) }}"
-        observability_forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
-        apiservice_issues: "{{ apiservice_issues | default([]) }}"
-        secret_type_counts: "{{ secret_type_counts | default({}) }}"
-        buildconfig_strategy_counts: "{{ buildconfig_strategy_counts | default({}) }}"
-        pipelinerun_status_counts: "{{ pipelinerun_status_counts | default({}) }}"
-        compliance_result_counts: "{{ compliance_result_counts | default({}) }}"
-        compliance_suite_summary: "{{ compliance_suite_summary | default([]) }}"
-        backup_storage_location_summary: "{{ backup_storage_location_summary | default([]) }}"
-        backup_schedule_summary: "{{ backup_schedule_summary | default([]) }}"
-        backup_summary: "{{ backup_summary | default([]) }}"
-        restore_summary: "{{ restore_summary | default([]) }}"
-        machinehealthcheck_summary: "{{ machinehealthcheck_summary | default([]) }}"
-        scc_posture_summary: "{{ scc_posture_summary | default([]) }}"
-        dataprotectionapplication_summary: "{{ dataprotectionapplication_summary | default([]) }}"
-        apiserver_readyz_status: "{{ apiserver_readyz_status | default('unavailable') }}"
-        apiserver_readyz_failed_checks: "{{ apiserver_readyz_failed_checks | default(0) }}"
-        etcd_wal_fsync_p99_ms: "{{ etcd_wal_fsync_p99_ms | default('') }}"
-        etcd_backend_commit_p99_ms: "{{ etcd_backend_commit_p99_ms | default('') }}"
-        etcd_leader_changes_5m: "{{ etcd_leader_changes_5m | default('') }}"
-        etcd_members_reporting_leader: "{{ etcd_members_reporting_leader | default('') }}"
-        etcd_leader_count: "{{ etcd_leader_count | default('') }}"
-        etcd_peer_rtt_p99_ms: "{{ etcd_peer_rtt_p99_ms | default('') }}"
-        apiserver_request_p99_seconds: "{{ apiserver_request_p99_seconds | default('') }}"
-        apiserver_request_5xx_rate: "{{ apiserver_request_5xx_rate | default('') }}"
-        apiserver_request_read_rate: "{{ apiserver_request_read_rate | default('') }}"
-        apiserver_request_write_rate: "{{ apiserver_request_write_rate | default('') }}"
-        apiserver_current_read_inflight: "{{ apiserver_current_read_inflight | default('') }}"
-        apiserver_current_write_inflight: "{{ apiserver_current_write_inflight | default('') }}"
-        apiserver_storage_objects_total: "{{ apiserver_storage_objects_total | default('') }}"
-        top_alert_groups: "{{ top_alert_groups | default([]) }}"
-        top_event_reasons: "{{ top_event_reasons | default([]) }}"
-        top_pod_cpu_usage_summary: "{{ top_pod_cpu_usage_summary | default([]) }}"
-        top_pod_memory_usage_summary: "{{ top_pod_memory_usage_summary | default([]) }}"
-        node_capacity_summary_by_density_desc: "{{ node_capacity_summary_by_density_desc | default([]) }}"
+- name: Build shared OpenShift domain payload
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_openshift_domain_payload.yml
 
-- name: Detect report conversion tools
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/detect_report_tools.py"
-  register: report_tool_detection_cmd
-  changed_when: false
-  failed_when: false
+- name: Build shared OpenShift report payload
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_openshift_report_payload.yml
 
-- name: Build report conversion capability facts
-  ansible.builtin.set_fact:
-    report_tool_detection: "{{ report_tool_detection_cmd.stdout | from_json if (report_tool_detection_cmd.rc == 0 and (report_tool_detection_cmd.stdout | default('') | length > 0)) else {} }}"
-    report_pandoc_available: "{{ (report_tool_detection.pandoc.found | default(false)) | bool }}"
-    report_pdf_engine: >-
-      {{
-        'wkhtmltopdf'
-        if (report_tool_detection.wkhtmltopdf.found | default(false))
-        else (
-          'weasyprint'
-          if (report_tool_detection.weasyprint.found | default(false))
-          else (
-            'prince'
-            if (report_tool_detection.prince.found | default(false))
-            else (
-              'tectonic'
-              if (report_tool_detection.tectonic.found | default(false))
-              else (
-                'xelatex'
-                if (report_tool_detection.xelatex.found | default(false))
-                else (
-                  'lualatex'
-                  if (report_tool_detection.lualatex.found | default(false))
-                  else (
-                    'pdflatex'
-                    if (report_tool_detection.pdflatex.found | default(false))
-                    else ''
-                  )
-                )
-              )
-            )
-          )
-        )
-      }}
+- name: Build live evidence and supportability facts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_live_openshift_support_facts.yml
 
-- name: Build PDF engine argument list
-  ansible.builtin.set_fact:
-    report_pdf_engine_argv: >-
-      {{
-        [
-          '--pdf-engine-opt=--orientation',
-          '--pdf-engine-opt=Landscape',
-          '--pdf-engine-opt=--margin-top',
-          '--pdf-engine-opt=10mm',
-          '--pdf-engine-opt=--margin-right',
-          '--pdf-engine-opt=10mm',
-          '--pdf-engine-opt=--margin-bottom',
-          '--pdf-engine-opt=10mm',
-          '--pdf-engine-opt=--margin-left',
-          '--pdf-engine-opt=10mm'
-        ]
-        if report_pdf_engine == 'wkhtmltopdf'
-        else []
-      }}
+- name: Build live OpenShift audit payload
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_live_openshift_audit_payload.yml
 
-- name: Capture final report completion epoch
-  ansible.builtin.set_fact:
-    final_report_completion_epoch: "{{ now(utc=true, fmt='%s') | int }}"
+- name: Build shared report conversion capability facts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_report_conversion_capabilities.yml
 
-- name: Format final report completion time
-  ansible.builtin.set_fact:
-    final_report_completion_iso: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(final_report_completion_epoch | int, utc=true) }}"
+- name: Finalize live OpenShift execution stats before rendering artifacts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: update_live_openshift_execution_stats_pre_render.yml
 
-- name: Update final execution stats and audit payload before rendering artifacts
-  ansible.builtin.set_fact:
-    report_completed_at: "{{ final_report_completion_iso }}"
-    execution_stats: "{{ execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True) }}"
-    audit_report: "{{ audit_report | combine({'execution_stats': (execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True)), 'metadata': (audit_report.metadata | combine({'completed_at': final_report_completion_iso, 'local_user': execution_stats.local_user, 'local_hostname': execution_stats.local_hostname}, recursive=True))}, recursive=True) }}"
+- name: Render live OpenShift report artifacts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: render_report_artifacts.yml
+  vars:
+    report_markdown_template: "{{ playbook_dir }}/../templates/openshift_cluster_health_report.md.j2"
 
-- name: Render final Markdown report
-  ansible.builtin.template:
-    src: "{{ playbook_dir }}/../templates/openshift_cluster_health_report.md.j2"
-    dest: "{{ report_path }}"
-    mode: "0644"
+- name: Update live OpenShift generated format status
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: update_live_openshift_execution_stats_post_render.yml
 
-- name: Render final HTML report when pandoc is available
-  ansible.builtin.command:
-    argv:
-      - pandoc
-      - --standalone
-      - --from
-      - gfm
-      - --to
-      - html5
-      - --css
-      - "{{ report_css_path }}"
-      - --output
-      - "{{ report_html_path }}"
-      - "{{ report_path }}"
-  register: report_html_cmd
-  changed_when: true
-  failed_when: false
-  when:
-    - report_generate_html | bool
-    - report_pandoc_available | bool
-
-- name: Render final PDF report when a PDF engine is available
-  ansible.builtin.command:
-    argv: "{{ ['pandoc', '--from', 'gfm', '--css', report_css_path, '--pdf-engine=' ~ report_pdf_engine] + (report_pdf_engine_argv | default([])) + ['--output', report_pdf_path, report_path] }}"
-  register: report_pdf_cmd
-  changed_when: true
-  failed_when: false
-  when:
-    - report_generate_pdf | bool
-    - report_pandoc_available | bool
-    - report_pdf_engine | length > 0
-
-- name: Update generated format status
-  ansible.builtin.set_fact:
-    execution_stats: "{{ execution_stats | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True) }}"
-    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True))}, recursive=True) }}"
-    report_pdf_status_reason: >-
-      {{
-        'generated'
-        if ((report_pdf_cmd.rc | default(1)) == 0)
-        else (
-          'skipped: pandoc not found'
-          if not (report_pandoc_available | bool)
-          else (
-            'skipped: no supported PDF engine found'
-            if (report_pdf_engine | default('') | length) == 0
-            else (
-              'skipped: PDF generation disabled'
-              if not (report_generate_pdf | bool)
-              else (
-                'failed: ' ~ ((report_pdf_cmd.stderr | default(report_pdf_cmd.stdout | default('unknown error')) | trim) or 'unknown error')
-              )
-            )
-          )
-        )
-      }}
-
-- name: Write final JSON report
-  ansible.builtin.copy:
-    dest: "{{ report_json_path }}"
-    mode: "0644"
-    content: "{{ audit_report | to_nice_json }}"
-
-- name: Show report locations
-  ansible.builtin.debug:
-    msg:
-      - "Health report generated: {{ report_path }}"
-      - "JSON report generated: {{ report_json_path }}"
-      - "HTML report generated: {{ report_html_path if (execution_stats.report_formats_generated.html | default(false)) else 'skipped' }}"
-      - "PDF report generated: {{ report_pdf_path if (execution_stats.report_formats_generated.pdf | default(false)) else report_pdf_status_reason }}"
-      - "Overall status: {{ health_summary.status }}"
-      - "Audit score: {{ audit_score_total }}/{{ audit_score_max }}"
-      - "Cluster health score: {{ cluster_health_score }}/100 ({{ cluster_health_score_label }})"
+- name: Show live OpenShift report locations
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: show_report_locations.yml
+  vars:
+    report_status_value: "{{ health_summary.status }}"
+    report_score_total: "{{ audit_score_total }}"
+    report_score_max: "{{ audit_score_max }}"
+    report_health_score: "{{ cluster_health_score }}"
+    report_health_score_label: "{{ cluster_health_score_label }}"

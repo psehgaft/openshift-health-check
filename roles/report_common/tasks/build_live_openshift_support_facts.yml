@@ -1,0 +1,225 @@
+---
+- name: Build live evidence and supportability facts
+  vars:
+    live_support_parsed: "{{ (live_support_data | default({})).get('parsed', {}) }}"
+    live_omc_verdict: "{{ omc_summary.verdict | default('not-collected') }}"
+    live_etcd_ocp_diag_verdict: "{{ etcd_ocp_diag_summary.verdict | default('not-collected') }}"
+    live_insights_archive_verdict: "{{ insights_archive_summary.verdict | default('not-collected') }}"
+    live_artifact_failed_count: "{{ live_support_data.artifacts.summary.failed_count | default(0) | int }}"
+    live_artifact_timed_out_count: "{{ live_support_data.artifacts.summary.timed_out_count | default(0) | int }}"
+    live_required_collector_failures: >-
+      {{
+        []
+        + (
+          ['must-gather']
+          if (
+            (live_support_data.capabilities['must-gather'].requested | default(false) | bool)
+            and (live_support_data.capabilities['must-gather'].applicable | default(true) | bool)
+            and (live_support_data.capabilities['must-gather'].status | default('unknown')) in ['failed', 'timed-out']
+          )
+          else []
+        )
+        + (
+          ['inspect']
+          if (
+            (live_support_data.capabilities['inspect'].requested | default(false) | bool)
+            and (live_support_data.capabilities['inspect'].applicable | default(true) | bool)
+            and (live_support_data.capabilities['inspect'].status | default('unknown')) in ['failed', 'timed-out']
+          )
+          else []
+        )
+        + (
+          ['insights-archive']
+          if (
+            (live_support_data.capabilities['insights-archive'].requested | default(false) | bool)
+            and (live_support_data.capabilities['insights-archive'].applicable | default(true) | bool)
+            and (live_support_data.capabilities['insights-archive'].status | default('unknown')) in ['failed', 'timed-out']
+          )
+          else []
+        )
+        + (
+          ['sosreport']
+          if (
+            (live_support_data.capabilities['sosreport'].requested | default(false) | bool)
+            and (live_support_data.capabilities['sosreport'].applicable | default(true) | bool)
+            and (live_support_data.capabilities['sosreport'].status | default('unknown')) in ['failed', 'timed-out']
+          )
+          else []
+        )
+      }}
+    live_supportability_verdict_resolved: >-
+      {{
+        'unsupported-risk'
+        if (
+          (supportability_summary.supportability_verdict | default('supported')) == 'unsupported-risk'
+          or live_etcd_ocp_diag_verdict == 'unsupported-risk'
+          or live_insights_archive_verdict == 'unsupported-risk'
+        )
+        else (
+          'review-required'
+          if (
+            (supportability_summary.supportability_verdict | default('supported')) == 'review-required'
+            or (
+              (omc_summary.present | default(false) | bool)
+              and live_omc_verdict != 'supported'
+            )
+            or (live_etcd_ocp_diag_verdict not in ['supported', 'not-collected'])
+            or (live_insights_archive_verdict not in ['supported', 'not-collected'])
+            or ((live_required_collector_failures | length) > 0)
+          )
+          else 'supported'
+        )
+      }}
+    live_overall_supportability_verdict_resolved: >-
+      {{
+        'unsupported-risk'
+        if (
+          (supportability_summary.health_verdict | default('supported')) == 'unsupported-risk'
+          or live_supportability_verdict_resolved == 'unsupported-risk'
+          or live_reference_compliance_summary.verdict == 'unsupported-risk'
+        )
+        else (
+          'review-required'
+          if (
+            (supportability_summary.health_verdict | default('supported')) == 'review-required'
+            or live_supportability_verdict_resolved == 'review-required'
+            or live_reference_compliance_summary.verdict != 'supported'
+          )
+          else 'supported'
+        )
+      }}
+  ansible.builtin.set_fact:
+    live_reference_compliance_summary:
+      verdict: "{{ 'not-collected' if (reference_compliance_summary.verdict | default('insufficient-evidence')) == 'insufficient-evidence' else (reference_compliance_summary.verdict | default('not-collected')) }}"
+      evidence_present: "{{ reference_compliance_summary.evidence_present | default(false) }}"
+      comparison_count: "{{ reference_compliance_summary.comparison_count | default(0) }}"
+      diff_count: "{{ reference_compliance_summary.diff_count | default(0) }}"
+      missing_count: "{{ reference_compliance_summary.missing_count | default(0) }}"
+      error_count: "{{ reference_compliance_summary.error_count | default(0) }}"
+      warning_count: "{{ reference_compliance_summary.warning_count | default(0) }}"
+      format: "{{ reference_compliance_summary.format | default('missing') }}"
+    live_node_diagnostics_summary:
+      verdict: "{{ 'not-collected' if (node_diagnostics_summary.verdict | default('insufficient-evidence')) == 'insufficient-evidence' else (node_diagnostics_summary.verdict | default('not-collected')) }}"
+      inspect_present: "{{ node_diagnostics_summary.inspect_present | default(false) }}"
+      inspect_file_count: "{{ node_diagnostics_summary.inspect_file_count | default(0) }}"
+      inspect_namespace_count: "{{ node_diagnostics_summary.inspect_namespace_count | default(0) }}"
+      inspect_resource_markers: "{{ node_diagnostics_summary.inspect_resource_markers | default({}) }}"
+      sosreport_present: "{{ node_diagnostics_summary.sosreport_present | default(false) }}"
+      sosreport_count: "{{ node_diagnostics_summary.sosreport_count | default(0) }}"
+      sosreport_node_names: "{{ node_diagnostics_summary.sosreport_node_names | default([]) }}"
+      sosreport_with_journal: "{{ node_diagnostics_summary.sosreport_with_journal | default(0) }}"
+      sosreport_with_kubelet_logs: "{{ node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) }}"
+      sosreport_with_crio_logs: "{{ node_diagnostics_summary.sosreport_with_crio_logs | default(0) }}"
+      sosreport_with_network_data: "{{ node_diagnostics_summary.sosreport_with_network_data | default(0) }}"
+    live_supportability_summary:
+      health_verdict: "{{ supportability_summary.health_verdict | default('supported') }}"
+      supportability_verdict: "{{ live_supportability_verdict_resolved }}"
+      reference_compliance_verdict: "{{ live_reference_compliance_summary.verdict }}"
+      recommendations: >-
+        {{
+          (
+            'Strengthen supportability first: repair failed high-value collectors, address etcd or Insights diagnostics problems, and resolve blocked advisory or managed-gate issues before relying on this run for deeper conclusions.'
+            if live_supportability_verdict_resolved == 'unsupported-risk'
+            else (
+              'Improve evidence quality before the next review: close node-diagnostics gaps, investigate non-supported etcd/Insights/OMC signals, and reduce failed required collector runs so support conclusions are better grounded.'
+              if live_supportability_verdict_resolved == 'review-required'
+              else 'Supportability posture is acceptable for this run. Keep the live collection path stable, preserve high-value collector coverage, and use the remaining posture sections for deeper remediation planning.'
+            )
+          )
+        }}
+      etcd_ocp_diag_verdict: "{{ etcd_ocp_diag_summary.verdict | default('not-collected') }}"
+      omc_verdict: "{{ live_omc_verdict }}"
+      node_diagnostics_verdict: "{{ live_node_diagnostics_summary.verdict }}"
+      evidence_confidence: "{{ report_confidence | default('unknown') }}"
+      artifact_collection_enabled: "{{ live_support_data.artifacts.summary.enabled | default(false) }}"
+      artifact_root: "{{ live_support_data.artifacts.summary.root | default('') }}"
+      collector_count: "{{ live_support_data.artifacts.summary.collector_count | default(0) }}"
+      success_count: "{{ live_support_data.artifacts.summary.success_count | default(0) }}"
+      failed_count: "{{ live_support_data.artifacts.summary.failed_count | default(0) }}"
+      timed_out_count: "{{ live_support_data.artifacts.summary.timed_out_count | default(0) }}"
+      verdict: "{{ live_overall_supportability_verdict_resolved }}"
+      key_findings: >-
+        {{
+          [
+            'Collected evidence sources: ' ~ (((analysis_graph.source_summary.sources | default([])) | join(', ')) or 'cluster scan') ~ '.',
+            'Health verdict is ' ~ (supportability_summary.health_verdict | default('supported')) ~ '.',
+            'Remote health posture is ' ~ (connected_cluster_posture.remote_health_posture | default('unknown')) ~ '.',
+            'Reference compliance verdict is ' ~ live_reference_compliance_summary.verdict ~ ' (missing=' ~ (live_reference_compliance_summary.missing_count | default(0) | string) ~ ', errors=' ~ (live_reference_compliance_summary.error_count | default(0) | string) ~ ').',
+            'etcd must-gather diagnostics verdict is ' ~ live_etcd_ocp_diag_verdict ~ ' (errors=' ~ (etcd_ocp_diag_summary.error_count_total | default(0) | string) ~ ').',
+            'OMC must-gather diagnostics verdict is ' ~ live_omc_verdict ~ ' (firing alerts=' ~ (omc_summary.firing_alert_count | default(0) | string) ~ ', endpoint errors=' ~ (omc_summary.endpoint_error_count | default(0) | string) ~ ').',
+            'Node diagnostics verdict is ' ~ live_node_diagnostics_summary.verdict ~ ' (sosreports=' ~ (live_node_diagnostics_summary.sosreport_count | default(0) | string) ~ ', kubelet=' ~ (live_node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) | string) ~ ', crio=' ~ (live_node_diagnostics_summary.sosreport_with_crio_logs | default(0) | string) ~ ', journal=' ~ (live_node_diagnostics_summary.sosreport_with_journal | default(0) | string) ~ ', network=' ~ (live_node_diagnostics_summary.sosreport_with_network_data | default(0) | string) ~ ').',
+            'Insights archive verdict is ' ~ live_insights_archive_verdict ~ ' (failed gathers=' ~ (insights_archive_summary.failed_gather_count | default(0) | string) ~ ', panics=' ~ (insights_archive_summary.panic_count | default(0) | string) ~ ').',
+            'Advisor verdict is ' ~ (advisor_summary.verdict | default('insufficient-evidence')) ~ ' (critical=' ~ (advisor_summary.critical_count | default(0) | string) ~ ', high=' ~ (advisor_summary.high_count | default(0) | string) ~ ').',
+            'Managed-service gate verdict is ' ~ (managed_gate_summary.verdict | default('insufficient-evidence')) ~ ' (blocked=' ~ (managed_gate_summary.blocked_count | default(0) | string) ~ ', pending=' ~ (managed_gate_summary.pending_count | default(0) | string) ~ ', warning=' ~ (managed_gate_summary.warning_count | default(0) | string) ~ ').',
+            'Artifact collection status is success=' ~ (live_support_data.artifacts.summary.success_count | default(0) | string) ~ ', failed=' ~ (live_artifact_failed_count | string) ~ ', timed-out=' ~ (live_artifact_timed_out_count | string) ~ ', required-collector-failures=' ~ ((live_required_collector_failures | join(', ')) or 'none') ~ '.'
+          ]
+        }}
+    live_evidence_summary:
+      enabled: "{{ live_support_data.artifacts.summary.enabled | default(false) }}"
+      root: "{{ live_support_data.artifacts.summary.root | default('') }}"
+      collector_count: "{{ live_support_data.artifacts.summary.collector_count | default(0) }}"
+      parallelism: "{{ live_support_data.artifacts.summary.parallelism | default(0) }}"
+      success_count: "{{ live_support_data.artifacts.summary.success_count | default(0) }}"
+      failed_count: "{{ live_support_data.artifacts.summary.failed_count | default(0) }}"
+      timed_out_count: "{{ live_support_data.artifacts.summary.timed_out_count | default(0) }}"
+    live_evidence_coverage:
+      must_gather:
+        category: "{{ live_support_data.capabilities['must-gather'].category | default('oc-native') }}"
+        applicable: "{{ live_support_data.capabilities['must-gather'].applicable | default(true) | bool }}"
+        status: "{{ live_support_data.capabilities['must-gather'].status | default('unknown') }}"
+        detail: "{{ live_support_data.capabilities['must-gather'].detail | default('') }}"
+        requested: "{{ live_support_data.capabilities['must-gather'].requested | default(false) | bool }}"
+        collected: "{{ (live_support_parsed.must_gather_inventory.summary is defined) }}"
+        cluster_resource_file_count: "{{ live_support_parsed.must_gather_inventory.summary.cluster_resource_file_count | default(0) }}"
+        namespaced_resource_file_count: "{{ live_support_parsed.must_gather_inventory.summary.namespaced_resource_file_count | default(0) }}"
+      inspect:
+        category: "{{ live_support_data.capabilities['inspect'].category | default('oc-native') }}"
+        applicable: "{{ live_support_data.capabilities['inspect'].applicable | default(true) | bool }}"
+        status: "{{ live_support_data.capabilities['inspect'].status | default('unknown') }}"
+        detail: "{{ live_support_data.capabilities['inspect'].detail | default('') }}"
+        requested: "{{ live_support_data.capabilities['inspect'].requested | default(false) | bool }}"
+        collected: "{{ (live_support_parsed.inspect.summary.file_count | default(0) | int) > 0 }}"
+        file_count: "{{ live_support_parsed.inspect.summary.file_count | default(0) }}"
+        namespace_count: "{{ live_support_parsed.inspect.summary.namespace_count | default(0) }}"
+      cluster_compare:
+        category: "{{ live_support_data.capabilities['cluster-compare'].category | default('oc-plugin') }}"
+        applicable: "{{ live_support_data.capabilities['cluster-compare'].applicable | default(true) | bool }}"
+        status: "{{ live_support_data.capabilities['cluster-compare'].status | default('unknown') }}"
+        detail: "{{ live_support_data.capabilities['cluster-compare'].detail | default('') }}"
+        requested: "{{ live_support_data.capabilities['cluster-compare'].requested | default(false) | bool }}"
+        collected: "{{ live_support_parsed.cluster_compare.summary is defined }}"
+        comparison_count: "{{ live_support_parsed.cluster_compare.summary.comparison_count | default(0) }}"
+      managed_gates:
+        category: "{{ live_support_data.capabilities['managed-gates'].category | default('provider-api') }}"
+        applicable: "{{ live_support_data.capabilities['managed-gates'].applicable | default(false) | bool }}"
+        status: "{{ live_support_data.capabilities['managed-gates'].status | default('unknown') }}"
+        detail: "{{ live_support_data.capabilities['managed-gates'].detail | default('') }}"
+        requested: "{{ live_support_data.capabilities['managed-gates'].requested | default(false) | bool }}"
+        collected: "{{ live_support_parsed.managed_gates.summary is defined }}"
+        item_count: "{{ live_support_parsed.managed_gates.summary.item_count | default(0) }}"
+      advisor_export:
+        category: "{{ live_support_data.capabilities['advisor-export'].category | default('external-service') }}"
+        applicable: "{{ live_support_data.capabilities['advisor-export'].applicable | default(true) | bool }}"
+        status: "{{ live_support_data.capabilities['advisor-export'].status | default('unknown') }}"
+        detail: "{{ live_support_data.capabilities['advisor-export'].detail | default('') }}"
+        requested: "{{ live_support_data.capabilities['advisor-export'].requested | default(false) | bool }}"
+        collected: "{{ live_support_parsed.advisor_export.summary is defined }}"
+        item_count: "{{ live_support_parsed.advisor_export.summary.item_count | default(0) }}"
+      insights_archive:
+        category: "{{ live_support_data.capabilities['insights-archive'].category | default('oc-native') }}"
+        applicable: "{{ live_support_data.capabilities['insights-archive'].applicable | default(true) | bool }}"
+        status: "{{ live_support_data.capabilities['insights-archive'].status | default('unknown') }}"
+        detail: "{{ live_support_data.capabilities['insights-archive'].detail | default('') }}"
+        requested: "{{ live_support_data.capabilities['insights-archive'].requested | default(false) | bool }}"
+        collected: "{{ live_support_parsed.insights_archive.summary.present | default(false) }}"
+        archive_count: "{{ live_support_parsed.insights_archive.summary.archive_count | default(0) }}"
+        gather_count: "{{ live_support_parsed.insights_archive.summary.gather_count | default(0) }}"
+      sosreport:
+        category: "{{ live_support_data.capabilities['sosreport'].category | default('node-level') }}"
+        applicable: "{{ live_support_data.capabilities['sosreport'].applicable | default(true) | bool }}"
+        status: "{{ live_support_data.capabilities['sosreport'].status | default('unknown') }}"
+        detail: "{{ live_support_data.capabilities['sosreport'].detail | default('') }}"
+        requested: "{{ live_support_data.capabilities['sosreport'].requested | default(false) | bool }}"
+        collected: "{{ (live_support_parsed.sosreport.summary.count | default(0) | int) > 0 }}"
+        count: "{{ live_support_parsed.sosreport.summary.count | default(0) }}"
+  changed_when: false

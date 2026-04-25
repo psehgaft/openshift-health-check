@@ -1,23 +1,27 @@
 ---
 - name: Build cluster profile
+  vars:
+    graph: "{{ analysis_graph | default({}) }}"
   ansible.builtin.set_fact:
     cluster_profile:
-      infrastructure_name: "{{ infrastructure.status.infrastructureName | default('unknown') }}"
-      platform: "{{ infrastructure.status.platformStatus.type | default(infrastructure.status.platform | default('unknown')) }}"
-      control_plane_topology: "{{ infrastructure.status.controlPlaneTopology | default('unknown') }}"
-      infrastructure_topology: "{{ infrastructure.status.infrastructureTopology | default('unknown') }}"
-      api_url: "{{ infrastructure.status.apiServerURL | default('unknown') }}"
-      api_internal_url: "{{ infrastructure.status.apiServerInternalURL | default('unknown') }}"
-      base_domain: "{{ dns_config.spec.baseDomain | default(ingress_config.spec.domain | default('unknown')) }}"
-      ingress_domain: "{{ ingress_config.spec.domain | default('unknown') }}"
-      network_type: "{{ network_config.status.networkType | default('unknown') }}"
-      service_networks: "{{ network_config.spec.serviceNetwork | default([]) }}"
-      cluster_networks: "{{ network_config.spec.clusterNetwork | default([]) }}"
+      infrastructure_name: "{{ graph.infrastructure.status.infrastructureName | default('unknown') }}"
+      platform: "{{ graph.infrastructure.status.platformStatus.type | default(graph.infrastructure.status.platform | default('unknown')) }}"
+      control_plane_topology: "{{ graph.infrastructure.status.controlPlaneTopology | default('unknown') }}"
+      infrastructure_topology: "{{ graph.infrastructure.status.infrastructureTopology | default('unknown') }}"
+      api_url: "{{ graph.infrastructure.status.apiServerURL | default('unknown') }}"
+      api_internal_url: "{{ graph.infrastructure.status.apiServerInternalURL | default('unknown') }}"
+      base_domain: "{{ graph.dns_config.spec.baseDomain | default(graph.ingress_config.spec.domain | default('unknown')) }}"
+      ingress_domain: "{{ graph.ingress_config.spec.domain | default('unknown') }}"
+      network_type: "{{ graph.network_config.status.networkType | default('unknown') }}"
+      service_networks: "{{ graph.network_config.spec.serviceNetwork | default([]) }}"
+      cluster_networks: "{{ graph.network_config.spec.clusterNetwork | default([]) }}"
       machine_networks: []
-      machine_networks_source: not-collected
-      identity_provider_count: "{{ oauth_config.spec.identityProviders | default([]) | length }}"
-      identity_provider_names: "{{ oauth_config.spec.identityProviders | default([]) | map(attribute='name') | list }}"
+      machine_networks_source: not-exposed-via-cluster-api
+      identity_provider_count: "{{ graph.oauth_config.spec.identityProviders | default([]) | length }}"
+      identity_provider_names: "{{ graph.oauth_config.spec.identityProviders | default([]) | map(attribute='name') | list }}"
       deployment_type: openshift
+      deployment_type_source: default-openshift-fallback
+      deployment_type_confidence: low
       is_sno: false
       is_hosted_control_plane: false
       control_plane_node_count: 0
@@ -25,20 +29,107 @@
       infra_node_count: 0
 
 - name: Build authentication findings
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+
+    data = json.loads(r'''{{ {
+      "oauth_config": analysis_graph.oauth_config | default({}),
+      "secrets": (analysis_graph.secrets | default({})).get('items', [])
+    } | to_json }}''')
+
+    idps = (((data.get("oauth_config") or {}).get("spec") or {}).get("identityProviders") or [])
+    secrets = data.get("secrets") or []
+
+    local_types = {"htpasswd", "basicAuth"}
+    generic_keys = {"name", "mappingMethod", "type", "challenge", "login"}
+    provider_types = []
+    provider_names = []
+    external_provider_count = 0
+    local_provider_count = 0
+
+    for item in idps:
+        if not isinstance(item, dict):
+            continue
+        provider_names.append(str(item.get("name") or "unnamed"))
+        typed_keys = [key for key in item.keys() if key not in generic_keys and item.get(key) is not None]
+        provider_type = typed_keys[0] if typed_keys else str(item.get("type") or "unknown")
+        provider_types.append(provider_type)
+        if provider_type in local_types:
+            local_provider_count += 1
+        else:
+            external_provider_count += 1
+
+    kubeadmin_secret_present = any(
+        ((item.get("metadata") or {}).get("name") == "kubeadmin")
+        and ((item.get("metadata") or {}).get("namespace") == "kube-system")
+        for item in secrets
+        if isinstance(item, dict)
+    )
+
+    findings = []
+    if len(idps) == 0:
+        detail = "oauth/cluster has no configured identityProviders"
+        if kubeadmin_secret_present:
+            detail += "; kubeadmin secret is still present"
+        findings.append({"issue": "missing-identity-provider", "detail": detail})
+        status = "warning"
+        reason_summary = "no configured identity providers"
+    elif external_provider_count == 0 and local_provider_count > 0:
+        detail = "only local identity providers are configured: " + ", ".join(sorted(set(provider_types)))
+        if kubeadmin_secret_present:
+            detail += "; kubeadmin secret is still present"
+        findings.append({"issue": "local-only-identity-provider", "detail": detail})
+        status = "warning"
+        reason_summary = "only local identity providers are configured"
+    elif kubeadmin_secret_present:
+        findings.append({
+            "issue": "kubeadmin-secret-still-present",
+            "detail": "kubeadmin secret is still present while identity providers are configured",
+        })
+        status = "review"
+        reason_summary = "external identity providers are configured, but kubeadmin fallback is still present"
+    elif external_provider_count == 1 and len(idps) == 1:
+        status = "healthy"
+        reason_summary = "single external identity provider configured"
+    else:
+        status = "healthy"
+        reason_summary = "external identity providers are configured"
+
+    print(json.dumps({
+        "auth_findings": findings,
+        "auth_posture_summary": {
+            "status": status,
+            "identity_provider_count": len(idps),
+            "provider_names": provider_names,
+            "provider_types": provider_types,
+            "external_identity_provider_count": external_provider_count,
+            "local_identity_provider_count": local_provider_count,
+            "kubeadmin_secret_present": kubeadmin_secret_present,
+            "reason_summary": reason_summary,
+        },
+    }))
+    PY
+  register: auth_posture_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize authentication findings
   ansible.builtin.set_fact:
-    auth_findings: "{{ ([{'issue': 'missing-identity-provider', 'detail': 'oauth cluster has no configured identityProviders'}] if (oauth_config.spec.identityProviders | default([]) | length) == 0 else []) }}"
+    auth_findings: "{{ ((auth_posture_cmd.stdout | from_json).auth_findings) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else [] }}"
+    auth_posture_summary: "{{ ((auth_posture_cmd.stdout | from_json).auth_posture_summary) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else {'status': 'unknown', 'identity_provider_count': (analysis_graph.oauth_config.spec.identityProviders | default([]) | length), 'provider_names': (analysis_graph.oauth_config.spec.identityProviders | default([]) | map(attribute='name') | list), 'provider_types': [], 'external_identity_provider_count': 0, 'local_identity_provider_count': 0, 'kubeadmin_secret_present': false, 'reason_summary': 'authentication posture could not be evaluated'} }}"
 
 - name: Capture cluster version history and updates
   ansible.builtin.set_fact:
-    cluster_update_history: "{{ clusterversion.status.history | default([]) }}"
-    available_updates: "{{ clusterversion.status.availableUpdates | default([]) }}"
-    conditional_updates: "{{ clusterversion.status.conditionalUpdates | default([]) }}"
+    cluster_update_history: "{{ analysis_graph.clusterversion.status.history | default([]) }}"
+    available_updates: "{{ analysis_graph.clusterversion.status.availableUpdates | default([]) }}"
+    conditional_updates: "{{ analysis_graph.clusterversion.status.conditionalUpdates | default([]) }}"
 
 - name: Extract cluster version conditions
   ansible.builtin.set_fact:
-    cv_available: "{{ ((clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
-    cv_progressing: "{{ ((clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
-    cv_failing: "{{ ((clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Failing') | map(attribute='status') | first) | default('Unknown')) }}"
+    cv_available: "{{ ((analysis_graph.clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
+    cv_progressing: "{{ ((analysis_graph.clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
+    cv_failing: "{{ ((analysis_graph.clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Failing') | map(attribute='status') | first) | default('Unknown')) }}"
 
 - name: Initialize operator facts
   ansible.builtin.set_fact:
@@ -53,7 +144,7 @@
     unavailable_operators: "{{ unavailable_operators + ([item.metadata.name] if available_status == 'False' else []) }}"
     progressing_operators: "{{ progressing_operators + ([item.metadata.name] if progressing_status == 'True' else []) }}"
     clusteroperator_status_map: "{{ clusteroperator_status_map | combine({item.metadata.name: {'available': available_status, 'degraded': degraded_status, 'progressing': progressing_status, 'version': operator_version}}, recursive=True) }}"
-  loop: "{{ (clusteroperators | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.clusteroperators | default({'items': []})).get('items', []) }}"
   vars:
     available_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
     degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
@@ -65,7 +156,7 @@
   ansible.builtin.set_fact:
     ingresscontroller_summary: "{{ ingresscontroller_summary | default([]) + [summary_entry] }}"
     ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) + issue_entries }}"
-  loop: "{{ (ingresscontrollers | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.ingresscontrollers | default({'items': []})).get('items', []) }}"
   vars:
     desired_replicas: "{{ item.spec.replicas | default((1 if (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica' else 2)) | int }}"
     available_replicas: "{{ item.status.availableReplicas | default(0) | int }}"
@@ -106,7 +197,7 @@
         progressing: "{{ clusteroperator_status_map.authentication.progressing | default('Unknown') }}"
         degraded: "{{ clusteroperator_status_map.authentication.degraded | default('Unknown') }}"
         version: "{{ clusteroperator_status_map.authentication.version | default('unknown') }}"
-        detail: "identityProviders={{ oauth_config.spec.identityProviders | default([]) | length }}"
+        detail: "identityProviders={{ analysis_graph.oauth_config.spec.identityProviders | default([]) | length }}"
       - component: console
         available: "{{ clusteroperator_status_map.console.available | default('Unknown') }}"
         progressing: "{{ clusteroperator_status_map.console.progressing | default('Unknown') }}"
@@ -118,7 +209,7 @@
         progressing: "{{ clusteroperator_status_map.dns.progressing | default('Unknown') }}"
         degraded: "{{ clusteroperator_status_map.dns.degraded | default('Unknown') }}"
         version: "{{ clusteroperator_status_map.dns.version | default('unknown') }}"
-        detail: "baseDomain={{ dns_config.spec.baseDomain | default('unknown') }}"
+        detail: "baseDomain={{ analysis_graph.dns_config.spec.baseDomain | default('unknown') }}"
       - component: etcd
         available: "{{ clusteroperator_status_map.etcd.available | default('Unknown') }}"
         progressing: "{{ clusteroperator_status_map.etcd.progressing | default('Unknown') }}"
@@ -130,13 +221,13 @@
         progressing: "{{ clusteroperator_status_map['image-registry'].progressing | default('Unknown') }}"
         degraded: "{{ clusteroperator_status_map['image-registry'].degraded | default('Unknown') }}"
         version: "{{ clusteroperator_status_map['image-registry'].version | default('unknown') }}"
-        detail: "managementState={{ image_registry_config.spec.managementState | default('unknown') }} defaultRoute={{ image_registry_config.spec.defaultRoute | default(false) }}"
+        detail: "managementState={{ analysis_graph.image_registry_config.spec.managementState | default('unknown') }} defaultRoute={{ analysis_graph.image_registry_config.spec.defaultRoute | default(false) }}"
       - component: ingress
         available: "{{ clusteroperator_status_map.ingress.available | default('Unknown') }}"
         progressing: "{{ clusteroperator_status_map.ingress.progressing | default('Unknown') }}"
         degraded: "{{ clusteroperator_status_map.ingress.degraded | default('Unknown') }}"
         version: "{{ clusteroperator_status_map.ingress.version | default('unknown') }}"
-        detail: "ingressControllers={{ (ingresscontrollers | default({})).get('items', []) | length }}"
+        detail: "ingressControllers={{ (analysis_graph.ingresscontrollers | default({})).get('items', []) | length }}"
       - component: insights
         available: "{{ clusteroperator_status_map.insights.available | default('Unknown') }}"
         progressing: "{{ clusteroperator_status_map.insights.progressing | default('Unknown') }}"
@@ -160,7 +251,7 @@
         progressing: "{{ clusteroperator_status_map.network.progressing | default('Unknown') }}"
         degraded: "{{ clusteroperator_status_map.network.degraded | default('Unknown') }}"
         version: "{{ clusteroperator_status_map.network.version | default('unknown') }}"
-        detail: "networkType={{ network_config.status.networkType | default('unknown') }}"
+        detail: "networkType={{ analysis_graph.network_config.status.networkType | default('unknown') }}"
 
 - name: Build infrastructure component issues
   ansible.builtin.set_fact:
@@ -179,12 +270,7 @@
           'component': item.component,
           'issue': 'component-degraded',
           'detail': 'degraded=' ~ (item.degraded | string)
-        }] if item.degraded == 'True' else []) +
-        ([{
-          'component': item.component,
-          'issue': 'component-progressing',
-          'detail': 'progressing=' ~ (item.progressing | string)
-        }] if item.progressing == 'True' else []))
+        }] if item.degraded == 'True' else []))
       }}
   changed_when: false
 
@@ -217,7 +303,7 @@
       running: "{{ (pod_object_counts.running | default(0) | int) + (1 if phase == 'Running' else 0) }}"
       user_total: "{{ (pod_object_counts.user_total | default(0) | int) + (1 if is_user_namespace else 0) }}"
       user_running: "{{ (pod_object_counts.user_running | default(0) | int) + (1 if (is_user_namespace and phase == 'Running') else 0) }}"
-  loop: "{{ (pods | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({'items': []})).get('items', []) }}"
   vars:
     phase: "{{ item.status.phase | default('Unknown') }}"
     node_name: "{{ item.spec.nodeName | default('unscheduled') }}"
@@ -236,7 +322,7 @@
     openshift_control_plane_node_count: "{{ (openshift_control_plane_node_count | int) + (1 if primary_node_role in ['master', 'control-plane'] else 0) }}"
     openshift_worker_node_count: "{{ (openshift_worker_node_count | int) + (1 if primary_node_role == 'worker' else 0) }}"
     openshift_infra_node_count: "{{ (openshift_infra_node_count | int) + (1 if primary_node_role == 'infra' else 0) }}"
-  loop: "{{ (nodes | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.nodes | default({'items': []})).get('items', []) }}"
   vars:
     ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
     node_is_ready: "{{ (ready_status | string | lower) in ['true', 'ready'] }}"
@@ -271,7 +357,7 @@
         if (
           (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
           or (
-            ((nodes | default({})).get('items', []) | length) == 1
+            ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
             and (openshift_control_plane_node_count | int) == 1
           )
         )
@@ -280,7 +366,7 @@
           if (
             (cluster_profile.platform | default('unknown') | lower) == 'aws'
             and (openshift_control_plane_node_count | int) == 0
-            and ((nodes | default({})).get('items', []) | length) > 0
+            and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
           )
           else (
             'aro'
@@ -300,7 +386,7 @@
       {{
         (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
         or (
-          ((nodes | default({})).get('items', []) | length) == 1
+          ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
           and (openshift_control_plane_node_count | int) == 1
         )
       }}
@@ -308,12 +394,62 @@
       {{
         (cluster_profile.platform | default('unknown') | lower) == 'aws'
         and (openshift_control_plane_node_count | int) == 0
-        and ((nodes | default({})).get('items', []) | length) > 0
+        and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
+      }}
+    openshift_deployment_type_source: >-
+      {{
+        'single-replica-topology-or-single-node'
+        if (
+          (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
+          or (
+            ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
+            and (openshift_control_plane_node_count | int) == 1
+          )
+        )
+        else (
+          'aws-worker-only-hosted-control-plane-inference'
+          if (
+            (cluster_profile.platform | default('unknown') | lower) == 'aws'
+            and (openshift_control_plane_node_count | int) == 0
+            and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
+          )
+          else (
+            'azure-platform-inference'
+            if ((cluster_profile.platform | default('unknown') | lower) == 'azure')
+            else (
+              'aws-platform-inference'
+              if (
+                (cluster_profile.platform | default('unknown') | lower) == 'aws'
+                and (openshift_control_plane_node_count | int) > 0
+              )
+              else 'default-openshift-fallback'
+            )
+          )
+        )
+      }}
+    openshift_deployment_type_confidence: >-
+      {{
+        'high'
+        if (
+          (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
+          or (
+            ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
+            and (openshift_control_plane_node_count | int) == 1
+          )
+        )
+        else (
+          'medium'
+          if (
+            (cluster_profile.platform | default('unknown') | lower) in ['aws', 'azure']
+            and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
+          )
+          else 'low'
+        )
       }}
 
 - name: Extend cluster profile with deployment type
   ansible.builtin.set_fact:
-    cluster_profile: "{{ cluster_profile | combine({'deployment_type': openshift_deployment_type, 'is_sno': (openshift_is_sno | bool), 'is_hosted_control_plane': (openshift_is_hosted_control_plane | bool), 'control_plane_node_count': (openshift_control_plane_node_count | int), 'worker_node_count': (openshift_worker_node_count | int), 'infra_node_count': (openshift_infra_node_count | int)}, recursive=True) }}"
+    cluster_profile: "{{ cluster_profile | combine({'deployment_type': openshift_deployment_type, 'deployment_type_source': openshift_deployment_type_source, 'deployment_type_confidence': openshift_deployment_type_confidence, 'is_sno': (openshift_is_sno | bool), 'is_hosted_control_plane': (openshift_is_hosted_control_plane | bool), 'control_plane_node_count': (openshift_control_plane_node_count | int), 'worker_node_count': (openshift_worker_node_count | int), 'infra_node_count': (openshift_infra_node_count | int)}, recursive=True) }}"
 
 - name: Initialize MCP facts
   ansible.builtin.set_fact:
@@ -324,7 +460,7 @@
   ansible.builtin.set_fact:
     degraded_mcps: "{{ degraded_mcps + ([item.metadata.name] if degraded_status == 'True' else []) }}"
     updating_mcps: "{{ updating_mcps + ([item.metadata.name] if updating_status == 'True' else []) }}"
-  loop: "{{ (machineconfigpools | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.machineconfigpools | default({})).get('items', []) }}"
   vars:
     degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
     updating_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) }}"
@@ -334,7 +470,7 @@
   ansible.builtin.set_fact:
     namespace_issue_summary: "{{ namespace_issue_summary | default([]) + ([{'name': item.metadata.name, 'phase': phase}] if phase != 'Active' else []) }}"
     user_namespace_names: "{{ user_namespace_names | default([]) + ([item.metadata.name] if not (item.metadata.name is match(user_namespaces_exclude_regex)) else []) }}"
-  loop: "{{ (namespaces | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.namespaces | default({})).get('items', []) }}"
   vars:
     phase: "{{ item.status.phase | default('Unknown') }}"
   changed_when: false
@@ -342,7 +478,7 @@
 - name: Build node capacity summary
   ansible.builtin.set_fact:
     node_capacity_summary: "{{ node_capacity_summary | default([]) + [node_capacity_entry] }}"
-  loop: "{{ (nodes | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.nodes | default({})).get('items', []) }}"
   vars:
     cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
     pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"

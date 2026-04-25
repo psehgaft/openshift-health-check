@@ -10,6 +10,24 @@
       - ingresses
       - persistentvolumes
       - persistentvolumeclaims
+    collection_optional_forbidden_command_names:
+      - poddisruptionbudgets
+      - ingresses
+      - serviceaccounts
+      - rolebindings
+      - clusterrolebindings
+      - services
+      - endpoints
+      - crds
+      - namespaces
+      - networkpolicies
+      - resourcequotas
+      - limitranges
+      - api_resources
+      - secrets
+      - configmaps
+      - storageclasses
+      - warning_events
     collection_commands:
       - name: nodes
         argv: ["{{ kube_cli | default('oc') }}", "get", "nodes", "-o", "json"]
@@ -159,32 +177,71 @@
 
 - name: Seed common collection failures with wrapper failure
   ansible.builtin.set_fact:
-    collection_failures: "{{ [collection_wrapper_failure] }}"
+    assessment_collection_failures: "{{ [collection_wrapper_failure] }}"
   when: collection_wrapper_failure is defined
 
 - name: Build common collection failure list
   ansible.builtin.set_fact:
-    collection_failures: "{{ (collection_failures | default([])) + [collection_failure_entry] }}"
+    assessment_collection_failures: "{{ (assessment_collection_failures | default([])) + [collection_failure_entry] }}"
   loop: "{{ collected_commands | default({}) | dict2items }}"
   vars:
+    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
+    optional_forbidden_failure: >-
+      {{
+        (item.key in (collection_optional_forbidden_command_names | default([])))
+        and (
+          'forbidden' in collection_failure_stderr_lower
+          or 'unauthorized' in collection_failure_stderr_lower
+        )
+      }}
     collection_failure_entry:
       name: "{{ item.key }}"
       rc: "{{ item.value.rc | default(1) }}"
       timed_out: "{{ item.value.timed_out | default(false) }}"
-      stderr: "{{ item.value.stderr | default('') | trim }}"
-  when: (item.value.rc | default(1) | int) != 0
+      stderr: "{{ collection_failure_stderr }}"
+  when:
+    - (item.value.rc | default(1) | int) != 0
+    - not optional_forbidden_failure
+  changed_when: false
+
+- name: Capture common optional permission skips
+  ansible.builtin.set_fact:
+    assessment_collection_skipped_optional_commands: "{{ (assessment_collection_skipped_optional_commands | default([])) + [collection_skip_entry] }}"
+  loop: "{{ collected_commands | default({}) | dict2items }}"
+  vars:
+    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
+    optional_forbidden_failure: >-
+      {{
+        (item.key in (collection_optional_forbidden_command_names | default([])))
+        and (
+          'forbidden' in collection_failure_stderr_lower
+          or 'unauthorized' in collection_failure_stderr_lower
+        )
+      }}
+    collection_skip_entry:
+      name: "{{ item.key }}"
+      rc: "{{ item.value.rc | default(1) }}"
+      category: "optional-access-denied"
+      detail: "{{ collection_failure_stderr }}"
+  when:
+    - (item.value.rc | default(1) | int) != 0
+    - optional_forbidden_failure
   changed_when: false
 
 - name: Build common collection summary
   ansible.builtin.set_fact:
-    collection_summary:
+    assessment_collection_summary:
       command_count: "{{ collection_run_metadata.command_count | default(collection_commands | length) }}"
       parallelism: "{{ collection_run_metadata.max_workers | default(collection_parallelism | int) }}"
       timeout_seconds: "{{ collection_run_metadata.timeout_seconds | default(collection_command_timeout_seconds | int) }}"
-      failed_commands: "{{ (collection_commands | length) if collection_wrapper_failure is defined else (collection_failures | default([]) | length) }}"
-      timed_out_commands: "{{ collection_failures | default([]) | selectattr('timed_out', 'equalto', true) | list | length }}"
-      succeeded_commands: "{{ 0 if collection_wrapper_failure is defined else ([0, (collection_commands | length) - (collection_failures | default([]) | length)] | max) }}"
-      core_failed_commands: "{{ (collection_core_command_names | length) if collection_wrapper_failure is defined else ((collection_failures | default([]) | selectattr('name', 'in', collection_core_command_names) | list | length)) }}"
+      applicable_command_count: "{{ [0, ((collection_commands | length) - (assessment_collection_skipped_optional_commands | default([]) | length))] | max }}"
+      failed_commands: "{{ (collection_commands | length) if collection_wrapper_failure is defined else (assessment_collection_failures | default([]) | length) }}"
+      optional_skipped_commands: "{{ assessment_collection_skipped_optional_commands | default([]) | length }}"
+      timed_out_commands: "{{ assessment_collection_failures | default([]) | selectattr('timed_out', 'equalto', true) | list | length }}"
+      succeeded_commands: "{{ 0 if collection_wrapper_failure is defined else ([0, (collection_commands | length) - (assessment_collection_failures | default([]) | length) - (assessment_collection_skipped_optional_commands | default([]) | length)] | max) }}"
+      core_failed_commands: "{{ (collection_core_command_names | length) if collection_wrapper_failure is defined else ((assessment_collection_failures | default([]) | selectattr('name', 'in', collection_core_command_names) | list | length)) }}"
 
 - name: Parse common collected JSON
   ansible.builtin.set_fact:

@@ -2,7 +2,7 @@
 - name: Build platform pod issue list
   ansible.builtin.set_fact:
     platform_pod_issues: "{{ platform_pod_issues | default([]) + pod_issue }}"
-  loop: "{{ (pods | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     phase: "{{ item.status.phase | default('Unknown') }}"
@@ -27,7 +27,7 @@
 - name: Build deployment health findings
   ansible.builtin.set_fact:
     deployment_issues: "{{ deployment_issues | default([]) + issue_entry }}"
-  loop: "{{ (deployments | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -41,7 +41,7 @@
 - name: Build statefulset health findings
   ansible.builtin.set_fact:
     statefulset_issues: "{{ statefulset_issues | default([]) + issue_entry }}"
-  loop: "{{ (statefulsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -55,7 +55,7 @@
 - name: Build daemonset health findings
   ansible.builtin.set_fact:
     daemonset_issues: "{{ daemonset_issues | default([]) + issue_entry }}"
-  loop: "{{ (daemonsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -72,7 +72,7 @@
 - name: Build deploymentconfig health findings
   ansible.builtin.set_fact:
     deploymentconfig_issues: "{{ deploymentconfig_issues | default([]) + issue_entry }}"
-  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deploymentconfigs | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -90,7 +90,7 @@
 - name: Build deploymentconfig high replica review findings
   ansible.builtin.set_fact:
     high_replica_workloads: "{{ (high_replica_workloads | default([])) + replica_review_entry }}"
-  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deploymentconfigs | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -110,7 +110,7 @@
 - name: Build deploymentconfig ownership label review findings
   ansible.builtin.set_fact:
     workload_label_governance_findings: "{{ (workload_label_governance_findings | default([])) + label_review_entry }}"
-  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deploymentconfigs | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -140,7 +140,7 @@
 - name: Build deploymentconfig resource requirement findings
   ansible.builtin.set_fact:
     workload_resource_findings: "{{ (workload_resource_findings | default([])) + resource_entries }}"
-  loop: "{{ (deploymentconfigs | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deploymentconfigs | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -171,7 +171,7 @@
 - name: Build deployment probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (deployments | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
@@ -213,7 +213,7 @@
 - name: Build statefulset probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (statefulsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
@@ -255,7 +255,7 @@
 - name: Build daemonset probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (daemonsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
@@ -297,7 +297,7 @@
 - name: Build route admission findings
   ansible.builtin.set_fact:
     service_names_by_namespace: "{{ service_names_by_namespace | default({}) | combine({ns_name: ((((service_names_by_namespace | default({}))[ns_name] | default([])) + [svc_name]) | unique)}, recursive=True) }}"
-  loop: "{{ (services | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.services | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     svc_name: "{{ item.metadata.name | default('') }}"
@@ -306,7 +306,7 @@
 - name: Build route issue findings
   ansible.builtin.set_fact:
     route_issues: "{{ route_issues | default([]) + route_issue_entry }}"
-  loop: "{{ (routes | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.routes | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     route_name: "{{ item.metadata.name | default('') }}"
@@ -340,7 +340,7 @@
 - name: Build ingress issue findings
   ansible.builtin.set_fact:
     ingress_issues: "{{ ingress_issues | default([]) + ingress_issue_entries }}"
-  loop: "{{ (ingresses | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.ingresses | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     ingress_name: "{{ item.metadata.name | default('') }}"
@@ -384,14 +384,14 @@
 - name: Build route host owner map
   ansible.builtin.set_fact:
     route_host_owners: "{{ route_host_owners | default({}) | combine({item.spec.host: ((route_host_owners[item.spec.host] | default([])) + [item.metadata.namespace ~ '/' ~ item.metadata.name]) | unique}, recursive=True) }}"
-  loop: "{{ (routes | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.routes | default({})).get('items', []) }}"
   when: (item.spec.host | default('')) != ''
   changed_when: false
 
 - name: Build ingress host owner map
   ansible.builtin.set_fact:
     ingress_host_records: "{{ ingress_host_records | default([]) + host_records }}"
-  loop: "{{ (ingresses | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.ingresses | default({})).get('items', []) }}"
   vars:
     ingress_hosts: "{{ item.spec.rules | default([]) | map(attribute='host') | select('defined') | reject('equalto', '') | list }}"
     host_records: "{{ ingress_hosts | map('regex_replace', '^(.*)$', item.metadata.namespace ~ '/' ~ item.metadata.name ~ '|' ~ '\\1') | list }}"
@@ -419,4 +419,25 @@
     ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) + [{'host': item.key, 'owners': item.value, 'issue': 'duplicate-ingress-host'}] }}"
   loop: "{{ ingress_host_owners | default({}) | dict2items }}"
   when: (item.value | default([]) | length) > 1
+  changed_when: false
+
+- name: Build cross route and ingress host conflict findings
+  ansible.builtin.set_fact:
+    route_ingress_host_conflicts: "{{ (route_ingress_host_conflicts | default([])) + conflict_entry }}"
+  loop: "{{ (((route_host_owners | default({})).keys() | list) + ((ingress_host_owners | default({})).keys() | list)) | unique }}"
+  vars:
+    route_owners_for_host: "{{ (route_host_owners | default({}))[item] | default([]) }}"
+    ingress_owners_for_host: "{{ (ingress_host_owners | default({}))[item] | default([]) }}"
+    conflict_entry: >-
+      {{
+        [{
+          'host': item,
+          'route_owners': route_owners_for_host,
+          'ingress_owners': ingress_owners_for_host,
+          'owners': (route_owners_for_host + ingress_owners_for_host),
+          'issue': 'duplicate-route-ingress-host'
+        }]
+        if ((route_owners_for_host | length) > 0 and (ingress_owners_for_host | length) > 0)
+        else []
+      }}
   changed_when: false

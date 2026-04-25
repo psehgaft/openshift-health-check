@@ -1,0 +1,283 @@
+---
+- name: Build shared OpenShift domain payload for collected-state reporting
+  ansible.builtin.set_fact:
+    openshift_report_domain_payload:
+      platform_health:
+        summary: "{{ assessment_health_summary | default({}) }}"
+        recommendations: >-
+          {{
+            (
+              'Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.'
+              if (assessment_health_summary.status | default('unknown')) == 'CRITICAL'
+              else (
+                'Reduce platform warning conditions next: review high-impact progressing operators, API or etcd runtime degradation, node pressure, and route or APIService warnings before treating the cluster as steady state.'
+                if (assessment_health_summary.status | default('unknown')) == 'WARNING'
+                else 'Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.'
+              )
+            )
+          }}
+        findings: "{{ assessment_health_findings | default([]) }}"
+        operators: "{{ assessment_operator_status_summary | default([]) }}"
+        infrastructure_components:
+          summary: "{{ infrastructure_component_summary | default([]) }}"
+          issues: "{{ infrastructure_component_issues | default([]) }}"
+        etcd_ocp_diag_summary: "{{ etcd_ocp_diag_summary | default({}) }}"
+        etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
+        omc_summary: "{{ omc_summary | default({}) }}"
+        omc_findings: "{{ omc_findings | default([]) }}"
+        apiservice_issues: "{{ apiservice_issues | default([]) }}"
+        image_registry:
+          findings: "{{ image_registry_findings | default([]) }}"
+          feature_findings: "{{ feature_findings | default([]) }}"
+          internal_registry_workloads: "{{ internal_registry_workloads | default([]) }}"
+      observability:
+        summary: "{{ observability_summary | default({}) }}"
+        recommendations: "{{ (observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}"
+        forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
+        findings: "{{ observability_findings | default([]) }}"
+        connected_cluster_posture: "{{ assessment_connected_cluster_posture | default({}) }}"
+        connected_cluster_findings: "{{ assessment_connected_cluster_findings | default([]) }}"
+        advisor_summary: "{{ advisor_summary | default({}) }}"
+        advisor_findings: "{{ advisor_findings | default([]) }}"
+        insights_archive_summary: "{{ insights_archive_summary | default({}) }}"
+        insights_archive_findings: "{{ insights_archive_findings | default([]) }}"
+      node_health_and_capacity:
+        summary: "{{ node_health_capacity_summary | default({}) }}"
+        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, node diagnostics coverage, and persistent storage posture before treating node capacity as healthy.') }}"
+        diagnostics_summary: "{{ node_diagnostics_summary | default({}) }}"
+        diagnostics_findings: "{{ node_diagnostics_findings | default([]) }}"
+        machineconfigpools: "{{ assessment_mcp_summary | default([]) }}"
+      upgrade_and_lifecycle_risk:
+        architecture_lifecycle_summary: "{{ architecture_lifecycle_summary | default({}) }}"
+        upgrade_readiness_summary: "{{ upgrade_readiness_summary | default({}) }}"
+        recommendations: "{{ (architecture_lifecycle_summary | default({})).get('recommendation', 'Review lifecycle support status, upgrade readiness, and failure-domain spread before treating the architecture posture as production-ready.') }}"
+        reference_compliance_summary: "{{ reference_compliance_summary | default({}) }}"
+        reference_compliance_findings: "{{ reference_compliance_findings | default([]) }}"
+        managed_gate_summary: "{{ managed_gate_summary | default({}) }}"
+        managed_gate_findings: "{{ managed_gate_findings | default([]) }}"
+      production_day2_readiness:
+        summary: "{{ day2_posture_summary | default({}) }}"
+        operations_lifecycle_maturity_summary: "{{ operations_lifecycle_maturity_summary | default({}) }}"
+        workload_capability_extensions_summary: "{{ workload_capability_extensions_summary | default({}) }}"
+        day2_production_readiness_summary: "{{ day2_production_readiness_summary | default({}) }}"
+        operations_recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen identity integration, backup execution, machine remediation, and repeatable operating practices before treating operations maturity as strong.') }}"
+        recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen GitOps control, identity integration, backup execution, and machine remediation before treating operations maturity as strong.') }}"
+        release_engineering_adoption_summary: "{{ release_engineering_adoption_summary | default({}) }}"
+        checks: "{{ day2_posture_checks | default([]) }}"
+        findings: "{{ day2_posture_findings | default([]) }}"
+        product_evidence: "{{ assessment_product_evidence | default({}) }}"
+        product_evidence_findings: "{{ assessment_product_evidence_findings | default([]) }}"
+        builds:
+          buildconfigs_without_triggers: "{{ buildconfigs_without_triggers | default([]) }}"
+        pipelines:
+          failed_pipelineruns: "{{ failed_pipelineruns | default([]) }}"
+      security_and_governance:
+        summary: "{{ security_compliance_summary | default({}) }}"
+        recommendations: "{{ (security_compliance_summary | default({})).get('recommendation', 'Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.') }}"
+        auth_posture_summary: "{{ auth_posture_summary | default({}) }}"
+        namespace_hygiene:
+          user_namespaces: "{{ user_namespace_names | default([]) }}"
+          namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) }}"
+          namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) }}"
+          namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) }}"
+          empty_user_namespaces: "{{ empty_user_namespaces | default([]) }}"
+        compliance:
+          summary: "{{ compliance_suite_summary | default([]) }}"
+          findings: "{{ compliance_suite_findings | default([]) }}"
+          operator_summary: "{{ compliance_operator_summary | default({}) }}"
+          standards_summary: "{{ compliance_standards_summary | default([]) }}"
+          standards_findings: "{{ compliance_standards_findings | default([]) }}"
+        access_review:
+          likely_unused_serviceaccounts: "{{ stale_access_review_serviceaccounts | default([]) }}"
+          stale_users: "{{ stale_access_review_users | default([]) }}"
+          stale_groups: "{{ stale_access_review_groups | default([]) }}"
+      network_and_application_access:
+        summary: "{{ network_architecture_summary | default({}) }}"
+        recommendations: "{{ (network_architecture_summary | default({})).get('recommendation', 'Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.') }}"
+        routes: "{{ assessment_route_summary | default([]) }}"
+        route_issues: "{{ assessment_route_issues | default([]) }}"
+        route_host_conflicts: "{{ route_host_conflicts | default([]) }}"
+        ingress_issues: "{{ ingress_issues | default([]) }}"
+        ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) }}"
+        route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
+        ingresscontrollers:
+          summary: "{{ ingresscontroller_summary | default([]) }}"
+          issues: "{{ ingresscontroller_issues | default([]) }}"
+      workload_health:
+        summary: "{{ workload_health_summary | default({}) }}"
+        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, service endpoint gaps, and workload hygiene debt before treating workload posture as healthy.') }}"
+        platform_pod_issues: "{{ platform_pod_issues | default([]) }}"
+        unhealthy_user_pods: "{{ unhealthy_user_pods | default([]) }}"
+        restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:15] }}"
+        workload_health_issues: "{{ workload_health_issues | default([]) }}"
+        high_replica_workloads: "{{ high_replica_workloads | default([]) }}"
+        orphan_pods: "{{ orphan_pods | default([]) }}"
+        workload_label_governance_findings: "{{ workload_label_governance_findings | default([]) }}"
+        workload_resource_findings: "{{ workload_resource_findings | default([]) }}"
+        workload_probe_findings: "{{ workload_probe_findings | default([]) }}"
+        overprovisioned_pods: "{{ overprovisioned_pods | default([]) }}"
+        services_without_endpoints: "{{ services_without_endpoints | default([]) }}"
+      storage_and_resilience:
+        summary: "{{ backup_recovery_summary | default({}) }}"
+        recommendations: "{{ (backup_recovery_summary | default({})).get('recommendation', 'Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.') }}"
+        storage:
+          pv_issues: "{{ pv_issues | default([]) }}"
+          pvc_issues: "{{ pvc_issues | default([]) }}"
+        backup:
+          findings: "{{ backup_posture_findings | default([]) }}"
+          storage_locations: "{{ backup_storage_location_summary | default([]) }}"
+          schedules: "{{ backup_schedule_summary | default([]) }}"
+          recent_backups: "{{ backup_summary | default([]) }}"
+          recent_restores: "{{ restore_summary | default([]) }}"
+        machine_remediation:
+          summary: "{{ machinehealthcheck_summary | default([]) }}"
+          findings: "{{ machine_healthcheck_findings | default([]) }}"
+  when: report_mode_resolved | default('live') == 'collected'
+
+- name: Build shared OpenShift domain payload for live reporting
+  ansible.builtin.set_fact:
+    openshift_report_domain_payload:
+      platform_health:
+        summary: "{{ health_summary | default({}) }}"
+        recommendations: >-
+          {{
+            (
+              'Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.'
+              if (health_summary.status | default('unknown')) == 'CRITICAL'
+              else (
+                'Reduce platform warning conditions next: review ' ~ ((health_summary.core_platform_runtime_reason_summary | default('')) or 'high-impact progressing operators, runtime degradation, and node or route warnings') ~ ' before treating the cluster as steady state.'
+                if (health_summary.status | default('unknown')) == 'WARNING'
+                else 'Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.'
+              )
+            )
+          }}
+        findings: "{{ (degraded_operators | default([])) + (unavailable_operators | default([])) + (top_apiservice_issues | default([])) }}"
+        operators: []
+        infrastructure_components:
+          summary: "{{ infrastructure_component_summary | default([]) }}"
+          issues: "{{ infrastructure_component_issues | default([]) }}"
+        etcd_ocp_diag_summary: "{{ etcd_ocp_diag_summary | default({}) }}"
+        etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
+        omc_summary: "{{ omc_summary | default({}) }}"
+        omc_findings: "{{ top_live_omc_findings | default([]) }}"
+        apiservice_issues: "{{ top_apiservice_issues | default([]) }}"
+        image_registry:
+          findings: "{{ top_image_registry_findings | default([]) }}"
+          feature_findings: "{{ top_feature_findings | default([]) }}"
+          internal_registry_workloads: "{{ top_internal_registry_workloads | default([]) }}"
+      observability:
+        summary: "{{ observability_summary | default({}) }}"
+        recommendations: "{{ (observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}"
+        forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
+        findings: "{{ top_observability_findings | default([]) }}"
+        connected_cluster_posture: {}
+        connected_cluster_findings: []
+        advisor_summary: "{{ live_support_data.parsed.advisor_export.summary | default({}) }}"
+        advisor_findings: "{{ top_live_advisor_findings | default([]) }}"
+        insights_archive_summary: "{{ insights_archive_summary | default({}) }}"
+        insights_archive_findings: "{{ insights_archive_findings | default([]) }}"
+      node_health_and_capacity:
+        summary: "{{ node_health_capacity_summary | default({}) }}"
+        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, node diagnostics coverage, and persistent storage posture before treating node capacity as healthy.') }}"
+        diagnostics_summary: "{{ node_diagnostics_summary | default({}) }}"
+        diagnostics_findings: "{{ (top_live_inspect_findings | default([])) + (top_live_sosreport_findings | default([])) }}"
+        machineconfigpools: "{{ cluster_current_state.machineconfigpools | default([]) }}"
+      upgrade_and_lifecycle_risk:
+        architecture_lifecycle_summary: "{{ architecture_lifecycle_summary | default({}) }}"
+        upgrade_readiness_summary: "{{ upgrade_readiness_summary | default({}) }}"
+        recommendations: "{{ (architecture_lifecycle_summary | default({})).get('recommendation', 'Review lifecycle support status, upgrade readiness, and failure-domain spread before treating the architecture posture as production-ready.') }}"
+        reference_compliance_summary:
+          evidence_present: "{{ live_support_data.parsed.cluster_compare.summary is defined }}"
+          comparison_count: "{{ live_support_data.parsed.cluster_compare.summary.comparison_count | default(0) }}"
+          diff_count: "{{ live_support_data.parsed.cluster_compare.summary.diff_count | default(0) }}"
+          missing_count: "{{ live_support_data.parsed.cluster_compare.summary.missing_count | default(0) }}"
+          error_count: "{{ live_support_data.parsed.cluster_compare.summary.error_count | default(0) }}"
+          warning_count: "{{ live_support_data.parsed.cluster_compare.summary.warning_count | default(0) }}"
+        reference_compliance_findings: "{{ top_live_cluster_compare_findings | default([]) }}"
+        managed_gate_summary:
+          present: "{{ live_support_data.parsed.managed_gates.summary is defined }}"
+          item_count: "{{ live_support_data.parsed.managed_gates.summary.item_count | default(0) }}"
+          blocked_count: "{{ live_support_data.parsed.managed_gates.summary.blocked_count | default(0) }}"
+          pending_count: "{{ live_support_data.parsed.managed_gates.summary.pending_count | default(0) }}"
+          warning_count: "{{ live_support_data.parsed.managed_gates.summary.warning_count | default(0) }}"
+          allowed_count: "{{ live_support_data.parsed.managed_gates.summary.allowed_count | default(0) }}"
+          top_categories: "{{ live_support_data.parsed.managed_gates.summary.top_categories | default([]) }}"
+        managed_gate_findings: "{{ top_live_managed_gate_findings | default([]) }}"
+      production_day2_readiness:
+        summary: "{{ day2_posture_summary | default({}) }}"
+        operations_lifecycle_maturity_summary: "{{ operations_lifecycle_maturity_summary | default({}) }}"
+        workload_capability_extensions_summary: "{{ workload_capability_extensions_summary | default({}) }}"
+        day2_production_readiness_summary: "{{ day2_production_readiness_summary | default({}) }}"
+        operations_recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen identity integration, backup execution, machine remediation, and repeatable operating practices before treating operations maturity as strong.') }}"
+        recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen GitOps control, identity integration, backup execution, and machine remediation before treating operations maturity as strong.') }}"
+        release_engineering_adoption_summary: "{{ release_engineering_adoption_summary | default({}) }}"
+        checks: "{{ day2_posture_checks | default([]) }}"
+        findings: "{{ day2_posture_findings | default([]) }}"
+        product_evidence: "{{ assessment_product_evidence | default({}) }}"
+        product_evidence_findings: "{{ assessment_product_evidence_findings | default([]) }}"
+        builds:
+          buildconfigs_without_triggers: "{{ top_buildconfigs_without_triggers | default([]) }}"
+        pipelines:
+          failed_pipelineruns: "{{ top_failed_pipelineruns | default([]) }}"
+      security_and_governance:
+        summary: "{{ security_compliance_summary | default({}) }}"
+        recommendations: "{{ (security_compliance_summary | default({})).get('recommendation', 'Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.') }}"
+        auth_posture_summary: "{{ auth_posture_summary | default({}) }}"
+        namespace_hygiene:
+          user_namespaces: "{{ user_namespace_names | default([]) }}"
+          namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) }}"
+          namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) }}"
+          namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) }}"
+          empty_user_namespaces: "{{ empty_user_namespaces | default([]) }}"
+        compliance:
+          summary: "{{ compliance_suite_summary | default([]) }}"
+          findings: "{{ top_compliance_suite_findings | default([]) }}"
+          operator_summary: "{{ compliance_operator_summary | default({}) }}"
+          standards_summary: "{{ compliance_standards_summary | default([]) }}"
+          standards_findings: "{{ top_compliance_standards_findings | default([]) }}"
+        access_review:
+          likely_unused_serviceaccounts: "{{ top_likely_unused_serviceaccounts | default([]) }}"
+          stale_users: "{{ top_stale_access_review_users | default([]) }}"
+          stale_groups: "{{ top_stale_access_review_groups | default([]) }}"
+      network_and_application_access:
+        summary: "{{ network_architecture_summary | default({}) }}"
+        recommendations: "{{ (network_architecture_summary | default({})).get('recommendation', 'Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.') }}"
+        routes: []
+        route_issues: "{{ top_route_issues | default([]) }}"
+        route_host_conflicts: "{{ top_route_host_conflicts | default([]) }}"
+        ingress_issues: "{{ top_ingress_issues | default([]) }}"
+        ingress_host_conflicts: "{{ top_ingress_host_conflicts | default([]) }}"
+        route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
+        ingresscontrollers:
+          summary: "{{ ingresscontroller_summary | default([]) }}"
+          issues: "{{ ingresscontroller_issues | default([]) }}"
+      workload_health:
+        summary: "{{ workload_health_summary | default({}) }}"
+        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, service endpoint gaps, and workload hygiene debt before treating workload posture as healthy.') }}"
+        platform_pod_issues: "{{ platform_pod_issues | default([]) }}"
+        unhealthy_user_pods: "{{ top_unhealthy_user_pods | default([]) }}"
+        restart_hotspots: "{{ top_high_restart_pods | default([]) }}"
+        workload_health_issues: "{{ top_workload_health_issues | default([]) }}"
+        high_replica_workloads: "{{ top_high_replica_workloads | default([]) }}"
+        orphan_pods: "{{ top_orphan_pods | default([]) }}"
+        workload_label_governance_findings: "{{ top_workload_label_governance_findings | default([]) }}"
+        workload_resource_findings: "{{ top_workload_resource_findings | default([]) }}"
+        workload_probe_findings: "{{ top_workload_probe_findings | default([]) }}"
+        overprovisioned_pods: "{{ top_overprovisioned_pods | default([]) }}"
+        services_without_endpoints: "{{ top_services_without_endpoints | default([]) }}"
+      storage_and_resilience:
+        summary: "{{ backup_recovery_summary | default({}) }}"
+        recommendations: "{{ (backup_recovery_summary | default({})).get('recommendation', 'Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.') }}"
+        storage:
+          pv_issues: "{{ top_pv_issues | default([]) }}"
+          pvc_issues: "{{ top_pvc_issues | default([]) }}"
+        backup:
+          findings: "{{ top_backup_posture_findings | default([]) }}"
+          storage_locations: "{{ backup_storage_location_summary | default([]) }}"
+          schedules: "{{ backup_schedule_summary | default([]) }}"
+          recent_backups: "{{ backup_summary | default([]) }}"
+          recent_restores: "{{ restore_summary | default([]) }}"
+        machine_remediation:
+          summary: "{{ machinehealthcheck_summary | default([]) }}"
+          findings: "{{ top_machine_healthcheck_findings | default([]) }}"
+  when: report_mode_resolved | default('live') != 'collected'

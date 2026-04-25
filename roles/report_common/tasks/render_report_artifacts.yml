@@ -1,0 +1,44 @@
+---
+- name: Render final Markdown report
+  ansible.builtin.template:
+    src: "{{ report_markdown_template }}"
+    dest: "{{ report_path }}"
+    mode: "0644"
+
+- name: Render final HTML report when pandoc is available
+  ansible.builtin.command:
+    argv:
+      - pandoc
+      - --standalone
+      - --from
+      - gfm
+      - --to
+      - html5
+      - --css
+      - "{{ report_css_path }}"
+      - --output
+      - "{{ report_html_path }}"
+      - "{{ report_path }}"
+  register: report_html_cmd
+  changed_when: true
+  failed_when: false
+  when:
+    - report_generate_html | default(true) | bool
+    - report_pandoc_available | bool
+
+- name: Render final PDF report when a PDF engine is available
+  ansible.builtin.command:
+    argv: "{{ ['pandoc', '--from', 'gfm', '--css', report_css_path, '--pdf-engine=' ~ report_pdf_engine] + (report_pdf_engine_argv | default([])) + ['--output', report_pdf_path, report_path] }}"
+  register: report_pdf_cmd
+  changed_when: true
+  failed_when: false
+  when:
+    - report_generate_pdf | default(true) | bool
+    - report_pandoc_available | bool
+    - report_pdf_engine | length > 0
+
+- name: Write final JSON report
+  ansible.builtin.copy:
+    dest: "{{ report_json_path }}"
+    mode: "0644"
+    content: "{{ audit_report | to_nice_json }}"

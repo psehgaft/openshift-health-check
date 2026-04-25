@@ -1,0 +1,55 @@
+---
+- name: Define collected-state report paths
+  ansible.builtin.set_fact:
+    supportability_report_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+
+- name: Build collected-state report file paths
+  ansible.builtin.set_fact:
+    supportability_report_name: "{{ report_basename }}-{{ platform_family }}-{{ supportability_report_timestamp }}"
+
+- name: Finalize collected-state report output paths
+  ansible.builtin.set_fact:
+    supportability_report_md_path: "{{ report_output_dir }}/{{ supportability_report_name }}.md"
+    supportability_report_json_path: "{{ report_output_dir }}/{{ supportability_report_name }}.json"
+
+- name: Ensure report output directory exists
+  ansible.builtin.file:
+    path: "{{ report_output_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Build collected-state support table summaries
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_offline_openshift_support_tables.yml
+
+- name: Build shared OpenShift domain payload
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_openshift_domain_payload.yml
+
+- name: Build shared OpenShift report payload
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_openshift_report_payload.yml
+
+- name: Build collected-state OpenShift report extras
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_offline_openshift_report_extras.yml
+
+- name: Build collected-state JSON payload
+  ansible.builtin.set_fact:
+    supportability_report_payload: "{{ openshift_report_payload_common | combine(openshift_report_payload_mode_extras | default({}), recursive=True) }}"
+
+- name: Write collected-state JSON report
+  ansible.builtin.copy:
+    dest: "{{ supportability_report_json_path }}"
+    content: "{{ supportability_report_payload | to_nice_json }}"
+    mode: "0644"
+
+- name: Render collected-state Markdown report
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../templates/openshift_supportability_report.md.j2"
+    dest: "{{ supportability_report_md_path }}"
+    mode: "0644"

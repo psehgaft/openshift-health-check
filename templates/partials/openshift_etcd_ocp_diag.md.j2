@@ -1,0 +1,25 @@
+| Item | Value |
+| --- | --- |
+| Verdict | `{{ etcd_diag_summary.verdict | default('not-collected') }}` |
+| Pods analyzed | `{{ etcd_diag_summary.pod_count | default(0) }}` |
+| Log files analyzed | `{{ etcd_diag_summary.log_file_count | default(0) }}` |
+| Rotated logs analyzed | `{{ etcd_diag_summary.rotated_log_count | default(0) }}` |
+| Total matched etcd signals | `{{ etcd_diag_summary.error_count_total | default(0) }}` |
+| Slow fdatasync count | `{{ etcd_diag_summary.slow_fsync_count | default(0) }}` |
+| Apply-too-long count | `{{ etcd_diag_summary.apply_took_too_long_count | default(0) }}` |
+| Request timeout count | `{{ etcd_diag_summary.request_timeout_count | default(0) }}` |
+| Leader election count | `{{ etcd_diag_summary.leader_election_count | default(0) }}` |
+| Lost leader count | `{{ etcd_diag_summary.lost_leader_count | default(0) }}` |
+
+{% if etcd_diag_summary.apply_took_too_long_stats.count | default(0) | int > 0 %}
+- `apply request took too long`: max=`{{ etcd_diag_summary.apply_took_too_long_stats.max_ms | default(0) }}`ms median=`{{ etcd_diag_summary.apply_took_too_long_stats.median_ms | default(0) }}`ms
+{% endif %}
+{% if etcd_diag_summary.slow_fsync_stats.count | default(0) | int > 0 %}
+- `slow fdatasync`: max=`{{ etcd_diag_summary.slow_fsync_stats.max_ms | default(0) }}`ms median=`{{ etcd_diag_summary.slow_fsync_stats.median_ms | default(0) }}`ms
+{% endif %}
+
+{% if etcd_diag_findings | default([]) | length > 0 %}
+{% for item in etcd_diag_findings %}
+- `{{ item.severity | upper }}` `{{ item.area }}`: {{ item.detail }}
+{% endfor %}
+{% endif %}

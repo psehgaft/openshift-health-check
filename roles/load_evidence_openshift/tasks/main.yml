@@ -1,0 +1,63 @@
+---
+- name: Build collected-resource extractor input arguments
+  ansible.builtin.set_fact:
+    collected_resource_extractor_args: >-
+      {{
+        []
+        + (['must-gather', must_gather_path] if (must_gather_path | default('') | trim | length > 0) else [])
+        + (['inspect', inspect_path] if (inspect_path | default('') | trim | length > 0) else [])
+      }}
+
+- name: Extract selected OpenShift resources from collected evidence
+  ansible.builtin.command:
+    argv: "{{ ['python3', playbook_dir ~ '/../scripts/extract_offline_resources.py'] + collected_resource_extractor_args }}"
+  register: collected_resource_extract_cmd
+  changed_when: false
+
+- name: Normalize extracted OpenShift resource facts
+  ansible.builtin.set_fact:
+    collected_resource_graph: "{{ collected_resource_extract_cmd.stdout | from_json }}"
+
+- name: Build OpenShift supportability scaffold facts
+  ansible.builtin.set_fact:
+    supportability_summary:
+      verdict: review-required
+      cluster_type: openshift
+      assessment_scope: evidence-intake-scaffold
+      health_verdict: review-required
+      supportability_verdict: review-required
+      reference_compliance_verdict: insufficient-evidence
+      evidence_mode: "{{ evidence_mode_resolved | default('auto') }}"
+      evidence_confidence: >-
+        {{
+          'medium'
+          if (
+            (evidence_coverage.cluster_configuration | default('missing')) == 'present'
+            and (evidence_coverage.namespaced_resources | default('missing')) == 'present'
+          )
+          else ('low' if (evidence_mode_resolved | default('auto')) != 'inspect' else 'partial')
+        }}
+      key_findings:
+        - "Collected evidence was loaded successfully from {{ (collected_resource_graph.source_summary.sources | default([])) | join(', ') or 'no sources' }}."
+        - "Selected OpenShift resources were normalized into one collected-state analysis graph."
+        - "Supportability verdict remains limited when Advisor, node diagnostics, or baseline evidence are missing."
+      next_milestones:
+        - "Deepen inspect-only partial analysis coverage."
+        - "Expand product-specific loaders beyond Pipelines and ODF."
+        - "Add provider-managed gate evidence."
+
+- name: Build diagnostics coverage facts
+  ansible.builtin.set_fact:
+    diagnostics_coverage:
+      must_gather: "{{ 'present' if (must_gather_path | default('') | trim | length > 0) else 'missing' }}"
+      inspect: "{{ 'present' if (inspect_data | default({}) | length > 0) else 'missing' }}"
+      sosreport: "{{ 'present' if (sosreport_data | default({}) | length > 0) else 'missing' }}"
+      cluster_compare: "{{ 'present' if (cluster_compare_data | default({}) | length > 0) else 'missing' }}"
+      managed_gates: "{{ 'present' if (managed_gates_data | default({}) | length > 0) else 'missing' }}"
+      insights_archive: unknown
+      telemetry_status_export: unknown
+      feature_specific_must_gather: "{{ 'present' if (((collected_resource_graph.pipelines | default({'items': []})).get('items', []) | length > 0) or ((collected_resource_graph.storageclusters | default({'items': []})).get('items', []) | length > 0) or ((collected_resource_graph.cephclusters | default({'items': []})).get('items', []) | length > 0) or ((collected_resource_graph.noobaas | default({'items': []})).get('items', []) | length > 0)) else 'unknown' }}"
+
+- name: Load product-specific evidence summaries
+  ansible.builtin.include_role:
+    name: load_evidence_openshift_products

@@ -1,0 +1,49 @@
+---
+- name: Build canonical OpenShift analysis graph
+  vars:
+    base_graph: >-
+      {{
+        analysis_graph_overlay
+        | default(collected_resource_graph | default({}))
+      }}
+    merged_graph: >-
+      {{
+        (base_graph | default({}))
+        | combine((live_support_data.resources | default(collected_support_resources | default({}))), recursive=True)
+      }}
+    merged_sources: >-
+      {{
+        (
+          (merged_graph.source_summary.sources | default([]))
+          + (['live-cluster'] if ((collected_resource_graph.source_summary.sources | default([])) | length > 0 and 'live-cluster' in (collected_resource_graph.source_summary.sources | default([]))) else [])
+        ) | unique | list
+      }}
+    openshift_analysis_graph_payload: >-
+      {{
+        (merged_graph | default({}))
+        | combine({
+            'source_summary': {
+              'sources': merged_sources
+            },
+            'resource_counts': {
+              'clusteroperators': ((merged_graph.clusteroperators | default({'items': []})).get('items', []) | length),
+              'machineconfigpools': ((merged_graph.machineconfigpools | default({'items': []})).get('items', []) | length),
+              'nodes': ((merged_graph.nodes | default({'items': []})).get('items', []) | length),
+              'pods': ((merged_graph.pods | default({'items': []})).get('items', []) | length),
+              'routes': ((merged_graph.routes | default({'items': []})).get('items', []) | length),
+              'namespaces': ((merged_graph.namespaces | default({'items': []})).get('items', []) | length),
+              'storageclusters': ((merged_graph.storageclusters | default({'items': []})).get('items', []) | length),
+              'cephclusters': ((merged_graph.cephclusters | default({'items': []})).get('items', []) | length),
+              'kubevirts': ((merged_graph.kubevirts | default({'items': []})).get('items', []) | length),
+              'virtualmachines': ((merged_graph.virtualmachines | default({'items': []})).get('items', []) | length),
+              'datascienceclusters': ((merged_graph.datascienceclusters | default({'items': []})).get('items', []) | length),
+              'inferenceservices': ((merged_graph.inferenceservices | default({'items': []})).get('items', []) | length),
+              'notebooks': ((merged_graph.notebooks | default({'items': []})).get('items', []) | length)
+            }
+          }, recursive=True)
+      }}
+  ansible.builtin.set_fact:
+    openshift_analysis_graph: "{{ openshift_analysis_graph_payload }}"
+    openshift_analysis_graph_summary:
+      sources: "{{ openshift_analysis_graph_payload.source_summary.sources | default([]) }}"
+      resource_counts: "{{ openshift_analysis_graph_payload.resource_counts | default({}) }}"

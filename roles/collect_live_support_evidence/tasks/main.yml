@@ -1,0 +1,686 @@
+---
+- name: Resolve live support artifact root
+  ansible.builtin.set_fact:
+    live_support_artifact_root: >-
+      {{
+        (live_support_artifact_output_dir | default('') | trim)
+        if (live_support_artifact_output_dir | default('') | trim | length > 0)
+        else (report_output_dir ~ '/support-artifacts-' ~ report_timestamp)
+      }}
+
+- name: Resolve live support artifact paths
+  ansible.builtin.set_fact:
+    live_support_cluster_compare_path: "{{ live_support_artifact_root }}/cluster-compare/cluster-compare.json"
+    live_support_managed_gates_path: "{{ live_support_artifact_root }}/managed-gates/managed-gates.json"
+    live_support_advisor_export_path: "{{ live_support_artifact_root }}/advisor/advisor-export.json"
+    live_support_insights_archive_path: "{{ live_support_artifact_root }}/insights-archive"
+    live_support_inspect_path: "{{ live_support_artifact_root }}/inspect"
+    live_support_must_gather_root: "{{ live_support_artifact_root }}/must-gather"
+    live_support_collected_sosreport_paths: []
+
+- name: Ensure live artifact root exists
+  ansible.builtin.file:
+    path: "{{ live_support_artifact_root }}"
+    state: directory
+    mode: "0755"
+  when: collect_live_support_artifacts | bool
+
+- name: Resolve live support collector plan
+  ansible.builtin.set_fact:
+    live_support_collector_capabilities:
+      must-gather:
+        category: "{{ openshift_scan_capabilities.collectors.must_gather.category | default('oc-native') }}"
+        applicable: "{{ openshift_scan_capabilities.collectors.must_gather.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_capabilities.collectors.must_gather.tool_available | default(true) | bool }}"
+        configured: "{{ openshift_scan_capabilities.collectors.must_gather.configured | default(true) | bool }}"
+        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_must_gather | default(false) | bool)) }}"
+        requirement_summary: "{{ openshift_scan_capabilities.collectors.must_gather.requirement_summary | default('Requires oc access to the cluster and the ability to run must-gather pods.') }}"
+      inspect:
+        category: "{{ openshift_scan_capabilities.collectors.inspect.category | default('oc-native') }}"
+        applicable: "{{ openshift_scan_capabilities.collectors.inspect.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_capabilities.collectors.inspect.tool_available | default(true) | bool }}"
+        configured: "{{ openshift_scan_capabilities.collectors.inspect.configured | default(true) | bool }}"
+        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_inspect | default(false) | bool)) }}"
+        requirement_summary: "{{ openshift_scan_capabilities.collectors.inspect.requirement_summary | default('Requires oc access to inspect cluster resources.') }}"
+      cluster-compare:
+        category: "{{ openshift_scan_capabilities.collectors.cluster_compare.category | default('oc-plugin') }}"
+        applicable: "{{ openshift_scan_capabilities.collectors.cluster_compare.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_capabilities.collectors.cluster_compare.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_capabilities.collectors.cluster_compare.configured | default(false) | bool }}"
+        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_cluster_compare | default(false) | bool)) }}"
+        requirement_summary: "{{ openshift_scan_capabilities.collectors.cluster_compare.requirement_summary | default('Requires the oc cluster-compare plugin plus a configured reference command.') }}"
+      managed-gates:
+        category: "{{ openshift_scan_capabilities.collectors.managed_gates.category | default('provider-api') }}"
+        applicable: "{{ openshift_scan_capabilities.collectors.managed_gates.applicable | default(false) | bool }}"
+        tool_available: "{{ openshift_scan_capabilities.collectors.managed_gates.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_capabilities.collectors.managed_gates.configured | default(false) | bool }}"
+        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_managed_gates | default(false) | bool)) }}"
+        requirement_summary: "{{ openshift_scan_capabilities.collectors.managed_gates.requirement_summary | default('Requires provider-side tooling or an explicit managed-gates command for managed OpenShift offerings.') }}"
+      advisor-export:
+        category: "{{ openshift_scan_capabilities.collectors.advisor_export.category | default('external-service') }}"
+        applicable: "{{ openshift_scan_capabilities.collectors.advisor_export.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_capabilities.collectors.advisor_export.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_capabilities.collectors.advisor_export.configured | default(false) | bool }}"
+        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_advisor_export | default(false) | bool)) }}"
+        requirement_summary: "{{ openshift_scan_capabilities.collectors.advisor_export.requirement_summary | default('Requires an explicit Advisor or Insights export command.') }}"
+      insights-archive:
+        category: "{{ openshift_scan_capabilities.collectors.insights_archive.category | default('oc-native') }}"
+        applicable: "{{ openshift_scan_capabilities.collectors.insights_archive.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_capabilities.collectors.insights_archive.tool_available | default(true) | bool }}"
+        configured: "{{ openshift_scan_capabilities.collectors.insights_archive.configured | default(true) | bool }}"
+        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_insights_archive | default(false) | bool)) }}"
+        requirement_summary: "{{ openshift_scan_capabilities.collectors.insights_archive.requirement_summary | default('Uses oc to copy the Insights Operator archive from a running pod.') }}"
+      sosreport:
+        category: "{{ openshift_scan_capabilities.collectors.sosreport.category | default('node-level') }}"
+        applicable: "{{ openshift_scan_capabilities.collectors.sosreport.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_capabilities.collectors.sosreport.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_capabilities.collectors.sosreport.configured | default(false) | bool }}"
+        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_sosreport | default(false) | bool)) }}"
+        requirement_summary: "{{ openshift_scan_capabilities.collectors.sosreport.requirement_summary | default('Requires node-level access such as oc debug node or SSH plus a sosreport command.') }}"
+    live_support_collect_must_gather_resolved: >-
+      {{
+        (live_support_collector_capabilities['must-gather'].requested | bool)
+        and (live_support_collector_capabilities['must-gather'].applicable | bool)
+        and (live_support_collector_capabilities['must-gather'].tool_available | bool)
+        and (live_support_collector_capabilities['must-gather'].configured | bool)
+      }}
+    live_support_collect_inspect_resolved: >-
+      {{
+        (live_support_collector_capabilities['inspect'].requested | bool)
+        and (live_support_collector_capabilities['inspect'].applicable | bool)
+        and (live_support_collector_capabilities['inspect'].tool_available | bool)
+        and (live_support_collector_capabilities['inspect'].configured | bool)
+      }}
+    live_support_collect_cluster_compare_resolved: >-
+      {{
+        (live_support_collector_capabilities['cluster-compare'].requested | bool)
+        and (live_support_collector_capabilities['cluster-compare'].applicable | bool)
+        and (live_support_collector_capabilities['cluster-compare'].tool_available | bool)
+        and (live_support_collector_capabilities['cluster-compare'].configured | bool)
+      }}
+    live_support_collect_managed_gates_resolved: >-
+      {{
+        (live_support_collector_capabilities['managed-gates'].requested | bool)
+        and (live_support_collector_capabilities['managed-gates'].applicable | bool)
+        and (live_support_collector_capabilities['managed-gates'].tool_available | bool)
+        and (live_support_collector_capabilities['managed-gates'].configured | bool)
+      }}
+    live_support_collect_advisor_export_resolved: >-
+      {{
+        (live_support_collector_capabilities['advisor-export'].requested | bool)
+        and (live_support_collector_capabilities['advisor-export'].applicable | bool)
+        and (live_support_collector_capabilities['advisor-export'].tool_available | bool)
+        and (live_support_collector_capabilities['advisor-export'].configured | bool)
+      }}
+    live_support_collect_insights_archive_resolved: >-
+      {{
+        (live_support_collector_capabilities['insights-archive'].requested | bool)
+        and (live_support_collector_capabilities['insights-archive'].applicable | bool)
+        and (live_support_collector_capabilities['insights-archive'].tool_available | bool)
+        and (live_support_collector_capabilities['insights-archive'].configured | bool)
+      }}
+    live_support_collect_sosreport_resolved: >-
+      {{
+        (live_support_collector_capabilities['sosreport'].requested | bool)
+        and (live_support_collector_capabilities['sosreport'].applicable | bool)
+        and (live_support_collector_capabilities['sosreport'].tool_available | bool)
+        and (live_support_collector_capabilities['sosreport'].configured | bool)
+      }}
+
+- name: Finalize live support collector capability statuses
+  ansible.builtin.set_fact:
+    live_support_collector_capabilities: >-
+      {{
+        live_support_collector_capabilities
+        | combine({
+            item.key: (
+              item.value
+              | combine({
+                  'enabled': (
+                    live_support_collect_must_gather_resolved if item.key == 'must-gather'
+                    else (
+                      live_support_collect_inspect_resolved if item.key == 'inspect'
+                      else (
+                        live_support_collect_cluster_compare_resolved if item.key == 'cluster-compare'
+                        else (
+                          live_support_collect_managed_gates_resolved if item.key == 'managed-gates'
+                          else (
+                            live_support_collect_advisor_export_resolved if item.key == 'advisor-export'
+                            else (
+                              live_support_collect_insights_archive_resolved if item.key == 'insights-archive'
+                              else live_support_collect_sosreport_resolved
+                            )
+                          )
+                        )
+                      )
+                    )
+                  ),
+                  'status': (
+                    'disabled'
+                    if not (collect_live_support_artifacts | bool)
+                    else (
+                      'not-applicable'
+                      if not (item.value.applicable | bool)
+                      else (
+                        'not-requested'
+                        if not (item.value.requested | bool)
+                        else (
+                          'missing-tooling'
+                          if not (item.value.tool_available | bool)
+                          else (
+                            'not-configured'
+                            if not (item.value.configured | bool)
+                            else (
+                            'planned'
+                            if (
+                              live_support_collect_must_gather_resolved if item.key == 'must-gather'
+                              else (
+                                live_support_collect_inspect_resolved if item.key == 'inspect'
+                                else (
+                                  live_support_collect_cluster_compare_resolved if item.key == 'cluster-compare'
+                                  else (
+                                    live_support_collect_managed_gates_resolved if item.key == 'managed-gates'
+                                    else (
+                                      live_support_collect_advisor_export_resolved if item.key == 'advisor-export'
+                                      else (
+                                        live_support_collect_insights_archive_resolved if item.key == 'insights-archive'
+                                        else live_support_collect_sosreport_resolved
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                              )
+                              else 'skipped'
+                            )
+                          )
+                        )
+                      )
+                    )
+                  ),
+                  'detail': (
+                    'Collector execution is disabled for this run.'
+                    if not (collect_live_support_artifacts | bool)
+                    else (
+                      'This collector does not apply to the current cluster or provider profile.'
+                      if not (item.value.applicable | bool)
+                      else (
+                        'This collector was not requested by the current collection profile.'
+                        if not (item.value.requested | bool)
+                        else (
+                          'Required tool or access path is not available on the scan host.'
+                          if not (item.value.tool_available | bool)
+                          else (
+                            'Collector prerequisites are available, but no command or baseline was configured.'
+                            if not (item.value.configured | bool)
+                            else 'Collector is planned for this scan.'
+                          )
+                        )
+                      )
+                    )
+                  )
+                }, recursive=True)
+            )
+          }, recursive=True)
+      }}
+  loop: "{{ live_support_collector_capabilities | dict2items }}"
+
+- name: Build live support collectors
+  ansible.builtin.set_fact:
+    live_support_collectors:
+      - name: must-gather
+        enabled: "{{ live_support_collect_must_gather_resolved | bool }}"
+        argv:
+          - "{{ kube_cli | default('oc') }}"
+          - adm
+          - must-gather
+          - --dest-dir
+          - "{{ live_support_must_gather_root }}"
+        output_kind: directory
+        output_path: ""
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+      - name: inspect
+        enabled: "{{ live_support_collect_inspect_resolved | bool }}"
+        argv:
+          - "{{ kube_cli | default('oc') }}"
+          - adm
+          - inspect
+          - nodes
+          - clusteroperators
+          - machineconfigpools
+          - routes
+          - --dest-dir
+          - "{{ live_support_inspect_path }}"
+        output_kind: directory
+        output_path: ""
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+      - name: cluster-compare
+        enabled: "{{ live_support_collect_cluster_compare_resolved | bool }}"
+        argv: >-
+          {{
+            (live_support_cluster_compare_command_argv | default([]))
+            if ((live_support_cluster_compare_command_argv | default([])) | length > 0)
+            else [kube_cli | default('oc'), 'cluster-compare', '-o', 'json']
+          }}
+        output_kind: file
+        output_path: "{{ live_support_cluster_compare_path }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+      - name: managed-gates
+        enabled: "{{ live_support_collect_managed_gates_resolved | bool }}"
+        argv: "{{ live_support_managed_gates_command_argv | default([]) }}"
+        output_kind: file
+        output_path: "{{ live_support_managed_gates_path }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+      - name: advisor-export
+        enabled: "{{ live_support_collect_advisor_export_resolved | bool }}"
+        argv: "{{ live_support_advisor_export_command_argv | default([]) }}"
+        output_kind: file
+        output_path: "{{ live_support_advisor_export_path }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+      - name: insights-archive
+        enabled: "{{ live_support_collect_insights_archive_resolved | bool }}"
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/collect_insights_archive.py"
+          - --kube-cli
+          - "{{ kube_cli | default('oc') }}"
+          - --output-dir
+          - "{{ live_support_insights_archive_path }}"
+        output_kind: none
+        output_path: ""
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+      - name: sosreport
+        enabled: "{{ live_support_collect_sosreport_resolved | bool }}"
+        argv: "{{ live_support_sosreport_command_argv | default([]) }}"
+        output_kind: none
+        output_path: ""
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+
+- name: Write live support collector specification
+  ansible.builtin.copy:
+    dest: "{{ live_support_artifact_root }}/collector-spec.json"
+    mode: "0644"
+    content: "{{ {'parallelism': (live_support_artifact_parallelism | int), 'collectors': live_support_collectors} | to_nice_json }}"
+  when: collect_live_support_artifacts | bool
+
+- name: Run live support collectors in parallel
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_live_artifact_collectors.py"
+      - "{{ live_support_artifact_root }}/collector-spec.json"
+  register: live_support_collectors_cmd
+  changed_when: false
+  failed_when: false
+  when: collect_live_support_artifacts | bool
+
+- name: Normalize live support collector results
+  ansible.builtin.set_fact:
+    live_support_artifact_collection: >-
+      {{
+        (live_support_collectors_cmd.stdout | from_json)
+        if (
+          (collect_live_support_artifacts | bool)
+          and (live_support_collectors_cmd.rc | default(1)) == 0
+          and (live_support_collectors_cmd.stdout | default('') | length > 0)
+        )
+        else {'parallelism': 0, 'collector_count': 0, 'results': {}}
+      }}
+
+- name: Discover live support case bundle outputs
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/discover_case_bundle.py"
+      - "{{ live_support_artifact_root }}"
+  register: live_support_bundle_cmd
+  changed_when: false
+  failed_when: false
+  when: collect_live_support_artifacts | bool
+
+- name: Normalize live support bundle payload
+  ansible.builtin.set_fact:
+    live_support_bundle_data: >-
+      {{
+        (live_support_bundle_cmd.stdout | from_json)
+        if (
+          (collect_live_support_artifacts | bool)
+          and (live_support_bundle_cmd.rc | default(1)) == 0
+          and (live_support_bundle_cmd.stdout | default('') | length > 0)
+        )
+        else {}
+      }}
+
+- name: Resolve discovered live support artifact paths
+  ansible.builtin.set_fact:
+    live_support_collected_must_gather_path: "{{ live_support_bundle_data.must_gather_path | default('') }}"
+    live_support_collected_cluster_compare_path: "{{ live_support_bundle_data.cluster_compare_path | default('') }}"
+    live_support_collected_managed_gates_path: "{{ live_support_bundle_data.managed_gates_path | default('') }}"
+    live_support_collected_inspect_path: "{{ live_support_bundle_data.inspect_path | default('') }}"
+    live_support_collected_advisor_export_path: "{{ live_support_bundle_data.advisor_export_path | default('') }}"
+    live_support_collected_insights_archive_path: >-
+      {{
+        live_support_insights_archive_path
+        if (((live_support_artifact_collection.results | default({})).get('insights-archive', {})).get('rc', 1) | int) == 0
+        else ''
+      }}
+    live_support_collected_sosreport_paths: "{{ live_support_bundle_data.sosreport_paths | default([]) }}"
+
+- name: Parse collected must-gather inventory
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_must_gather.py"
+      - "{{ live_support_collected_must_gather_path }}"
+  register: live_support_must_gather_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_must_gather_path | default('') | length > 0
+
+- name: Parse collected etcd-ocp-diag data
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_etcd_ocp_diag.py"
+      - "{{ live_support_collected_must_gather_path }}"
+  register: live_support_etcd_ocp_diag_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_must_gather_path | default('') | length > 0
+
+- name: Parse collected omc data
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['python3', playbook_dir ~ '/../scripts/parse_omc.py', live_support_collected_must_gather_path]
+        + (['--omc-bin', omc_binary_path] if (omc_binary_path | default('') | trim | length > 0) else [])
+      }}
+  register: live_support_omc_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_must_gather_path | default('') | length > 0
+
+- name: Parse collected inspect data
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_inspect.py"
+      - "{{ live_support_collected_inspect_path }}"
+  register: live_support_inspect_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_inspect_path | default('') | length > 0
+
+- name: Parse collected cluster-compare data
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_cluster_compare.py"
+      - "{{ live_support_collected_cluster_compare_path }}"
+  register: live_support_cluster_compare_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_cluster_compare_path | default('') | length > 0
+
+- name: Parse collected managed gates data
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_managed_gates.py"
+      - "{{ live_support_collected_managed_gates_path }}"
+  register: live_support_managed_gates_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_managed_gates_path | default('') | length > 0
+
+- name: Parse collected Advisor export data
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_advisor_export.py"
+      - "{{ live_support_collected_advisor_export_path }}"
+  register: live_support_advisor_export_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_advisor_export_path | default('') | length > 0
+
+- name: Parse collected Insights archive data
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_insights_archive.py"
+      - "{{ live_support_collected_insights_archive_path }}"
+  register: live_support_insights_archive_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_insights_archive_path | default('') | length > 0
+
+- name: Parse collected sosreport data
+  ansible.builtin.command:
+    argv: "{{ ['python3', playbook_dir ~ '/../scripts/parse_sosreport.py'] + (live_support_collected_sosreport_paths | default([])) }}"
+  register: live_support_sosreport_cmd
+  changed_when: false
+  failed_when: false
+  when: (live_support_collected_sosreport_paths | default([])) | length > 0
+
+- name: Build live support artifact facts
+  ansible.builtin.set_fact:
+    live_support_must_gather_inventory: >-
+      {{
+        (live_support_must_gather_cmd.stdout | from_json)
+        if ((live_support_must_gather_cmd.rc | default(1)) == 0 and (live_support_must_gather_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_etcd_ocp_diag_data: >-
+      {{
+        (live_support_etcd_ocp_diag_cmd.stdout | from_json)
+        if ((live_support_etcd_ocp_diag_cmd.rc | default(1)) == 0 and (live_support_etcd_ocp_diag_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_omc_data: >-
+      {{
+        (live_support_omc_cmd.stdout | from_json)
+        if ((live_support_omc_cmd.rc | default(1)) == 0 and (live_support_omc_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_inspect_data: >-
+      {{
+        (live_support_inspect_cmd.stdout | from_json)
+        if ((live_support_inspect_cmd.rc | default(1)) == 0 and (live_support_inspect_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_cluster_compare_data: >-
+      {{
+        (live_support_cluster_compare_cmd.stdout | from_json)
+        if ((live_support_cluster_compare_cmd.rc | default(1)) == 0 and (live_support_cluster_compare_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_managed_gates_data: >-
+      {{
+        (live_support_managed_gates_cmd.stdout | from_json)
+        if ((live_support_managed_gates_cmd.rc | default(1)) == 0 and (live_support_managed_gates_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_advisor_export_data: >-
+      {{
+        (live_support_advisor_export_cmd.stdout | from_json)
+        if ((live_support_advisor_export_cmd.rc | default(1)) == 0 and (live_support_advisor_export_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_insights_archive_data: >-
+      {{
+        (live_support_insights_archive_cmd.stdout | from_json)
+        if ((live_support_insights_archive_cmd.rc | default(1)) == 0 and (live_support_insights_archive_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_sosreport_data: >-
+      {{
+        (live_support_sosreport_cmd.stdout | from_json)
+        if ((live_support_sosreport_cmd.rc | default(1)) == 0 and (live_support_sosreport_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+    live_support_artifact_summary:
+      enabled: "{{ collect_live_support_artifacts | bool }}"
+      root: "{{ live_support_artifact_root }}"
+      parallelism: "{{ live_support_artifact_collection.parallelism | default(0) }}"
+      collector_count: "{{ live_support_artifact_collection.collector_count | default(0) }}"
+      success_count: >-
+        {{
+          (live_support_artifact_collection.results | default({}) | dict2items
+          | rejectattr('value.rc', 'ne', 0) | list | length)
+        }}
+      failed_count: >-
+        {{
+          (live_support_artifact_collection.results | default({}) | dict2items
+          | selectattr('value.rc', 'ne', 0) | list | length)
+        }}
+      timed_out_count: >-
+        {{
+          (live_support_artifact_collection.results | default({}) | dict2items
+          | selectattr('value.timed_out', 'equalto', true) | list | length)
+        }}
+      collected_paths:
+        must_gather: "{{ live_support_collected_must_gather_path | default('') }}"
+        inspect: "{{ live_support_collected_inspect_path | default('') }}"
+        cluster_compare: "{{ live_support_collected_cluster_compare_path | default('') }}"
+        managed_gates: "{{ live_support_collected_managed_gates_path | default('') }}"
+        advisor_export: "{{ live_support_collected_advisor_export_path | default('') }}"
+        insights_archive: "{{ live_support_collected_insights_archive_path | default('') }}"
+        sosreport: "{{ live_support_collected_sosreport_paths | default([]) }}"
+
+- name: Build normalized collected-support evidence facts for live scans
+  ansible.builtin.set_fact:
+    must_gather_inventory: "{{ live_support_must_gather_inventory | default({}) }}"
+    inspect_data: "{{ live_support_inspect_data | default({}) }}"
+    cluster_compare_data: "{{ live_support_cluster_compare_data | default({}) }}"
+    managed_gates_data: "{{ live_support_managed_gates_data | default({}) }}"
+    advisor_export_data: "{{ live_support_advisor_export_data | default({}) }}"
+    insights_archive_data: "{{ live_support_insights_archive_data | default({}) }}"
+    sosreport_data: "{{ live_support_sosreport_data | default({}) }}"
+    etcd_ocp_diag_data: "{{ live_support_etcd_ocp_diag_data | default({}) }}"
+    omc_data: "{{ live_support_omc_data | default({}) }}"
+    evidence_mode_resolved: live
+    evidence_sources: "{{ live_collected_evidence_sources }}"
+    evidence_summary:
+      source_count: "{{ live_collected_evidence_sources | length }}"
+      source_labels: "{{ live_collected_evidence_sources | map(attribute='name') | list }}"
+      mode: live
+      must_gather_path: "{{ live_support_collected_must_gather_path | default('') }}"
+      must_gather_root_entries: "{{ live_support_must_gather_inventory.summary.root_entry_count | default(0) }}"
+      namespaced_resource_files: "{{ live_support_must_gather_inventory.summary.namespaced_resource_file_count | default(0) }}"
+      cluster_resource_files: "{{ live_support_must_gather_inventory.summary.cluster_resource_file_count | default(0) }}"
+      event_files: "{{ live_support_must_gather_inventory.summary.event_file_count | default(0) }}"
+      log_files: "{{ live_support_must_gather_inventory.summary.log_file_count | default(0) }}"
+      has_cluster_scoped_resources: "{{ live_support_must_gather_inventory.summary.has_cluster_scoped_resources | default(false) }}"
+      has_namespaces_tree: "{{ live_support_must_gather_inventory.summary.has_namespaces_tree | default(false) }}"
+      omc_present: "{{ live_support_omc_data.summary.present | default(false) }}"
+      omc_verdict: "{{ live_support_omc_data.summary.verdict | default('not-collected') }}"
+      inspect_path: "{{ live_support_collected_inspect_path | default('') }}"
+      cluster_compare_path: "{{ live_support_collected_cluster_compare_path | default('') }}"
+      managed_gates_path: "{{ live_support_collected_managed_gates_path | default('') }}"
+      advisor_export_path: "{{ live_support_collected_advisor_export_path | default('') }}"
+      insights_archive_path: "{{ live_support_collected_insights_archive_path | default('') }}"
+      sosreport_count: "{{ live_support_sosreport_data.summary.count | default(0) }}"
+      artifact_root: "{{ live_support_artifact_root }}"
+      collector_count: "{{ live_support_artifact_summary.collector_count | default(0) }}"
+      parallelism: "{{ live_support_artifact_summary.parallelism | default(0) }}"
+      success_count: "{{ live_support_artifact_summary.success_count | default(0) }}"
+      failed_count: "{{ live_support_artifact_summary.failed_count | default(0) }}"
+      timed_out_count: "{{ live_support_artifact_summary.timed_out_count | default(0) }}"
+    evidence_coverage:
+      cluster_configuration: >-
+        {{ 'present' if (live_support_must_gather_inventory.summary.has_cluster_scoped_resources | default(false)) else ('partial' if ((live_support_inspect_data.summary.file_count | default(0) | int) > 0) else 'missing') }}
+      namespaced_resources: >-
+        {{ 'present' if (live_support_must_gather_inventory.summary.has_namespaces_tree | default(false)) else ('partial' if ((live_support_inspect_data.summary.namespace_count | default(0) | int) > 0) else 'missing') }}
+      cluster_events: "{{ 'present' if ((live_support_must_gather_inventory.summary.event_file_count | default(0) | int) > 0) else ('partial' if ((live_support_inspect_data.summary.resource_markers.events | default(0) | int) > 0) else 'missing') }}"
+      service_logs: "{{ 'partial' if ((live_support_must_gather_inventory.summary.log_file_count | default(0) | int) > 0) else ('partial' if ((live_support_inspect_data.summary.text_file_count | default(0) | int) > 0) else 'unknown') }}"
+      node_diagnostics: "{{ 'present' if ((live_support_sosreport_data.summary.count | default(0) | int) > 0) else 'missing' }}"
+      inspect: "{{ 'present' if ((live_support_inspect_data.summary.file_count | default(0) | int) > 0) else 'missing' }}"
+      advisor_data: "{{ 'present' if (live_support_advisor_export_data.summary is defined) else 'unknown' }}"
+      insights_archive: "{{ 'present' if (live_support_insights_archive_data.summary is defined and (live_support_insights_archive_data.summary.present | default(false) | bool)) else 'missing' }}"
+      cluster_compare: "{{ 'present' if (live_support_cluster_compare_data.summary is defined) else 'missing' }}"
+      managed_gates: "{{ 'present' if (live_support_managed_gates_data.summary is defined) else 'missing' }}"
+    evidence_limitations: >-
+      {{
+        []
+        + ([{'area': 'node diagnostics', 'detail': 'No sosreport or node-level archive input was collected during this scan.'}] if ((live_support_sosreport_data.summary.count | default(0) | int) == 0) else [])
+        + ([{'area': 'targeted inspect evidence', 'detail': 'No oc adm inspect directory was collected during this scan.'}] if ((live_support_inspect_data.summary.file_count | default(0) | int) == 0) else [])
+        + ([{'area': 'reference compliance', 'detail': 'No cluster-compare output or baseline reference was collected during this scan.'}] if (live_support_cluster_compare_data.summary is not defined) else [])
+        + ([{'area': 'managed-service gates', 'detail': 'No provider-managed gate export was collected during this scan.'}] if (live_support_managed_gates_data.summary is not defined) else [])
+        + ([{'area': 'advisor posture', 'detail': 'No Advisor export was collected during this scan.'}] if (live_support_advisor_export_data.summary is not defined) else [])
+        + ([{'area': 'insights archive', 'detail': 'No live Insights Operator archive was collected during this scan.'}] if (live_support_insights_archive_data.summary is not defined or not (live_support_insights_archive_data.summary.present | default(false) | bool)) else [])
+      }}
+  vars:
+    live_collected_evidence_sources: >-
+      {{
+        []
+        + ([{'name': 'must-gather', 'type': 'archive-directory', 'mode': 'live', 'path': live_support_collected_must_gather_path, 'parser': 'parse_must_gather.py'}] if (live_support_collected_must_gather_path | default('') | length > 0) else [])
+        + ([{'name': 'inspect', 'type': 'resource-directory', 'mode': 'live', 'path': live_support_collected_inspect_path, 'parser': 'parse_inspect.py'}] if (live_support_collected_inspect_path | default('') | length > 0) else [])
+        + ([{'name': 'cluster-compare', 'type': 'report-file', 'mode': 'live', 'path': live_support_collected_cluster_compare_path, 'parser': 'parse_cluster_compare.py'}] if (live_support_collected_cluster_compare_path | default('') | length > 0) else [])
+        + ([{'name': 'managed-gates', 'type': 'report-file', 'mode': 'live', 'path': live_support_collected_managed_gates_path, 'parser': 'parse_managed_gates.py'}] if (live_support_collected_managed_gates_path | default('') | length > 0) else [])
+        + ([{'name': 'advisor-export', 'type': 'report-file', 'mode': 'live', 'path': live_support_collected_advisor_export_path, 'parser': 'parse_advisor_export.py'}] if (live_support_collected_advisor_export_path | default('') | length > 0) else [])
+        + ([{'name': 'insights-archive', 'type': 'archive-directory', 'mode': 'live', 'path': live_support_collected_insights_archive_path, 'parser': 'parse_insights_archive.py'}] if (live_support_collected_insights_archive_path | default('') | length > 0) else [])
+        + (
+          (live_support_sosreport_data.reports | default([]))
+          | map('combine', {'name': 'sosreport', 'type': 'node-archive', 'mode': 'live', 'parser': 'parse_sosreport.py'})
+          | list
+        )
+      }}
+
+- name: Build collected-support resource extractor input arguments
+  ansible.builtin.set_fact:
+    collected_support_resource_extractor_args: >-
+      {{
+        []
+        + (['must-gather', live_support_collected_must_gather_path] if (live_support_collected_must_gather_path | default('') | trim | length > 0) else [])
+        + (['inspect', live_support_collected_inspect_path] if (live_support_collected_inspect_path | default('') | trim | length > 0) else [])
+      }}
+
+- name: Extract selected OpenShift resources from live collected support artifacts
+  ansible.builtin.command:
+    argv: "{{ ['python3', playbook_dir ~ '/../scripts/extract_offline_resources.py'] + collected_support_resource_extractor_args }}"
+  register: collected_support_resource_extract_cmd
+  changed_when: false
+  failed_when: false
+  when: (collected_support_resource_extractor_args | default([]) | length) > 0
+
+- name: Normalize extracted live collected support resources
+  ansible.builtin.set_fact:
+    collected_support_resources: >-
+      {{
+        (collected_support_resource_extract_cmd.stdout | from_json)
+        if (
+          (collected_support_resource_extract_cmd.rc | default(1)) == 0
+          and (collected_support_resource_extract_cmd.stdout | default('') | length > 0)
+        )
+        else {}
+      }}
+  when: (collected_support_resource_extractor_args | default([]) | length) > 0
+
+- name: Build normalized live support data
+  ansible.builtin.set_fact:
+    live_support_data:
+      artifacts:
+        collection: "{{ live_support_artifact_collection | default({}) }}"
+        summary: "{{ live_support_artifact_summary | default({}) }}"
+        bundle: "{{ live_support_bundle_data | default({}) }}"
+      capabilities: "{{ live_support_collector_capabilities | default({}) }}"
+      paths:
+        must_gather: "{{ live_support_collected_must_gather_path | default('') }}"
+        inspect: "{{ live_support_collected_inspect_path | default('') }}"
+        cluster_compare: "{{ live_support_collected_cluster_compare_path | default('') }}"
+        managed_gates: "{{ live_support_collected_managed_gates_path | default('') }}"
+        advisor_export: "{{ live_support_collected_advisor_export_path | default('') }}"
+        insights_archive: "{{ live_support_collected_insights_archive_path | default('') }}"
+        sosreport: "{{ live_support_collected_sosreport_paths | default([]) }}"
+      parsed:
+        must_gather_inventory: "{{ live_support_must_gather_inventory | default({}) }}"
+        etcd_ocp_diag: "{{ live_support_etcd_ocp_diag_data | default({}) }}"
+        omc: "{{ live_support_omc_data | default({}) }}"
+        inspect: "{{ live_support_inspect_data | default({}) }}"
+        cluster_compare: "{{ live_support_cluster_compare_data | default({}) }}"
+        managed_gates: "{{ live_support_managed_gates_data | default({}) }}"
+        advisor_export: "{{ live_support_advisor_export_data | default({}) }}"
+        insights_archive: "{{ live_support_insights_archive_data | default({}) }}"
+        sosreport: "{{ live_support_sosreport_data | default({}) }}"
+      resources: "{{ collected_support_resources | default({}) }}"

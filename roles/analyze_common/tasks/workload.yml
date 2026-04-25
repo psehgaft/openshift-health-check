@@ -2,7 +2,7 @@
 - name: Build platform pod issue list
   ansible.builtin.set_fact:
     platform_pod_issues: "{{ platform_pod_issues | default([]) + pod_issue }}"
-  loop: "{{ (pods | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     phase: "{{ item.status.phase | default('Unknown') }}"
@@ -27,7 +27,7 @@
 - name: Build unhealthy user pod findings
   ansible.builtin.set_fact:
     unhealthy_user_pods: "{{ (unhealthy_user_pods | default([])) + pod_issue }}"
-  loop: "{{ (pods | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     phase: "{{ item.status.phase | default('Unknown') }}"
@@ -52,7 +52,7 @@
 - name: Build deployment health findings
   ansible.builtin.set_fact:
     deployment_issues: "{{ deployment_issues | default([]) + issue_entry }}"
-  loop: "{{ (deployments | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
   vars:
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.availableReplicas | default(0) | int }}"
@@ -64,7 +64,7 @@
 - name: Build statefulset health findings
   ansible.builtin.set_fact:
     statefulset_issues: "{{ statefulset_issues | default([]) + issue_entry }}"
-  loop: "{{ (statefulsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
   vars:
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.currentReplicas | default(0) | int }}"
@@ -76,7 +76,7 @@
 - name: Build daemonset health findings
   ansible.builtin.set_fact:
     daemonset_issues: "{{ daemonset_issues | default([]) + issue_entry }}"
-  loop: "{{ (daemonsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
   vars:
     desired: "{{ item.status.desiredNumberScheduled | default(0) | int }}"
     available: "{{ item.status.numberReady | default(0) | int }}"
@@ -91,7 +91,7 @@
 - name: Build high replica workload review findings
   ansible.builtin.set_fact:
     high_replica_workloads: "{{ (high_replica_workloads | default([])) + replica_review_entry }}"
-  loop: "{{ ((deployments | default({})).get('items', [])) + ((statefulsets | default({})).get('items', [])) }}"
+  loop: "{{ ((analysis_graph.deployments | default({})).get('items', [])) + ((analysis_graph.statefulsets | default({})).get('items', [])) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -117,9 +117,9 @@
     import re
 
     data = json.loads(base64.b64decode(r'''{{ {
-      "deployments": (deployments | default({})).get('items', []),
-      "statefulsets": (statefulsets | default({})).get('items', []),
-      "poddisruptionbudgets": (poddisruptionbudgets | default({})).get('items', []),
+      "deployments": (analysis_graph.deployments | default({})).get('items', []),
+      "statefulsets": (analysis_graph.statefulsets | default({})).get('items', []),
+      "poddisruptionbudgets": (analysis_graph.poddisruptionbudgets | default({})).get('items', []),
       "exclude_regex": user_namespaces_exclude_regex | default('^$')
     } | to_json | b64encode }}''').decode("utf-8"))
 
@@ -243,7 +243,7 @@
 - name: Build orphan pod review findings
   ansible.builtin.set_fact:
     orphan_pods: "{{ (orphan_pods | default([])) + orphan_pod_entry }}"
-  loop: "{{ (pods | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     phase: "{{ item.status.phase | default('Unknown') }}"
@@ -267,7 +267,7 @@
 - name: Build workload ownership label review findings
   ansible.builtin.set_fact:
     workload_label_governance_findings: "{{ (workload_label_governance_findings | default([])) + label_review_entry }}"
-  loop: "{{ ((deployments | default({})).get('items', [])) + ((statefulsets | default({})).get('items', [])) + ((daemonsets | default({})).get('items', [])) }}"
+  loop: "{{ ((analysis_graph.deployments | default({})).get('items', [])) + ((analysis_graph.statefulsets | default({})).get('items', [])) + ((analysis_graph.daemonsets | default({})).get('items', [])) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -296,7 +296,7 @@
 - name: Build workload resource requirement findings
   ansible.builtin.set_fact:
     workload_resource_findings: "{{ (workload_resource_findings | default([])) + resource_entries }}"
-  loop: "{{ ((deployments | default({})).get('items', [])) + ((statefulsets | default({})).get('items', [])) + ((daemonsets | default({})).get('items', [])) }}"
+  loop: "{{ ((analysis_graph.deployments | default({})).get('items', [])) + ((analysis_graph.statefulsets | default({})).get('items', [])) + ((analysis_graph.daemonsets | default({})).get('items', [])) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
@@ -327,7 +327,7 @@
 - name: Build deployment probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (deployments | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
@@ -348,7 +348,7 @@
 - name: Build statefulset probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (statefulsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"
@@ -369,7 +369,7 @@
 - name: Build daemonset probe coverage findings
   ansible.builtin.set_fact:
     workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (daemonsets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     workload_name: "{{ item.metadata.name | default('') }}"

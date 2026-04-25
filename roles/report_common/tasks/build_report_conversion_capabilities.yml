@@ -1,0 +1,64 @@
+---
+- name: Detect report conversion tools
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/detect_report_tools.py"
+  register: report_tool_detection_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Build shared report conversion capability facts
+  ansible.builtin.set_fact:
+    report_tool_detection: "{{ report_tool_detection_cmd.stdout | from_json if (report_tool_detection_cmd.rc == 0 and (report_tool_detection_cmd.stdout | default('') | length > 0)) else {} }}"
+    report_pandoc_available: "{{ (report_tool_detection.pandoc.found | default(false)) | bool }}"
+    report_pdf_engine: >-
+      {{
+        'wkhtmltopdf'
+        if (report_tool_detection.wkhtmltopdf.found | default(false))
+        else (
+          'weasyprint'
+          if (report_tool_detection.weasyprint.found | default(false))
+          else (
+            'prince'
+            if (report_tool_detection.prince.found | default(false))
+            else (
+              'tectonic'
+              if (report_tool_detection.tectonic.found | default(false))
+              else (
+                'xelatex'
+                if (report_tool_detection.xelatex.found | default(false))
+                else (
+                  'lualatex'
+                  if (report_tool_detection.lualatex.found | default(false))
+                  else (
+                    'pdflatex'
+                    if (report_tool_detection.pdflatex.found | default(false))
+                    else ''
+                  )
+                )
+              )
+            )
+          )
+        )
+      }}
+
+- name: Build shared PDF engine argument list
+  ansible.builtin.set_fact:
+    report_pdf_engine_argv: >-
+      {{
+        [
+          '--pdf-engine-opt=--orientation',
+          '--pdf-engine-opt=Landscape',
+          '--pdf-engine-opt=--margin-top',
+          '--pdf-engine-opt=10mm',
+          '--pdf-engine-opt=--margin-right',
+          '--pdf-engine-opt=10mm',
+          '--pdf-engine-opt=--margin-bottom',
+          '--pdf-engine-opt=10mm',
+          '--pdf-engine-opt=--margin-left',
+          '--pdf-engine-opt=10mm'
+        ]
+        if report_pdf_engine == 'wkhtmltopdf'
+        else []
+      }}

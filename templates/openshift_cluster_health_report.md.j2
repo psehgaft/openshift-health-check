@@ -1,20 +1,44 @@
 {% macro status_badge(value) -%}
 {%- set text = value | string -%}
 {%- set key = text | trim | upper -%}
-{%- if key in ['CRITICAL', 'FAILED', 'FAIL', 'ERROR', 'DEGRADED'] -%}
+{%- if key in ['CRITICAL', 'FAILED', 'FAIL', 'ERROR', 'DEGRADED', 'UNSUPPORTED-RISK'] -%}
 <span class="status-critical">{{ text }}</span>
-{%- elif key in ['WARNING', 'WARN', 'LOW', 'POOR'] -%}
+{%- elif key in ['WARNING', 'WARN', 'LOW', 'POOR', 'REVIEW-REQUIRED'] -%}
 <span class="status-warn">{{ text }}</span>
-{%- elif key in ['HEALTHY', 'OK', 'PASS', 'PASSED', 'TRUE', 'ALIGNED', 'EXCELLENT', 'GOOD', 'HIGH'] -%}
+{%- elif key in ['HEALTHY', 'OK', 'PASS', 'PASSED', 'TRUE', 'ALIGNED', 'EXCELLENT', 'GOOD', 'HIGH', 'SUPPORTED'] -%}
 <span class="status-ok">{{ text }}</span>
-{%- elif key in ['INFO', 'FAIR', 'MEDIUM'] -%}
+{%- elif key in ['INFO', 'FAIR', 'MEDIUM', 'PARTIAL'] -%}
 <span class="status-info">{{ text }}</span>
-{%- elif key in ['UNKNOWN', 'UNAVAILABLE', 'N/A', 'NONE'] -%}
+{%- elif key in ['UNKNOWN', 'UNAVAILABLE', 'N/A', 'NONE', 'NOT-COLLECTED', 'INSUFFICIENT-EVIDENCE'] -%}
 <span class="status-unknown">{{ text }}</span>
 {%- else -%}
 {{ text }}
 {%- endif -%}
 {%- endmacro %}
+
+{% set graph = analysis_graph | default({}) %}
+{% set live_support = live_support_data | default({}) %}
+{% set live_support_artifacts = live_support.artifacts | default({}) %}
+{% set live_support_paths = live_support.paths | default({}) %}
+{% set live_support_parsed = live_support.parsed | default({}) %}
+{% set report_collection_failures_list = report_collection_failures | default([]) %}
+{% set report_collection_skipped_list = report_collection_skipped_optional_commands | default([]) %}
+{% set report_collection_success_pct = report_collection_success_rate_pct | default(0) %}
+{% set clusteroperators_items = (graph.clusteroperators | default({})).get('items', []) %}
+{% set clusterversion_obj = graph.clusterversion | default({}) %}
+{% set nodes_items = (graph.nodes | default({})).get('items', []) %}
+{% set machineconfigpools_items = (graph.machineconfigpools | default({})).get('items', []) %}
+{% set apiservices_items = (graph.apiservices | default({})).get('items', []) %}
+{% set routes_items = (graph.routes | default({})).get('items', []) %}
+{% set ingresses_items = (graph.ingresses | default({})).get('items', []) %}
+{% set buildconfigs_items = (graph.buildconfigs | default({})).get('items', []) %}
+{% set builds_items = (graph.builds | default({})).get('items', []) %}
+{% set imagestreams_items = (graph.imagestreams | default({})).get('items', []) %}
+{% set pipelines_items = (graph.pipelines | default({})).get('items', []) %}
+{% set pipelineruns_items = (graph.pipelineruns | default({})).get('items', []) %}
+{% set securitycontextconstraints_items = (graph.securitycontextconstraints | default({})).get('items', []) %}
+{% set secrets_items = (graph.secrets | default({})).get('items', []) %}
+{% set compliancesuites_items = (graph.compliancesuites | default({})).get('items', []) %}
 
 # OpenShift Cluster Health Report
 
@@ -28,9 +52,13 @@
 
 ## At A Glance
 
+{% set optional_access_denied_count = report_collection_skipped_list | selectattr('category', 'equalto', 'optional-access-denied') | list | length %}
 {% set top_risk_areas = [] %}
-{% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}
+{% if (report_collection.core_failed_commands | default(0) | int) > 0 %}
 {% set _ = top_risk_areas.append('core collection gaps reduce confidence in the report') %}
+{% endif %}
+{% if optional_access_denied_count > 0 %}
+{% set _ = top_risk_areas.append('some report detail was skipped because RBAC denied optional queries; rerun with cluster-admin for full detail') %}
 {% endif %}
 {% if (degraded_operators | default([]) | length) > 0 or (unavailable_operators | default([]) | length) > 0 %}
 {% set _ = top_risk_areas.append('cluster operators are degraded or unavailable') %}
@@ -53,15 +81,24 @@
 {% if (observability_findings | default([]) | length) > 0 %}
 {% set _ = top_risk_areas.append('observability forwarding or monitoring posture has gaps') %}
 {% endif %}
+{% if (scored_day2_posture_findings | default([]) | length) > 0 %}
+{% set _ = top_risk_areas.append('expected production Day 2 platform capabilities are missing or incomplete') %}
+{% endif %}
 
 | Summary | Value |
 | --- | --- |
 | Overall status | {{ status_badge(health_summary.status) }} |
 | Health score | `{{ cluster_health_score }}/100` ({{ status_badge(cluster_health_score_label) }}) |
 | Report confidence | {{ status_badge(report_confidence | default('unknown') | upper) }} |
-| Collection completeness | {% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}{{ status_badge('WARN') }} core gaps{% elif (collection_summary.failed_commands | default(0) | int) > 0 %}{{ status_badge('INFO') }} partial{% else %}{{ status_badge('OK') }} complete{% endif %} |
-| Timed out commands | `{{ collection_summary.timed_out_commands | default(0) }}` |
+| Collection completeness | {% if (report_collection.core_failed_commands | default(0) | int) > 0 %}{{ status_badge('WARN') }} core gaps{% elif (report_collection.failed_commands | default(0) | int) > 0 or optional_access_denied_count > 0 %}{{ status_badge('INFO') }} partial{% else %}{{ status_badge('OK') }} complete{% endif %} |
+| Timed out commands | `{{ report_collection.timed_out_commands | default(0) }}` |
 | First recommended action | {% if suggested_next_steps | default([]) | length > 0 %}{{ suggested_next_steps[0].summary }}{% else %}Continue normal review cadence and monitor for drift.{% endif %} |
+
+{% if optional_access_denied_count > 0 %}
+Access note:
+- `{{ optional_access_denied_count }}` optional collector queries were denied by RBAC in this run
+- rerun with `cluster-admin` if you want the report to include full platform detail from those sections
+{% endif %}
 
 {% if top_risk_areas | length == 0 %}
 Primary concerns:
@@ -85,7 +122,9 @@ No specific next steps were generated for this run.
 {% endfor %}
 {% endif %}
 
-## Current State Snapshot
+## Platform Architecture And Capacity Snapshot
+
+Recommendations: {{ architecture_lifecycle_summary.recommendation | default('Review release support status, topology spread, and upgrade readiness before treating the cluster architecture posture as production-ready.') }}
 
 {% if cluster_current_state_build_error | default('') | length > 0 %}
 State summary note:
@@ -111,6 +150,20 @@ State summary note:
 | Estimated installed at | `{{ cluster_current_state.installed_at | default('unknown') }}` |
 | Estimated cluster age | `{{ cluster_current_state.uptime_human | default('unknown') }}` |
 | Estimated cluster age in days | `{{ cluster_current_state.uptime_days | default('unknown') }}` |
+| Lifecycle support status | `{{ architecture_lifecycle_summary.support_status | default('unknown') }}` |
+| Lifecycle support phase | `{{ architecture_lifecycle_summary.support_phase | default('unknown') }}` |
+| Base maintenance support ends | `{{ architecture_lifecycle_summary.maintenance_end | default('unknown') }}` |
+| EUS coverage window ends | `{{ architecture_lifecycle_summary.eus_end | default('n/a') }}` |
+| Lifecycle policy source | `{{ architecture_lifecycle_summary.lifecycle_policy_source | default('unknown') }}` |
+| Deployment classification source | `{{ architecture_lifecycle_summary.deployment_type_source | default(cluster_profile.deployment_type_source | default('unknown')) }}` |
+| Deployment classification confidence | `{{ architecture_lifecycle_summary.deployment_type_confidence | default(cluster_profile.deployment_type_confidence | default('unknown')) }}` |
+| Machine networks source | `{{ architecture_lifecycle_summary.machine_networks_source | default(cluster_profile.machine_networks_source | default('unknown')) }}` |
+| Machine networks known | `{{ architecture_lifecycle_summary.machine_networks_known | default(false) }}` |
+
+{% if architecture_lifecycle_summary.reason_summary | default('') | length > 0 %}
+Architecture and lifecycle notes:
+- {{ architecture_lifecycle_summary.reason_summary }}
+{% endif %}
 
 ### Cluster Size
 
@@ -390,6 +443,7 @@ Collection notes:
 | Signal | Current Value | Status |
 | --- | --- | --- |
 | API `/readyz` | `{{ apiserver_readyz_status | default('unavailable') }}` | {{ status_badge('OK' if apiserver_readyz_status | default('unavailable') == 'ok' else ('WARN' if apiserver_readyz_status | default('unavailable') == 'failed' else 'UNKNOWN')) }} |
+| API `/readyz` failed checks | `{{ health_summary.apiserver_readyz_failed | default(0) }}` | {{ status_badge('WARN' if (health_summary.apiserver_readyz_failed | default(0) | int) > 0 else 'OK') }} |
 {% if prom_available | default(false) %}
 | Prometheus query transport | `{{ prom_transport_label }}` | {{ status_badge('INFO' if (prom_available | default(false)) else 'UNKNOWN') }} |
 | API server 5xx rate | `{{ apiserver_request_5xx_rate if apiserver_request_5xx_rate != '' else 'no samples returned' }}` req/s | {{ status_badge('UNKNOWN' if apiserver_request_5xx_rate == '' else ('WARN' if (apiserver_request_5xx_rate | float) > 0 else 'OK')) }} |
@@ -401,6 +455,8 @@ Collection notes:
 | Prometheus control-plane metrics | `not collected` | {{ status_badge('INFO') }} |
 {% endif %}
 | APIService issues | `{{ health_summary.apiservice_issues | default(0) }}` | {{ status_badge('WARN' if (health_summary.apiservice_issues | default(0) | int) > 0 else 'OK') }} |
+| API runtime degraded | `{{ health_summary.apiserver_runtime_degraded | default(0) }}` | {{ status_badge('WARN' if (health_summary.apiserver_runtime_degraded | default(0) | int) > 0 else 'OK') }} |
+| Core runtime reason summary | `{{ health_summary.core_platform_runtime_reason_summary | default('none') or 'none' }}` | {{ status_badge('WARN' if (health_summary.core_platform_runtime_reason_summary | default('') | length) > 0 else 'OK') }} |
 | ClusterVersion Available | `{{ cv_available | default('Unknown') }}` | {{ status_badge('OK' if cv_available | default('Unknown') == 'True' else ('UNKNOWN' if cv_available | default('Unknown') == 'Unknown' else 'WARN')) }} |
 | ClusterVersion Progressing | `{{ cv_progressing | default('Unknown') }}` | {{ status_badge('INFO' if cv_progressing | default('Unknown') == 'True' else ('UNKNOWN' if cv_progressing | default('Unknown') == 'Unknown' else 'OK')) }} |
 | ClusterVersion Failing | `{{ cv_failing | default('Unknown') }}` | {{ status_badge('WARN' if cv_failing | default('Unknown') == 'True' else ('UNKNOWN' if cv_failing | default('Unknown') == 'Unknown' else 'OK')) }} |
@@ -408,6 +464,8 @@ Collection notes:
 | etcd leaders observed | `{{ etcd_leader_count if etcd_leader_count != '' else 'no samples returned' }}` | {{ status_badge('UNKNOWN' if etcd_leader_count == '' else ('WARN' if (etcd_leader_count | float) != 1 else 'OK')) }} |
 | etcd leader changes (5m) | `{{ etcd_leader_changes_5m if etcd_leader_changes_5m != '' else 'no samples returned' }}` | {{ status_badge('UNKNOWN' if etcd_leader_changes_5m == '' else ('WARN' if (etcd_leader_changes_5m | float) > 0 else 'OK')) }} |
 {% endif %}
+| etcd leader unhealthy | `{{ health_summary.etcd_leader_unhealthy | default(0) }}` | {{ status_badge('WARN' if (health_summary.etcd_leader_unhealthy | default(0) | int) > 0 else 'OK') }} |
+| etcd runtime degraded | `{{ health_summary.etcd_runtime_degraded | default(0) }}` | {{ status_badge('WARN' if (health_summary.etcd_runtime_degraded | default(0) | int) > 0 else 'OK') }} |
 
 ### Platform And Topology
 
@@ -416,6 +474,7 @@ Collection notes:
 | Degraded operators | `{{ health_summary.operators_degraded | default(0) }}` | {{ status_badge('WARN' if (health_summary.operators_degraded | default(0) | int) > 0 else 'OK') }} |
 | Unavailable operators | `{{ health_summary.operators_unavailable | default(0) }}` | {{ status_badge('WARN' if (health_summary.operators_unavailable | default(0) | int) > 0 else 'OK') }} |
 | Progressing operators | `{{ health_summary.operators_progressing | default(0) }}` | {{ status_badge('WARN' if (health_summary.operators_progressing | default(0) | int) > 0 else 'OK') }} |
+| High-impact progressing operators | `{{ health_summary.operators_progressing_high_impact | default(0) }}` | {{ status_badge('WARN' if (health_summary.operators_progressing_high_impact | default(0) | int) > 0 else 'OK') }} |
 | Operator version mismatches | `{{ health_summary.operator_version_mismatches | default(0) }}` | {{ status_badge('WARN' if (health_summary.operator_version_mismatches | default(0) | int) > 0 else 'OK') }} |
 | Network operator available | `{{ (clusteroperator_status_map | default({})).get('network', {}).get('available', 'Unknown') }}` | {{ status_badge('OK' if (clusteroperator_status_map | default({})).get('network', {}).get('available', 'Unknown') == 'True' else ('UNKNOWN' if (clusteroperator_status_map | default({})).get('network', {}) | length == 0 else 'WARN')) }} |
 | Ingress operator available | `{{ (clusteroperator_status_map | default({})).get('ingress', {}).get('available', 'Unknown') }}` | {{ status_badge('OK' if (clusteroperator_status_map | default({})).get('ingress', {}).get('available', 'Unknown') == 'True' else ('UNKNOWN' if (clusteroperator_status_map | default({})).get('ingress', {}) | length == 0 else 'WARN')) }} |
@@ -501,6 +560,11 @@ Collection notes:
 | Signal | Current Value | Status |
 | --- | --- | --- |
 | Conditional update risks | `{{ health_summary.conditional_updates | default(0) }}` | `{% if (health_summary.conditional_updates | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
+| Lifecycle support status | `{{ architecture_lifecycle_summary.support_status | default('unknown') }}` | {{ status_badge(architecture_lifecycle_summary.status | default('UNKNOWN')) }} |
+| Lifecycle support phase | `{{ architecture_lifecycle_summary.support_phase | default('unknown') }}` | {{ status_badge('UNKNOWN' if (architecture_lifecycle_summary.support_phase | default('unknown')) == 'unknown' else ('WARN' if (architecture_lifecycle_summary.support_status | default('unknown')) != 'supported' else 'OK')) }} |
+| Topology warning count | `{{ architecture_lifecycle_summary.topology_warning_count | default(0) }}` | {{ status_badge('WARN' if (architecture_lifecycle_summary.topology_warning_count | default(0) | int) > 0 else 'OK') }} |
+| Deployment classification confidence | `{{ architecture_lifecycle_summary.deployment_type_confidence | default('unknown') }}` | {{ status_badge('INFO' if (architecture_lifecycle_summary.deployment_type_confidence | default('unknown')) in ['low', 'medium'] else 'OK') }} |
+| Machine-network evidence gap | `{{ architecture_lifecycle_summary.machine_networks_evidence_gap | default(false) }}` | {{ status_badge('INFO' if (architecture_lifecycle_summary.machine_networks_evidence_gap | default(false)) else 'OK') }} |
 | Deprecated CRD versions | `{{ health_summary.deprecated_crd_findings | default(0) }}` | `{% if (health_summary.deprecated_crd_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
 | Deprecated API resources | `{{ health_summary.deprecated_api_lines | default(0) }}` | `{% if (health_summary.deprecated_api_lines | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
 | External log forwarding outputs | `{{ observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length }}` | `{% if (observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length) > 0 %}OK{% else %}WARN{% endif %}` |
@@ -509,6 +573,7 @@ Collection notes:
 | External cluster metrics remote write targets | `{{ observability_forwarding_summary.external_cluster_metrics_remote_write_count | default(0) }}` | `{% if (observability_forwarding_summary.external_cluster_metrics_remote_write_count | default(0) | int) > 0 %}OK{% else %}WARN{% endif %}` |
 | External user workload metrics remote write targets | `{{ observability_forwarding_summary.external_user_workload_metrics_remote_write_count | default(0) }}` | `{% if (observability_forwarding_summary.external_user_workload_metrics_remote_write_count | default(0) | int) > 0 %}OK{% else %}WARN{% endif %}` |
 | Compliance suite findings | `{{ health_summary.compliance_suite_findings | default(0) }}` | `{% if (health_summary.compliance_suite_findings | default(0) | int) > 0 %}WARN{% elif (health_summary.compliancesuites | default(0) | int) > 0 %}OK{% else %}UNKNOWN{% endif %}` |
+| Compliance standards findings | `{{ health_summary.compliance_program_findings | default(0) }}` | `{% if (health_summary.compliance_program_findings | default(0) | int) > 0 %}WARN{% elif (health_summary.compliancescans | default(0) | int) > 0 %}OK{% else %}UNKNOWN{% endif %}` |
 | Empty user namespaces | `{{ health_summary.empty_user_namespaces | default(0) }}` | `{% if (health_summary.empty_user_namespaces | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
 | Likely unused service accounts | `{{ health_summary.likely_unused_serviceaccounts | default(0) }}` | `{% if (health_summary.likely_unused_serviceaccounts | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
 | Likely unused configmaps | `{{ health_summary.likely_unused_configmaps | default(0) }}` | `{% if (health_summary.likely_unused_configmaps | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
@@ -516,7 +581,7 @@ Collection notes:
 | Likely unused CRDs | `{{ health_summary.likely_unused_crds | default(0) }}` | `{% if (health_summary.likely_unused_crds | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
 | Recent warning events | `{{ health_summary.recent_warning_events | default(0) }}` | `{% if (health_summary.recent_warning_events | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
 | Firing alerts | `{{ health_summary.firing_alerts | default(0) }}` | `{% if (health_summary.firing_alerts | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
-| Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% | `{% if (collection_summary.core_failed_commands | default(0) | int) > 0 %}WARN{% elif (collection_summary.failed_commands | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
+| Collection success rate | `{{ report_collection_success_pct }}`% | `{% if (report_collection.core_failed_commands | default(0) | int) > 0 %}WARN{% elif (report_collection.failed_commands | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` |
 | Report confidence | `{{ report_confidence | default('unknown') | upper }}` | `{% if report_confidence | default('unknown') == 'low' %}WARN{% elif report_confidence | default('unknown') == 'medium' %}INFO{% else %}OK{% endif %}` |
 
 ### Recovery And Remediation
@@ -533,7 +598,117 @@ Collection notes:
 | MachineHealthChecks | `{{ health_summary.machinehealthchecks | default(0) }}` | `{% if (health_summary.machinehealthchecks | default(0) | int) > 0 %}INFO{% else %}UNKNOWN{% endif %}` |
 | Machine remediation findings | `{{ health_summary.machine_healthcheck_findings | default(0) }}` | `{% if (health_summary.machine_healthcheck_findings | default(0) | int) > 0 %}WARN{% else %}OK{% endif %}` |
 
-## Platform Component Detail
+## Assessment Domains By Priority
+
+| Priority | Posture Area | Headline Signal | Primary Section |
+| --- | --- | --- | --- |
+| `P1` | Supportability | `{{ audit_report.supportability.summary.verdict | default('unknown') }}` | `Supportability And Evidence` |
+| `P2` | Core platform health | `{{ health_summary.status | default('unknown') }}` | `Platform Health` |
+| `P3` | Platform architecture and lifecycle | `support={{ architecture_lifecycle_summary.support_status | default('unknown') }} conditional={{ conditional_updates | default([]) | length }} topology={{ architecture_lifecycle_summary.topology_warning_count | default(0) }}` | `Platform Architecture And Capacity Snapshot`, `Upgrade And Lifecycle Risk` |
+| `P4` | Networking architecture | `status={{ network_architecture_summary.status | default('unknown') }} route={{ top_route_issues | default([]) | length }} cross-conflicts={{ route_ingress_host_conflicts | default([]) | length }}` | `Network And Application Access` |
+| `P5` | Security and compliance | `status={{ security_compliance_summary.status | default('unknown') }} privileged={{ security_compliance_summary.privileged_access_count | default(0) }} compliance={{ security_compliance_summary.compliance_warning_count | default(0) }}` | `Security And Governance` |
+| `P6` | Observability | `status={{ observability_summary.status | default('unknown') }} alerts={{ observability_summary.firing_alert_count | default(0) }} log_gaps={{ observability_summary.log_gap_count | default(0) }}` | `Observability` |
+| `P7` | Backup and disaster recovery | `status={{ backup_recovery_summary.status | default('unknown') }} backup findings={{ top_backup_posture_findings | default([]) | length }} machine remediation={{ top_machine_healthcheck_findings | default([]) | length }}` | `Storage And Resilience` |
+| `P8` | Node health and capacity planning | `status={{ node_health_capacity_summary.status | default('unknown') }} not_ready={{ node_health_capacity_summary.not_ready_node_count | default(0) }} pressure={{ node_health_capacity_summary.node_pressure_count | default(0) }}` | `Node Health And Capacity`, `Platform Architecture And Capacity Snapshot` |
+| `P9` | Workload health and deployment hygiene | `status={{ (audit_report.domains.workload_health.summary | default({})).status | default('unknown') }} unhealthy={{ (audit_report.domains.workload_health.summary | default({})).unhealthy_user_pod_count | default(0) }} hygiene={{ (audit_report.domains.workload_health.summary | default({})).workload_hygiene_debt_count | default(0) }}` | `Workload Health` |
+| `P10` | Operations and lifecycle maturity | `status={{ (audit_report.domains.production_day2_readiness.operations_lifecycle_maturity_summary | default({})).status | default('unknown') }} gitops={{ (audit_report.domains.production_day2_readiness.operations_lifecycle_maturity_summary | default({})).gitops_present | default(false) }} backups={{ (audit_report.domains.production_day2_readiness.operations_lifecycle_maturity_summary | default({})).successful_backup_count | default(0) }}` | `Operations And Lifecycle Maturity` |
+| `P11` | Container platform adoption and release engineering | `failed pipelines={{ top_failed_pipelineruns | default([]) | length }} buildconfigs without triggers={{ top_buildconfigs_without_triggers | default([]) | length }}` | `Container Platform Adoption And Release Engineering` |
+| `P12` | Workload capability extensions | `status={{ (audit_report.domains.production_day2_readiness.workload_capability_extensions_summary | default({})).status | default('unknown') }} virtualization={{ (audit_report.domains.production_day2_readiness.workload_capability_extensions_summary | default({})).virtualization_present | default(false) }} ai={{ (audit_report.domains.production_day2_readiness.workload_capability_extensions_summary | default({})).ai_present | default(false) }}` | `Day 2 Capability Inventory And Readiness` |
+| `P13` | Day 2 production readiness | `status={{ (audit_report.domains.production_day2_readiness.day2_production_readiness_summary | default({})).status | default('unknown') }} evidence={{ (audit_report.domains.production_day2_readiness.day2_production_readiness_summary | default({})).evidence_confidence | default('unknown') }}` | `Day 2 Production Readiness` |
+
+## Operations And Lifecycle Maturity
+
+Signals in this section show how the cluster is operated day to day. Capability inventory appears later as supporting context.
+{% if audit_report.domains.production_day2_readiness.operations_recommendations | default('') | length > 0 %}
+Recommendations: {{ audit_report.domains.production_day2_readiness.operations_recommendations }}
+
+{% endif %}
+
+{% set operations_maturity_summary = audit_report.domains.production_day2_readiness.operations_lifecycle_maturity_summary | default({}) %}
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| Operations maturity status | `{{ operations_maturity_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (operations_maturity_summary.status | default('unknown')) == 'WARNING' else ('OK' if (operations_maturity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')) }} |
+| Reason summary | `{{ operations_maturity_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
+| GitOps present | `{{ operations_maturity_summary.gitops_present | default(false) }}` | {{ status_badge('INFO' if not (operations_maturity_summary.gitops_present | default(false)) else 'OK') }} |
+| GitOps applications | `{{ operations_maturity_summary.gitops_application_count | default(0) }}` | {{ status_badge('OK' if (operations_maturity_summary.gitops_application_count | default(0) | int) > 0 else ('INFO' if not (operations_maturity_summary.gitops_present | default(false)) else 'WARN')) }} |
+| Identity providers | `{{ operations_maturity_summary.identity_provider_count | default(0) }}` | {{ status_badge('OK' if (operations_maturity_summary.identity_provider_count | default(0) | int) > 0 else 'WARN') }} |
+| Backup schedules | `{{ operations_maturity_summary.backup_schedule_count | default(0) }}` | {{ status_badge('OK' if (operations_maturity_summary.backup_schedule_count | default(0) | int) > 0 else 'WARN') }} |
+| Successful backups | `{{ operations_maturity_summary.successful_backup_count | default(0) }}` | {{ status_badge('OK' if (operations_maturity_summary.successful_backup_count | default(0) | int) > 0 else 'WARN') }} |
+| MachineHealthChecks | `{{ operations_maturity_summary.machinehealthcheck_count | default(0) }}` | {{ status_badge('OK' if ((operations_maturity_summary.machinehealthcheck_count | default(0) | int) > 0 or not (operations_maturity_summary.machinehealthcheck_expected | default(false))) else 'WARN') }} |
+| Broader capability warnings | `{{ operations_maturity_summary.capability_check_warning_count | default(0) }}` | {{ status_badge('INFO' if (operations_maturity_summary.capability_check_warning_count | default(0) | int) > 0 else 'OK') }} |
+
+Check levels:
+- `required` means a baseline production capability the report expects to be present
+- `recommended` means a strong Day 2 capability that should usually exist in production
+- `informational` means useful posture context that is reported but not scored
+Detected baseline profile:
+- `provider baseline`: `{{ health_summary.day2_baseline_provider | default('unknown') }}`
+- `cluster shape`: `{{ health_summary.day2_baseline_cluster_shape | default('unknown') }}`
+- `control plane mode`: `{{ health_summary.day2_baseline_control_plane_mode | default('unknown') }}`
+
+## Day 2 Capability Inventory And Readiness
+
+{% set capability_extensions_summary = audit_report.domains.production_day2_readiness.workload_capability_extensions_summary | default({}) %}
+
+Recommendations: {{ capability_extensions_summary.recommendation | default('Review extension-specific health for capabilities that are actually present, and treat absent optional capabilities as inventory context rather than automatic defects.') }}
+
+The items below are supporting inventory details. They add context, but they are not the final production-readiness verdict.
+
+| Signal | Current Value | Status |
+| --- | --- | --- |
+| Capability extensions posture | `{{ capability_extensions_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (capability_extensions_summary.status | default('unknown')) == 'WARNING' else ('INFO' if (capability_extensions_summary.status | default('unknown')) == 'INFO' else 'UNKNOWN')) }} |
+| Reason summary | `{{ capability_extensions_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
+| Virtualization present | `{{ capability_extensions_summary.virtualization_present | default(false) }}` | {{ status_badge('WARN' if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 else ('INFO' if (capability_extensions_summary.virtualization_present | default(false)) else 'UNKNOWN')) }} |
+| AI present | `{{ capability_extensions_summary.ai_present | default(false) }}` | {{ status_badge('WARN' if (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 else ('INFO' if (capability_extensions_summary.ai_present | default(false)) else 'UNKNOWN')) }} |
+| Extension context capabilities | `{{ capability_extensions_summary.extension_context_present_count | default(0) }}` | {{ status_badge('INFO' if (capability_extensions_summary.extension_context_present_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Optional capability inventory notes | `{{ capability_extensions_summary.capability_inventory_info_count | default(0) }}` | {{ status_badge('INFO' if (capability_extensions_summary.capability_inventory_info_count | default(0) | int) > 0 else 'OK') }} |
+| ClusterAutoscaler resources | `{{ health_summary.day2_clusterautoscaler_count | default(0) }}` | {{ status_badge('OK' if (health_summary.day2_clusterautoscaler_count | default(0) | int) > 0 else ('WARN' if (health_summary.day2_clusterautoscaler_expected | default(false)) else 'INFO')) }} |
+| ACM management detected | `{{ health_summary.day2_acm_managed | default(false) }}` | {{ status_badge('OK' if (health_summary.day2_acm_managed | default(false)) else 'INFO') }} |
+| ACM klusterlets | `{{ health_summary.day2_acm_klusterlet_count | default(0) }}` | {{ status_badge('INFO' if (health_summary.day2_acm_klusterlet_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+| ACM managed cluster addons | `{{ health_summary.day2_acm_managedclusteraddon_count | default(0) }}` | {{ status_badge('INFO' if (health_summary.day2_acm_managedclusteraddon_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+
+{% if (audit_report.domains.production_day2_readiness.product_evidence | default({}) | length) > 0 %}
+### Workload Capability Extensions
+
+| Capability | Present | Evidence Sources | Key Counts |
+| --- | --- | --- | --- |
+| Virtualization | `{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).virtualization.present | default(false) }}` | `{{ ((audit_report.domains.production_day2_readiness.product_evidence | default({})).virtualization.evidence_sources | default([])) | join(', ') or 'none' }}` | kubevirt=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).virtualization.kubevirt_count | default(0) }}` hco=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).virtualization.hyperconverged_count | default(0) }}` vms=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).virtualization.virtualmachine_count | default(0) }}` vmis=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).virtualization.virtualmachineinstance_count | default(0) }}` |
+| AI | `{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).ai.present | default(false) }}` | `{{ ((audit_report.domains.production_day2_readiness.product_evidence | default({})).ai.evidence_sources | default([])) | join(', ') or 'none' }}` | dsc=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).ai.datasciencecluster_count | default(0) }}` dsci=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).ai.dscinitialization_count | default(0) }}` notebooks=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).ai.notebook_count | default(0) }}` isvc=`{{ (audit_report.domains.production_day2_readiness.product_evidence | default({})).ai.inferenceservice_count | default(0) }}` |
+
+{% set extension_findings = (audit_report.domains.production_day2_readiness.product_evidence_findings | default([]))
+  | selectattr('area', 'in', ['virtualization', 'ai']) | list %}
+{% if extension_findings | length > 0 %}
+#### Extension Health Findings
+
+{% for item in extension_findings %}
+- `{{ item.severity | upper }}` `{{ item.area }}`: {{ item.detail }}
+{% endfor %}
+{% endif %}
+{% endif %}
+
+{% if day2_posture_findings | default([]) | length > 0 %}
+#### Supporting Capability Findings
+
+{% set day2_findings = day2_posture_findings %}
+{% set day2_use_status_badge = false %}
+{% include 'partials/openshift_day2_findings.md.j2' %}
+{% endif %}
+
+{% if day2_posture_checks | default([]) | length > 0 %}
+#### Supporting Capability Checks
+
+{% set day2_checks = day2_posture_checks %}
+{% set day2_use_status_badge = true %}
+{% include 'partials/openshift_day2_checks.md.j2' %}
+{% endif %}
+
+## Platform Health
+
+{% if audit_report.domains.platform_health.recommendations | default('') | length > 0 %}
+Recommendations: {{ audit_report.domains.platform_health.recommendations }}
+
+{% endif %}
 
 | Component | Available | Progressing | Degraded | Detail |
 | --- | --- | --- | --- | --- |
@@ -546,13 +721,27 @@ Collection notes:
 {% if top_apiservice_issues | default([]) | length > 0 %}
 ### APIService Availability Findings
 
-| APIService | Backing Service | Available | Reason | Detail |
-| --- | --- | --- | --- | --- |
-{% for item in top_apiservice_issues %}
-| `{{ item.name }}` | `{{ item.service }}` | {{ status_badge('OK' if item.available == 'True' else ('UNKNOWN' if item.available == 'Unknown' else 'WARN')) }} | `{{ item.reason }}` | `{{ item.detail | replace('\n', ' ') }}` |
-{% endfor %}
-{% elif (apiservices | default({})).get('items', []) | length > 0 %}
+{% set apiservice_items = top_apiservice_issues %}
+{% set apiservice_use_status_badge = true %}
+{% include 'partials/openshift_apiservice_findings.md.j2' %}
+{% elif apiservices_items | length > 0 %}
 No APIService availability issues were detected in the collected registration objects.
+{% endif %}
+
+{% if (audit_report.domains.platform_health.etcd_ocp_diag_summary.present | default(false)) or (audit_report.domains.platform_health.etcd_ocp_diag_findings | default([]) | length > 0) %}
+### etcd Must-Gather Diagnostics
+
+{% set etcd_diag_summary = audit_report.domains.platform_health.etcd_ocp_diag_summary %}
+{% set etcd_diag_findings = audit_report.domains.platform_health.etcd_ocp_diag_findings | default([]) %}
+{% include 'partials/openshift_etcd_ocp_diag.md.j2' %}
+{% endif %}
+
+{% if (audit_report.domains.platform_health.omc_summary.present | default(false)) or (audit_report.domains.platform_health.omc_findings | default([]) | length > 0) %}
+### OMC Must-Gather Diagnostics
+
+{% set omc_summary = audit_report.domains.platform_health.omc_summary %}
+{% set omc_findings = audit_report.domains.platform_health.omc_findings | default([]) %}
+{% include 'partials/openshift_omc.md.j2' %}
 {% endif %}
 
 {% if dataprotectionapplication_summary | default([]) | length > 0 %}
@@ -571,7 +760,17 @@ No APIService availability issues were detected in the collected registration ob
 | Check | Result | Detail |
 | --- | --- | --- |
 {% for item in top_backup_posture_findings %}
-| `{% if item.issue == 'backup-tooling-not-detected' %}Backup tooling{% elif item.issue == 'backup-storage-location-missing' %}Backup storage location{% elif item.issue == 'backup-storage-location-unavailable' %}Backup storage location{% elif item.issue == 'backup-schedule-missing' %}Backup schedule{% elif item.issue == 'backup-schedule-paused' %}Backup schedule{% elif item.issue == 'successful-backup-missing' %}Successful backup{% elif item.issue == 'successful-backup-stale' %}Successful backup freshness{% elif item.issue == 'restore-evidence-missing' %}Restore evidence{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue in ['backup-tooling-not-detected', 'backup-storage-location-missing', 'backup-schedule-missing', 'successful-backup-missing', 'restore-evidence-missing'] %}missing{% elif item.issue in ['backup-storage-location-unavailable', 'backup-schedule-paused', 'successful-backup-stale'] %}review{% else %}review{% endif %}` | `{{ item.detail }}` |
+| `{% if item.issue == 'backup-tooling-not-detected' %}Backup tooling{% elif item.issue == 'backup-storage-location-missing' %}Backup storage location{% elif item.issue == 'backup-storage-location-unavailable' %}Backup storage location{% elif item.issue == 'backup-schedule-missing' %}Backup schedule{% elif item.issue == 'backup-schedule-paused' %}Backup schedule{% elif item.issue == 'successful-backup-missing' %}Successful backup{% elif item.issue == 'successful-backup-has-warnings-or-errors' %}Successful backup quality{% elif item.issue == 'successful-backup-stale' %}Successful backup freshness{% elif item.issue == 'restore-evidence-missing' or item.issue == 'restore-evidence-not-demonstrated' %}Restore evidence{% elif item.issue == 'restore-evidence-has-warnings-or-errors' %}Restore quality{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue in ['backup-tooling-not-detected', 'backup-storage-location-missing', 'backup-schedule-missing', 'successful-backup-missing'] %}missing{% elif item.issue in ['backup-storage-location-unavailable', 'backup-schedule-paused', 'successful-backup-has-warnings-or-errors', 'successful-backup-stale', 'restore-evidence-not-demonstrated', 'restore-evidence-has-warnings-or-errors', 'restore-evidence-missing'] %}review{% else %}review{% endif %}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_live_must_gather_findings | default([]) | length > 0 or top_live_inspect_findings | default([]) | length > 0 %}
+### Live Collection Coverage Signals
+
+| Signal | Severity | Detail |
+| --- | --- | --- |
+{% for item in (top_live_must_gather_findings | default([])) + (top_live_inspect_findings | default([])) %}
+| `{{ item.issue }}` | `{{ item.severity | upper }}` | {{ item.detail }} |
 {% endfor %}
 {% endif %}
 
@@ -615,7 +814,50 @@ No APIService availability issues were detected in the collected registration ob
 {% endfor %}
 {% endif %}
 
-## Upgrade Risk
+## Upgrade And Lifecycle Risk
+
+Recommendations: {{ architecture_lifecycle_summary.recommendation | default('Review release support status, topology spread, and upgrade readiness before treating the cluster architecture posture as production-ready.') }}
+
+| Signal | Value |
+| --- | --- |
+| Lifecycle support status | `{{ architecture_lifecycle_summary.support_status | default('unknown') }}` |
+| Lifecycle support phase | `{{ architecture_lifecycle_summary.support_phase | default('unknown') }}` |
+| Base maintenance support ends | `{{ architecture_lifecycle_summary.maintenance_end | default('unknown') }}` |
+| EUS coverage window ends | `{{ architecture_lifecycle_summary.eus_end | default('n/a') }}` |
+| Conditional update risks | `{{ architecture_lifecycle_summary.conditional_update_count | default(0) }}` |
+| Topology warning count | `{{ architecture_lifecycle_summary.topology_warning_count | default(0) }}` |
+
+### Upgrade Readiness
+
+Recommendations: {{ upgrade_readiness_summary.recommendation | default('Review lifecycle support, deprecations, control-plane health, and conditional update risks before scheduling an upgrade.') }}
+
+| Signal | Value |
+| --- | --- |
+| Upgrade readiness status | `{{ upgrade_readiness_summary.status | default('unknown') }}` |
+| Blocking findings | `{{ upgrade_readiness_summary.blocker_count | default(0) }}` |
+| Warning findings | `{{ upgrade_readiness_summary.warning_count | default(0) }}` |
+| Available updates | `{{ upgrade_readiness_summary.available_update_count | default(0) }}` |
+| Conditional update risks | `{{ upgrade_readiness_summary.conditional_update_count | default(0) }}` |
+
+{% if upgrade_readiness_summary.blocker_findings | default([]) | length > 0 %}
+#### Upgrade Blockers
+
+| Issue | Detail |
+| --- | --- |
+{% for item in upgrade_readiness_summary.blocker_findings %}
+| `{{ item.issue }}` | {{ item.detail }} |
+{% endfor %}
+{% endif %}
+
+{% if upgrade_readiness_summary.warning_findings | default([]) | length > 0 %}
+#### Upgrade Warnings
+
+| Issue | Detail |
+| --- | --- |
+{% for item in upgrade_readiness_summary.warning_findings %}
+| `{{ item.issue }}` | {{ item.detail }} |
+{% endfor %}
+{% endif %}
 
 {% if (available_updates | default([]) | length) == 0 and (conditional_updates | default([]) | length) == 0 %}
 No available or conditional updates were returned by `ClusterVersion`.
@@ -633,9 +875,54 @@ No available or conditional updates were returned by `ClusterVersion`.
 - version=`{{ item.release.version | default('unknown') }}` risk=`{{ item.risks[0].name | default('unknown') if (item.risks | default([]) | length > 0) else 'unknown' }}`
 {% endfor %}
 {% endif %}
+
+{% if top_live_cluster_compare_findings | default([]) | length > 0 %}
+### Baseline Comparison Findings
+
+| Signal | Severity | Detail |
+| --- | --- | --- |
+{% for item in top_live_cluster_compare_findings %}
+| `{{ item.issue }}` | `{{ item.severity | upper }}` | {{ item.detail }} |
+{% endfor %}
 {% endif %}
 
-## Update History
+{% if top_live_managed_gate_findings | default([]) | length > 0 %}
+### Managed-Service Gate Findings
+
+| Signal | Severity | Detail |
+| --- | --- | --- |
+{% for item in top_live_managed_gate_findings %}
+| `{{ item.issue }}` | `{{ item.severity | upper }}` | {{ item.detail }} |
+{% endfor %}
+{% endif %}
+{% endif %}
+
+### API And CRD Lifecycle
+
+{% if top_deprecated_crd_findings | default([]) | length == 0 and top_deprecated_api_lines | default([]) | length == 0 %}
+No deprecated CRD versions or deprecated API resources were identified from the collected data.
+{% else %}
+{% if top_deprecated_crd_findings | default([]) | length > 0 %}
+#### Deprecated CRD Versions
+
+| CRD | Group | Deprecated Versions |
+| --- | --- | --- |
+{% for item in top_deprecated_crd_findings %}
+| `{{ item.name }}` | `{{ item.group }}` | `{{ item.versions }}` |
+{% endfor %}
+{% endif %}
+{% if top_deprecated_api_lines | default([]) | length > 0 %}
+#### Deprecated API Resources
+
+| Resource Detail |
+| --- |
+{% for line in top_deprecated_api_lines %}
+| {{ line | replace('|', '\\|') }} |
+{% endfor %}
+{% endif %}
+{% endif %}
+
+### Update History
 
 {% if cluster_update_history | default([]) | length == 0 %}
 Cluster update history was not returned.
@@ -647,9 +934,9 @@ Cluster update history was not returned.
 {% endfor %}
 {% endif %}
 
-## Operator Inventory
+### Operator Inventory
 
-{% if (clusteroperators | default({})).get('items', []) | length == 0 %}
+{% if clusteroperators_items | length == 0 %}
 Cluster operator data was not collected.
 {% else %}
 Operator version note:
@@ -658,55 +945,87 @@ Operator version note:
 
 | Operator | Version | Desired Version | Version State | Available | Progressing | Degraded |
 | --- | --- | --- | --- | --- | --- | --- |
-{% for item in ((clusteroperators | default({})).get('items', []) | sort(attribute='metadata.name')) %}
-| `{{ item.metadata.name }}` | `{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}` | `{{ clusterversion.status.desired.version | default('unknown') }}` | {% set operator_version = item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' %}{% set desired_version = clusterversion.status.desired.version | default('unknown') %}{% if operator_version in ['unknown', ''] or desired_version in ['unknown', ''] %}{{ status_badge('UNKNOWN') }}{% elif operator_version == desired_version %}{{ status_badge('ALIGNED') }}{% else %}{{ status_badge('WARN') }} drift{% endif %} | {{ status_badge('OK' if ((item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if ((item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} |
+{% for item in (clusteroperators_items | sort(attribute='metadata.name')) %}
+| `{{ item.metadata.name }}` | `{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}` | `{{ clusterversion_obj.status.desired.version | default('unknown') }}` | {% set operator_version = item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' %}{% set desired_version = clusterversion_obj.status.desired.version | default('unknown') %}{% if operator_version in ['unknown', ''] or desired_version in ['unknown', ''] %}{{ status_badge('UNKNOWN') }}{% elif operator_version == desired_version %}{{ status_badge('ALIGNED') }}{% else %}{{ status_badge('WARN') }} drift{% endif %} | {{ status_badge('OK' if ((item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if ((item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} |
 {% endfor %}
 {% endif %}
 
-## Platform Component Inventory
+### Platform Component Inventory
 
-{% if infrastructure_component_summary | default([]) | length == 0 %}
-Infrastructure component summary was not collected.
-{% else %}
-| Component | Available | Progressing | Degraded | Version | Detail |
-| --- | --- | --- | --- | --- | --- |
-{% for item in infrastructure_component_summary %}
-| `{{ item.component }}` | {{ status_badge('OK' if item.available == 'True' else ('UNKNOWN' if item.available == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if item.progressing == 'True' else ('UNKNOWN' if item.progressing == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if item.degraded == 'True' else ('UNKNOWN' if item.degraded == 'Unknown' else 'OK')) }} | `{{ item.version }}` | `{{ item.detail }}` |
-{% endfor %}
-{% endif %}
+{% set platform_component_items = infrastructure_component_summary | default([]) %}
+{% set platform_component_use_status_badge = true %}
+{% set platform_component_show_version = true %}
+{% set platform_component_empty_message = 'Infrastructure component summary was not collected.' %}
+{% include 'partials/openshift_platform_components.md.j2' %}
 
 {% if ingresscontroller_summary | default([]) | length > 0 %}
 ### Ingress Controllers
 
-| Name | Domain | Available | Progressing | Degraded | Available Replicas | Desired Replicas |
-| --- | --- | --- | --- | --- | --- | --- |
-{% for item in ingresscontroller_summary %}
-| `{{ item.name }}` | `{{ item.domain }}` | {{ status_badge('OK' if item.available == 'True' else ('UNKNOWN' if item.available == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if item.progressing == 'True' else ('UNKNOWN' if item.progressing == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if item.degraded == 'True' else ('UNKNOWN' if item.degraded == 'Unknown' else 'OK')) }} | `{{ item.available_replicas }}` | `{{ item.desired_replicas }}` |
-{% endfor %}
+{% set ingresscontroller_items = ingresscontroller_summary %}
+{% set ingresscontroller_use_status_badge = true %}
+{% set ingresscontroller_compact_replica_column = false %}
+{% include 'partials/openshift_ingresscontrollers.md.j2' %}
 {% endif %}
 
-## Node Inventory
+## Node Health And Capacity
 
-{% if (nodes | default({})).get('items', []) | length == 0 %}
+Recommendations: {{ audit_report.domains.node_health_and_capacity.recommendations | default('Review node readiness, pressure, pod density, capacity hotspots, node diagnostics coverage, and persistent storage posture before treating node capacity as healthy.') }}
+
+{% set node_health_capacity_summary = audit_report.domains.node_health_and_capacity.summary | default({}) %}
+{% set node_diagnostics = audit_report.domains.node_health_and_capacity.diagnostics_summary | default({}) %}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Node health and capacity status | `{{ node_health_capacity_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (node_health_capacity_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (node_health_capacity_summary.status | default('unknown')) == 'WARNING' else ('OK' if (node_health_capacity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Capacity reason summary | `{{ node_health_capacity_summary.reason_summary | default('none') }}` | `summary` |
+| NotReady nodes | `{{ node_health_capacity_summary.not_ready_node_count | default(0) }}` | {{ status_badge('CRITICAL' if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 else 'OK') }} |
+| Nodes under pressure | `{{ node_health_capacity_summary.node_pressure_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 else 'OK') }} |
+| Critical pod density nodes | `{{ node_health_capacity_summary.critical_pod_density_node_count | default(0) }}` | {{ status_badge('CRITICAL' if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 else 'OK') }} |
+| High pod density nodes | `{{ node_health_capacity_summary.high_pod_density_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 else 'OK') }} |
+| Quota pressure findings | `{{ node_health_capacity_summary.quota_pressure_finding_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 else 'OK') }} |
+| High CPU nodes | `{{ node_health_capacity_summary.high_cpu_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 else 'OK') }} |
+| High memory nodes | `{{ node_health_capacity_summary.high_memory_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 else 'OK') }} |
+| High disk nodes | `{{ node_health_capacity_summary.high_disk_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 else 'OK') }} |
+| Node diagnostics verdict | `{{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}` | {{ status_badge('OK' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) == 'supported' else ('INFO' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] else 'UNKNOWN')) }} |
+| External storage provider detected | `{{ node_health_capacity_summary.external_storage_provider_detected | default(false) }}` | {{ status_badge('OK' if (node_health_capacity_summary.external_storage_provider_detected | default(false)) else 'INFO') }} |
+| Local or ephemeral storage only risk | `{{ node_health_capacity_summary.local_or_ephemeral_only_risk | default(false) }}` | {{ status_badge('INFO' if (node_health_capacity_summary.local_or_ephemeral_only_risk | default(false)) else 'OK') }} |
+
+{% if nodes_items | length == 0 %}
 Node data was not collected.
 {% else %}
 | Node | Roles | Ready | Pressures | Kubelet | OS Image |
 | --- | --- | --- | --- | --- | --- |
-{% for item in (((nodes | default({})).get('items', [])) | sort(attribute='metadata.name')) %}
+{% for item in (nodes_items | sort(attribute='metadata.name')) %}
 | `{{ item.metadata.name }}` | `{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | join(', ') or 'worker' }}` | {{ status_badge('OK' if ((item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | `{{ item.status.conditions | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | join(', ') or 'None' }}` | `{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}` | `{{ item.status.nodeInfo.osImage | default('unknown') }}` |
 {% endfor %}
 {% endif %}
 
-## MachineConfigPool Inventory
+### MachineConfigPool Inventory
 
-{% if (machineconfigpools | default({})).get('items', []) | length == 0 %}
+{% if machineconfigpools_items | length == 0 %}
 MachineConfigPool data was not collected.
 {% else %}
 | MCP | Updated | Updating | Degraded | Machine Count | Ready Count | Updated Count |
 | --- | --- | --- | --- | --- | --- | --- |
-{% for item in (((machineconfigpools | default({})).get('items', [])) | sort(attribute='metadata.name')) %}
+{% for item in (machineconfigpools_items | sort(attribute='metadata.name')) %}
 | `{{ item.metadata.name }}` | {{ status_badge('OK' if ((item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if ((item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | `{{ item.status.machineCount | default('n/a') }}` | `{{ item.status.readyMachineCount | default('n/a') }}` | `{{ item.status.updatedMachineCount | default('n/a') }}` |
 {% endfor %}
+{% endif %}
+
+{% if node_diagnostics | default({}) | length > 0 %}
+### Node Diagnostic Coverage
+
+| Signal | Value |
+| --- | --- |
+| Diagnostics verdict | `{{ node_diagnostics.verdict | default('unknown') }}` |
+| Inspect present | `{{ node_diagnostics.inspect_present | default(false) }}` |
+| Inspect node markers | `{{ node_diagnostics.inspect_resource_markers.nodes | default(0) }}` |
+| Inspect MachineConfigPool markers | `{{ node_diagnostics.inspect_resource_markers.machineconfigpools | default(0) }}` |
+| Sosreports collected | `{{ node_diagnostics.sosreport_count | default(0) }}` |
+| Sosreports with journal | `{{ node_diagnostics.sosreport_with_journal | default(0) }}` |
+| Sosreports with kubelet logs | `{{ node_diagnostics.sosreport_with_kubelet_logs | default(0) }}` |
+| Sosreports with CRI-O logs | `{{ node_diagnostics.sosreport_with_crio_logs | default(0) }}` |
+| Sosreports with network data | `{{ node_diagnostics.sosreport_with_network_data | default(0) }}` |
 {% endif %}
 
 {% if machinehealthcheck_summary | default([]) | length > 0 %}
@@ -729,7 +1048,24 @@ MachineConfigPool data was not collected.
 {% endfor %}
 {% endif %}
 
-## Storage
+## Storage And Resilience
+
+Recommendations: {{ audit_report.domains.storage_and_resilience.recommendations | default('Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.') }}
+
+{% set backup_recovery_summary = audit_report.domains.storage_and_resilience.summary | default({}) %}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Backup and DR posture status | `{{ backup_recovery_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (backup_recovery_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (backup_recovery_summary.status | default('unknown')) == 'WARNING' else ('OK' if (backup_recovery_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Recovery reason summary | `{{ backup_recovery_summary.reason_summary | default('none') }}` | `summary` |
+| Available backup storage locations | `{{ backup_recovery_summary.available_backup_storage_location_count | default(0) }}` | {{ status_badge('OK' if (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) > 0 else 'CRITICAL') }} |
+| Backup schedules | `{{ backup_recovery_summary.backup_schedule_count | default(0) }}` | {{ status_badge('OK' if (backup_recovery_summary.backup_schedule_count | default(0) | int) > 0 else 'CRITICAL') }} |
+| Paused backup schedules | `{{ backup_recovery_summary.paused_backup_schedule_count | default(0) }}` | {{ status_badge('WARN' if (backup_recovery_summary.paused_backup_schedule_count | default(0) | int) > 0 else 'OK') }} |
+| Clean successful backups | `{{ backup_recovery_summary.clean_successful_backup_count | default(0) }}` | {{ status_badge('OK' if (backup_recovery_summary.clean_successful_backup_count | default(0) | int) > 0 else 'CRITICAL') }} |
+| Completed backups with warnings/errors | `{{ backup_recovery_summary.completed_backup_with_issues_count | default(0) }}` | {{ status_badge('WARN' if (backup_recovery_summary.completed_backup_with_issues_count | default(0) | int) > 0 else 'OK') }} |
+| Clean restore evidence | `{{ backup_recovery_summary.clean_completed_restore_count | default(0) }}` | {{ status_badge('INFO' if (backup_recovery_summary.clean_completed_restore_count | default(0) | int) == 0 else 'OK') }} |
+| Completed restores with warnings/errors | `{{ backup_recovery_summary.completed_restore_with_issues_count | default(0) }}` | {{ status_badge('WARN' if (backup_recovery_summary.completed_restore_with_issues_count | default(0) | int) > 0 else 'OK') }} |
+| Machine remediation findings | `{{ backup_recovery_summary.machine_healthcheck_findings | default(0) }}` | {{ status_badge('WARN' if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 else 'OK') }} |
 
 ### Storage Posture
 
@@ -819,32 +1155,158 @@ Default StorageClasses: none detected
 {% endfor %}
 {% endif %}
 
-## API And CRD Lifecycle
+### Node Utilization And Density
 
-{% if top_deprecated_crd_findings | default([]) | length == 0 and top_deprecated_api_lines | default([]) | length == 0 %}
-No deprecated CRD versions or deprecated API resources were identified from the collected data.
-{% else %}
-{% if top_deprecated_crd_findings | default([]) | length > 0 %}
-### Deprecated CRD Versions
+This section stays with `P8` because node density and packing pressure are capacity signals, not release-engineering signals.
 
-| CRD | Group | Deprecated Versions |
+{% if node_capacity_summary_by_density_desc | default([]) | length > 0 %}
+### Highest Pod Density Nodes
+
+| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
+| --- | --- | --- | --- | --- | --- |
+{% for item in node_capacity_summary_by_density_desc[:10] %}
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') }}` | `{{ item.requested_cpu_pct | default('unknown') }}` |
+{% endfor %}
+
+### Lowest Pod Density Nodes
+
+| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
+| --- | --- | --- | --- | --- | --- |
+{% for item in node_capacity_summary_by_density_asc[:10] %}
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') }}` | `{{ item.requested_cpu_pct | default('unknown') }}` |
+{% endfor %}
+{% endif %}
+
+{% if audit_report.supportability.summary is defined or live_support_artifacts.summary.enabled | default(false) %}
+## Supportability And Evidence
+
+These collection artifacts were gathered from the same live cluster scan and are folded into this report as part of the overall assessment.
+
+{% if audit_report.supportability.summary.recommendations | default('') | length > 0 %}
+Recommendations: {{ audit_report.supportability.summary.recommendations }}
+
+{% endif %}
+
+{% if audit_report.supportability.summary is defined %}
+| Signal | Value |
+| --- | --- |
+| Overall supportability verdict | {{ status_badge((audit_report.supportability.summary.verdict | default('unknown')) | upper) }} |
+| Health verdict | {{ status_badge((audit_report.supportability.summary.health_verdict | default('unknown')) | upper) }} |
+| Supportability verdict | {{ status_badge((audit_report.supportability.summary.supportability_verdict | default('unknown')) | upper) }} |
+| Reference compliance verdict | {{ status_badge((audit_report.supportability.summary.reference_compliance_verdict | default('unknown')) | upper) }} |
+| Node diagnostics verdict | {{ status_badge((audit_report.supportability.summary.node_diagnostics_verdict | default('unknown')) | upper) }} |
+| Evidence confidence | {{ status_badge((audit_report.supportability.summary.evidence_confidence | default('unknown')) | upper) }} |
+{% endif %}
+
+{% if audit_report.supportability.summary.key_findings | default([]) | length > 0 %}
+### Key Supportability Findings
+
+| Signal | Severity | Detail |
 | --- | --- | --- |
-{% for item in top_deprecated_crd_findings %}
-| `{{ item.name }}` | `{{ item.group }}` | `{{ item.versions }}` |
+{% for item in audit_report.supportability.summary.key_findings %}
+| `{{ item.issue | default('review') }}` | `{{ item.severity | default('info') | upper }}` | {{ item.detail | default(item | string) }} |
 {% endfor %}
 {% endif %}
-{% if top_deprecated_api_lines | default([]) | length > 0 %}
-### Deprecated API Resources
 
-| Resource Detail |
-| --- |
-{% for line in top_deprecated_api_lines %}
-| {{ line | replace('|', '\\|') }} |
+| Signal | Value |
+| --- | --- |
+| Artifact root | `{{ audit_report.evidence.summary.root | default(live_support_artifacts.summary.root | default('')) }}` |
+| Enabled collectors | `{{ audit_report.evidence.summary.collector_count | default(live_support_artifacts.summary.collector_count | default(0)) }}` |
+| Parallelism | `{{ audit_report.evidence.summary.parallelism | default(live_support_artifacts.summary.parallelism | default(0)) }}` |
+| Successful collectors | `{{ audit_report.evidence.summary.success_count | default(live_support_artifacts.summary.success_count | default(0)) }}` |
+| Failed collectors | `{{ audit_report.evidence.summary.failed_count | default(live_support_artifacts.summary.failed_count | default(0)) }}` |
+| Timed out collectors | `{{ audit_report.evidence.summary.timed_out_count | default(live_support_artifacts.summary.timed_out_count | default(0)) }}` |
+
+{% if audit_report.evidence.coverage is defined %}
+### Collector Capability Matrix
+
+| Collector | Category | Applicability | Status | Collected | Detail |
+| --- | --- | --- | --- | --- | --- |
+{% set evidence_coverage = audit_report.evidence.coverage %}
+| `must-gather` | `{{ evidence_coverage.must_gather.category | default('oc-native') }}` | `{{ 'applicable' if (evidence_coverage.must_gather.applicable | default(true)) else 'not-applicable' }}` | `{{ evidence_coverage.must_gather.status | default('unknown') }}` | `{{ evidence_coverage.must_gather.collected | default(false) }}` | {{ evidence_coverage.must_gather.detail | default('') }} |
+| `inspect` | `{{ evidence_coverage.inspect.category | default('oc-native') }}` | `{{ 'applicable' if (evidence_coverage.inspect.applicable | default(true)) else 'not-applicable' }}` | `{{ evidence_coverage.inspect.status | default('unknown') }}` | `{{ evidence_coverage.inspect.collected | default(false) }}` | {{ evidence_coverage.inspect.detail | default('') }} |
+| `cluster-compare` | `{{ evidence_coverage.cluster_compare.category | default('oc-plugin') }}` | `{{ 'applicable' if (evidence_coverage.cluster_compare.applicable | default(true)) else 'not-applicable' }}` | `{{ evidence_coverage.cluster_compare.status | default('unknown') }}` | `{{ evidence_coverage.cluster_compare.collected | default(false) }}` | {{ evidence_coverage.cluster_compare.detail | default('') }} |
+| `managed-gates` | `{{ evidence_coverage.managed_gates.category | default('provider-api') }}` | `{{ 'applicable' if (evidence_coverage.managed_gates.applicable | default(false)) else 'not-applicable' }}` | `{{ evidence_coverage.managed_gates.status | default('unknown') }}` | `{{ evidence_coverage.managed_gates.collected | default(false) }}` | {{ evidence_coverage.managed_gates.detail | default('') }} |
+| `advisor-export` | `{{ evidence_coverage.advisor_export.category | default('external-service') }}` | `{{ 'applicable' if (evidence_coverage.advisor_export.applicable | default(true)) else 'not-applicable' }}` | `{{ evidence_coverage.advisor_export.status | default('unknown') }}` | `{{ evidence_coverage.advisor_export.collected | default(false) }}` | {{ evidence_coverage.advisor_export.detail | default('') }} |
+| `insights-archive` | `{{ evidence_coverage.insights_archive.category | default('oc-native') }}` | `{{ 'applicable' if (evidence_coverage.insights_archive.applicable | default(true)) else 'not-applicable' }}` | `{{ evidence_coverage.insights_archive.status | default('unknown') }}` | `{{ evidence_coverage.insights_archive.collected | default(false) }}` | {{ evidence_coverage.insights_archive.detail | default('') }} |
+| `sosreport` | `{{ evidence_coverage.sosreport.category | default('node-level') }}` | `{{ 'applicable' if (evidence_coverage.sosreport.applicable | default(true)) else 'not-applicable' }}` | `{{ evidence_coverage.sosreport.status | default('unknown') }}` | `{{ evidence_coverage.sosreport.collected | default(false) }}` | {{ evidence_coverage.sosreport.detail | default('') }} |
+{% endif %}
+
+{% if live_support_artifacts.collection.results | default({}) | length > 0 %}
+### Collector Results
+
+| Collector | Status | Duration | Output |
+| --- | --- | --- | --- |
+{% for item in (live_support_artifacts.collection.results | dict2items | sort(attribute='key')) %}
+| `{{ item.key }}` | {{ status_badge('OK' if (item.value.rc | default(1) | int) == 0 else ('WARN' if (item.value.timed_out | default(false)) else 'FAILED')) }} | `{{ item.value.duration_seconds | default(0) }}s` | `{{ item.value.output_path | default('') or 'artifact directory or inline output' }}` |
 {% endfor %}
 {% endif %}
+
+{% if live_support_parsed.must_gather_inventory.summary is defined %}
+### Must-Gather Coverage
+
+{% include 'partials/live_must_gather_coverage.md.j2' %}
 {% endif %}
 
-## Observability And External Forwarding
+{% if live_support_parsed.inspect.summary is defined %}
+### Inspect Coverage
+
+{% include 'partials/live_inspect_coverage.md.j2' %}
+{% endif %}
+
+{% if live_support_parsed.cluster_compare.summary is defined %}
+### Cluster-Compare
+
+{% include 'partials/live_cluster_compare_summary.md.j2' %}
+{% endif %}
+
+{% if live_support_parsed.managed_gates.summary is defined %}
+### Managed-Service Gates
+
+{% include 'partials/live_managed_gates_summary.md.j2' %}
+{% endif %}
+
+{% if live_support_parsed.advisor_export.summary is defined %}
+### Advisor Export
+
+{% include 'partials/live_advisor_export_summary.md.j2' %}
+{% endif %}
+
+{% if live_support_parsed.insights_archive.summary is defined and (live_support_parsed.insights_archive.summary.present | default(false)) %}
+### Insights Operator Archive
+
+{% include 'partials/live_insights_archive_summary.md.j2' %}
+{% endif %}
+
+{% if live_support_parsed.sosreport.summary is defined %}
+### Node-Level Sosreport Coverage
+
+{% include 'partials/live_sosreport_coverage.md.j2' %}
+{% endif %}
+
+{% endif %}
+
+## Observability
+
+Recommendations: {{ audit_report.domains.observability.recommendations | default('Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}
+
+{% set observability_summary = audit_report.domains.observability.summary | default({}) %}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Observability posture status | `{{ observability_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (observability_summary.status | default('unknown')) == 'WARNING' else ('OK' if (observability_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Observability reason summary | `{{ observability_summary.reason_summary | default('none') }}` | `summary` |
+| Monitoring operator healthy | `{{ observability_summary.monitoring_operator_healthy | default(false) }}` | {{ status_badge('OK' if (observability_summary.monitoring_operator_healthy | default(false)) else 'CRITICAL') }} |
+| Firing alerts | `{{ observability_summary.firing_alert_count | default(0) }}` | {{ status_badge('CRITICAL' if (observability_summary.firing_critical_alert_count | default(0) | int) > 0 else ('WARN' if (observability_summary.firing_alert_count | default(0) | int) > 0 else 'OK')) }} |
+| Warning events | `{{ observability_summary.warning_event_count | default(0) }}` | {{ status_badge('WARN' if (observability_summary.warning_event_count | default(0) | int) > 0 else 'OK') }} |
+| Log forwarding gap count | `{{ observability_summary.log_gap_count | default(0) }}` | {{ status_badge('WARN' if (observability_summary.log_gap_count | default(0) | int) > 0 else 'OK') }} |
+| Metrics forwarding gap count | `{{ observability_summary.metrics_gap_count | default(0) }}` | {{ status_badge('WARN' if (observability_summary.metrics_gap_count | default(0) | int) > 0 else 'OK') }} |
+| Alerting gap count | `{{ observability_summary.alerting_gap_count | default(0) }}` | {{ status_badge('WARN' if (observability_summary.alerting_gap_count | default(0) | int) > 0 else 'OK') }} |
+| Critical firing alerts | `{{ observability_summary.firing_critical_alert_count | default(0) }}` | {{ status_badge('CRITICAL' if (observability_summary.firing_critical_alert_count | default(0) | int) > 0 else 'OK') }} |
+| Non-critical firing alerts | `{{ observability_summary.firing_noncritical_alert_count | default(0) }}` | {{ status_badge('WARN' if (observability_summary.firing_noncritical_alert_count | default(0) | int) > 0 else 'OK') }} |
+| Log delivery verification status | `{{ observability_summary.logs_delivery_verification_status | default('not-configured') }}` | {{ status_badge('INFO' if (observability_summary.logs_delivery_verification_status | default('not-configured')) in ['not-verified', 'not-configured'] else ('OK' if (observability_summary.logs_delivery_verification_status | default('not-configured')) == 'verified' else 'UNKNOWN')) }} |
+| Alert delivery verification status | `{{ observability_summary.alert_delivery_verification_status | default('not-configured') }}` | {{ status_badge('INFO' if (observability_summary.alert_delivery_verification_status | default('not-configured')) in ['not-verified', 'not-configured'] else ('OK' if (observability_summary.alert_delivery_verification_status | default('not-configured')) == 'verified' else 'UNKNOWN')) }} |
+| Metrics delivery verification status | `{{ observability_summary.metrics_delivery_verification_status | default('not-configured') }}` | {{ status_badge('INFO' if (observability_summary.metrics_delivery_verification_status | default('not-configured')) in ['not-verified', 'not-configured'] else ('OK' if (observability_summary.metrics_delivery_verification_status | default('not-configured')) == 'verified' else 'UNKNOWN')) }} |
 
 | Signal | Value |
 | --- | --- |
@@ -853,17 +1315,36 @@ No deprecated CRD versions or deprecated API resources were identified from the 
 | Thanos querier route found | `{{ observability_forwarding_summary.thanos_querier_route_found | default(false) }}` |
 | ClusterLogForwarder count | `{{ observability_forwarding_summary.cluster_log_forwarder_count | default(0) }}` |
 | AlertmanagerConfig count | `{{ observability_forwarding_summary.alertmanagerconfig_count | default(0) }}` |
+| Alert delivery configuration sources | `{{ observability_forwarding_summary.alert_delivery_source_count | default(0) }}` |
+| Application log pipelines | `{{ observability_forwarding_summary.application_log_pipeline_count | default(0) }}` |
+| Application logs delivery state | `{{ observability_forwarding_summary.application_logs_delivery_state | default('not-collected') }}` |
+| Application logs exported external | `{{ observability_forwarding_summary.application_logs_exported_external | default(false) }}` |
+| Infrastructure log pipelines | `{{ observability_forwarding_summary.infrastructure_log_pipeline_count | default(0) }}` |
+| Infrastructure logs delivery state | `{{ observability_forwarding_summary.infrastructure_logs_delivery_state | default('not-collected') }}` |
+| Infrastructure logs exported external | `{{ observability_forwarding_summary.infrastructure_logs_exported_external | default(false) }}` |
+| Audit log pipelines | `{{ observability_forwarding_summary.audit_log_pipeline_count | default(0) }}` |
+| Audit logs delivery state | `{{ observability_forwarding_summary.audit_logs_delivery_state | default('not-collected') }}` |
+| Audit logs exported external | `{{ observability_forwarding_summary.audit_logs_exported_external | default(false) }}` |
 | Log forwarding outputs | `{{ observability_forwarding_summary.log_forwarding_outputs | default([]) | length }}` |
 | External log forwarding outputs | `{{ observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length }}` |
+| Log delivery verification | `{{ observability_forwarding_summary.logs_delivery_verification_status | default('not-configured') }}` |
 | External alert delivery configured | `{{ observability_forwarding_summary.external_alert_delivery_configured | default(false) }}` |
+| Alert delivery state | `{{ observability_forwarding_summary.alert_delivery_state | default('not-configured') }}` |
 | External alert delivery receivers | `{{ observability_forwarding_summary.external_alert_receiver_count | default(0) }}` |
 | Alert routing to external receiver configured | `{{ observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false) }}` |
 | AlertmanagerConfigs with external routes | `{{ observability_forwarding_summary.alertmanagerconfigs_with_external_routes | default(0) }}` |
 | AlertmanagerConfigs without route receiver | `{{ observability_forwarding_summary.alertmanagerconfigs_without_route_receivers | default(0) }}` |
 | Cluster metrics remote write targets | `{{ observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) }}` |
+| Cluster metrics delivery state | `{{ observability_forwarding_summary.cluster_metrics_delivery_state | default('not-configured') }}` |
 | External cluster metrics remote write targets | `{{ observability_forwarding_summary.external_cluster_metrics_remote_write_count | default(0) }}` |
 | User workload metrics remote write targets | `{{ observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) }}` |
+| User workload metrics delivery state | `{{ observability_forwarding_summary.user_workload_metrics_delivery_state | default('not-configured') }}` |
 | External user workload metrics remote write targets | `{{ observability_forwarding_summary.external_user_workload_metrics_remote_write_count | default(0) }}` |
+| Metrics delivery verification | `{{ observability_forwarding_summary.metrics_delivery_verification_status | default('not-configured') }}` |
+
+{% if observability_forwarding_summary.alert_delivery_source_count | default(0) | int > 0 and observability_forwarding_summary.external_alert_receiver_count | default(0) | int == 0 %}
+- additional Alertmanager configuration was detected, but no explicitly external receiver could be verified from parsed resources
+{% endif %}
 
 {% if top_observability_findings | default([]) | length == 0 %}
 No observability setup gaps were detected from the collected data.
@@ -873,7 +1354,7 @@ No observability setup gaps were detected from the collected data.
 | Check | Result | Detail |
 | --- | --- | --- |
 {% for item in top_observability_findings %}
-| `{% if item.issue == 'monitoring-operator-not-healthy' %}Monitoring operator{% elif item.issue == 'thanos-querier-route-unavailable' %}Thanos querier route{% elif item.issue == 'missing-clusterlogforwarder' %}ClusterLogForwarder{% elif item.issue == 'clusterlogforwarder-without-outputs' %}ClusterLogForwarder outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}ClusterLogForwarder pipelines{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}External log forwarding{% elif item.issue == 'external-alert-delivery-not-configured' %}External alert delivery{% elif item.issue == 'alertmanagerconfig-route-missing' %}Alertmanager route wiring{% elif item.issue == 'external-alert-receiver-not-routed' %}Alertmanager route wiring{% elif item.issue == 'cluster-metrics-remote-write-missing' %}Cluster metrics remote write{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}Cluster metrics remote write{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}User workload metrics remote write{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}User workload metrics remote write{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue == 'monitoring-operator-not-healthy' %}not healthy{% elif item.issue == 'thanos-querier-route-unavailable' %}not found{% elif item.issue == 'missing-clusterlogforwarder' %}missing{% elif item.issue == 'clusterlogforwarder-without-outputs' %}no outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}missing output refs{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}cluster-local only{% elif item.issue == 'external-alert-delivery-not-configured' %}not configured{% elif item.issue == 'alertmanagerconfig-route-missing' %}missing route{% elif item.issue == 'external-alert-receiver-not-routed' %}not routed{% elif item.issue == 'cluster-metrics-remote-write-missing' %}missing{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}cluster-local only{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}missing{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}cluster-local only{% else %}review{% endif %}` | {{ item.detail }} |
+| `{% if item.issue == 'monitoring-operator-not-healthy' %}Monitoring operator{% elif item.issue == 'thanos-querier-route-unavailable' %}Thanos querier route{% elif item.issue == 'missing-clusterlogforwarder' %}ClusterLogForwarder{% elif item.issue == 'clusterlogforwarder-without-outputs' %}ClusterLogForwarder outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}ClusterLogForwarder pipelines{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}External log forwarding{% elif item.issue == 'application-logs-not-collected' %}Application logs{% elif item.issue == 'application-logs-not-exported-external' %}Application logs{% elif item.issue == 'infrastructure-logs-not-collected' %}Infrastructure logs{% elif item.issue == 'infrastructure-logs-not-exported-external' %}Infrastructure logs{% elif item.issue == 'audit-logs-not-collected' %}Audit logs{% elif item.issue == 'audit-logs-not-exported-external' %}Audit logs{% elif item.issue == 'external-alert-delivery-not-configured' %}External alert delivery{% elif item.issue == 'external-alert-delivery-not-verifiable' %}External alert delivery{% elif item.issue == 'alertmanagerconfig-route-missing' %}Alertmanager route wiring{% elif item.issue == 'external-alert-receiver-not-routed' %}Alertmanager route wiring{% elif item.issue == 'cluster-metrics-remote-write-missing' %}Cluster metrics remote write{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}Cluster metrics remote write{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}User workload metrics remote write{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}User workload metrics remote write{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue == 'monitoring-operator-not-healthy' %}not healthy{% elif item.issue == 'thanos-querier-route-unavailable' %}not found{% elif item.issue == 'missing-clusterlogforwarder' %}missing{% elif item.issue == 'clusterlogforwarder-without-outputs' %}no outputs{% elif item.issue == 'clusterlogforwarder-pipelines-without-outputrefs' %}missing output refs{% elif item.issue == 'logs-not-forwarded-to-external-destination' %}cluster-local only{% elif (item.issue | default('')) is match('.*-not-collected$') %}not collected{% elif (item.issue | default('')) is match('.*-not-exported-external$') %}not exported{% elif item.issue == 'external-alert-delivery-not-configured' %}not configured{% elif item.issue == 'external-alert-delivery-not-verifiable' %}not verifiable{% elif item.issue == 'alertmanagerconfig-route-missing' %}missing route{% elif item.issue == 'external-alert-receiver-not-routed' %}not routed{% elif item.issue == 'cluster-metrics-remote-write-missing' %}missing{% elif item.issue == 'cluster-metrics-not-forwarded-external' %}cluster-local only{% elif item.issue == 'user-workload-metrics-remote-write-missing' %}missing{% elif item.issue == 'user-workload-metrics-not-forwarded-external' %}cluster-local only{% else %}review{% endif %}` | {{ item.detail }} |
 {% endfor %}
 {% endif %}
 
@@ -897,7 +1378,17 @@ No observability setup gaps were detected from the collected data.
 {% endfor %}
 {% endif %}
 
-## Recent Warning Events
+{% if top_live_advisor_findings | default([]) | length > 0 %}
+### Advisor Findings
+
+| Signal | Severity | Detail |
+| --- | --- | --- |
+{% for item in top_live_advisor_findings %}
+| `{{ item.issue }}` | `{{ item.severity | upper }}` | {{ item.detail }} |
+{% endfor %}
+{% endif %}
+
+### Recent Warning Events
 
 {% if top_event_reasons | default([]) | length == 0 %}
 No warning events were returned from the collected event data.
@@ -917,13 +1408,13 @@ No warning events were returned from the collected event data.
 {% endfor %}
 {% endif %}
 
-## Supporting Evidence
+## Appendix: Supporting Evidence
 
 This section keeps only lower-level evidence that is not already expanded in later domain sections.
 
 {% set has_supporting_evidence =
   (top_namespace_issue_summary | default([]) | length > 0)
-  or (collection_failures | default([]) | length > 0)
+  or (report_collection_failures_list | length > 0)
   or (pv_issues | default([]) | length > 0)
   or (pvc_issues | default([]) | length > 0)
   or (expiring_certificates_warning | default([]) | length > 0)
@@ -943,13 +1434,13 @@ No additional supporting evidence tables were needed for this run.
 {% endif %}
 {% endif %}
 
-{% if collection_failures | default([]) | length > 0 %}
+{% if report_collection_failures_list | length > 0 %}
 ### Data Collection Issues
-{% for item in collection_failures[:10] %}
+{% for item in report_collection_failures_list[:10] %}
 - `{{ item.name }}` rc=`{{ item.rc }}` timeout=`{{ item.timed_out }}`{% if item.stderr %} detail=`{{ item.stderr }}`{% endif %}
 {% endfor %}
-{% if (collection_failures | length) > 10 %}
-- additional collection failures omitted: `{{ (collection_failures | length) - 10 }}`
+{% if (report_collection_failures_list | length) > 10 %}
+- additional collection failures omitted: `{{ (report_collection_failures_list | length) - 10 }}`
 {% endif %}
 {% endif %}
 
@@ -990,9 +1481,9 @@ No additional supporting evidence tables were needed for this run.
 {% endfor %}
 {% endif %}
 
-## Control Plane Signals
+### Control Plane Signals
 
-### API Readiness
+#### API Readiness
 
 | Signal | Value | Status |
 | --- | --- | --- |
@@ -1027,7 +1518,7 @@ Inter-node latency note:
 | Firing alerts | `{{ firing_alerts | length }}` | {{ status_badge('WARN' if firing_alerts | length > 0 else 'OK') }} |
 
 {% if (firing_alerts_by_severity | default({}) | length) > 0 %}
-### Firing Alert Severity Summary
+#### Firing Alert Severity Summary
 
 | Severity | Count |
 | --- | --- |
@@ -1037,7 +1528,7 @@ Inter-node latency note:
 {% endif %}
 
 {% if top_alert_groups | default([]) | length > 0 %}
-### Top Firing Alert Names
+#### Top Firing Alert Names
 
 | Alert | Count |
 | --- | --- |
@@ -1047,7 +1538,7 @@ Inter-node latency note:
 {% endif %}
 
 {% if top_alert_namespaces | default([]) | length > 0 %}
-### Firing Alerts By Namespace
+#### Firing Alerts By Namespace
 
 | Namespace | Count |
 | --- | --- |
@@ -1057,10 +1548,38 @@ Inter-node latency note:
 {% endif %}
 {% endif %}
 
-## Network And Route Health
+## Network And Application Access
 
-{% if route_issues | default([]) | length == 0 and ingress_issues | default([]) | length == 0 and route_host_conflicts | default([]) | length == 0 and ingress_host_conflicts | default([]) | length == 0 %}
-{% if ((routes | default({})).get('items', []) | length) == 0 and ((ingresses | default({})).get('items', []) | length) == 0 %}
+Recommendations: {{ network_architecture_summary.recommendation | default('Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.') }}
+
+| Signal | Value |
+| --- | --- |
+| Network architecture status | `{{ network_architecture_summary.status | default('unknown') }}` |
+| Route issues | `{{ network_architecture_summary.route_issue_count | default(0) }}` |
+| Ingress issues | `{{ network_architecture_summary.ingress_issue_count | default(0) }}` |
+| Route host conflicts | `{{ network_architecture_summary.route_host_conflict_count | default(0) }}` |
+| Ingress host conflicts | `{{ network_architecture_summary.ingress_host_conflict_count | default(0) }}` |
+| Cross Route/Ingress host conflicts | `{{ network_architecture_summary.cross_host_conflict_count | default(0) }}` |
+| Ingress controller issues | `{{ network_architecture_summary.ingresscontroller_issue_count | default(0) }}` |
+| Default ingress controller issues | `{{ network_architecture_summary.default_ingresscontroller_issue_count | default(0) }}` |
+| Non-default ingress controller issues | `{{ network_architecture_summary.nondefault_ingresscontroller_issue_count | default(0) }}` |
+| Exposed namespaces | `{{ network_architecture_summary.exposed_namespace_count | default(0) }}` |
+| Service-exposed namespaces | `{{ network_architecture_summary.service_exposure_namespace_count | default(0) }}` |
+| Exposed namespaces without NetworkPolicy | `{{ network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | length }}` |
+| Exposed namespaces missing ingress policy | `{{ network_architecture_summary.exposed_namespaces_missing_ingress_policies | default([]) | length }}` |
+| Exposed namespaces missing egress policy | `{{ network_architecture_summary.exposed_namespaces_missing_egress_policies | default([]) | length }}` |
+| Cluster proxy configured | `{{ network_architecture_summary.cluster_proxy_configured | default(false) }}` |
+| Proxy trusted CA configured | `{{ network_architecture_summary.trusted_ca_configured | default(false) }}` |
+| noProxy entries | `{{ network_architecture_summary.no_proxy_entry_count | default(0) }}` |
+| Proxy missing internal noProxy entries | `{{ network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | join(', ') or 'none' }}` |
+
+{% if network_architecture_summary.reason_summary | default('') | length > 0 %}
+Networking architecture notes:
+- {{ network_architecture_summary.reason_summary }}
+{% endif %}
+
+{% if route_issues | default([]) | length == 0 and ingress_issues | default([]) | length == 0 and route_host_conflicts | default([]) | length == 0 and ingress_host_conflicts | default([]) | length == 0 and route_ingress_host_conflicts | default([]) | length == 0 %}
+{% if routes_items | length == 0 and ingresses_items | length == 0 %}
 No `Route` or `Ingress` objects were collected, so this section had no objects to evaluate.
 {% else %}
 No route or ingress issues were detected in the collected `Route` and `Ingress` objects.
@@ -1105,17 +1624,44 @@ No route or ingress issues were detected in the collected `Route` and `Ingress` 
 | `{{ item.host }}` | `{{ item.owners | join(', ') }}` |
 {% endfor %}
 {% endif %}
+
+{% if route_ingress_host_conflicts | default([]) | length > 0 %}
+### Cross Route And Ingress Host Conflicts
+
+| Host | Route Owners | Ingress Owners |
+| --- | --- | --- |
+{% for item in route_ingress_host_conflicts[:15] %}
+| `{{ item.host }}` | `{{ item.route_owners | join(', ') }}` | `{{ item.ingress_owners | join(', ') }}` |
+{% endfor %}
+{% endif %}
 {% endif %}
 
-## Workload Delivery Detail
+## Workload Health
+
+{% if audit_report.domains.workload_health.recommendations | default('') | length > 0 %}
+Recommendations: {{ audit_report.domains.workload_health.recommendations }}
+
+{% endif %}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Workload posture status | `{{ (audit_report.domains.workload_health.summary | default({})).status | default('unknown') }}` | {{ status_badge('CRITICAL' if ((audit_report.domains.workload_health.summary | default({})).status | default('unknown')) == 'CRITICAL' else ('WARN' if ((audit_report.domains.workload_health.summary | default({})).status | default('unknown')) == 'WARNING' else 'OK')) }} |
+| Reason summary | `{{ (audit_report.domains.workload_health.summary | default({})).reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
+| Unhealthy user pods | `{{ (audit_report.domains.workload_health.summary | default({})).unhealthy_user_pod_count | default(0) }}` | {{ status_badge('CRITICAL' if ((audit_report.domains.workload_health.summary | default({})).unhealthy_user_pod_count | default(0) | int) > 0 else 'OK') }} |
+| Workload rollout issues | `{{ (audit_report.domains.workload_health.summary | default({})).workload_health_issue_count | default(0) }}` | {{ status_badge('CRITICAL' if ((audit_report.domains.workload_health.summary | default({})).workload_health_issue_count | default(0) | int) > 0 else 'OK') }} |
+| Restart hotspots | `{{ (audit_report.domains.workload_health.summary | default({})).high_restart_pod_count | default(0) }}` | {{ status_badge('WARN' if ((audit_report.domains.workload_health.summary | default({})).high_restart_pod_count | default(0) | int) > 0 else 'OK') }} |
+| Workload hygiene debt | `{{ (audit_report.domains.workload_health.summary | default({})).workload_hygiene_debt_count | default(0) }}` | {{ status_badge('INFO' if ((audit_report.domains.workload_health.summary | default({})).workload_hygiene_debt_count | default(0) | int) > 0 else 'OK') }} |
+| Softer efficiency or cleanup signals | `{{ (audit_report.domains.workload_health.summary | default({})).workload_efficiency_context_count | default(0) }}` | {{ status_badge('INFO' if ((audit_report.domains.workload_health.summary | default({})).workload_efficiency_context_count | default(0) | int) > 0 else 'OK') }} |
 
 {% if workload_health_issues | default([]) | length == 0 and unhealthy_user_pods | default([]) | length == 0 and high_replica_workloads | default([]) | length == 0 and orphan_pods | default([]) | length == 0 and workload_label_governance_findings | default([]) | length == 0 and workload_probe_findings | default([]) | length == 0 %}
 No non-running pod, rollout, replica governance, orphan pod, recommended app label, or probe coverage issues were detected in the collected user workload objects.
 {% else %}
 Workload-oriented checks in this section exclude namespaces matched by `user_namespaces_exclude_regex`, including `openshift-*`.
 
+### Runtime Health
+
 {% if top_unhealthy_user_pods | default([]) | length > 0 %}
-### Unhealthy User Pods
+#### Unhealthy User Pods
 
 | Namespace | Pod | Phase | Ready |
 | --- | --- | --- | --- |
@@ -1125,6 +1671,8 @@ Workload-oriented checks in this section exclude namespaces matched by `user_nam
 {% endif %}
 
 {% if workload_health_issues | default([]) | length > 0 %}
+#### Workload Rollout Issues
+
 | Kind | Namespace | Name | Desired | Ready | Updated |
 | --- | --- | --- | --- | --- | --- |
 {% for item in top_workload_health_issues %}
@@ -1132,8 +1680,22 @@ Workload-oriented checks in this section exclude namespaces matched by `user_nam
 {% endfor %}
 {% endif %}
 
+{% if top_high_restart_pods | default([]) | length > 0 %}
+#### High Restart Pod Summary
+
+Pods in this section are limited to non-platform namespaces and have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
+
+| Namespace | Pod | Phase | Restarts |
+| --- | --- | --- | --- |
+{% for pod in top_high_restart_pods %}
+| `{{ pod.namespace }}` | `{{ pod.name }}` | `{{ pod.phase }}` | `{{ pod.restarts }}` |
+{% endfor %}
+{% endif %}
+
+### Deployment Hygiene
+
 {% if top_high_replica_workloads | default([]) | length > 0 %}
-### Large Replica Workloads
+#### Large Replica Workloads
 
 These entries use a simple review threshold of more than `10` desired replicas.
 
@@ -1145,7 +1707,7 @@ These entries use a simple review threshold of more than `10` desired replicas.
 {% endif %}
 
 {% if top_orphan_pods | default([]) | length > 0 %}
-### Pods Without Parent Owner
+#### Pods Without Parent Owner
 
 | Namespace | Pod | Phase |
 | --- | --- | --- |
@@ -1155,7 +1717,7 @@ These entries use a simple review threshold of more than `10` desired replicas.
 {% endif %}
 
 {% if top_workload_label_governance_findings | default([]) | length > 0 %}
-### Workloads Missing Recommended App Labels
+#### Workloads Missing Recommended App Labels
 
 This review checks for the common Kubernetes application labels and, for OpenShift deployment configs, the OpenShift runtime label.
 
@@ -1167,7 +1729,7 @@ This review checks for the common Kubernetes application labels and, for OpenShi
 {% endif %}
 
 {% if workload_probe_issue_type_counts | default({}) | length > 0 %}
-### Probe Coverage Summary
+#### Probe Coverage Summary
 
 | Missing Probe Type | Count |
 | --- | --- |
@@ -1177,7 +1739,7 @@ This review checks for the common Kubernetes application labels and, for OpenShi
 {% endif %}
 
 {% if top_workload_probe_findings | default([]) | length > 0 %}
-### Probe Coverage Samples
+#### Probe Coverage Samples
 
 | Kind | Namespace | Name | Missing Probe Type | Containers |
 | --- | --- | --- | --- | --- |
@@ -1185,18 +1747,6 @@ This review checks for the common Kubernetes application labels and, for OpenShi
 | `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.issue }}` | `{{ item.detail }}` |
 {% endfor %}
 {% endif %}
-{% endif %}
-
-{% if top_high_restart_pods | default([]) | length > 0 %}
-### High Restart Pod Summary
-
-Pods in this section are limited to non-platform namespaces and have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
-
-| Namespace | Pod | Phase | Restarts |
-| --- | --- | --- | --- |
-{% for pod in top_high_restart_pods %}
-| `{{ pod.namespace }}` | `{{ pod.name }}` | `{{ pod.phase }}` | `{{ pod.restarts }}` |
-{% endfor %}
 {% endif %}
 
 {% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
@@ -1223,17 +1773,47 @@ These Prometheus samples exclude namespaces matching `openshift-*`.
 {% endfor %}
 {% endif %}
 
-## Delivery Pipeline Detail
+## Container Platform Adoption And Release Engineering
+
+Release-engineering signals are kept outside `P9` so workload runtime health stays separate from pipeline and build maturity.
+
+{% set release_engineering_summary = audit_report.domains.production_day2_readiness.release_engineering_adoption_summary | default({}) %}
+
+Recommendations: {{ release_engineering_summary.recommendation | default('Review delivery failures first, then treat triggerless build resources and platform adoption evidence as supporting context rather than automatic defects.') }}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Release engineering posture status | `{{ release_engineering_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (release_engineering_summary.status | default('unknown')) == 'WARNING' else ('INFO' if (release_engineering_summary.status | default('unknown')) == 'INFO' else 'UNKNOWN')) }} |
+| Reason summary | `{{ release_engineering_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
+| Failed PipelineRuns | `{{ release_engineering_summary.failed_pipelinerun_count | default(0) }}` | {{ status_badge('WARN' if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 else 'OK') }} |
+| Triggerless BuildConfigs requiring review | `{{ release_engineering_summary.triggerless_buildconfig_warning_count | default(0) }}` | {{ status_badge('WARN' if (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | int) > 0 else 'OK') }} |
+| Triggerless BuildConfigs treated as automation context | `{{ release_engineering_summary.triggerless_buildconfig_info_count | default(0) }}` | {{ status_badge('INFO' if (release_engineering_summary.triggerless_buildconfig_info_count | default(0) | int) > 0 else 'OK') }} |
+| Product/platform capabilities detected | `{{ release_engineering_summary.product_evidence_present_count | default(0) }}` | {{ status_badge('INFO' if (release_engineering_summary.product_evidence_present_count | default(0) | int) > 0 else 'UNKNOWN') }} |
 
 | Signal | Value |
 | --- | --- |
-| BuildConfigs | `{{ (buildconfigs | default({})).get('items', []) | length }}` |
-| Builds | `{{ (builds | default({})).get('items', []) | length }}` |
-| ImageStreams | `{{ (imagestreams | default({})).get('items', []) | length }}` |
-| Pipelines | `{{ (pipelines | default({})).get('items', []) | length }}` |
-| PipelineRuns | `{{ (pipelineruns | default({})).get('items', []) | length }}` |
+| BuildConfigs | `{{ buildconfigs_items | length }}` |
+| Builds | `{{ builds_items | length }}` |
+| ImageStreams | `{{ imagestreams_items | length }}` |
+| Pipelines | `{{ pipelines_items | length }}` |
+| PipelineRuns | `{{ pipelineruns_items | length }}` |
 | Failed PipelineRuns | `{{ failed_pipelineruns | default([]) | length }}` |
 | BuildConfigs without triggers | `{{ buildconfigs_without_triggers | default([]) | length }}` |
+
+{% if (audit_report.domains.production_day2_readiness.product_evidence | default({}) | length) > 0 %}
+### Product And Platform Adoption Evidence
+
+{% set product_evidence = audit_report.domains.production_day2_readiness.product_evidence %}
+{% include 'partials/openshift_product_evidence.md.j2' %}
+
+{% if audit_report.domains.production_day2_readiness.product_evidence_findings | default([]) | length > 0 %}
+### Product And Platform Adoption Findings
+
+{% for item in audit_report.domains.production_day2_readiness.product_evidence_findings %}
+- `{{ item.severity | upper }}` `{{ item.area }}`: {{ item.detail }}
+{% endfor %}
+{% endif %}
+{% endif %}
 
 {% if (buildconfig_strategy_counts | default({}) | length) > 0 %}
 ### BuildConfig Strategy Summary
@@ -1275,28 +1855,6 @@ These Prometheus samples exclude namespaces matching `openshift-*`.
 {% endfor %}
 {% endif %}
 
-## Node Utilization And Density
-
-This section is kept lower in the report because it is useful for workload tuning and capacity review, but it is usually less urgent than cluster control-plane, operator, node, storage, and lifecycle health.
-
-{% if node_capacity_summary_by_density_desc | default([]) | length > 0 %}
-### Highest Pod Density Nodes
-
-| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
-| --- | --- | --- | --- | --- | --- |
-{% for item in node_capacity_summary_by_density_desc[:10] %}
-| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') }}` | `{{ item.requested_cpu_pct | default('unknown') }}` |
-{% endfor %}
-
-### Lowest Pod Density Nodes
-
-| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
-| --- | --- | --- | --- | --- | --- |
-{% for item in node_capacity_summary_by_density_asc[:10] %}
-| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') }}` | `{{ item.requested_cpu_pct | default('unknown') }}` |
-{% endfor %}
-{% endif %}
-
 {% if high_pod_density_nodes | default([]) | length > 0 %}
 ### Pod Density Best-Practice Exceptions
 {% for item in high_pod_density_nodes[:15] %}
@@ -1321,19 +1879,45 @@ This section is kept lower in the report because it is useful for workload tunin
 {% endif %}
 {% endif %}
 
-## Security And Governance Detail
+## Security And Governance
 
 This section groups access, workload, namespace, SCC, image, secret, and hygiene findings that matter after platform health has been stabilized.
 
-### Namespace Hygiene
+Recommendations: {{ audit_report.domains.security_and_governance.recommendations | default('Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.') }}
+
+{% set security_governance_summary = audit_report.domains.security_and_governance.summary | default({}) %}
+{% set auth_posture_summary = audit_report.domains.security_and_governance.auth_posture_summary | default({}) %}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Security posture status | `{{ security_governance_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (security_governance_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (security_governance_summary.status | default('unknown')) == 'WARNING' else ('OK' if (security_governance_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Security reason summary | `{{ security_governance_summary.reason_summary | default('none') }}` | `summary` |
+| Identity provider posture | `{{ auth_posture_summary.reason_summary | default('unknown') }}` | {{ status_badge('WARN' if (auth_posture_summary.status | default('unknown')) in ['warning', 'review'] else ('OK' if (auth_posture_summary.status | default('unknown')) == 'healthy' else 'UNKNOWN')) }} |
+| Privileged access grants | `{{ security_governance_summary.privileged_access_count | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.privileged_access_count | default(0) | int) > 0 else 'OK') }} |
+| High-risk SCC grants | `{{ security_governance_summary.scc_grant_findings | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.scc_grant_findings | default(0) | int) > 0 else 'OK') }} |
+| High-signal pod security findings | `{{ security_governance_summary.high_signal_security_findings | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.high_signal_security_findings | default(0) | int) > 0 else 'OK') }} |
+| Certificates expiring in <= 7d | `{{ security_governance_summary.expiring_certificates_critical | default(0) }}` | {{ status_badge('CRITICAL' if (security_governance_summary.expiring_certificates_critical | default(0) | int) > 0 else 'OK') }} |
+| Certificates expiring in <= 30d | `{{ security_governance_summary.expiring_certificates_warning | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.expiring_certificates_warning | default(0) | int) > 0 else 'OK') }} |
+| Active compliance standards needing review | `{{ security_governance_summary.compliance_active_standards_review_count | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.compliance_active_standards_review_count | default(0) | int) > 0 else 'OK') }} |
+| Configured but inactive standards | `{{ security_governance_summary.compliance_configured_inactive_standard_count | default(0) }}` | {{ status_badge('INFO' if (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 else 'OK') }} |
+
+{% set top_namespace_networkpolicy_gaps = (namespaces_without_networkpolicy | default([]))[:10] %}
+{% set top_namespace_ingress_policy_gaps = (namespaces_missing_ingress_policies | default([]))[:10] %}
+{% set top_namespace_egress_policy_gaps = (namespaces_missing_egress_policies | default([]))[:10] %}
+{% set top_namespace_resourcequota_gaps = (namespaces_without_resourcequota | default([]))[:10] %}
+{% set top_namespace_limitrange_gaps = (namespaces_without_limitrange | default([]))[:10] %}
+
+### Namespace Baseline Guardrails
+
+These are governance baseline checks. Treat gaps here as platform hygiene debt unless they overlap with exposed, sensitive, or regulated workloads.
 
 | Check | Result | Detail |
 | --- | --- | --- |
-| `NetworkPolicy coverage` | {% if namespaces_without_networkpolicy | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_networkpolicy | default([]) | length > 0 %}`{{ namespaces_without_networkpolicy | join(', ') }}`{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `NetworkPolicy` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `NetworkPolicy` hygiene check{% endif %} |
-| `Ingress policy coverage` | {% if namespaces_missing_ingress_policies | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% else %}{{ status_badge('OK') }} no gap detected{% endif %} | {% if namespaces_missing_ingress_policies | default([]) | length > 0 %}`{{ namespaces_missing_ingress_policies | join(', ') }}`{% else %}no namespace with existing `NetworkPolicy` objects was missing ingress coverage{% endif %} |
-| `Egress policy coverage` | {% if namespaces_missing_egress_policies | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% else %}{{ status_badge('OK') }} no gap detected{% endif %} | {% if namespaces_missing_egress_policies | default([]) | length > 0 %}`{{ namespaces_missing_egress_policies | join(', ') }}`{% else %}no namespace with existing `NetworkPolicy` objects was missing egress coverage{% endif %} |
-| `ResourceQuota coverage` | {% if namespaces_without_resourcequota | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_resourcequota | default([]) | length > 0 %}`{{ namespaces_without_resourcequota | join(', ') }}`{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `ResourceQuota` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `ResourceQuota` hygiene check{% endif %} |
-| `LimitRange coverage` | {% if namespaces_without_limitrange | default([]) | length > 0 %}{{ status_badge('WARN') }} gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_limitrange | default([]) | length > 0 %}`{{ namespaces_without_limitrange | join(', ') }}`{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `LimitRange` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `LimitRange` hygiene check{% endif %} |
+| `NetworkPolicy coverage` | {% if namespaces_without_networkpolicy | default([]) | length > 0 %}{{ status_badge('INFO') }} baseline gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_networkpolicy | default([]) | length > 0 %}`{{ top_namespace_networkpolicy_gaps | join(', ') }}`{% if (namespaces_without_networkpolicy | length) > (top_namespace_networkpolicy_gaps | length) %} and `{{ (namespaces_without_networkpolicy | length) - (top_namespace_networkpolicy_gaps | length) }}` more{% endif %}{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `NetworkPolicy` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `NetworkPolicy` hygiene check{% endif %} |
+| `Ingress policy coverage` | {% if namespaces_missing_ingress_policies | default([]) | length > 0 %}{{ status_badge('INFO') }} baseline gaps found{% else %}{{ status_badge('OK') }} no gap detected{% endif %} | {% if namespaces_missing_ingress_policies | default([]) | length > 0 %}`{{ top_namespace_ingress_policy_gaps | join(', ') }}`{% if (namespaces_missing_ingress_policies | length) > (top_namespace_ingress_policy_gaps | length) %} and `{{ (namespaces_missing_ingress_policies | length) - (top_namespace_ingress_policy_gaps | length) }}` more{% endif %}{% else %}no namespace with existing `NetworkPolicy` objects was missing ingress coverage{% endif %} |
+| `Egress policy coverage` | {% if namespaces_missing_egress_policies | default([]) | length > 0 %}{{ status_badge('INFO') }} baseline gaps found{% else %}{{ status_badge('OK') }} no gap detected{% endif %} | {% if namespaces_missing_egress_policies | default([]) | length > 0 %}`{{ top_namespace_egress_policy_gaps | join(', ') }}`{% if (namespaces_missing_egress_policies | length) > (top_namespace_egress_policy_gaps | length) %} and `{{ (namespaces_missing_egress_policies | length) - (top_namespace_egress_policy_gaps | length) }}` more{% endif %}{% else %}no namespace with existing `NetworkPolicy` objects was missing egress coverage{% endif %} |
+| `ResourceQuota coverage` | {% if namespaces_without_resourcequota | default([]) | length > 0 %}{{ status_badge('INFO') }} baseline gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_resourcequota | default([]) | length > 0 %}`{{ top_namespace_resourcequota_gaps | join(', ') }}`{% if (namespaces_without_resourcequota | length) > (top_namespace_resourcequota_gaps | length) %} and `{{ (namespaces_without_resourcequota | length) - (top_namespace_resourcequota_gaps | length) }}` more{% endif %}{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `ResourceQuota` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `ResourceQuota` hygiene check{% endif %} |
+| `LimitRange coverage` | {% if namespaces_without_limitrange | default([]) | length > 0 %}{{ status_badge('INFO') }} baseline gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_limitrange | default([]) | length > 0 %}`{{ top_namespace_limitrange_gaps | join(', ') }}`{% if (namespaces_without_limitrange | length) > (top_namespace_limitrange_gaps | length) %} and `{{ (namespaces_without_limitrange | length) - (top_namespace_limitrange_gaps | length) }}` more{% endif %}{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `LimitRange` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `LimitRange` hygiene check{% endif %} |
 
 {% if (security_issue_type_counts | default({}) | length) > 0 %}
 ### Pod Security Summary
@@ -1452,7 +2036,7 @@ These are review candidates, not confirmed stale identities. Service account ent
 {% endif %}
 
 {% set high_risk_sccs = scc_posture_summary | default([]) | rejectattr('risk_summary', 'equalto', 'restricted') | list %}
-{% if (securitycontextconstraints | default({})).get('items', []) | length > 0 %}
+{% if securitycontextconstraints_items | length > 0 %}
 ### Security Context Constraints
 
 {% if high_risk_sccs | length == 0 %}
@@ -1506,33 +2090,44 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 {% endif %}
 
-{% if auth_findings | default([]) | length > 0 %}
+{% if auth_posture_summary | default({}) | length > 0 %}
 ### Authentication Configuration
 
+| Signal | Value |
+| --- | --- |
+| Identity provider count | `{{ auth_posture_summary.identity_provider_count | default(0) }}` |
+| Provider types | `{{ (auth_posture_summary.provider_types | default([])) | join(', ') or 'none' }}` |
+| External providers | `{{ auth_posture_summary.external_identity_provider_count | default(0) }}` |
+| Local providers | `{{ auth_posture_summary.local_identity_provider_count | default(0) }}` |
+| kubeadmin secret present | `{{ auth_posture_summary.kubeadmin_secret_present | default(false) }}` |
+| Posture | `{{ auth_posture_summary.reason_summary | default('unknown') }}` |
+
+{% if auth_findings | default([]) | length > 0 %}
 | Check | Result | Detail |
 | --- | --- | --- |
 {% for item in auth_findings %}
-| `{% if item.issue == 'missing-identity-provider' %}OAuth identity providers{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue == 'missing-identity-provider' %}not configured{% else %}review{% endif %}` | {% if item.issue == 'missing-identity-provider' %}No `identityProviders` were defined in `oauth/cluster` at collection time.{% else %}{{ item.detail }}{% endif %} |
+| `{% if item.issue == 'missing-identity-provider' %}OAuth identity providers{% elif item.issue == 'local-only-identity-provider' %}Identity provider diversity{% else %}{{ item.issue }}{% endif %}` | `{% if item.issue == 'missing-identity-provider' %}not configured{% else %}review{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
+{% endif %}
 {% endif %}
 
 ### Secrets Management
 
 | Signal | Value |
 | --- | --- |
-| Total secrets | `{{ (secrets | default({})).get('items', []) | length }}` |
+| Total secrets | `{{ secrets_items | length }}` |
 | TLS secrets | `{{ (secret_type_counts | default({})).get('kubernetes.io/tls', 0) }}` |
 | Docker config secrets | `{{ (secret_type_counts | default({})).get('kubernetes.io/dockerconfigjson', 0) }}` |
 | Likely unused secrets | `{{ likely_unused_secrets | default([]) | length }}` |
 | Certificates expiring in <= 30d | `{{ expiring_certificates_warning | default([]) | length }}` |
 | Certificates expiring in <= 7d | `{{ expiring_certificates_critical | default([]) | length }}` |
 
-{% if top_image_registry_findings | default([]) | length > 0 or top_internal_registry_workloads | default([]) | length > 0 or top_feature_findings | default([]) | length > 0 or (imagestreams | default({})).get('items', []) | length > 0 or (buildconfigs | default({})).get('items', []) | length > 0 %}
+{% if top_image_registry_findings | default([]) | length > 0 or top_internal_registry_workloads | default([]) | length > 0 or top_feature_findings | default([]) | length > 0 or imagestreams_items | length > 0 or buildconfigs_items | length > 0 %}
 ### Container Image Management
 
 | Check | Result | Detail |
 | --- | --- | --- |
-| `Inventory` | `info` | `ImageStreams={{ (imagestreams | default({})).get('items', []) | length }}, BuildConfigs={{ (buildconfigs | default({})).get('items', []) | length }}, Builds={{ (builds | default({})).get('items', []) | length }}` |
+| `Inventory` | `info` | `ImageStreams={{ imagestreams_items | length }}, BuildConfigs={{ buildconfigs_items | length }}, Builds={{ builds_items | length }}` |
 {% for item in top_image_registry_findings | default([]) %}
 | `Image registry` | `{% if item.issue == 'public-internal-image-registry-route' %}public internal route enabled{% elif item.issue == 'missing-image-registry-filter-policy' %}registry import policy not defined{% elif item.issue == 'insecure-image-registries-configured' %}insecure registries configured{% elif item.issue == 'internal-registry-images-in-user-workloads' %}user workloads use internal registry{% else %}review{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
@@ -1550,8 +2145,29 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 {% endif %}
 
-{% if (compliancesuites | default({})).get('items', []) | length > 0 %}
+{% if compliancesuites_items | length > 0 or (audit_report.domains.security_and_governance.compliance.operator_summary.present | default(false)) %}
 ### Compliance Signals
+
+{% set compliance_operator_summary = audit_report.domains.security_and_governance.compliance.operator_summary | default({}) %}
+{% set compliance_standards_summary = audit_report.domains.security_and_governance.compliance.standards_summary | default([]) %}
+{% set compliance_standards_findings = audit_report.domains.security_and_governance.compliance.standards_findings | default([]) %}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Compliance Operator present | `{{ compliance_operator_summary.present | default(false) }}` | {{ status_badge('OK' if (compliance_operator_summary.present | default(false)) else 'UNKNOWN') }} |
+| openshift-compliance namespace | `{{ compliance_operator_summary.namespace_present | default(false) }}` | {{ status_badge('OK' if (compliance_operator_summary.namespace_present | default(false)) else ('WARN' if (compliance_operator_summary.present | default(false)) else 'UNKNOWN')) }} |
+| Profile bundles | `{{ compliance_operator_summary.profilebundle_count | default(0) }}` total / `{{ compliance_operator_summary.valid_profilebundle_count | default(0) }}` valid / `{{ compliance_operator_summary.invalid_profilebundle_count | default(0) }}` invalid | {{ status_badge('WARN' if (compliance_operator_summary.invalid_profilebundle_count | default(0) | int) > 0 else ('OK' if (compliance_operator_summary.profilebundle_count | default(0) | int) > 0 else 'UNKNOWN')) }} |
+| Scan settings | `{{ compliance_operator_summary.scan_setting_count | default(0) }}` settings / `{{ compliance_operator_summary.scan_setting_binding_count | default(0) }}` bindings | {{ status_badge('OK' if (compliance_operator_summary.scan_setting_binding_count | default(0) | int) > 0 else ('WARN' if (compliance_operator_summary.present | default(false)) else 'UNKNOWN')) }} |
+| Suites and scans | `{{ compliance_operator_summary.suite_count | default(0) }}` suites / `{{ compliance_operator_summary.scan_count | default(0) }}` scans | {{ status_badge('WARN' if (compliance_operator_summary.failing_scan_count | default(0) | int) > 0 else ('OK' if (compliance_operator_summary.scan_count | default(0) | int) > 0 else 'INFO')) }} |
+| Failed compliance checks | `{{ compliance_operator_summary.failed_check_count | default(0) }}` | {{ status_badge('WARN' if (compliance_operator_summary.failed_check_count | default(0) | int) > 0 else ('OK' if (compliance_operator_summary.present | default(false)) else 'UNKNOWN')) }} |
+
+{% if compliance_standards_summary | length > 0 %}
+| Standard | Content | Configured | Active | Profiles | Tailored | Suites | Scans | Failed Scans | Failed Checks | Runtime | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+{% for item in compliance_standards_summary %}
+| `{{ item.standard }}` | `{{ item.content_present }}` | `{{ item.configured }}` | `{{ item.active_enabled }}` | `{{ item.profile_count }}` | `{{ item.tailored_profile_count }}` | `{{ item.suite_count }}` | `{{ item.scan_count }}` | `{{ item.failing_scan_count }}` | `{{ item.failed_check_count }}` | `{{ item.runtime_status }}` | `{{ item.verdict }}` |
+{% endfor %}
+{% endif %}
 
 {% if (compliance_result_counts | default({}) | length) > 0 %}
 | Result | Count |
@@ -1566,6 +2182,15 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% for item in compliance_suite_summary | default([]) %}
 | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.result }}` |
 {% endfor %}
+
+{% if compliance_standards_findings | length > 0 %}
+
+| Standard | Severity | Detail |
+| --- | --- | --- |
+{% for item in compliance_standards_findings %}
+| `{{ item.standard | default('general') }}` | `{{ item.severity }}` | `{{ item.detail }}` |
+{% endfor %}
+{% endif %}
 {% endif %}
 
 {% if empty_user_namespaces | default([]) | length > 0 or top_services_without_endpoints | default([]) | length > 0 or top_likely_unused_serviceaccounts | default([]) | length > 0 or top_likely_unused_configmaps | default([]) | length > 0 or top_likely_unused_secrets | default([]) | length > 0 or top_likely_unused_crds | default([]) | length > 0 %}
@@ -1616,6 +2241,28 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 {% endif %}
 
+## Day 2 Production Readiness
+
+{% set day2_readiness_summary = audit_report.domains.production_day2_readiness.day2_production_readiness_summary | default({}) %}
+
+Recommendations: {{ day2_readiness_summary.recommendation | default('Use this section as the final production-readiness synthesis across lifecycle, observability, recovery, operations maturity, and workload capability-extension posture.') }}
+
+This section synthesizes the earlier readiness-relevant postures instead of repeating raw Day 2 inventory detail.
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Production readiness status | `{{ day2_readiness_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (day2_readiness_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (day2_readiness_summary.status | default('unknown')) == 'WARNING' else ('OK' if (day2_readiness_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Reason summary | `{{ day2_readiness_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
+| Top blockers | `{{ (day2_readiness_summary.top_blockers | default([])) | join('; ') or 'none' }}` | {{ status_badge('INFO') }} |
+| Lifecycle support | `{{ day2_readiness_summary.lifecycle_support_status | default('unknown') }}` | {{ status_badge('WARN' if (day2_readiness_summary.lifecycle_support_status | default('unknown')) not in ['supported', 'unknown'] else ('OK' if (day2_readiness_summary.lifecycle_support_status | default('unknown')) == 'supported' else 'UNKNOWN')) }} |
+| Upgrade readiness | `{{ day2_readiness_summary.upgrade_readiness_status | default('UNKNOWN') }}` | {{ status_badge('CRITICAL' if (day2_readiness_summary.upgrade_readiness_status | default('UNKNOWN')) == 'BLOCKED' else ('WARN' if (day2_readiness_summary.upgrade_readiness_status | default('UNKNOWN')) == 'WARNING' else ('OK' if (day2_readiness_summary.upgrade_readiness_status | default('UNKNOWN')) == 'READY' else 'UNKNOWN'))) }} |
+| Observability posture | `{{ day2_readiness_summary.observability_status | default('UNKNOWN') }}` | {{ status_badge('CRITICAL' if (day2_readiness_summary.observability_status | default('UNKNOWN')) == 'CRITICAL' else ('WARN' if (day2_readiness_summary.observability_status | default('UNKNOWN')) == 'WARNING' else ('OK' if (day2_readiness_summary.observability_status | default('UNKNOWN')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Backup and DR posture | `{{ day2_readiness_summary.backup_recovery_status | default('UNKNOWN') }}` | {{ status_badge('CRITICAL' if (day2_readiness_summary.backup_recovery_status | default('UNKNOWN')) == 'CRITICAL' else ('WARN' if (day2_readiness_summary.backup_recovery_status | default('UNKNOWN')) == 'WARNING' else ('OK' if (day2_readiness_summary.backup_recovery_status | default('UNKNOWN')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Security and compliance posture | `{{ day2_readiness_summary.security_compliance_status | default('UNKNOWN') }}` | {{ status_badge('CRITICAL' if (day2_readiness_summary.security_compliance_status | default('UNKNOWN')) == 'CRITICAL' else ('WARN' if (day2_readiness_summary.security_compliance_status | default('UNKNOWN')) == 'WARNING' else ('OK' if (day2_readiness_summary.security_compliance_status | default('UNKNOWN')) == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Operations maturity | `{{ day2_readiness_summary.operations_maturity_status | default('UNKNOWN') }}` | {{ status_badge('WARN' if (day2_readiness_summary.operations_maturity_status | default('UNKNOWN')) == 'WARNING' else ('OK' if (day2_readiness_summary.operations_maturity_status | default('UNKNOWN')) == 'HEALTHY' else 'UNKNOWN')) }} |
+| Workload capability extensions | `{{ day2_readiness_summary.workload_capability_extensions_status | default('UNKNOWN') }}` | {{ status_badge('WARN' if (day2_readiness_summary.workload_capability_extensions_status | default('UNKNOWN')) == 'WARNING' else ('INFO' if (day2_readiness_summary.workload_capability_extensions_status | default('UNKNOWN')) == 'INFO' else 'UNKNOWN')) }} |
+| Evidence confidence | `{{ day2_readiness_summary.evidence_confidence | default('unknown') }}` | {{ status_badge('INFO' if (day2_readiness_summary.evidence_confidence | default('unknown')) in ['low', 'unknown'] else 'OK') }} |
+
 ## Appendix: Notes
 
 - This report is a point-in-time read of cluster state.
@@ -1627,33 +2274,39 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 
 | Signal | Value |
 | --- | --- |
-| Commands attempted | `{{ collection_summary.command_count | default(0) }}` |
-| Applicable commands | `{{ collection_summary.applicable_command_count | default(collection_summary.command_count | default(0)) }}` |
-| Collection success rate | `{{ collection_success_rate_pct | default(0) }}`% |
-| Collector parallelism | `{{ collection_summary.parallelism | default(0) }}` |
-| Per-command timeout | `{{ collection_summary.timeout_seconds | default(0) }}` seconds |
-| Successful commands | `{{ collection_summary.succeeded_commands | default(0) }}` |
-| Failed commands | `{{ collection_summary.failed_commands | default(0) }}` |
-| Optional commands skipped as not applicable | `{{ collection_summary.optional_skipped_commands | default(collection_skipped_optional_commands | default([]) | length) }}` |
-| Timed out commands | `{{ collection_summary.timed_out_commands | default(0) }}` |
-| Core command failures | `{{ collection_summary.core_failed_commands | default(0) }}` |
+| Commands attempted | `{{ report_collection.command_count | default(0) }}` |
+| Applicable commands | `{{ report_collection.applicable_command_count | default(report_collection.command_count | default(0)) }}` |
+| Collection success rate | `{{ report_collection_success_pct }}`% |
+| Collector parallelism | `{{ report_collection.parallelism | default(0) }}` |
+| Per-command timeout | `{{ report_collection.timeout_seconds | default(0) }}` seconds |
+| Successful commands | `{{ report_collection.succeeded_commands | default(0) }}` |
+| Failed commands | `{{ report_collection.failed_commands | default(0) }}` |
+| Optional commands skipped | `{{ report_collection.optional_skipped_commands | default(report_collection_skipped_list | length) }}` |
+| Timed out commands | `{{ report_collection.timed_out_commands | default(0) }}` |
+| Core command failures | `{{ report_collection.core_failed_commands | default(0) }}` |
 
-{% if collection_failures | default([]) | length == 0 %}
+{% if report_collection_failures_list | length == 0 %}
 All collection commands completed successfully.
 {% else %}
 | Command | RC | Timed Out | Detail |
 | --- | --- | --- | --- |
-{% for item in collection_failures %}
+{% for item in report_collection_failures_list %}
 | `{{ item.name }}` | `{{ item.rc }}` | `{{ item.timed_out }}` | {{ item.stderr or 'n/a' }} |
 {% endfor %}
 {% endif %}
 
-{% if collection_skipped_optional_commands | default([]) | length > 0 %}
+{% if report_collection_skipped_list | length > 0 %}
 | Optional Collector | Category | Detail |
 | --- | --- | --- |
-{% for item in collection_skipped_optional_commands %}
+{% for item in report_collection_skipped_list %}
 | `{{ item.name }}` | `{{ item.category }}` | {{ item.detail or 'n/a' }} |
 {% endfor %}
+{% if optional_access_denied_count > 0 %}
+
+Collection warning:
+- some optional queries were denied by RBAC during this run
+- rerun with `cluster-admin` if you want the report to include full detail for those skipped sections
+{% endif %}
 {% endif %}
 
 ## Appendix: Execution Stats

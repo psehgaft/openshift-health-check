@@ -2,33 +2,40 @@
 - name: Build warning event summaries
   ansible.builtin.set_fact:
     warning_event_reason_counts: "{{ warning_event_reason_counts | default({}) | combine({event_reason: ((warning_event_reason_counts[event_reason] | default(0)) + 1)}, recursive=True) }}"
-  loop: "{{ (warning_events | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.events | default({})).get('items', []) }}"
   vars:
     event_reason: "{{ item.reason | default('Unknown') }}"
   changed_when: false
 
 - name: Parse monitoring config YAML
+  vars:
+    graph_configmaps: "{{ (analysis_graph.configmaps | default({'items': []})).get('items', []) }}"
+    cluster_monitoring_config_obj: "{{ (graph_configmaps | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring') | selectattr('metadata.name', 'equalto', 'cluster-monitoring-config') | list | first) | default({}) }}"
+    user_workload_monitoring_config_obj: "{{ (graph_configmaps | selectattr('metadata.namespace', 'equalto', 'openshift-user-workload-monitoring') | selectattr('metadata.name', 'equalto', 'user-workload-monitoring-config') | list | first) | default({}) }}"
   ansible.builtin.set_fact:
-    cluster_monitoring_config_parsed: "{{ ((cluster_monitoring_config.data['config.yaml'] | default('')) | from_yaml) if (cluster_monitoring_config.data is defined and cluster_monitoring_config.data['config.yaml'] is defined) else {} }}"
-    user_workload_monitoring_config_parsed: "{{ ((user_workload_monitoring_config.data['config.yaml'] | default('')) | from_yaml) if (user_workload_monitoring_config.data is defined and user_workload_monitoring_config.data['config.yaml'] is defined) else {} }}"
+    cluster_monitoring_config_parsed: "{{ ((cluster_monitoring_config_obj.data['config.yaml'] | default('')) | from_yaml) if (cluster_monitoring_config_obj.data is defined and cluster_monitoring_config_obj.data['config.yaml'] is defined) else {} }}"
+    user_workload_monitoring_config_parsed: "{{ ((user_workload_monitoring_config_obj.data['config.yaml'] | default('')) | from_yaml) if (user_workload_monitoring_config_obj.data is defined and user_workload_monitoring_config_obj.data['config.yaml'] is defined) else {} }}"
 
 - name: Attempt to discover thanos querier route
   ansible.builtin.command: oc -n openshift-monitoring get route thanos-querier -o jsonpath={.spec.host}
   register: thanos_route_cmd
   changed_when: false
   failed_when: false
+  when: (report_mode_resolved | default('live')) == 'live'
 
 - name: Capture bearer token
   ansible.builtin.command: oc whoami -t
   register: oc_token_cmd
   changed_when: false
   failed_when: false
+  when: (report_mode_resolved | default('live')) == 'live'
 
 - name: Attempt API server readyz check
   ansible.builtin.command: oc get --raw=/readyz?verbose
   register: apiserver_readyz_cmd
   changed_when: false
   failed_when: false
+  when: (report_mode_resolved | default('live')) == 'live'
 
 - name: Build observability forwarding summary
   ansible.builtin.set_fact:
@@ -36,24 +43,46 @@
       monitoring_operator_available: "{{ clusteroperator_status_map.monitoring.available | default('Unknown') }}"
       monitoring_operator_degraded: "{{ clusteroperator_status_map.monitoring.degraded | default('Unknown') }}"
       thanos_querier_route_found: false
-      cluster_log_forwarder_count: "{{ (clusterlogforwarders | default({})).get('items', []) | length }}"
-      alertmanagerconfig_count: "{{ (alertmanagerconfigs | default({})).get('items', []) | length }}"
+      cluster_log_forwarder_count: "{{ (analysis_graph.clusterlogforwarders | default({})).get('items', []) | length }}"
+      alertmanagerconfig_count: "{{ (analysis_graph.alertmanagerconfigs | default({})).get('items', []) | length }}"
+      cluster_alertmanager_additional_config_count: "{{ ((((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([])) | length)) }}"
+      user_workload_alertmanager_additional_config_count: "{{ ((((user_workload_monitoring_config_parsed.alertmanager | default({})).additionalAlertmanagerConfigs | default([])) | length)) }}"
       log_forwarding_outputs: []
       external_log_forwarding_outputs: []
       external_alert_receivers: []
+      alert_delivery_config_sources: []
+      alert_delivery_source_count: 0
       external_alert_receiver_count: 0
       external_alert_delivery_configured: false
       alert_routing_to_external_receiver_configured: false
       alertmanagerconfigs_with_external_routes: 0
       alertmanagerconfigs_without_route_receivers: 0
+      application_log_pipeline_count: 0
+      infrastructure_log_pipeline_count: 0
+      audit_log_pipeline_count: 0
+      application_logs_collected: false
+      infrastructure_logs_collected: false
+      audit_logs_collected: false
+      application_logs_exported_external: false
+      infrastructure_logs_exported_external: false
+      audit_logs_exported_external: false
+      application_logs_delivery_state: not-collected
+      infrastructure_logs_delivery_state: not-collected
+      audit_logs_delivery_state: not-collected
+      logs_delivery_verification_status: not-configured
       cluster_metrics_remote_write_count: "{{ (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([])) | length) }}"
       user_workload_metrics_remote_write_count: "{{ (((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([])) | length) }}"
       external_cluster_metrics_remote_write_count: 0
       external_user_workload_metrics_remote_write_count: 0
+      cluster_metrics_delivery_state: not-configured
+      user_workload_metrics_delivery_state: not-configured
+      metrics_delivery_verification_status: not-configured
+      alert_delivery_state: not-configured
+      alert_delivery_verification_status: not-configured
 
 - name: Update thanos route capability in observability summary
   ansible.builtin.set_fact:
-    observability_forwarding_summary: "{{ observability_forwarding_summary | combine({'thanos_querier_route_found': (thanos_route_cmd.rc == 0 and (thanos_route_cmd.stdout | default('') | trim | length > 0))}, recursive=True) }}"
+    observability_forwarding_summary: "{{ observability_forwarding_summary | combine({'thanos_querier_route_found': ((thanos_route_cmd.rc | default(1)) == 0 and (thanos_route_cmd.stdout | default('') | trim | length > 0))}, recursive=True) }}"
 
 - name: Build log forwarding findings
   ansible.builtin.shell: |
@@ -61,12 +90,14 @@
     import json
 
     data = json.loads(r'''{{ {
-      "items": (clusterlogforwarders | default({})).get('items', [])
+      "items": (analysis_graph.clusterlogforwarders | default({})).get('items', [])
     } | to_json }}''')
 
     findings = []
     outputs = []
     external_outputs = []
+    pipeline_counts = {"application": 0, "infrastructure": 0, "audit": 0}
+    external_pipeline_counts = {"application": 0, "infrastructure": 0, "audit": 0}
 
     def is_external_url(url):
         if not url:
@@ -83,6 +114,17 @@
             return True
         return False
 
+    def normalize_inputs(pipeline):
+        refs = pipeline.get("inputRefs")
+        if isinstance(refs, list):
+            return [str(item).lower() for item in refs if item not in (None, "")]
+        if refs not in (None, ""):
+            return [str(refs).lower()]
+        input_ref = pipeline.get("inputRef")
+        if input_ref not in (None, ""):
+            return [str(input_ref).lower()]
+        return []
+
     for clf in data["items"]:
         ns = clf.get("metadata", {}).get("namespace", "")
         name = clf.get("metadata", {}).get("name", "")
@@ -93,6 +135,7 @@
             for ref in pipeline.get("outputRefs", []) or []:
                 output_refs.add(ref)
         current_outputs = spec.get("outputs", []) or []
+        output_by_name = {str(item.get("name", "")): item for item in current_outputs if item.get("name")}
         if not current_outputs:
             findings.append({
                 "issue": "clusterlogforwarder-without-outputs",
@@ -110,6 +153,15 @@
             outputs.append(record)
             if output_is_external(output):
                 external_outputs.append(record)
+        for pipeline in pipelines:
+            input_refs = normalize_inputs(pipeline)
+            pipeline_output_refs = [str(ref) for ref in (pipeline.get("outputRefs", []) or []) if ref not in (None, "")]
+            pipeline_external = any(output_is_external(output_by_name.get(ref, {})) for ref in pipeline_output_refs)
+            for log_type in ("application", "infrastructure", "audit"):
+                if log_type in input_refs:
+                    pipeline_counts[log_type] += 1
+                    if pipeline_external:
+                        external_pipeline_counts[log_type] += 1
         if current_outputs and not any(output_is_external(o) for o in current_outputs):
             findings.append({
                 "issue": "logs-not-forwarded-to-external-destination",
@@ -127,10 +179,25 @@
             "detail": "no ClusterLogForwarder resource found"
         })
 
+    for log_type in ("application", "infrastructure", "audit"):
+        if {{ require_cluster_log_forwarder | bool | to_json }}:
+            if pipeline_counts[log_type] == 0:
+                findings.append({
+                    "issue": f"{log_type}-logs-not-collected",
+                    "detail": f"no ClusterLogForwarder pipeline was found for {log_type} logs"
+                })
+            elif external_pipeline_counts[log_type] == 0:
+                findings.append({
+                    "issue": f"{log_type}-logs-not-exported-external",
+                    "detail": f"{log_type} logs appear to be collected but not forwarded to an external destination"
+                })
+
     print(json.dumps({
         "findings": findings,
         "outputs": outputs,
-        "external_outputs": external_outputs
+        "external_outputs": external_outputs,
+        "pipeline_counts": pipeline_counts,
+        "external_pipeline_counts": external_pipeline_counts
     }))
     PY
   register: observability_log_forwarding_cmd
@@ -139,7 +206,7 @@
 
 - name: Normalize log forwarding findings
   ansible.builtin.set_fact:
-    observability_log_forwarding_data: "{{ observability_log_forwarding_cmd.stdout | from_json if (observability_log_forwarding_cmd.rc == 0 and (observability_log_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'outputs': [], 'external_outputs': []} }}"
+    observability_log_forwarding_data: "{{ observability_log_forwarding_cmd.stdout | from_json if (observability_log_forwarding_cmd.rc == 0 and (observability_log_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'outputs': [], 'external_outputs': [], 'pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}, 'external_pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}} }}"
 
 - name: Build metrics forwarding findings
   ansible.builtin.shell: |
@@ -205,11 +272,14 @@
     import json
 
     data = json.loads(r'''{{ {
-      "items": (alertmanagerconfigs | default({})).get('items', [])
+      "items": (analysis_graph.alertmanagerconfigs | default({})).get('items', []),
+      "cluster_alertmanager_additional_configs": (((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([]))),
+      "user_workload_alertmanager_additional_configs": (((user_workload_monitoring_config_parsed.alertmanager | default({})).additionalAlertmanagerConfigs | default([])))
     } | to_json }}''')
 
     findings = []
     receivers = []
+    config_sources = []
     supported_receiver_keys = [
         ("slackConfigs", "slack"),
         ("pagerdutyConfigs", "pagerduty"),
@@ -258,6 +328,12 @@
                         "type": receiver_type,
                         "target": describe_target(receiver_type, cfg),
                     })
+        if external_receiver_names:
+            config_sources.append({
+                "source": "AlertmanagerConfig",
+                "namespace": namespace,
+                "name": config_name,
+            })
 
         route_receivers = set()
         collect_route_receivers((item.get("spec", {}) or {}).get("route") or {}, route_receivers)
@@ -276,15 +352,37 @@
                 "detail": f"{namespace}/{config_name} defines external receivers that are not referenced by any route"
             })
 
-    if not receivers:
+    cluster_additional_count = len(data.get("cluster_alertmanager_additional_configs") or [])
+    user_additional_count = len(data.get("user_workload_alertmanager_additional_configs") or [])
+    if cluster_additional_count > 0:
+        config_sources.append({
+            "source": "cluster-monitoring-config",
+            "namespace": "openshift-monitoring",
+            "name": "alertmanagerMain.additionalAlertmanagerConfigs",
+        })
+    if user_additional_count > 0:
+        config_sources.append({
+            "source": "user-workload-monitoring-config",
+            "namespace": "openshift-user-workload-monitoring",
+            "name": "alertmanager.additionalAlertmanagerConfigs",
+        })
+
+    if not receivers and not config_sources:
         findings.append({
             "issue": "external-alert-delivery-not-configured",
             "detail": "no AlertmanagerConfig receiver was found for supported external channels such as email, Slack, PagerDuty, Opsgenie, VictorOps, webhook, or WeChat"
+        })
+    elif not receivers and config_sources:
+        findings.append({
+            "issue": "external-alert-delivery-not-verifiable",
+            "detail": "additional Alertmanager configuration was detected, but no explicit externally routed receivers were visible in AlertmanagerConfig resources"
         })
 
     print(json.dumps({
         "findings": findings,
         "receivers": receivers,
+        "config_sources": config_sources,
+        "alert_delivery_source_count": len(config_sources),
         "external_alert_receiver_count": len(receivers),
         "external_alert_delivery_configured": len(receivers) > 0,
         "alert_routing_to_external_receiver_configured": configs_with_external_routes > 0,
@@ -298,7 +396,7 @@
 
 - name: Normalize external alert delivery findings
   ansible.builtin.set_fact:
-    observability_alert_delivery_data: "{{ observability_alert_delivery_cmd.stdout | from_json if (observability_alert_delivery_cmd.rc == 0 and (observability_alert_delivery_cmd.stdout | default('') | length > 0)) else {'findings': [], 'receivers': [], 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false, 'alert_routing_to_external_receiver_configured': false, 'alertmanagerconfigs_with_external_routes': 0, 'alertmanagerconfigs_without_route_receivers': 0} }}"
+    observability_alert_delivery_data: "{{ observability_alert_delivery_cmd.stdout | from_json if (observability_alert_delivery_cmd.rc == 0 and (observability_alert_delivery_cmd.stdout | default('') | length > 0)) else {'findings': [], 'receivers': [], 'config_sources': [], 'alert_delivery_source_count': 0, 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false, 'alert_routing_to_external_receiver_configured': false, 'alertmanagerconfigs_with_external_routes': 0, 'alertmanagerconfigs_without_route_receivers': 0} }}"
 
 - name: Build observability findings and summary
   ansible.builtin.set_fact:
@@ -313,7 +411,54 @@
     observability_forwarding_updates:
       log_forwarding_outputs: "{{ observability_log_forwarding_data.outputs | default([]) }}"
       external_log_forwarding_outputs: "{{ observability_log_forwarding_data.external_outputs | default([]) }}"
+      application_log_pipeline_count: "{{ (observability_log_forwarding_data.pipeline_counts | default({})).application | default(0) }}"
+      infrastructure_log_pipeline_count: "{{ (observability_log_forwarding_data.pipeline_counts | default({})).infrastructure | default(0) }}"
+      audit_log_pipeline_count: "{{ (observability_log_forwarding_data.pipeline_counts | default({})).audit | default(0) }}"
+      application_logs_collected: "{{ (((observability_log_forwarding_data.pipeline_counts | default({})).application | default(0)) | int) > 0 }}"
+      infrastructure_logs_collected: "{{ (((observability_log_forwarding_data.pipeline_counts | default({})).infrastructure | default(0)) | int) > 0 }}"
+      audit_logs_collected: "{{ (((observability_log_forwarding_data.pipeline_counts | default({})).audit | default(0)) | int) > 0 }}"
+      application_logs_exported_external: "{{ (((observability_log_forwarding_data.external_pipeline_counts | default({})).application | default(0)) | int) > 0 }}"
+      infrastructure_logs_exported_external: "{{ (((observability_log_forwarding_data.external_pipeline_counts | default({})).infrastructure | default(0)) | int) > 0 }}"
+      audit_logs_exported_external: "{{ (((observability_log_forwarding_data.external_pipeline_counts | default({})).audit | default(0)) | int) > 0 }}"
+      application_logs_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((((observability_log_forwarding_data.external_pipeline_counts | default({})).application | default(0)) | int) > 0)
+          else (
+            'cluster-local-only'
+            if ((((observability_log_forwarding_data.pipeline_counts | default({})).application | default(0)) | int) > 0)
+            else 'not-collected'
+          )
+        }}
+      infrastructure_logs_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((((observability_log_forwarding_data.external_pipeline_counts | default({})).infrastructure | default(0)) | int) > 0)
+          else (
+            'cluster-local-only'
+            if ((((observability_log_forwarding_data.pipeline_counts | default({})).infrastructure | default(0)) | int) > 0)
+            else 'not-collected'
+          )
+        }}
+      audit_logs_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((((observability_log_forwarding_data.external_pipeline_counts | default({})).audit | default(0)) | int) > 0)
+          else (
+            'cluster-local-only'
+            if ((((observability_log_forwarding_data.pipeline_counts | default({})).audit | default(0)) | int) > 0)
+            else 'not-collected'
+          )
+        }}
+      logs_delivery_verification_status: >-
+        {{
+          'not-verified'
+          if ((observability_log_forwarding_data.outputs | default([]) | length) > 0)
+          else 'not-configured'
+        }}
       external_alert_receivers: "{{ observability_alert_delivery_data.receivers | default([]) }}"
+      alert_delivery_config_sources: "{{ observability_alert_delivery_data.config_sources | default([]) }}"
+      alert_delivery_source_count: "{{ observability_alert_delivery_data.alert_delivery_source_count | default(0) }}"
       external_alert_receiver_count: "{{ observability_alert_delivery_data.external_alert_receiver_count | default(0) }}"
       external_alert_delivery_configured: "{{ observability_alert_delivery_data.external_alert_delivery_configured | default(false) }}"
       alert_routing_to_external_receiver_configured: "{{ observability_alert_delivery_data.alert_routing_to_external_receiver_configured | default(false) }}"
@@ -321,11 +466,56 @@
       alertmanagerconfigs_without_route_receivers: "{{ observability_alert_delivery_data.alertmanagerconfigs_without_route_receivers | default(0) }}"
       external_cluster_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.cluster_external_count | default(0) }}"
       external_user_workload_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.user_external_count | default(0) }}"
+      alert_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((observability_alert_delivery_data.external_alert_receiver_count | default(0) | int) > 0)
+          else (
+            'configuration-present-external-not-proven'
+            if ((observability_alert_delivery_data.alert_delivery_source_count | default(0) | int) > 0)
+            else 'not-configured'
+          )
+        }}
+      alert_delivery_verification_status: >-
+        {{
+          'not-verified'
+          if ((observability_alert_delivery_data.alert_delivery_source_count | default(0) | int) > 0)
+          else 'not-configured'
+        }}
+      cluster_metrics_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((observability_metrics_forwarding_data.cluster_external_count | default(0) | int) > 0)
+          else (
+            'cluster-local-only'
+            if ((observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) | int) > 0)
+            else 'not-configured'
+          )
+        }}
+      user_workload_metrics_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((observability_metrics_forwarding_data.user_external_count | default(0) | int) > 0)
+          else (
+            'cluster-local-only'
+            if ((observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) | int) > 0)
+            else 'not-configured'
+          )
+        }}
+      metrics_delivery_verification_status: >-
+        {{
+          'not-verified'
+          if (
+            (observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) | int) > 0
+            or (observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) | int) > 0
+          )
+          else 'not-configured'
+        }}
 
 - name: Normalize warning event timestamps
   ansible.builtin.set_fact:
     warning_event_items_unsorted: "{{ warning_event_items_unsorted | default([]) + [item | combine({'_sort_timestamp': ((item.lastTimestamp | default(item.eventTime | default(item.metadata.creationTimestamp | default('')))) | string)})] }}"
-  loop: "{{ (warning_events | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.events | default({})).get('items', []) }}"
   changed_when: false
 
 - name: Sort warning events
@@ -425,7 +615,7 @@
 
 - name: Extract Prometheus summaries
   ansible.builtin.set_fact:
-    firing_alerts: "{{ prom_result_map.firing_alerts | default([]) }}"
+    firing_alerts: "{{ prom_result_map.firing_alerts if (prom_result_map.firing_alerts is defined and prom_result_map.firing_alerts is sequence and prom_result_map.firing_alerts is not string and prom_result_map.firing_alerts is not mapping) else [] }}"
     etcd_wal_fsync_p99_ms: "{{ (prom_result_map.etcd_wal_fsync[0].value[1]) if (prom_result_map.etcd_wal_fsync | default([]) | length > 0) else '' }}"
     etcd_backend_commit_p99_ms: "{{ (prom_result_map.etcd_backend_commit[0].value[1]) if (prom_result_map.etcd_backend_commit | default([]) | length > 0) else '' }}"
     etcd_leader_changes_5m: "{{ (prom_result_map.etcd_leader_changes[0].value[1]) if (prom_result_map.etcd_leader_changes | default([]) | length > 0) else '' }}"
@@ -444,14 +634,14 @@
     worker_to_worker_network_latency_ms: "{{ (prom_result_map.worker_to_worker_network_latency[0].value[1]) if (prom_result_map.worker_to_worker_network_latency | default([]) | length > 0) else '' }}"
     apiserver_readyz_status: "{{ 'ok' if (apiserver_readyz_cmd.rc | default(1)) == 0 else ('failed' if (apiserver_readyz_cmd.stdout | default('') | trim | length > 0 or apiserver_readyz_cmd.stderr | default('') | trim | length > 0) else 'unavailable') }}"
     apiserver_readyz_failed_checks: "{{ ((apiserver_readyz_cmd.stdout | default('')) ~ '\n' ~ (apiserver_readyz_cmd.stderr | default(''))) | regex_findall('(?im)\\bfailed\\b') | length }}"
-    node_cpu_utilization_results: "{{ prom_result_map.node_cpu_utilization | default([]) }}"
-    node_memory_utilization_results: "{{ prom_result_map.node_memory_utilization | default([]) }}"
-    node_disk_utilization_results: "{{ prom_result_map.node_disk_utilization | default([]) }}"
-    kubelet_pod_density_results: "{{ prom_result_map.kubelet_pod_density | default([]) }}"
-    top_pod_cpu_usage_summary: "{{ prom_result_map.top_pod_cpu_usage | default([]) }}"
-    top_pod_memory_usage_summary: "{{ prom_result_map.top_pod_memory_usage | default([]) }}"
-    pod_cpu_usage_all_results: "{{ prom_result_map.pod_cpu_usage_all | default([]) }}"
-    pod_memory_usage_all_results: "{{ prom_result_map.pod_memory_usage_all | default([]) }}"
+    node_cpu_utilization_results: "{{ prom_result_map.node_cpu_utilization if (prom_result_map.node_cpu_utilization is defined and prom_result_map.node_cpu_utilization is sequence and prom_result_map.node_cpu_utilization is not string and prom_result_map.node_cpu_utilization is not mapping) else [] }}"
+    node_memory_utilization_results: "{{ prom_result_map.node_memory_utilization if (prom_result_map.node_memory_utilization is defined and prom_result_map.node_memory_utilization is sequence and prom_result_map.node_memory_utilization is not string and prom_result_map.node_memory_utilization is not mapping) else [] }}"
+    node_disk_utilization_results: "{{ prom_result_map.node_disk_utilization if (prom_result_map.node_disk_utilization is defined and prom_result_map.node_disk_utilization is sequence and prom_result_map.node_disk_utilization is not string and prom_result_map.node_disk_utilization is not mapping) else [] }}"
+    kubelet_pod_density_results: "{{ prom_result_map.kubelet_pod_density if (prom_result_map.kubelet_pod_density is defined and prom_result_map.kubelet_pod_density is sequence and prom_result_map.kubelet_pod_density is not string and prom_result_map.kubelet_pod_density is not mapping) else [] }}"
+    top_pod_cpu_usage_summary: "{{ prom_result_map.top_pod_cpu_usage if (prom_result_map.top_pod_cpu_usage is defined and prom_result_map.top_pod_cpu_usage is sequence and prom_result_map.top_pod_cpu_usage is not string and prom_result_map.top_pod_cpu_usage is not mapping) else [] }}"
+    top_pod_memory_usage_summary: "{{ prom_result_map.top_pod_memory_usage if (prom_result_map.top_pod_memory_usage is defined and prom_result_map.top_pod_memory_usage is sequence and prom_result_map.top_pod_memory_usage is not string and prom_result_map.top_pod_memory_usage is not mapping) else [] }}"
+    pod_cpu_usage_all_results: "{{ prom_result_map.pod_cpu_usage_all if (prom_result_map.pod_cpu_usage_all is defined and prom_result_map.pod_cpu_usage_all is sequence and prom_result_map.pod_cpu_usage_all is not string and prom_result_map.pod_cpu_usage_all is not mapping) else [] }}"
+    pod_memory_usage_all_results: "{{ prom_result_map.pod_memory_usage_all if (prom_result_map.pod_memory_usage_all is defined and prom_result_map.pod_memory_usage_all is sequence and prom_result_map.pod_memory_usage_all is not string and prom_result_map.pod_memory_usage_all is not mapping) else [] }}"
 
 - name: Build Prometheus alert summaries
   ansible.builtin.set_fact:
@@ -508,7 +698,7 @@
     import math
 
     data = json.loads(r'''{{ {
-      "pods": (pods | default({})).get('items', []),
+      "pods": (analysis_graph.pods | default({})).get('items', []),
       "cpu_usage": pod_cpu_usage_all_results | default([]),
       "memory_usage": pod_memory_usage_all_results | default([]),
       "exclude_regex": user_namespaces_exclude_regex
@@ -615,7 +805,7 @@
     python3 - <<'PY'
     import json
 
-    quotas = json.loads(r'''{{ (resourcequotas | default({})).get('items', []) | to_json }}''')
+    quotas = json.loads(r'''{{ (analysis_graph.resourcequotas | default({})).get('items', []) | to_json }}''')
 
     def parse_qty(val):
         if val is None:

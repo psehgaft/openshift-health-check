@@ -1,37 +1,47 @@
 ---
 - name: Build Kubernetes aggregate lists
+  vars:
+    restart_limit: "{{ top_restart_pod_limit | default(10) | int }}"
+    pvc_issue_limit: "{{ top_pvc_issue_limit | default(10) | int }}"
+    namespace_issue_limit: "{{ top_namespace_issue_limit | default(10) | int }}"
+    workload_issue_limit: "{{ top_workload_issue_limit | default(10) | int }}"
+    security_issue_limit: "{{ top_security_issue_limit | default(10) | int }}"
+    deprecated_api_limit: "{{ top_deprecated_api_limit | default(10) | int }}"
   ansible.builtin.set_fact:
     scored_workload_practice_findings: "{{ workload_practice_findings | default([]) | rejectattr('issue', 'equalto', 'missing-pod-disruption-budget') | list }}"
     resolved_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}"
     profile_is_lightweight: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'lightweight') | bool }}"
     profile_is_development: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) == 'development') | bool }}"
     profile_is_non_production: "{{ ((resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight']) | bool }}"
-    top_pod_restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit] }}"
+    top_pod_restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:(restart_limit | int)] }}"
     high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list) }}"
-    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list)[:top_restart_pod_limit]) }}"
-    top_pvc_issues: "{{ (pvc_issues | default([]))[:top_pvc_issue_limit] }}"
-    top_pv_issues: "{{ (pv_issues | default([]))[:top_pvc_issue_limit] }}"
-    top_namespace_issue_summary: "{{ (namespace_issue_summary | default([]))[:top_namespace_issue_limit] }}"
-    top_workload_health_issues: "{{ (workload_health_issues | default([]))[:top_workload_issue_limit] }}"
-    top_unhealthy_user_pods: "{{ (unhealthy_user_pods | default([]))[:top_workload_issue_limit] }}"
-    top_high_replica_workloads: "{{ (high_replica_workloads | default([]) | sort(attribute='replicas', reverse=true) | list)[:top_workload_issue_limit] }}"
-    top_orphan_pods: "{{ (orphan_pods | default([]))[:top_workload_issue_limit] }}"
-    top_workload_label_governance_findings: "{{ (workload_label_governance_findings | default([]))[:top_workload_issue_limit] }}"
-    top_workload_resource_findings: "{{ (workload_resource_findings | default([]))[:top_workload_issue_limit] }}"
-    top_workload_probe_findings: "{{ (workload_probe_findings | default([]))[:top_workload_issue_limit] }}"
-    top_security_findings: "{{ (security_findings | default([]))[:top_security_issue_limit] }}"
-    top_workload_practice_findings: "{{ (workload_practice_findings | default([]))[:top_security_issue_limit] }}"
-    top_deprecated_crd_findings: "{{ (deprecated_crd_findings | default([]))[:top_deprecated_api_limit] }}"
-    top_deprecated_api_lines: "{{ (deprecated_api_lines | default([]))[:top_deprecated_api_limit] }}"
-    top_services_without_endpoints: "{{ (services_without_endpoints | default([]))[:top_workload_issue_limit] }}"
-    top_likely_unused_serviceaccounts: "{{ (likely_unused_serviceaccounts | default([]))[:top_workload_issue_limit] }}"
-    top_likely_unused_configmaps: "{{ (likely_unused_configmaps | default([]))[:top_workload_issue_limit] }}"
-    top_likely_unused_secrets: "{{ (likely_unused_secrets | default([]))[:top_workload_issue_limit] }}"
-    top_likely_unused_crds: "{{ (likely_unused_crds | default([]))[:top_deprecated_api_limit] }}"
-    top_provider_specific_findings: "{{ (provider_specific_findings | default([]))[:top_workload_issue_limit] }}"
+    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list)[:(restart_limit | int)]) }}"
+    top_pvc_issues: "{{ (pvc_issues | default([]))[:(pvc_issue_limit | int)] }}"
+    top_pv_issues: "{{ (pv_issues | default([]))[:(pvc_issue_limit | int)] }}"
+    top_namespace_issue_summary: "{{ (namespace_issue_summary | default([]))[:(namespace_issue_limit | int)] }}"
+    top_workload_health_issues: "{{ (workload_health_issues | default([]))[:(workload_issue_limit | int)] }}"
+    top_unhealthy_user_pods: "{{ (unhealthy_user_pods | default([]))[:(workload_issue_limit | int)] }}"
+    top_high_replica_workloads: "{{ (high_replica_workloads | default([]) | sort(attribute='replicas', reverse=true) | list)[:(workload_issue_limit | int)] }}"
+    top_orphan_pods: "{{ (orphan_pods | default([]))[:(workload_issue_limit | int)] }}"
+    top_workload_label_governance_findings: "{{ (workload_label_governance_findings | default([]))[:(workload_issue_limit | int)] }}"
+    top_workload_resource_findings: "{{ (workload_resource_findings | default([]))[:(workload_issue_limit | int)] }}"
+    top_workload_probe_findings: "{{ (workload_probe_findings | default([]))[:(workload_issue_limit | int)] }}"
+    top_security_findings: "{{ (security_findings | default([]))[:(security_issue_limit | int)] }}"
+    top_workload_practice_findings: "{{ (workload_practice_findings | default([]))[:(security_issue_limit | int)] }}"
+    top_deprecated_crd_findings: "{{ (deprecated_crd_findings | default([]))[:(deprecated_api_limit | int)] }}"
+    top_deprecated_api_lines: "{{ (deprecated_api_lines | default([]))[:(deprecated_api_limit | int)] }}"
+    top_services_without_endpoints: "{{ (services_without_endpoints | default([]))[:(workload_issue_limit | int)] }}"
+    top_likely_unused_serviceaccounts: "{{ (likely_unused_serviceaccounts | default([]))[:(workload_issue_limit | int)] }}"
+    top_likely_unused_configmaps: "{{ (likely_unused_configmaps | default([]))[:(workload_issue_limit | int)] }}"
+    top_likely_unused_secrets: "{{ (likely_unused_secrets | default([]))[:(workload_issue_limit | int)] }}"
+    top_likely_unused_crds: "{{ (likely_unused_crds | default([]))[:(deprecated_api_limit | int)] }}"
+    top_provider_specific_findings: "{{ (provider_specific_findings | default([]))[:(workload_issue_limit | int)] }}"
   changed_when: false
 
 - name: Build Kubernetes health summary
+  vars:
+    assessment_collection: "{{ assessment_collection_summary | default({}) }}"
+    assessment_collection_failure_list: "{{ assessment_collection_failures | default([]) }}"
   ansible.builtin.set_fact:
     health_summary:
       status: >-
@@ -39,7 +49,7 @@
           'CRITICAL'
           if (
             (not_ready_nodes | default([]) | length > 0)
-            or (collection_summary.core_failed_commands | default(0) | int > 0)
+            or (assessment_collection.core_failed_commands | default(0) | int > 0)
           )
           else (
             'WARNING'
@@ -79,7 +89,7 @@
               or (deprecated_api_lines | default([]) | length > 0)
               or (certificate_expiry_findings | default([]) | length > 0)
               or ((provider_specific_findings | default([]) | rejectattr('issue', 'equalto', 'minikube-lightweight-profile') | list | length) > 0)
-              or (collection_failures | default([]) | length > 0)
+              or (assessment_collection_failure_list | length > 0)
             )
             else 'HEALTHY'
           )
@@ -132,9 +142,9 @@
       has_external_storage_provider: "{{ storage_posture_summary.has_external_storage_provider | default(false) }}"
       local_or_ephemeral_only_risk: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}"
       certificate_expiry_findings: "{{ certificate_expiry_findings | default([]) | length }}"
-      collection_failed_commands: "{{ collection_summary.failed_commands | default(0) }}"
-      collection_core_failed_commands: "{{ collection_summary.core_failed_commands | default(0) }}"
-      collection_timed_out_commands: "{{ collection_summary.timed_out_commands | default(0) }}"
+      collection_failed_commands: "{{ assessment_collection.failed_commands | default(0) }}"
+      collection_core_failed_commands: "{{ assessment_collection.core_failed_commands | default(0) }}"
+      collection_timed_out_commands: "{{ assessment_collection.timed_out_commands | default(0) }}"
       cluster_profile_mode: "{{ resolved_profile_mode }}"
 
 - name: Build Kubernetes current state

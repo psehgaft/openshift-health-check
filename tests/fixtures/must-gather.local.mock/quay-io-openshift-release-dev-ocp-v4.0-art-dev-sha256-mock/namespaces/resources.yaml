@@ -1,0 +1,314 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-team-a
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-insights
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-gitops
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-adp
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-logging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-compliance
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-machine-api
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true
+    prometheusK8s:
+      volumeClaimTemplate:
+        spec:
+          resources:
+            requests:
+              storage: 20Gi
+    alertmanagerMain:
+      volumeClaimTemplate:
+        spec:
+          resources:
+            requests:
+              storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-workload-monitoring-config
+  namespace: openshift-user-workload-monitoring
+data:
+  config.yaml: |
+    prometheus:
+      remoteWrite:
+        - url: https://metrics.example.com/api/v1/write
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: insights-config
+  namespace: openshift-insights
+data:
+  disabled: "false"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemeter-client
+  namespace: openshift-monitoring
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: telemeter
+          image: quay.io/openshift/origin-telemeter:latest
+status:
+  replicas: 1
+  availableReplicas: 1
+  readyReplicas: 1
+  updatedReplicas: 1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: app-team-a
+spec:
+  replicas: 2
+  template:
+    spec:
+      serviceAccountName: app-sa
+      containers:
+        - name: web
+          image: image-registry.openshift-image-registry.svc:5000/app-team-a/web:latest
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+status:
+  replicas: 2
+  availableReplicas: 1
+  readyReplicas: 1
+  updatedReplicas: 1
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: app-team-a
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: db
+          image: quay.io/example/db:1.0
+status:
+  replicas: 1
+  readyReplicas: 1
+  updatedReplicas: 1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: telemeter-client-123
+  namespace: openshift-monitoring
+spec:
+  nodeName: worker-0
+  containers:
+    - name: telemeter
+status:
+  phase: Running
+  containerStatuses:
+    - name: telemeter
+      ready: true
+      restartCount: 0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: insights-operator-123
+  namespace: openshift-insights
+spec:
+  nodeName: worker-0
+  containers:
+    - name: insights
+status:
+  phase: Running
+  containerStatuses:
+    - name: insights
+      ready: true
+      restartCount: 0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-abc
+  namespace: app-team-a
+spec:
+  nodeName: worker-0
+  containers:
+    - name: web
+status:
+  phase: CrashLoopBackOff
+  containerStatuses:
+    - name: web
+      ready: false
+      restartCount: 7
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-app-data
+status:
+  phase: Bound
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data
+  namespace: app-team-a
+status:
+  phase: Pending
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: app-team-a
+spec:
+  selector:
+    app: web
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: web
+  namespace: app-team-a
+subsets: []
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: web
+  namespace: app-team-a
+spec:
+  host: web.apps.mock.example.com
+  to:
+    kind: Service
+    name: web
+status:
+  ingress:
+    - host: web.apps.mock.example.com
+      conditions:
+        - type: Admitted
+          status: "False"
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: app-build
+  namespace: app-team-a
+  labels:
+    tekton.dev/pipeline: app-build
+status:
+  conditions:
+    - type: Succeeded
+      status: "False"
+      reason: Failed
+  startTime: "2026-04-21T10:00:00Z"
+  completionTime: "2026-04-21T10:05:00Z"
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: app-image
+  namespace: app-team-a
+spec:
+  strategy:
+    sourceStrategy: {}
+  triggers: []
+---
+apiVersion: v1
+kind: Event
+metadata:
+  name: web-crash
+  namespace: app-team-a
+reason: BackOff
+type: Warning
+message: Back-off restarting failed container
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-sa
+  namespace: app-team-a
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-admin
+  namespace: app-team-a
+subjects:
+  - kind: User
+    name: missing-user
+  - kind: Group
+    name: app-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: admin
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: app-secret
+  namespace: app-team-a
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: app-team-a
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute
+  namespace: app-team-a
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: app-team-a

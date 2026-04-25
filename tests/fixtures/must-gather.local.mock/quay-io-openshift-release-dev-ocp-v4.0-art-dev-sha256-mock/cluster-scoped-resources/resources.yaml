@@ -1,0 +1,735 @@
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterVersion
+metadata:
+  name: version
+status:
+  desired:
+    version: 4.16.3
+  history:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Progressing
+      status: "False"
+    - type: Failing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: Infrastructure
+metadata:
+  name: cluster
+status:
+  infrastructureName: mock-cluster
+  platformStatus:
+    type: AWS
+  controlPlaneTopology: HighlyAvailable
+  infrastructureTopology: HighlyAvailable
+  apiServerURL: https://api.mock.example.com:6443
+  apiServerInternalURL: https://api-int.mock.example.com:6443
+---
+apiVersion: config.openshift.io/v1
+kind: Network
+metadata:
+  name: cluster
+spec:
+  serviceNetwork:
+    - 172.30.0.0/16
+  clusterNetwork:
+    - cidr: 10.128.0.0/14
+      hostPrefix: 23
+status:
+  networkType: OVNKubernetes
+---
+apiVersion: config.openshift.io/v1
+kind: Ingress
+metadata:
+  name: cluster
+spec:
+  domain: apps.mock.example.com
+---
+apiVersion: config.openshift.io/v1
+kind: DNS
+metadata:
+  name: default
+spec:
+  baseDomain: mock.example.com
+---
+apiVersion: config.openshift.io/v1
+kind: OAuth
+metadata:
+  name: cluster
+spec:
+  identityProviders:
+    - name: corp-oidc
+      mappingMethod: claim
+      type: OpenID
+---
+apiVersion: config.openshift.io/v1
+kind: Image
+metadata:
+  name: cluster
+spec:
+  registrySources:
+    insecureRegistries:
+      - registry-insecure.example.com
+---
+apiVersion: imageregistry.operator.openshift.io/v1
+kind: Config
+metadata:
+  name: cluster
+  namespace: openshift-image-registry
+spec:
+  managementState: Managed
+  defaultRoute: true
+---
+apiVersion: imageregistry.operator.openshift.io/v1
+kind: ImagePruner
+metadata:
+  name: cluster
+spec:
+  suspend: false
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.metrics.k8s.io
+spec:
+  service:
+    namespace: openshift-monitoring
+    name: metrics-service
+status:
+  conditions:
+    - type: Available
+      status: "False"
+      reason: MissingEndpoints
+      message: endpoints not available
+---
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfigPool
+metadata:
+  name: worker
+status:
+  machineCount: 2
+  readyMachineCount: 2
+  conditions:
+    - type: Updated
+      status: "True"
+    - type: Updating
+      status: "False"
+    - type: NodeDegraded
+      status: "False"
+---
+apiVersion: operator.openshift.io/v1
+kind: IngressController
+metadata:
+  name: default
+  namespace: openshift-ingress-operator
+spec:
+  replicas: 2
+status:
+  domain: apps.mock.example.com
+  availableReplicas: 2
+  unavailableReplicas: 0
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Progressing
+      status: "False"
+    - type: Degraded
+      status: "False"
+---
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  name: worker-us-east-1a
+  namespace: openshift-machine-api
+---
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineHealthCheck
+metadata:
+  name: worker-healthcheck
+  namespace: openshift-machine-api
+spec:
+  maxUnhealthy: 40%
+---
+apiVersion: autoscaling.openshift.io/v1
+kind: ClusterAutoscaler
+metadata:
+  name: default
+spec:
+  maxNodesTotal: 6
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator-rh
+  namespace: openshift-operators
+spec:
+  name: openshift-pipelines-operator-rh
+---
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: openshift-gitops
+  namespace: openshift-gitops
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: namespace-onboarding
+  namespace: openshift-gitops
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: openshift-gitops
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: vault
+---
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: default
+  namespace: openshift-adp
+  labels:
+    velero.io/default-backup-storage-location: "true"
+spec:
+  provider: aws
+  objectStorage:
+    bucket: mock-backups
+status:
+  conditions:
+    - type: Available
+      status: "True"
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: nightly
+  namespace: openshift-adp
+spec:
+  schedule: 0 2 * * *
+  paused: false
+status:
+  lastBackup: "2026-04-21T02:00:00Z"
+---
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: nightly-20260421
+  namespace: openshift-adp
+  creationTimestamp: "2026-04-21T02:00:00Z"
+spec:
+  storageLocation: default
+status:
+  phase: Completed
+  completionTimestamp: "2026-04-21T02:10:00Z"
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: restore-20260421
+  namespace: openshift-adp
+  creationTimestamp: "2026-04-21T03:00:00Z"
+spec:
+  backupName: nightly-20260421
+status:
+  phase: Completed
+  completionTimestamp: "2026-04-21T03:05:00Z"
+---
+apiVersion: oadp.openshift.io/v1alpha1
+kind: DataProtectionApplication
+metadata:
+  name: dpa-sample
+  namespace: openshift-adp
+status:
+  phase: Reconciled
+  conditions:
+    - type: Reconciled
+      status: "True"
+      reason: Complete
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ComplianceSuite
+metadata:
+  name: cis
+  namespace: openshift-compliance
+status:
+  phase: DONE
+  result: NON-COMPLIANT
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ComplianceScan
+metadata:
+  name: cis-worker-scan
+  namespace: openshift-compliance
+status:
+  phase: DONE
+  result: NON-COMPLIANT
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ComplianceScan
+metadata:
+  name: pci-dss-master-scan
+  namespace: openshift-compliance
+status:
+  phase: DONE
+  result: NON-COMPLIANT
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ScanSetting
+metadata:
+  name: default-auto-apply
+  namespace: openshift-compliance
+roles:
+  - master
+  - worker
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ScanSettingBinding
+metadata:
+  name: cis-binding
+  namespace: openshift-compliance
+profiles:
+  - apiGroup: compliance.openshift.io/v1alpha1
+    kind: Profile
+    name: ocp4-cis
+  - apiGroup: compliance.openshift.io/v1alpha1
+    kind: TailoredProfile
+    name: pci-dss-tailored
+settingsRef:
+  apiGroup: compliance.openshift.io/v1alpha1
+  kind: ScanSetting
+  name: default-auto-apply
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ProfileBundle
+metadata:
+  name: ocp4
+  namespace: openshift-compliance
+status:
+  dataStreamStatus: VALID
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: Profile
+metadata:
+  name: ocp4-cis
+  namespace: openshift-compliance
+title: CIS OpenShift Benchmark
+description: CIS benchmark profile for OpenShift clusters
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: Profile
+metadata:
+  name: ocp4-hipaa
+  namespace: openshift-compliance
+title: HIPAA profile
+description: HIPAA-aligned profile
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: Profile
+metadata:
+  name: ocp4-fedramp-moderate
+  namespace: openshift-compliance
+title: FedRAMP Moderate profile
+description: FedRAMP-aligned controls profile
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: Profile
+metadata:
+  name: ocp4-sox
+  namespace: openshift-compliance
+title: SOX profile
+description: SOX-aligned controls profile
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: TailoredProfile
+metadata:
+  name: pci-dss-tailored
+  namespace: openshift-compliance
+spec:
+  title: PCI-DSS tailored profile
+  description: PCI-DSS controls for payment workloads
+  extends: ocp4-cis
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: TailoredProfile
+metadata:
+  name: fips-tailored
+  namespace: openshift-compliance
+spec:
+  title: FIPS tailored profile
+  description: FIPS content selection
+  extends: ocp4-cis
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ComplianceCheckResult
+metadata:
+  name: pci-dss-kubelet-anonymous-auth
+  namespace: openshift-compliance
+status:
+  result: FAIL
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: app-admins
+users: []
+---
+apiVersion: user.openshift.io/v1
+kind: User
+metadata:
+  name: jane
+---
+apiVersion: logging.openshift.io/v1
+kind: ClusterLogForwarder
+metadata:
+  name: instance
+  namespace: openshift-logging
+spec:
+  outputs:
+    - name: splunk
+      type: syslog
+      url: tls://logs.example.com:6514
+---
+apiVersion: ocs.openshift.io/v1
+kind: StorageCluster
+metadata:
+  name: ocs-storagecluster
+  namespace: openshift-storage
+status:
+  phase: Ready
+---
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: ocs-storagecluster-cephcluster
+  namespace: openshift-storage
+status:
+  phase: Ready
+---
+apiVersion: noobaa.io/v1alpha1
+kind: NooBaa
+metadata:
+  name: noobaa
+  namespace: openshift-storage
+status:
+  phase: Ready
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: ocs-rbdplugin-snapclass
+driver: openshift-storage.rbd.csi.ceph.com
+deletionPolicy: Delete
+---
+apiVersion: kubevirt.io/v1
+kind: KubeVirt
+metadata:
+  name: kubevirt-kubevirt-hyperconverged
+  namespace: openshift-cnv
+status:
+  conditions:
+    - type: Available
+      status: "True"
+---
+apiVersion: hco.kubevirt.io/v1beta1
+kind: HyperConverged
+metadata:
+  name: kubevirt-hyperconverged
+  namespace: openshift-cnv
+status:
+  conditions:
+    - type: Available
+      status: "True"
+---
+apiVersion: ssp.kubevirt.io/v1beta2
+kind: SSP
+metadata:
+  name: ssp-kubevirt-hyperconverged
+  namespace: openshift-cnv
+status:
+  conditions:
+    - type: Available
+      status: "True"
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: CDI
+metadata:
+  name: cdi
+status:
+  phase: Deployed
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: demo-vm
+  namespace: openshift-cnv
+spec:
+  running: true
+status:
+  ready: true
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachineInstance
+metadata:
+  name: demo-vm
+  namespace: openshift-cnv
+status:
+  phase: Running
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: demo-vm-rootdisk
+  namespace: openshift-cnv
+status:
+  phase: Succeeded
+---
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  namespace: redhat-ods-operator
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: dscinitialization.opendatahub.io/v1
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+  namespace: redhat-ods-operator
+status:
+  conditions:
+    - type: Available
+      status: "True"
+---
+apiVersion: kubeflow.org/v1
+kind: Notebook
+metadata:
+  name: fraud-model-dev
+  namespace: redhat-ods-applications
+---
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: ovms-runtime
+  namespace: redhat-ods-applications
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: fraud-model
+  namespace: redhat-ods-applications
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: serving.kserve.io/v1alpha1
+kind: ModelMeshServing
+metadata:
+  name: modelmesh-serving
+  namespace: redhat-ods-applications
+---
+apiVersion: dashboard.opendatahub.io/v1
+kind: AcceleratorProfile
+metadata:
+  name: nvidia-gpu
+  namespace: redhat-ods-applications
+spec:
+  enabled: true
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: app-alerts
+  namespace: app-team-a
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: authentication
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: console
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: dns
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: etcd
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: image-registry
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: ingress
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: insights
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: kube-apiserver
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: monitoring
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: config.openshift.io/v1
+kind: ClusterOperator
+metadata:
+  name: network
+status:
+  versions:
+    - version: 4.16.3
+  conditions:
+    - type: Available
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: Progressing
+      status: "False"
+---
+apiVersion: v1
+kind: Node
+metadata:
+  name: master-0
+  labels:
+    node-role.kubernetes.io/master: ""
+status:
+  nodeInfo:
+    kubeletVersion: v1.29.6
+  conditions:
+    - type: Ready
+      status: "True"
+    - type: MemoryPressure
+      status: "False"
+---
+apiVersion: v1
+kind: Node
+metadata:
+  name: worker-0
+  labels:
+    node-role.kubernetes.io/worker: ""
+status:
+  nodeInfo:
+    kubeletVersion: v1.29.6
+  conditions:
+    - type: Ready
+      status: "True"
+    - type: DiskPressure
+      status: "False"

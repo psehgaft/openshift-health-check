@@ -1,0 +1,50 @@
+---
+- name: Build connected-cluster posture facts
+  ansible.builtin.set_fact:
+    connected_cluster_insights_operator_status: "{{ ((clusteroperator_status_map | default({})).get('insights', {})) }}"
+    connected_cluster_insights_namespace_present: "{{ ((analysis_graph.namespaces | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', 'openshift-insights') | list | length) > 0 }}"
+    connected_cluster_insights_pod_count: "{{ (analysis_graph.pods | default({'items': []})).get('items', []) | selectattr('metadata.namespace', 'equalto', 'openshift-insights') | list | length }}"
+    connected_cluster_telemeter_deployment_count: "{{ (analysis_graph.deployments | default({'items': []})).get('items', []) | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring') | selectattr('metadata.name', 'search', 'telemeter') | list | length }}"
+    connected_cluster_telemeter_pod_count: "{{ (analysis_graph.pods | default({'items': []})).get('items', []) | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring') | selectattr('metadata.name', 'search', 'telemeter') | list | length }}"
+    connected_cluster_insights_config_present: "{{ (analysis_graph.configmaps | default({'items': []})).get('items', []) | selectattr('metadata.namespace', 'equalto', 'openshift-insights') | selectattr('metadata.name', 'equalto', 'insights-config') | list | length > 0 }}"
+
+- name: Build connected-cluster posture summary
+  ansible.builtin.set_fact:
+    connected_cluster_posture:
+      insights_operator_available: "{{ connected_cluster_insights_operator_status.available | default('Unknown') }}"
+      insights_operator_degraded: "{{ connected_cluster_insights_operator_status.degraded | default('Unknown') }}"
+      insights_namespace_present: "{{ connected_cluster_insights_namespace_present | bool }}"
+      insights_pod_count: "{{ connected_cluster_insights_pod_count | int }}"
+      insights_config_present: "{{ connected_cluster_insights_config_present | bool }}"
+      telemeter_deployment_count: "{{ connected_cluster_telemeter_deployment_count | int }}"
+      telemeter_pod_count: "{{ connected_cluster_telemeter_pod_count | int }}"
+      remote_health_posture: >-
+        {{
+          'connected'
+          if (
+            (connected_cluster_insights_operator_status.available | default('Unknown')) == 'True'
+            and (connected_cluster_insights_namespace_present | bool)
+            and (connected_cluster_insights_pod_count | int) > 0
+            and ((connected_cluster_telemeter_deployment_count | int) > 0 or (connected_cluster_telemeter_pod_count | int) > 0)
+          )
+          else (
+            'degraded'
+            if (
+              (connected_cluster_insights_namespace_present | bool)
+              or (connected_cluster_insights_pod_count | int) > 0
+              or (connected_cluster_telemeter_deployment_count | int) > 0
+              or (connected_cluster_telemeter_pod_count | int) > 0
+            )
+            else 'unknown'
+          )
+        }}
+
+- name: Build connected-cluster posture findings
+  ansible.builtin.set_fact:
+    connected_cluster_findings: >-
+      {{
+        []
+        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'Insights operator is not reporting Available=True.'}] if (connected_cluster_posture.insights_operator_available | default('Unknown')) != 'True' else [])
+        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'The openshift-insights namespace or pod evidence is incomplete.'}] if (not (connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) == 0) else [])
+        + ([{'severity': 'warning', 'area': 'telemetry', 'detail': 'No telemeter deployment or pod was found in openshift-monitoring.'}] if ((connected_cluster_posture.telemeter_deployment_count | default(0) | int) == 0 and (connected_cluster_posture.telemeter_pod_count | default(0) | int) == 0) else [])
+      }}

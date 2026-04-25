@@ -32,12 +32,12 @@ Optional collectors that target APIs or config objects which are not installed o
 > This tool is a reporting aid, not a replacement for operator judgment. It helps surface health signals, risks, and likely issues, but no automated report can fully understand every cluster design,
   business requirement, or accepted exception. Review the findings critically and use your own operational judgment before making decisions.
 
-## Design Guide
+## Design Notes
 
-The check set in this repo follows the design in [DESIGN-GUIDE.md](DESIGN-GUIDE.md).
+The check set in this repo follows the design in [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md).
 
 Use this `README.md` when you want to install, run, and read the tool.
-Use the design guide when you want to understand why the checks exist and how the report is meant to be used.
+Use the design notes when you want to understand why the checks exist and how the report is meant to be used.
 
 ## Quick Start
 
@@ -50,6 +50,45 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
 For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
+
+For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the primary live cluster entrypoint and now defaults to a live support collection profile of `all`. The scan builds a capability-based collector plan from the cluster type, installed tools, configured commands, and available access, then runs all applicable collectors during the same scan.
+
+Example live OpenShift run:
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml
+```
+
+`must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` requires the plugin plus an explicit baseline/reference command. Provider-managed gates, Advisor export, and node-level `sosreport` also run in the same scan when their tool or command prerequisites are available. If possible, install `omc` as well. The OpenShift path can use it as a must-gather post-analyzer to enrich etcd and alert/rule analysis from collected support data.
+
+The same OpenShift playbook also supports collected-state reprocessing. If you set any of these inputs, the playbook automatically resolves into the collected-state path:
+
+- `must_gather_path`
+- `inspect_path`
+- `cluster_compare_path`
+- `advisor_export_path`
+- `managed_gates_path`
+- `sosreport_paths`
+- `case_bundle_path`
+
+You can also force that path explicitly with `-e report_mode=collected`.
+
+For CI, use the stable wrapper so the run always emits one normalized report artifact regardless of cluster type:
+
+```bash
+scripts/run_ci_report.sh playbooks/openshift_cluster_health_report.yml \
+  -e live_support_collection_profile=all
+```
+
+This writes:
+- `reports/ci-cluster-report.md`
+- `reports/ci-cluster-report.json`
+
+The CI report is organized by priority:
+- summary and snapshot first
+- priority findings next
+- operational sections after that
+- evidence and limitations last
 
 ## What This Tool Does
 
@@ -77,6 +116,24 @@ The report covers the main areas operators usually care about.
 
 The OpenShift path is the deepest path in the repo.
 The Kubernetes path covers shared checks plus provider-aware sections where safe cluster-local signals exist.
+
+For OpenShift, the final report is organized by priority:
+
+- `P1` Supportability
+- `P2` Core platform health
+- `P3` Platform architecture and lifecycle
+- `P4` Networking architecture
+- `P5` Security and compliance
+- `P6` Observability
+- `P7` Backup and disaster recovery
+- `P8` Node health and capacity planning
+- `P9` Workload health and deployment hygiene
+- `P10` Operations and lifecycle maturity
+- `P11` Container platform adoption and release engineering
+- `P12` Workload capability extensions
+- `P13` Day 2 production readiness
+
+Each section starts with a short recommendation and summary. The report moves from urgent problems to longer-term readiness.
 
 Main areas:
 
@@ -261,7 +318,7 @@ This section maps the main report signals to their reason for inclusion and the 
 ## Repository Layout
 
 - [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
-  Main OpenShift playbook.
+  Main OpenShift playbook for both live scans and collected-state reprocessing.
 - [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml)
   Generic Kubernetes playbook.
 - [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml)
@@ -276,7 +333,7 @@ This section maps the main report signals to their reason for inclusion and the 
   Rancher Kubernetes playbook.
 - [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml)
   Minikube playbook.
-- [DESIGN-GUIDE.md](DESIGN-GUIDE.md)
+- [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md)
   Design notes and the reasoning behind the checks.
 - [roles/preflight_openshift/tasks/main.yml](roles/preflight_openshift/tasks/main.yml)
   Login and access checks.
@@ -288,8 +345,16 @@ This section maps the main report signals to their reason for inclusion and the 
   Shared Kubernetes-native data collection.
 - [roles/collect_openshift/tasks/main.yml](roles/collect_openshift/tasks/main.yml)
   OpenShift-specific data collection.
+- [roles/collect_live_support_evidence/tasks/main.yml](roles/collect_live_support_evidence/tasks/main.yml)
+  Optional live support collectors and must-gather post-analysis.
 - [roles/collect_kubernetes/tasks/main.yml](roles/collect_kubernetes/tasks/main.yml)
   Kubernetes collection extension point.
+- [roles/load_evidence_common/tasks/main.yml](roles/load_evidence_common/tasks/main.yml)
+  Shared collected-state evidence discovery and parsing.
+- [roles/load_evidence_openshift/tasks/main.yml](roles/load_evidence_openshift/tasks/main.yml)
+  OpenShift collected-state loading and graph preparation.
+- [roles/load_evidence_openshift_products/tasks/main.yml](roles/load_evidence_openshift_products/tasks/main.yml)
+  Optional product evidence loading for collected-state OpenShift inputs, including Pipelines, Logging, GitOps, ODF, Virtualization, and OpenShift AI.
 - [roles/analyze_common/tasks/main.yml](roles/analyze_common/tasks/main.yml)
   Shared workload analysis.
 - [roles/analyze_openshift/tasks/main.yml](roles/analyze_openshift/tasks/main.yml)
@@ -300,14 +365,42 @@ This section maps the main report signals to their reason for inclusion and the 
   Shared reporting extension point.
 - [roles/report_openshift/tasks/main.yml](roles/report_openshift/tasks/main.yml)
   OpenShift scoring, rendering, and output generation.
+- [roles/report_openshift/tasks/render_collected_state_report.yml](roles/report_openshift/tasks/render_collected_state_report.yml)
+  Collected-state OpenShift report rendering entrypoint.
 - [templates/openshift_cluster_health_report.md.j2](templates/openshift_cluster_health_report.md.j2)
   OpenShift Markdown report template.
+- [templates/openshift_supportability_report.md.j2](templates/openshift_supportability_report.md.j2)
+  Collected-state OpenShift Markdown renderer built on the same shared payload model.
+- [scripts/parse_must_gather.py](scripts/parse_must_gather.py)
+  Must-gather summary parser.
+- [scripts/parse_inspect.py](scripts/parse_inspect.py)
+  Inspect summary parser.
+- [scripts/parse_cluster_compare.py](scripts/parse_cluster_compare.py)
+  Cluster-compare parser.
+- [scripts/parse_sosreport.py](scripts/parse_sosreport.py)
+  `sosreport` parser.
+- [scripts/collect_insights_archive.py](scripts/collect_insights_archive.py)
+  Live Insights Operator archive collector.
+- [scripts/parse_insights_archive.py](scripts/parse_insights_archive.py)
+  Insights Operator archive and `gathers.json` parser.
+- [scripts/parse_etcd_ocp_diag.py](scripts/parse_etcd_ocp_diag.py)
+  Local `etcd-ocp-diag` wrapper for must-gather analysis.
+- [scripts/parse_omc.py](scripts/parse_omc.py)
+  Optional `omc` wrapper for must-gather etcd and alert/rule diagnostics.
+- [tests/run_supportability_fixture.sh](tests/run_supportability_fixture.sh)
+  Main OpenShift collected-state fixture.
+- [tests/run_supportability_inspect_fixture.sh](tests/run_supportability_inspect_fixture.sh)
+  Inspect-only collected-state fixture.
+- [tests/run_supportability_case_bundle_fixture.sh](tests/run_supportability_case_bundle_fixture.sh)
+  Case-bundle fixture.
+- [tests/run_k8s_fixture.sh](tests/run_k8s_fixture.sh)
+  Generic Kubernetes smoke fixture.
 
 ## Profile Guide
 
 Use these entrypoints:
 
-- OpenShift production: [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
+- OpenShift production and unified live scan: [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
 - Generic Kubernetes production: [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml)
 - Generic Kubernetes development or lab: [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml)
 - Minikube or local lightweight cluster: [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml)
@@ -319,7 +412,7 @@ Use these entrypoints:
 
 For OpenShift variants:
 
-- standard OpenShift, ARO, ROSA, ROSA HCP, and SNO all use [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
+- standard OpenShift, ARO, ROSA, ROSA HCP, and SNO should use [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
 - the tool labels the deployment type in the report when the cluster signals are clear
 
 Simple profile matrix:
@@ -398,6 +491,25 @@ Nice to have:
 
 - OpenShift: access to `openshift-monitoring/thanos-querier`
 
+Optional OpenShift helper tools:
+
+- `oc cluster-compare`
+  Used only when you want `cluster-compare` baseline drift analysis.
+- `rosa`
+  Used only for ROSA or other managed-service gate collection paths.
+- `omc`
+  Recommended must-gather helper when available. The OpenShift path can use it to extract additional must-gather diagnostics such as etcd status and alert/rule signals, which enriches the report analysis from collected cluster data.
+
+The live OpenShift scan also collects the Insights Operator archive directly from the cluster through `oc` when support collectors are enabled, so no extra binary is needed for that source.
+
+For `omc`, the playbook will use, in this order:
+
+- `-e omc_binary_path=/path/to/omc` if you set it
+- `scripts/omc` if you vendor the binary into the repo
+- `omc` from `PATH`
+
+If none of those are present, the playbook just runs without the extra `omc`-derived must-gather diagnostics.
+
 Optional tools by output format:
 
 - Markdown report: no extra tools
@@ -472,6 +584,15 @@ Use this for OpenShift, SNO, ARO, ROSA, and ROSA HCP:
 ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
+Collected-state example:
+
+```bash
+. .venv/bin/activate
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e must_gather_path=/path/to/must-gather.local.123456 \
+  -e inspect_path=/path/to/inspect-dir
+```
+
 ### Generic Kubernetes
 
 Use this for a standard Kubernetes cluster when you want the shared Kubernetes checks:
@@ -521,6 +642,22 @@ These parameters work across the playbooks:
   Timeout for each collection command
 - `keep_collection_artifacts`
   Keep the temporary raw collection file for debugging
+- `report_mode`
+  `auto`, `live`, or `collected`
+- `must_gather_path`
+  Path to an extracted `must-gather.local*` directory
+- `inspect_path`
+  Path to an extracted `oc adm inspect` directory
+- `cluster_compare_path`
+  Path to saved `oc cluster-compare` JSON output
+- `advisor_export_path`
+  Path to saved Advisor export JSON
+- `managed_gates_path`
+  Path to saved managed-service gate JSON
+- `sosreport_paths`
+  One or more extracted `sosreport` directories or archives
+- `case_bundle_path`
+  Folder containing a mix of collected-state inputs discovered automatically
 
 Example:
 

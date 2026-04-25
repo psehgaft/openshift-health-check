@@ -1,0 +1,100 @@
+---
+- name: Project shared connected-cluster posture into compatibility facts
+  ansible.builtin.set_fact:
+    assessment_connected_cluster_posture: "{{ connected_cluster_posture | default({}) }}"
+    assessment_connected_cluster_findings: "{{ connected_cluster_findings | default([]) }}"
+
+- name: Refine supportability summary with collected-state health facts
+  ansible.builtin.set_fact:
+    supportability_summary: "{{ supportability_summary | combine(updated_supportability_summary, recursive=True) }}"
+  vars:
+    assessment_health_verdict: >-
+      {{
+        'unsupported-risk'
+        if assessment_health_summary.status == 'CRITICAL'
+        else ('review-required' if assessment_health_summary.status == 'WARNING' else 'supported')
+      }}
+    assessment_etcd_ocp_diag_verdict: "{{ etcd_ocp_diag_summary.verdict | default('not-collected') }}"
+    assessment_omc_verdict: "{{ omc_summary.verdict | default('not-collected') }}"
+    assessment_insights_archive_verdict: "{{ insights_archive_summary.verdict | default('not-collected') }}"
+    assessment_evidence_hygiene_verdict: "{{ evidence_hygiene_data.summary.verdict | default('unknown') }}"
+    assessment_supportability_verdict: >-
+      {{
+        'unsupported-risk'
+        if (
+          (assessment_connected_cluster_posture.remote_health_posture | default('unknown')) == 'degraded'
+          or (advisor_summary.verdict | default('insufficient-evidence')) == 'unsupported-risk'
+          or (managed_gate_summary.verdict | default('insufficient-evidence')) == 'unsupported-risk'
+          or assessment_etcd_ocp_diag_verdict == 'unsupported-risk'
+          or assessment_insights_archive_verdict == 'unsupported-risk'
+        )
+        else (
+          'review-required'
+          if (
+            (node_diagnostics_summary.verdict | default('insufficient-evidence')) != 'supported'
+            or (
+              (omc_summary.present | default(false) | bool)
+              and assessment_omc_verdict != 'supported'
+            )
+            or (assessment_connected_cluster_posture.remote_health_posture | default('unknown')) == 'unknown'
+            or (advisor_summary.verdict | default('insufficient-evidence')) == 'review-required'
+            or (managed_gate_summary.verdict | default('insufficient-evidence')) == 'review-required'
+            or (assessment_etcd_ocp_diag_verdict not in ['supported', 'not-collected'])
+            or (assessment_insights_archive_verdict not in ['supported', 'not-collected'])
+            or (assessment_evidence_hygiene_verdict == 'review-required')
+          )
+          else 'supported'
+        )
+      }}
+    assessment_reference_compliance_verdict: "{{ reference_compliance_summary.verdict | default('insufficient-evidence') }}"
+    assessment_overall_supportability_verdict: >-
+      {{
+        'unsupported-risk'
+        if (
+          assessment_health_verdict == 'unsupported-risk'
+          or assessment_supportability_verdict == 'unsupported-risk'
+          or assessment_reference_compliance_verdict == 'unsupported-risk'
+        )
+        else (
+          'review-required'
+          if (
+            assessment_health_verdict == 'review-required'
+            or assessment_supportability_verdict == 'review-required'
+            or assessment_reference_compliance_verdict != 'supported'
+          )
+          else 'supported'
+        )
+      }}
+    updated_supportability_summary:
+      health_verdict: "{{ assessment_health_verdict }}"
+      supportability_verdict: "{{ assessment_supportability_verdict }}"
+      reference_compliance_verdict: "{{ assessment_reference_compliance_verdict }}"
+      verdict: "{{ assessment_overall_supportability_verdict }}"
+      recommendations: >-
+        {{
+          (
+            'Strengthen supportability first: collect or repair the missing high-value evidence paths, address etcd or Insights diagnostics problems, and resolve blocked advisory or managed-gate issues before relying on this report for deeper conclusions.'
+            if assessment_supportability_verdict == 'unsupported-risk'
+            else (
+              'Improve evidence quality before the next review: close node-diagnostics gaps, investigate non-supported etcd/Insights/OMC signals, and reduce evidence-hygiene or advisory issues so support conclusions are better grounded.'
+              if assessment_supportability_verdict == 'review-required'
+              else 'Supportability posture is acceptable for this run. Keep the evidence path stable, preserve collector coverage, and use the remaining posture sections for deeper remediation planning.'
+            )
+          )
+        }}
+      key_findings: >-
+        {{
+          [
+            'Collected evidence sources: ' ~ (((analysis_graph.source_summary.sources | default([])) | join(', ')) or 'cluster scan') ~ '.',
+            'Health verdict is ' ~ assessment_health_verdict ~ '.',
+            'Remote health posture is ' ~ (assessment_connected_cluster_posture.remote_health_posture | default('unknown')) ~ '.',
+            'Reference compliance verdict is ' ~ (reference_compliance_summary.verdict | default('insufficient-evidence')) ~ ' (missing=' ~ (reference_compliance_summary.missing_count | default(0) | string) ~ ', errors=' ~ (reference_compliance_summary.error_count | default(0) | string) ~ ').',
+            'etcd must-gather diagnostics verdict is ' ~ assessment_etcd_ocp_diag_verdict ~ ' (errors=' ~ (etcd_ocp_diag_summary.error_count_total | default(0) | string) ~ ').',
+            'OMC must-gather diagnostics verdict is ' ~ assessment_omc_verdict ~ ' (firing alerts=' ~ (omc_summary.firing_alert_count | default(0) | string) ~ ', endpoint errors=' ~ (omc_summary.endpoint_error_count | default(0) | string) ~ ').',
+            'Node diagnostics verdict is ' ~ (node_diagnostics_summary.verdict | default('insufficient-evidence')) ~ ' (sosreports=' ~ (node_diagnostics_summary.sosreport_count | default(0) | string) ~ ', kubelet=' ~ (node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) | string) ~ ', crio=' ~ (node_diagnostics_summary.sosreport_with_crio_logs | default(0) | string) ~ ', journal=' ~ (node_diagnostics_summary.sosreport_with_journal | default(0) | string) ~ ', network=' ~ (node_diagnostics_summary.sosreport_with_network_data | default(0) | string) ~ ').',
+            'Insights archive verdict is ' ~ assessment_insights_archive_verdict ~ ' (failed gathers=' ~ (insights_archive_summary.failed_gather_count | default(0) | string) ~ ', panics=' ~ (insights_archive_summary.panic_count | default(0) | string) ~ ').',
+            'Advisor verdict is ' ~ (advisor_summary.verdict | default('insufficient-evidence')) ~ ' (critical=' ~ (advisor_summary.critical_count | default(0) | string) ~ ', high=' ~ (advisor_summary.high_count | default(0) | string) ~ ').',
+            'Managed-service gate verdict is ' ~ (managed_gate_summary.verdict | default('insufficient-evidence')) ~ ' (blocked=' ~ (managed_gate_summary.blocked_count | default(0) | string) ~ ', pending=' ~ (managed_gate_summary.pending_count | default(0) | string) ~ ', warning=' ~ (managed_gate_summary.warning_count | default(0) | string) ~ ').',
+            'Evidence hygiene verdict is ' ~ assessment_evidence_hygiene_verdict ~ '.'
+          ]
+        }}

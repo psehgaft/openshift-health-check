@@ -1,0 +1,514 @@
+---
+- name: Build production Day 2 posture summary
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+
+    data = json.loads(r'''{{ {
+      "cluster_profile": cluster_profile | default({}),
+      "clusteroperators": clusteroperator_status_map | default({}),
+      "cluster_monitoring_config": cluster_monitoring_config_parsed | default({}),
+      "user_workload_monitoring_config": user_workload_monitoring_config_parsed | default({}),
+      "subscriptions": (analysis_graph.subscriptions | default({})).get('items', []),
+      "argocds": (analysis_graph.argocds | default({})).get('items', []),
+      "gitops_applications": (analysis_graph.gitops_applications | default({})).get('items', []),
+      "gitops_appprojects": (analysis_graph.gitops_appprojects | default({})).get('items', []),
+      "clusterautoscalers": (analysis_graph.clusterautoscalers | default({})).get('items', []),
+      "klusterlets": (analysis_graph.klusterlets | default({})).get('items', []),
+      "managedclusteraddons": (analysis_graph.managedclusteraddons | default({})).get('items', []),
+      "clustersecretstores": (analysis_graph.clustersecretstores | default({})).get('items', []),
+      "secretstores": (analysis_graph.secretstores | default({})).get('items', []),
+      "externalsecrets": (analysis_graph.externalsecrets | default({})).get('items', []),
+      "namespaces": (analysis_graph.namespaces | default({})).get('items', []),
+      "clusterlogforwarders": (analysis_graph.clusterlogforwarders | default({})).get('items', []),
+      "backupstoragelocations": (analysis_graph.backupstoragelocations | default({})).get('items', []),
+      "schedules": (analysis_graph.schedules | default({})).get('items', []),
+      "dataprotectionapplications": (analysis_graph.dataprotectionapplications | default({})).get('items', []),
+      "compliancesuites": (analysis_graph.compliancesuites | default({})).get('items', []),
+      "machinehealthchecks": (analysis_graph.machinehealthchecks | default({})).get('items', []),
+      "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
+      "backup_posture": backup_posture_data | default({}),
+      "observability_forwarding_summary": observability_forwarding_summary | default({}),
+      "observability_findings": observability_findings | default([]),
+      "identity_provider_count": (cluster_profile.identity_provider_count | default(0)),
+      "image_registry_findings": image_registry_findings | default([]),
+      "machine_healthcheck_findings": machine_healthcheck_findings | default([]),
+      "compliance_suite_findings": compliance_suite_findings | default([]),
+      "backup_posture_findings": backup_posture_findings | default([])
+    } | to_json }}''')
+
+    platform = str((((data.get("cluster_profile") or {}).get("platform")) or "unknown")).strip()
+    deployment_type = str((((data.get("cluster_profile") or {}).get("deployment_type")) or "openshift")).strip().lower()
+    managed_deployment_types = {"aro", "rosa", "rosa-hcp", "osd"}
+    cloud_managed = deployment_type in managed_deployment_types
+    is_sno = bool(((data.get("cluster_profile") or {}).get("is_sno")) or False)
+    is_hosted_control_plane = bool(((data.get("cluster_profile") or {}).get("is_hosted_control_plane")) or False)
+
+    cmc = data.get("cluster_monitoring_config") or {}
+    uwm = data.get("user_workload_monitoring_config") or {}
+    prom_k8s = (cmc.get("prometheusK8s") or {})
+    alertmanager_main = (cmc.get("alertmanagerMain") or {})
+    enable_user_workload = bool(cmc.get("enableUserWorkload", False))
+    monitoring_persistent = bool(prom_k8s.get("volumeClaimTemplate")) and bool(alertmanager_main.get("volumeClaimTemplate"))
+
+    argocds = data.get("argocds") or []
+    subscriptions = data.get("subscriptions") or []
+    gitops_apps = data.get("gitops_applications") or []
+    gitops_projects = data.get("gitops_appprojects") or []
+    clustersecretstores = data.get("clustersecretstores") or []
+    secretstores = data.get("secretstores") or []
+    externalsecrets = data.get("externalsecrets") or []
+    clusterautoscalers = data.get("clusterautoscalers") or []
+    klusterlets = data.get("klusterlets") or []
+    managedclusteraddons = data.get("managedclusteraddons") or []
+    namespaces = data.get("namespaces") or []
+    clusterlogforwarders = data.get("clusterlogforwarders") or []
+    backupstoragelocations = data.get("backupstoragelocations") or []
+    schedules = data.get("schedules") or []
+    dataprotectionapplications = data.get("dataprotectionapplications") or []
+    compliancesuites = data.get("compliancesuites") or []
+    machinehealthchecks = data.get("machinehealthchecks") or []
+    machinesets = data.get("machinesets") or []
+    operators = data.get("clusteroperators") or {}
+    obs = data.get("observability_forwarding_summary") or {}
+    backup_posture = data.get("backup_posture") or {}
+
+    insights = operators.get("insights", {}) or {}
+    insights_healthy = insights.get("available") == "True" and insights.get("degraded") != "True"
+    namespace_names = {((item.get("metadata") or {}).get("name") or "") for item in namespaces}
+    acm_agent_namespaces = sorted(
+        name for name in namespace_names
+        if name in {"open-cluster-management-agent", "open-cluster-management-agent-addon"}
+    )
+    subscription_packages = {
+        str((((item.get("spec") or {}).get("name")) or "")).strip()
+        for item in subscriptions
+        if str((((item.get("spec") or {}).get("name")) or "")).strip()
+    }
+    subscription_namespaces = {
+        str((((item.get("metadata") or {}).get("namespace")) or "")).strip()
+        for item in subscriptions
+        if str((((item.get("metadata") or {}).get("namespace")) or "")).strip()
+    }
+    gitops_application_names = {
+        str((((item.get("metadata") or {}).get("name")) or "")).strip()
+        for item in gitops_apps
+        if str((((item.get("metadata") or {}).get("name")) or "")).strip()
+    }
+
+    checks = []
+    findings = []
+
+    def level_rank(value):
+        return {"required": 3, "recommended": 2, "informational": 1}.get(value, 2)
+
+    def normalize_level(value):
+        if value in {"required", "recommended", "informational"}:
+            return value
+        return "recommended"
+
+    def choose_level(*values):
+        normalized = [normalize_level(v) for v in values if v]
+        return max(normalized, key=level_rank) if normalized else "recommended"
+
+    cluster_shape = "single-node" if is_sno else ("hosted-control-plane" if is_hosted_control_plane else "multi-node")
+    provider_baseline = deployment_type if cloud_managed else "self-managed"
+    control_plane_mode = "hosted" if is_hosted_control_plane else ("single-replica" if is_sno else "classic")
+    day2_baseline_profile = {
+        "provider": provider_baseline,
+        "cluster_shape": cluster_shape,
+        "control_plane_mode": control_plane_mode,
+    }
+
+    base_required_level = "recommended" if is_sno else "required"
+    telemetry_level = "required" if cloud_managed else "recommended"
+    external_secrets_level = "required" if platform == "Azure" else ("recommended" if cloud_managed else "informational")
+    compliance_level = "informational" if is_sno else "recommended"
+    insights_level = "recommended" if cloud_managed else "informational"
+    namespace_guardrails_level = "informational" if is_sno else "recommended"
+    pipelines_level = "informational" if is_sno else "recommended"
+    cert_manager_level = "informational" if is_sno else "recommended"
+    acs_level = "recommended" if cloud_managed and not is_sno else "informational"
+    machine_remediation_level = "recommended" if (cloud_managed and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational"
+    autoscaler_level = "recommended" if (cloud_managed and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational"
+
+    def add_check(capability, status, detail, source, level="recommended", scored=True):
+        normalized_level = normalize_level(level)
+        checks.append({
+            "capability": capability,
+            "status": status,
+            "detail": detail,
+            "source": source,
+            "level": normalized_level,
+            "scored": bool(scored and normalized_level != "informational"),
+        })
+
+    def add_finding(issue, detail, severity="warning", source="general"):
+        findings.append({
+            "issue": issue,
+            "detail": detail,
+            "severity": severity,
+            "source": source,
+        })
+
+    gitops_present = bool(argocds or gitops_apps or gitops_projects)
+    add_check(
+        "GitOps controller and application inventory",
+        "OK" if gitops_present else "INFO",
+        f"argocds={len(argocds)} applications={len(gitops_apps)} appprojects={len(gitops_projects)}",
+        "GitOps resource inventory",
+        level=base_required_level,
+    )
+    if not gitops_present:
+        add_finding(
+            "prod-day2-gitops-missing",
+            "no Argo CD, Argo CD Application, or AppProject resources were found",
+            severity="info",
+            source="GitOps resource inventory",
+        )
+
+    ext_secret_store_count = len(clustersecretstores) + len(secretstores)
+    ext_secrets_present = ext_secret_store_count > 0 or len(externalsecrets) > 0
+    add_check(
+        "External secrets integration",
+        "OK" if ext_secrets_present else "WARN",
+        f"clustersecretstores={len(clustersecretstores)} secretstores={len(secretstores)} externalsecrets={len(externalsecrets)}",
+        "aro-gitops external-secrets",
+        level=external_secrets_level,
+    )
+    if not ext_secrets_present:
+        add_finding(
+            "prod-day2-external-secrets-missing",
+            "no External Secrets Operator stores or ExternalSecret resources were found",
+            source="aro-gitops external-secrets",
+        )
+
+    add_check(
+        "User workload monitoring enabled",
+        "OK" if enable_user_workload else "WARN",
+        f"enableUserWorkload={enable_user_workload}",
+        "aro-gitops user-workload-monitoring + Red Hat monitoring",
+        level=base_required_level,
+    )
+    if not enable_user_workload:
+        add_finding(
+            "prod-day2-user-workload-monitoring-disabled",
+            "cluster-monitoring-config does not enable user workload monitoring",
+            source="aro-gitops user-workload-monitoring + Red Hat monitoring",
+        )
+
+    add_check(
+        "Persistent cluster monitoring storage",
+        "OK" if monitoring_persistent else "WARN",
+        "prometheusK8s and alertmanagerMain volumeClaimTemplate must both be present for this check",
+        "Red Hat monitoring + IBM/Azure guidance",
+        level=choose_level(base_required_level, telemetry_level),
+    )
+    if not monitoring_persistent:
+        add_finding(
+            "prod-day2-monitoring-persistence-missing",
+            "cluster monitoring does not show persistent volume claim templates for both Prometheus and Alertmanager",
+            source="Red Hat monitoring + IBM/Azure guidance",
+        )
+
+    log_forwarding_present = len(obs.get("external_log_forwarding_outputs") or []) > 0 or len(clusterlogforwarders) > 0
+    add_check(
+        "External log forwarding",
+        "OK" if len(obs.get("external_log_forwarding_outputs") or []) > 0 else "WARN",
+        f"clusterlogforwarders={len(clusterlogforwarders)} external_outputs={len(obs.get('external_log_forwarding_outputs') or [])}",
+        "aro-gitops cluster-logging + vendor logging guidance",
+        level=telemetry_level,
+    )
+    if not log_forwarding_present or len(obs.get("external_log_forwarding_outputs") or []) == 0:
+        add_finding(
+            "prod-day2-external-log-forwarding-missing",
+            "no external log forwarding outputs were detected from ClusterLogForwarder resources",
+            source="aro-gitops cluster-logging + vendor logging guidance",
+        )
+
+    cluster_remote_write = int(obs.get("external_cluster_metrics_remote_write_count") or 0)
+    user_remote_write = int(obs.get("external_user_workload_metrics_remote_write_count") or 0)
+    add_check(
+        "External metrics forwarding",
+        "OK" if cluster_remote_write > 0 else "WARN",
+        f"cluster_remote_write={cluster_remote_write} user_remote_write={user_remote_write}",
+        "Red Hat monitoring + vendor monitoring guidance",
+        level=telemetry_level,
+    )
+    if cluster_remote_write == 0:
+        add_finding(
+            "prod-day2-external-metrics-forwarding-missing",
+            "no external cluster metrics remoteWrite target was detected",
+            source="Red Hat monitoring + vendor monitoring guidance",
+        )
+
+    backup_ready = bool(dataprotectionapplications and backupstoragelocations and schedules)
+    successful_backups = int(backup_posture.get("successful_backup_count") or 0)
+    add_check(
+        "Backup and restore baseline",
+        "OK" if backup_ready and successful_backups > 0 else "WARN",
+        f"dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} successful_backups={successful_backups}",
+        "aro-gitops OADP + vendor backup guidance",
+        level=base_required_level,
+    )
+    if not backup_ready or successful_backups == 0:
+        add_finding(
+            "prod-day2-backup-baseline-incomplete",
+            "backup posture is missing OADP resources, active schedules, or successful backup evidence",
+            source="aro-gitops OADP + vendor backup guidance",
+        )
+
+    compliance_present = len(compliancesuites) > 0
+    add_check(
+        "Compliance scanning",
+        "OK" if compliance_present else "WARN",
+        f"compliancesuites={len(compliancesuites)} findings={len(data.get('compliance_suite_findings') or [])}",
+        "aro-gitops compliance-operator",
+        level=compliance_level,
+    )
+    if not compliance_present:
+        add_finding(
+            "prod-day2-compliance-scanning-missing",
+            "no ComplianceSuite resources were found",
+            source="aro-gitops compliance-operator",
+        )
+
+    idp_count = int(data.get("identity_provider_count") or 0)
+    add_check(
+        "Central identity provider integration",
+        "OK" if idp_count > 0 else "WARN",
+        f"identity_providers={idp_count}",
+        "aro-gitops identity-providers + production auth practice",
+        level=base_required_level,
+    )
+    if idp_count == 0:
+        add_finding(
+            "prod-day2-identity-provider-missing",
+            "oauth cluster has no configured identity provider",
+            source="aro-gitops identity-providers + production auth practice",
+        )
+
+    add_check(
+        "Red Hat Insights connectivity",
+        "OK" if insights_healthy else "WARN",
+        f"available={insights.get('available', 'Unknown')} degraded={insights.get('degraded', 'Unknown')}",
+        "aro-gitops redhat-insights",
+        level=insights_level,
+    )
+    if not insights_healthy:
+        add_finding(
+            "prod-day2-insights-not-healthy",
+            "the insights operator is not healthy",
+            source="aro-gitops redhat-insights",
+        )
+
+    mhc_expected = cloud_managed and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane
+    mhc_present = len(machinehealthchecks) > 0
+    add_check(
+        "Worker machine remediation",
+        "OK" if (mhc_present or not mhc_expected) else "WARN",
+        f"platform={platform} machinesets={len(machinesets)} machinehealthchecks={len(machinehealthchecks)}",
+        "existing machine remediation posture + managed-cloud practice",
+        level=machine_remediation_level,
+    )
+    if mhc_expected and not mhc_present:
+        add_finding(
+            "prod-day2-machinehealthcheck-missing",
+            "no MachineHealthCheck resources were found for a cloud cluster with MachineSets",
+            source="existing machine remediation posture + managed-cloud practice",
+        )
+
+    autoscaler_expected = cloud_managed and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane
+    autoscaler_present = len(clusterautoscalers) > 0
+    add_check(
+        "Cluster autoscaler",
+        "OK" if (autoscaler_present or not autoscaler_expected) else "WARN",
+        f"platform={platform} clusterautoscalers={len(clusterautoscalers)}",
+        "aro-gitops cluster-autoscaler + managed-cloud practice",
+        level=autoscaler_level,
+    )
+    if autoscaler_expected and not autoscaler_present:
+        add_finding(
+            "prod-day2-cluster-autoscaler-missing",
+            "no ClusterAutoscaler resource was found for a cloud cluster with MachineSets",
+            source="aro-gitops cluster-autoscaler + managed-cloud practice",
+        )
+
+    image_policy_clean = len(data.get("image_registry_findings") or []) == 0
+    add_check(
+        "Registry governance baseline",
+        "OK" if image_policy_clean else "WARN",
+        f"image_registry_findings={len(data.get('image_registry_findings') or [])}",
+        "aro-gitops registry governance",
+        level="informational" if is_sno else "recommended",
+    )
+
+    platform_app_catalog = [
+        {
+            "capability": "Cluster logging app footprint",
+            "level": telemetry_level,
+            "source": "gitops/apps/platform/cluster-logging",
+            "present": bool(clusterlogforwarders or "openshift-logging" in namespace_names),
+            "detail": f"clusterlogforwarders={len(clusterlogforwarders)} openshift_logging_namespace={'openshift-logging' in namespace_names}",
+            "issue": "prod-day2-platform-cluster-logging-missing",
+            "finding": "no cluster logging app footprint was detected from ClusterLogForwarder resources or openshift-logging namespace",
+        },
+        {
+            "capability": "External Secrets Operator app footprint",
+            "level": external_secrets_level,
+            "source": "gitops/apps/platform/external-secrets-operator + external-secrets-config",
+            "present": bool(ext_secrets_present or "external-secrets-operator" in namespace_names),
+            "detail": f"stores={ext_secret_store_count} externalsecrets={len(externalsecrets)} namespace_present={'external-secrets-operator' in namespace_names}",
+            "issue": "prod-day2-platform-external-secrets-operator-missing",
+            "finding": "no external-secrets operator footprint was detected",
+        },
+        {
+            "capability": "OADP operator app footprint",
+            "level": base_required_level,
+            "source": "gitops/apps/platform/oadp-operator + oadp-backup",
+            "present": bool(dataprotectionapplications or backupstoragelocations or schedules or "openshift-adp" in namespace_names),
+            "detail": f"dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} openshift_adp_namespace={'openshift-adp' in namespace_names}",
+            "issue": "prod-day2-platform-oadp-operator-missing",
+            "finding": "no OADP operator or backup app footprint was detected",
+        },
+        {
+            "capability": "Compliance operator app footprint",
+            "level": compliance_level,
+            "source": "gitops/apps/platform/compliance-operator + compliance-content",
+            "present": bool(compliancesuites or "openshift-compliance" in namespace_names),
+            "detail": f"compliancesuites={len(compliancesuites)} openshift_compliance_namespace={'openshift-compliance' in namespace_names}",
+            "issue": "prod-day2-platform-compliance-operator-missing",
+            "finding": "no compliance operator app footprint was detected",
+        },
+        {
+            "capability": "Pipelines operator app footprint",
+            "level": pipelines_level,
+            "source": "gitops/apps/platform/openshift-pipelines-operator-bootstrap",
+            "present": bool("openshift-pipelines-operator-rh" in subscription_packages or "openshift-pipelines" in namespace_names or "openshift-pipelines-operator-bootstrap" in gitops_application_names),
+            "detail": f"subscription_present={'openshift-pipelines-operator-rh' in subscription_packages} openshift_pipelines_namespace={'openshift-pipelines' in namespace_names} gitops_app_present={'openshift-pipelines-operator-bootstrap' in gitops_application_names}",
+            "issue": "prod-day2-platform-pipelines-operator-missing",
+            "finding": "no OpenShift Pipelines operator footprint was detected",
+        },
+        {
+            "capability": "cert-manager operator footprint",
+            "level": cert_manager_level,
+            "source": "gitops/apps/platform/cert-manager-operator + cert-manager-config",
+            "present": bool("openshift-cert-manager-operator" in subscription_packages or "cert-manager-operator" in namespace_names or "cert-manager" in namespace_names),
+            "detail": f"subscription_present={'openshift-cert-manager-operator' in subscription_packages} cert_manager_operator_namespace={'cert-manager-operator' in namespace_names} cert_manager_namespace={'cert-manager' in namespace_names}",
+            "issue": "prod-day2-platform-cert-manager-missing",
+            "finding": "no cert-manager operator footprint was detected",
+        },
+        {
+            "capability": "Advanced Cluster Security operator footprint",
+            "level": acs_level,
+            "source": "gitops/apps/platform/advanced-cluster-security-operator-bootstrap",
+            "present": bool("container-security-operator" in subscription_packages or "container-security-operator" in namespace_names or "stackrox" in namespace_names),
+            "detail": f"subscription_present={'container-security-operator' in subscription_packages} operator_namespace={'container-security-operator' in namespace_names} stackrox_namespace={'stackrox' in namespace_names}",
+            "issue": "prod-day2-platform-acs-missing",
+            "finding": "no Advanced Cluster Security operator footprint was detected",
+        },
+        {
+            "capability": "Namespace onboarding guardrails footprint",
+            "level": namespace_guardrails_level,
+            "source": "gitops/apps/platform/namespace-onboarding + self-provisioner",
+            "present": bool(
+                "namespace-onboarding" in gitops_application_names
+                or "self-provisioner" in gitops_application_names
+            ),
+            "detail": f"namespace_onboarding_app_present={'namespace-onboarding' in gitops_application_names} self_provisioner_app_present={'self-provisioner' in gitops_application_names}",
+            "issue": "prod-day2-platform-namespace-governance-weak",
+            "finding": "no namespace-onboarding or self-provisioner GitOps application footprint was detected",
+        },
+        {
+            "capability": "Cost management operator footprint",
+            "level": "informational",
+            "source": "gitops/apps/platform/cost-management",
+            "present": bool("redhat-cost-management" in subscription_packages or "cost-management" in namespace_names),
+            "detail": f"subscription_present={'redhat-cost-management' in subscription_packages} namespace_present={'cost-management' in namespace_names}",
+            "issue": "prod-day2-platform-cost-management-missing",
+            "finding": "no cost management operator footprint was detected",
+        },
+    ]
+
+    for item in platform_app_catalog:
+        present = bool(item["present"])
+        add_check(
+            item["capability"],
+            "OK" if present else "INFO",
+            item["detail"],
+            item["source"],
+            level=item["level"],
+            scored=False,
+        )
+        if not present:
+            add_finding(
+                item["issue"],
+                item["finding"],
+                severity="info",
+                source=item["source"],
+            )
+
+    acm_managed = bool(klusterlets or managedclusteraddons or acm_agent_namespaces)
+    add_check(
+        "ACM managed-cluster registration",
+        "OK" if acm_managed else "INFO",
+        f"klusterlets={len(klusterlets)} managedclusteraddons={len(managedclusteraddons)} agent_namespaces={','.join(acm_agent_namespaces) or 'none'}",
+        "aro-classic-acm-registration",
+        level="informational",
+        scored=False,
+    )
+    if not acm_managed:
+        add_finding(
+            "prod-day2-acm-management-missing",
+            "no ACM managed-cluster signals were found from Klusterlet, ManagedClusterAddOn, or ACM agent namespaces",
+            severity="info",
+            source="aro-classic-acm-registration",
+        )
+
+    print(json.dumps({
+        "day2_posture_checks": checks,
+        "day2_posture_findings": findings,
+        "scored_day2_posture_findings": [item for item in findings if item.get("severity") != "info"],
+        "day2_posture_summary": {
+            "checks_total": len(checks),
+            "checks_warn": len([c for c in checks if c["status"] == "WARN"]),
+            "scored_findings_count": len([item for item in findings if item.get("severity") != "info"]),
+            "baseline_profile": day2_baseline_profile,
+            "gitops_present": gitops_present,
+            "argocd_count": len(argocds),
+            "gitops_application_count": len(gitops_apps),
+            "gitops_appproject_count": len(gitops_projects),
+            "external_secret_store_count": ext_secret_store_count,
+            "external_secret_count": len(externalsecrets),
+            "clusterautoscaler_count": len(clusterautoscalers),
+            "clusterautoscaler_expected": autoscaler_expected,
+            "machinehealthcheck_count": len(machinehealthchecks),
+            "machinehealthcheck_expected": mhc_expected,
+            "acm_managed": acm_managed,
+            "acm_klusterlet_count": len(klusterlets),
+            "acm_managedclusteraddon_count": len(managedclusteraddons),
+            "acm_agent_namespace_count": len(acm_agent_namespaces),
+            "enable_user_workload_monitoring": enable_user_workload,
+            "monitoring_persistent_storage_configured": monitoring_persistent,
+            "external_log_forwarding_output_count": len(obs.get("external_log_forwarding_outputs") or []),
+            "external_cluster_metrics_remote_write_count": cluster_remote_write,
+            "external_user_workload_metrics_remote_write_count": user_remote_write,
+            "backup_schedule_count": len(schedules),
+            "successful_backup_count": successful_backups,
+            "compliancesuite_count": len(compliancesuites),
+            "identity_provider_count": idp_count,
+            "insights_healthy": insights_healthy,
+        }
+    }))
+    PY
+  register: day2_posture_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize production Day 2 posture summary
+  ansible.builtin.set_fact:
+    day2_posture_data: "{{ day2_posture_cmd.stdout | from_json if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else {'day2_posture_checks': [], 'day2_posture_findings': [], 'scored_day2_posture_findings': [], 'day2_posture_summary': {'checks_total': 0, 'checks_warn': 0, 'scored_findings_count': 0, 'baseline_profile': {}, 'gitops_present': false, 'argocd_count': 0, 'gitops_application_count': 0, 'gitops_appproject_count': 0, 'external_secret_store_count': 0, 'external_secret_count': 0, 'clusterautoscaler_count': 0, 'clusterautoscaler_expected': false, 'machinehealthcheck_count': 0, 'machinehealthcheck_expected': false, 'acm_managed': false, 'acm_klusterlet_count': 0, 'acm_managedclusteraddon_count': 0, 'acm_agent_namespace_count': 0, 'enable_user_workload_monitoring': false, 'monitoring_persistent_storage_configured': false, 'external_log_forwarding_output_count': 0, 'external_cluster_metrics_remote_write_count': 0, 'external_user_workload_metrics_remote_write_count': 0, 'backup_schedule_count': 0, 'successful_backup_count': 0, 'compliancesuite_count': 0, 'identity_provider_count': 0, 'insights_healthy': false}} }}"
+    day2_posture_checks: "{{ (day2_posture_cmd.stdout | from_json).day2_posture_checks if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else [] }}"
+    day2_posture_findings: "{{ (day2_posture_cmd.stdout | from_json).day2_posture_findings if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else [] }}"
+    scored_day2_posture_findings: "{{ (day2_posture_cmd.stdout | from_json).scored_day2_posture_findings if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else [] }}"
+    day2_posture_summary: "{{ (day2_posture_cmd.stdout | from_json).day2_posture_summary if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else {'checks_total': 0, 'checks_warn': 0, 'scored_findings_count': 0, 'baseline_profile': {}, 'gitops_present': false, 'argocd_count': 0, 'gitops_application_count': 0, 'gitops_appproject_count': 0, 'external_secret_store_count': 0, 'external_secret_count': 0, 'clusterautoscaler_count': 0, 'clusterautoscaler_expected': false, 'machinehealthcheck_count': 0, 'machinehealthcheck_expected': false, 'acm_managed': false, 'acm_klusterlet_count': 0, 'acm_managedclusteraddon_count': 0, 'acm_agent_namespace_count': 0, 'enable_user_workload_monitoring': false, 'monitoring_persistent_storage_configured': false, 'external_log_forwarding_output_count': 0, 'external_cluster_metrics_remote_write_count': 0, 'external_user_workload_metrics_remote_write_count': 0, 'backup_schedule_count': 0, 'successful_backup_count': 0, 'compliancesuite_count': 0, 'identity_provider_count': 0, 'insights_healthy': false} }}"

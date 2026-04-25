@@ -1,0 +1,61 @@
+---
+- name: Build collected operator table summary
+  vars:
+    support_table_graph: "{{ analysis_graph | default(collected_resource_graph | default({})) }}"
+  ansible.builtin.set_fact:
+    assessment_operator_status_summary: >-
+      {%- set items = [] -%}
+      {%- for item in (support_table_graph.clusteroperators | default({'items': []})).get('items', []) -%}
+      {%- set available_status = ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) -%}
+      {%- set degraded_status = ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) -%}
+      {%- set progressing_status = ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) -%}
+      {%- set operator_version = item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' -%}
+      {%- set _ = items.append({
+        'name': item.metadata.name | default('unknown'),
+        'available': available_status,
+        'degraded': degraded_status,
+        'progressing': progressing_status,
+        'version': operator_version
+      }) -%}
+      {%- endfor -%}
+      {{ items }}
+  changed_when: false
+- name: Build collected machine config pool table summary
+  vars:
+    support_table_graph: "{{ analysis_graph | default(collected_resource_graph | default({})) }}"
+  ansible.builtin.set_fact:
+    assessment_mcp_summary: >-
+      {%- set items = [] -%}
+      {%- for item in (support_table_graph.machineconfigpools | default({'items': []})).get('items', []) -%}
+      {%- set degraded_status = ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'NodeDegraded') | map(attribute='status') | first) | default('Unknown')) -%}
+      {%- set updating_status = ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) -%}
+      {%- set updated_status = ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) -%}
+      {%- set _ = items.append({
+        'name': item.metadata.name | default('unknown'),
+        'degraded': degraded_status,
+        'updating': updating_status,
+        'updated': updated_status,
+        'machine_count': item.status.machineCount | default(0),
+        'ready_machine_count': item.status.readyMachineCount | default(0)
+      }) -%}
+      {%- endfor -%}
+      {{ items }}
+  changed_when: false
+- name: Build collected route table summary
+  vars:
+    support_table_graph: "{{ analysis_graph | default(collected_resource_graph | default({})) }}"
+  ansible.builtin.set_fact:
+    assessment_route_summary: >-
+      {%- set items = [] -%}
+      {%- for item in (support_table_graph.routes | default({'items': []})).get('items', []) -%}
+      {%- set admitted_statuses = item.status.ingress | default([]) | map(attribute='conditions') | list | flatten | selectattr('type', 'equalto', 'Admitted') | map(attribute='status') | list -%}
+      {%- set _ = items.append({
+        'namespace': item.metadata.namespace | default('unknown'),
+        'name': item.metadata.name | default('unknown'),
+        'host': item.spec.host | default(''),
+        'admitted': 'True' in admitted_statuses,
+        'service_name': item.spec.to.name | default('unknown')
+      }) -%}
+      {%- endfor -%}
+      {{ items }}
+  changed_when: false

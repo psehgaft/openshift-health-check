@@ -8,21 +8,8 @@
   ansible.builtin.fail:
     msg: >-
       OpenShift login validation failed. Run `oc login ...` with a user that has
-      cluster-admin privileges, verify the current context, and rerun this playbook.
+      cluster-wide read access, verify the current context, and rerun this playbook.
   when: oc_session_check.rc != 0
-
-- name: Validate cluster-admin privileges
-  ansible.builtin.command: oc auth can-i '*' '*' --all-namespaces
-  register: cluster_admin_check
-  changed_when: false
-  failed_when: false
-
-- name: Fail when caller is not cluster-admin
-  ansible.builtin.fail:
-    msg: >-
-      The current `oc` user is authenticated but does not have cluster-admin privileges.
-      Log in with cluster-admin credentials and rerun this playbook.
-  when: cluster_admin_check.rc != 0 or (cluster_admin_check.stdout | trim | lower) != 'yes'
 
 - name: Capture oc context
   ansible.builtin.command: oc config current-context
@@ -41,3 +28,109 @@
   register: oc_user_cmd
   changed_when: false
   failed_when: false
+
+- name: Detect optional local collector tools
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - "command -v {{ item }}"
+  loop:
+    - python3
+    - podman
+    - rosa
+    - omc
+  register: openshift_optional_tool_checks
+  changed_when: false
+  failed_when: false
+
+- name: Detect cluster-compare plugin availability
+  ansible.builtin.command:
+    argv:
+      - oc
+      - cluster-compare
+      - version
+  register: openshift_cluster_compare_plugin_check
+  changed_when: false
+  failed_when: false
+
+- name: Build OpenShift collector capability facts
+  ansible.builtin.set_fact:
+    openshift_optional_tools:
+      python3:
+        available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'python3') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        path: "{{ openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'python3') | map(attribute='stdout') | first | default('') | trim }}"
+      podman:
+        available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'podman') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        path: "{{ openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'podman') | map(attribute='stdout') | first | default('') | trim }}"
+      rosa:
+        available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        path: "{{ openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='stdout') | first | default('') | trim }}"
+      omc:
+        available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'omc') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        path: "{{ openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'omc') | map(attribute='stdout') | first | default('') | trim }}"
+    openshift_scan_capabilities:
+      tools:
+        oc:
+          available: "{{ oc_session_check.rc == 0 }}"
+          context: "{{ oc_context_cmd.stdout | default('') | trim }}"
+        python3:
+          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'python3') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        podman:
+          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'podman') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        rosa:
+          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        omc:
+          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'omc') | map(attribute='rc') | first | default(1) | int) == 0 }}"
+        oc_cluster_compare:
+          available: "{{ (openshift_cluster_compare_plugin_check.rc | default(1) | int) == 0 }}"
+      collectors:
+        must_gather:
+          category: oc-native
+          applicable: true
+          tool_available: "{{ oc_session_check.rc == 0 }}"
+          configured: true
+          access_path: oc
+          requirement_summary: "Requires oc access to the cluster and the ability to run must-gather pods."
+        inspect:
+          category: oc-native
+          applicable: true
+          tool_available: "{{ oc_session_check.rc == 0 }}"
+          configured: true
+          access_path: oc
+          requirement_summary: "Requires oc access to inspect cluster resources."
+        cluster_compare:
+          category: oc-plugin
+          applicable: true
+          tool_available: "{{ (openshift_cluster_compare_plugin_check.rc | default(1) | int) == 0 }}"
+          configured: "{{ (live_support_cluster_compare_command_argv | default([]) | length) > 0 }}"
+          access_path: oc-plugin
+          requirement_summary: "Requires the oc cluster-compare plugin plus a configured reference/baseline command."
+        managed_gates:
+          category: provider-api
+          applicable: "{{ (provider_family | default('generic')) in ['rosa', 'aro', 'osd'] or (live_support_managed_gates_command_argv | default([]) | length) > 0 }}"
+          tool_available: "{{ ((openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='rc') | first | default(1) | int) == 0) or ((live_support_managed_gates_command_argv | default([]) | length) > 0) }}"
+          configured: "{{ (live_support_managed_gates_command_argv | default([]) | length) > 0 }}"
+          access_path: provider-api
+          requirement_summary: "Requires provider-side tooling or an explicit managed-gates command for managed OpenShift offerings."
+        advisor_export:
+          category: external-service
+          applicable: true
+          tool_available: "{{ (live_support_advisor_export_command_argv | default([]) | length) > 0 }}"
+          configured: "{{ (live_support_advisor_export_command_argv | default([]) | length) > 0 }}"
+          access_path: external-service
+          requirement_summary: "Requires an explicit Advisor or Insights export command."
+        insights_archive:
+          category: oc-native
+          applicable: true
+          tool_available: "{{ oc_session_check.rc == 0 }}"
+          configured: true
+          access_path: oc
+          requirement_summary: "Uses oc to copy the Insights Operator archive from a running pod in openshift-insights."
+        sosreport:
+          category: node-level
+          applicable: true
+          tool_available: "{{ (live_support_sosreport_command_argv | default([]) | length) > 0 }}"
+          configured: "{{ (live_support_sosreport_command_argv | default([]) | length) > 0 }}"
+          access_path: node-level
+          requirement_summary: "Requires node-level access such as oc debug node or SSH plus a sosreport command."

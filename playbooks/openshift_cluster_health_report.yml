@@ -7,8 +7,9 @@
     provider_family: generic
     cluster_profile_mode: production
     kube_cli: oc
+    report_mode: auto
     report_output_dir: "{{ playbook_dir }}/../reports"
-    report_basename: "cluster-health"
+    report_basename: "cluster-report"
     report_generate_html: true
     report_generate_pdf: true
     collection_parallelism: 8
@@ -23,7 +24,37 @@
     top_workload_issue_limit: 25
     top_security_issue_limit: 25
     top_certificate_issue_limit: 20
-    top_deprecated_api_limit: 25
+    require_cluster_log_forwarder: false
+    require_external_metrics_remote_write: false
+    warn_on_ingress_without_class: false
+    evidence_mode: auto
+    collect_live_support_artifacts: true
+    live_support_collection_profile: all
+    live_support_artifact_output_dir: ""
+    live_support_artifact_parallelism: 3
+    live_support_artifact_timeout_seconds: 1800
+    collect_live_must_gather: false
+    collect_live_inspect: false
+    collect_live_cluster_compare: false
+    collect_live_managed_gates: false
+    collect_live_advisor_export: false
+    collect_live_insights_archive: false
+    collect_live_sosreport: false
+    live_support_cluster_compare_command_argv: []
+    live_support_managed_gates_command_argv: []
+    live_support_advisor_export_command_argv: []
+    live_support_sosreport_command_argv: []
+    case_bundle_path: ""
+    must_gather_path: ""
+    cluster_compare_path: ""
+    managed_gates_path: ""
+    inspect_path: ""
+    sosreport_paths: []
+    advisor_export_path: ""
+    write_redaction_manifest: false
+    redaction_manifest_path: ""
+    write_redacted_bundle: false
+    redacted_bundle_output_dir: ""
     platform_namespaces_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*|kubernetes-.*)$"
     user_namespaces_exclude_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*|kubernetes-.*)$"
     etcd_wal_fsync_p99_warn_ms: 10
@@ -35,9 +66,6 @@
     pod_density_critical_pct: 90
     certificate_expiry_warn_days: 30
     certificate_expiry_critical_days: 7
-    require_cluster_log_forwarder: false
-    require_external_metrics_remote_write: false
-    warn_on_ingress_without_class: false
     prom_queries:
       firing_alerts: 'ALERTS{alertstate="firing"}'
       etcd_wal_fsync_p99_ms: 'histogram_quantile(0.99, sum by (le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))) * 1000'
@@ -64,7 +92,35 @@
       pod_cpu_usage_all: 'sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!="",pod!="",namespace!~"openshift-.*"}[5m]))'
       pod_memory_usage_all: 'sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!="",namespace!~"openshift-.*"})'
   tasks:
-    - name: Run cluster health report workflow
+    - name: Resolve unified OpenShift report mode
+      ansible.builtin.set_fact:
+        report_mode_resolved: >-
+          {{
+            ('collected' if report_mode == 'offline' else report_mode)
+            if (report_mode | default('auto')) != 'auto'
+            else (
+              'collected'
+              if (
+                (case_bundle_path | default('') | trim | length > 0)
+                or (must_gather_path | default('') | trim | length > 0)
+                or (inspect_path | default('') | trim | length > 0)
+                or (cluster_compare_path | default('') | trim | length > 0)
+                or (managed_gates_path | default('') | trim | length > 0)
+                or (advisor_export_path | default('') | trim | length > 0)
+                or ((sosreport_paths | default([])) | length > 0)
+              )
+              else 'live'
+            )
+          }}
+
+    - name: Validate unified OpenShift report mode
+      ansible.builtin.assert:
+        that:
+          - report_mode_resolved in ['live', 'collected']
+        fail_msg: "Set report_mode to auto, live, collected, or offline."
+
+    - name: Run live OpenShift health workflow
+      when: report_mode_resolved == 'live'
       block:
         - name: Run preflight checks
           ansible.builtin.include_role:
@@ -82,6 +138,10 @@
           ansible.builtin.include_role:
             name: collect_openshift
 
+        - name: Collect live support artifacts
+          ansible.builtin.include_role:
+            name: collect_live_support_evidence
+
         - name: Run common analysis
           ansible.builtin.include_role:
             name: analyze_common
@@ -90,7 +150,7 @@
           ansible.builtin.include_role:
             name: analyze_openshift
 
-        - name: Build reports
+        - name: Build live OpenShift report
           ansible.builtin.include_role:
             name: report_openshift
       always:
@@ -99,7 +159,47 @@
             path: "{{ collection_run_metadata.results_path | dirname }}"
             state: absent
           when:
+            - report_mode_resolved == 'live'
             - not (keep_collection_artifacts | bool)
             - collection_run_metadata is defined
             - collection_run_metadata.results_path | default('') | length > 0
           failed_when: false
+
+    - name: Run collected-state OpenShift evidence workflow
+      when: report_mode_resolved == 'collected'
+      block:
+        - name: Load common evidence
+          ansible.builtin.include_role:
+            name: load_evidence_common
+
+        - name: Load OpenShift evidence
+          ansible.builtin.include_role:
+            name: load_evidence_openshift
+
+        - name: Prepare collected-state OpenShift analysis
+          ansible.builtin.include_role:
+            name: analyze_openshift
+            tasks_from: prepare_collected_state.yml
+
+        - name: Run common analysis against collected-state inputs
+          ansible.builtin.include_role:
+            name: analyze_common
+
+        - name: Run unified OpenShift analysis against collected-state inputs
+          ansible.builtin.include_role:
+            name: analyze_openshift
+
+        - name: Build collected-state OpenShift health synthesis
+          ansible.builtin.include_role:
+            name: analyze_openshift
+            tasks_from: collected_state_health.yml
+
+        - name: Finalize collected-state supportability rollup
+          ansible.builtin.include_role:
+            name: analyze_openshift
+            tasks_from: finalize_collected_supportability.yml
+
+        - name: Build collected-state OpenShift report
+          ansible.builtin.include_role:
+            name: report_openshift
+            tasks_from: render_collected_state_report.yml

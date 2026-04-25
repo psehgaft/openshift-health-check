@@ -2,7 +2,7 @@
 - name: Build APIService availability findings
   ansible.builtin.set_fact:
     apiservice_issues: "{{ apiservice_issues | default([]) + apiservice_issue_entry }}"
-  loop: "{{ (apiservices | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.apiservices | default({})).get('items', []) }}"
   vars:
     available_condition: "{{ (item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | list | first) | default({}) }}"
     service_ref: "{{ ((item.spec.service.namespace | default('')) ~ '/' ~ (item.spec.service.name | default(''))) if (item.spec.service is defined) else 'Local' }}"
@@ -23,7 +23,7 @@
 - name: Build secret type counts
   ansible.builtin.set_fact:
     secret_type_counts: "{{ secret_type_counts | default({}) | combine({secret_type: (((secret_type_counts | default({}))[secret_type] | default(0)) + 1)}, recursive=True) }}"
-  loop: "{{ (secrets | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
   vars:
     secret_type: "{{ item.type | default('unknown') }}"
   changed_when: false
@@ -32,7 +32,7 @@
   ansible.builtin.set_fact:
     buildconfig_strategy_counts: "{{ buildconfig_strategy_counts | default({}) | combine({strategy_name: (((buildconfig_strategy_counts | default({}))[strategy_name] | default(0)) + 1)}, recursive=True) }}"
     buildconfigs_without_triggers: "{{ buildconfigs_without_triggers | default([]) + triggerless_entry }}"
-  loop: "{{ (buildconfigs | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.buildconfigs | default({})).get('items', []) }}"
   vars:
     strategy_name: >-
       {{
@@ -68,7 +68,7 @@
   ansible.builtin.set_fact:
     pipelinerun_status_counts: "{{ pipelinerun_status_counts | default({}) | combine({pipelinerun_status: (((pipelinerun_status_counts | default({}))[pipelinerun_status] | default(0)) + 1)}, recursive=True) }}"
     failed_pipelineruns: "{{ failed_pipelineruns | default([]) + failed_pipelinerun_entry }}"
-  loop: "{{ (pipelineruns | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pipelineruns | default({})).get('items', []) }}"
   vars:
     succeeded_condition: "{{ (item.status.conditions | default([]) | selectattr('type', 'equalto', 'Succeeded') | list | first) | default({}) }}"
     pipelinerun_status: >-
@@ -106,7 +106,7 @@
     compliance_result_counts: "{{ compliance_result_counts | default({}) | combine({suite_result: (((compliance_result_counts | default({}))[suite_result] | default(0)) + 1)}, recursive=True) }}"
     compliance_suite_findings: "{{ compliance_suite_findings | default([]) + compliance_suite_finding_entry }}"
     compliance_suite_summary: "{{ compliance_suite_summary | default([]) + [compliance_suite_summary_entry] }}"
-  loop: "{{ (compliancesuites | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.compliancesuites | default({})).get('items', []) }}"
   vars:
     suite_phase: "{{ item.status.phase | default('Unknown') }}"
     suite_result: "{{ item.status.result | default(suite_phase) }}"
@@ -125,10 +125,373 @@
       }}
   changed_when: false
 
+- name: Build compliance program posture summary
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+    import re
+
+    data = json.loads(r'''{{ {
+      "namespaces": (analysis_graph.namespaces | default({})).get('items', []),
+      "compliancesuites": (analysis_graph.compliancesuites | default({})).get('items', []),
+      "compliancescans": (analysis_graph.compliancescans | default({})).get('items', []),
+      "scansettings": (analysis_graph.scansettings | default({})).get('items', []),
+      "scansettingbindings": (analysis_graph.scansettingbindings | default({})).get('items', []),
+      "tailoredprofiles": (analysis_graph.tailoredprofiles | default({})).get('items', []),
+      "profiles": (analysis_graph.profiles | default({})).get('items', []),
+      "profilebundles": (analysis_graph.profilebundles | default({})).get('items', []),
+      "compliancecheckresults": (analysis_graph.compliancecheckresults | default({})).get('items', []),
+      "sosreport_reports": (
+        (live_support_data.parsed.sosreport.reports | default([]))
+        if (live_support_data is defined and live_support_data.parsed is defined)
+        else (sosreport_data.reports | default([]))
+      )
+    } | to_json }}''')
+
+    standards = [
+        ("FIPS", [r"\bfips\b"]),
+        ("FedRAMP", [r"\bfedramp\b"]),
+        ("HIPAA", [r"\bhipaa\b"]),
+        ("PCI-DSS", [r"\bpci(?:[-_ ]?dss)?\b"]),
+        ("SOC", [r"\bsoc(?:[-_ ]?\d+)?\b"]),
+        ("SOX", [r"\bsox\b"]),
+        ("NIST", [r"\bnist\b"]),
+        ("CIS", [r"\bcis\b"]),
+    ]
+
+    def gather_strings(obj):
+        if isinstance(obj, dict):
+            strings = []
+            for key, value in obj.items():
+                if key in {"metadata", "spec", "title", "description", "id"}:
+                    strings.extend(gather_strings(value))
+            return strings
+        if isinstance(obj, list):
+            strings = []
+            for item in obj:
+                strings.extend(gather_strings(item))
+            return strings
+        if isinstance(obj, str):
+            return [obj]
+        return []
+
+    def resource_matches(item, regexes):
+        haystack = " ".join(gather_strings(item)).lower()
+        return any(re.search(pattern, haystack) for pattern in regexes)
+
+    def metadata_name(item):
+        return str(((item.get("metadata") or {}).get("name") or ""))
+
+    def binding_profile_refs(binding):
+        refs = []
+        for profile in ((binding.get("profiles") or []) or []):
+            if isinstance(profile, dict):
+                refs.append(str(profile.get("name") or ""))
+        return [item for item in refs if item]
+
+    def scan_profile_refs(scan):
+        spec = scan.get("spec") or {}
+        refs = []
+        for key in ("profile", "profileRef", "tailoredProfile"):
+            value = spec.get(key)
+            if isinstance(value, str) and value:
+                refs.append(value)
+            elif isinstance(value, dict):
+                name = str(value.get("name") or "")
+                if name:
+                    refs.append(name)
+        return refs
+
+    def scan_result(scan):
+        status = scan.get("status") or {}
+        return str(status.get("result") or status.get("phase") or "Unknown")
+
+    def scan_phase(scan):
+        status = scan.get("status") or {}
+        return str(status.get("phase") or "Unknown")
+
+    def check_result(item):
+        status = item.get("status") or {}
+        labels = (item.get("metadata") or {}).get("labels") or {}
+        return str(
+            status.get("result")
+            or status.get("status")
+            or labels.get("compliance.openshift.io/check-status")
+            or item.get("result")
+            or "Unknown"
+        )
+
+    suites = data.get("compliancesuites") or []
+    scans = data.get("compliancescans") or []
+    scan_settings = data.get("scansettings") or []
+    scan_setting_bindings = data.get("scansettingbindings") or []
+    tailored_profiles = data.get("tailoredprofiles") or []
+    profiles = data.get("profiles") or []
+    profile_bundles = data.get("profilebundles") or []
+    check_results = data.get("compliancecheckresults") or []
+    sosreport_reports = data.get("sosreport_reports") or []
+    namespace_names = {(item.get("metadata") or {}).get("name", "") for item in (data.get("namespaces") or [])}
+
+    operator_present = bool(
+        suites or scans or scan_settings or scan_setting_bindings or tailored_profiles or profiles or profile_bundles
+        or ("openshift-compliance" in namespace_names)
+    )
+
+    valid_profilebundle_count = 0
+    invalid_profilebundle_count = 0
+    profilebundle_summary = []
+    for item in profile_bundles:
+        status = item.get("status") or {}
+        ds_status = str(status.get("dataStreamStatus") or "Unknown")
+        profilebundle_summary.append({
+            "namespace": ((item.get("metadata") or {}).get("namespace") or ""),
+            "name": ((item.get("metadata") or {}).get("name") or ""),
+            "data_stream_status": ds_status,
+        })
+        if ds_status == "VALID":
+            valid_profilebundle_count += 1
+        else:
+            invalid_profilebundle_count += 1
+
+    failing_scan_count = 0
+    scan_summary = []
+    for item in scans:
+        result = scan_result(item)
+        phase = scan_phase(item)
+        if result not in {"COMPLIANT", "NOT-APPLICABLE", "PASS"} or phase not in {"DONE", "COMPLIANT", "NOT-APPLICABLE"}:
+            failing_scan_count += 1
+        scan_summary.append({
+            "namespace": ((item.get("metadata") or {}).get("namespace") or ""),
+            "name": ((item.get("metadata") or {}).get("name") or ""),
+            "phase": phase,
+            "result": result,
+        })
+
+    check_fail_count = 0
+    for item in check_results:
+        result = check_result(item)
+        if result not in {"PASS", "COMPLIANT", "NOT-APPLICABLE", "INFO"}:
+            check_fail_count += 1
+
+    standards_summary = []
+    standards_findings = []
+
+    for standard_name, regexes in standards:
+        matched_profiles = [item for item in profiles if resource_matches(item, regexes)]
+        matched_tailored = [item for item in tailored_profiles if resource_matches(item, regexes)]
+        standard_profile_names = {metadata_name(item) for item in matched_profiles + matched_tailored if metadata_name(item)}
+        standard_profile_refs_lower = {item.lower() for item in standard_profile_names}
+        matched_bindings = [
+            item for item in scan_setting_bindings
+            if (
+                any(ref in standard_profile_names for ref in binding_profile_refs(item))
+                or any(ref.lower() in standard_profile_refs_lower for ref in binding_profile_refs(item))
+            )
+        ]
+        matched_binding_names = {metadata_name(item) for item in matched_bindings if metadata_name(item)}
+        matched_suites = [
+            item for item in suites
+            if metadata_name(item) in matched_binding_names
+        ]
+        matched_suite_names = {metadata_name(item) for item in matched_suites if metadata_name(item)}
+        matched_scans = []
+        for item in scans:
+            labels = (item.get("metadata") or {}).get("labels") or {}
+            owner_refs = item.get("metadata", {}).get("ownerReferences") or []
+            owner_names = {str(ref.get("name") or "") for ref in owner_refs if isinstance(ref, dict)}
+            scan_name = metadata_name(item)
+            if (
+                any(ref in standard_profile_names for ref in scan_profile_refs(item))
+                or any(ref.lower() in standard_profile_refs_lower for ref in scan_profile_refs(item))
+                or any(name in matched_suite_names for name in owner_names)
+                or str(labels.get("compliance.openshift.io/suite") or "") in matched_suite_names
+                or any(binding_name and binding_name in scan_name for binding_name in matched_binding_names)
+            ):
+                matched_scans.append(item)
+        matched_scan_names = {metadata_name(item) for item in matched_scans if metadata_name(item)}
+        matched_checks = []
+        for item in check_results:
+            labels = (item.get("metadata") or {}).get("labels") or {}
+            if (
+                str(labels.get("compliance.openshift.io/scan-name") or "") in matched_scan_names
+                or str(labels.get("compliance.openshift.io/suite") or "") in matched_suite_names
+            ):
+                matched_checks.append(item)
+
+        matched_settings = [
+            item for item in scan_settings
+            if metadata_name(item) in {str((binding.get("settingsRef") or {}).get("name") or "") for binding in matched_bindings}
+        ]
+        content_present = bool(matched_profiles or matched_tailored)
+        configured = bool(matched_bindings or matched_suites or matched_scans)
+        active_enabled = bool(matched_bindings or matched_suites or matched_scans)
+        standard_failing_scans = [
+            item for item in matched_scans
+            if scan_result(item) not in {"COMPLIANT", "NOT-APPLICABLE", "PASS"}
+            or scan_phase(item) not in {"DONE", "COMPLIANT", "NOT-APPLICABLE"}
+        ]
+        standard_failed_checks = [
+            item for item in matched_checks
+            if check_result(item) not in {"PASS", "COMPLIANT", "NOT-APPLICABLE", "INFO"}
+        ]
+
+        runtime_status = "not-applicable"
+        if standard_name == "FIPS":
+            if not configured:
+                runtime_status = "not-applicable"
+            else:
+                enabled = sum(1 for item in sosreport_reports if str(item.get("fips_enabled_status") or "") == "enabled")
+                disabled = sum(1 for item in sosreport_reports if str(item.get("fips_enabled_status") or "") == "disabled")
+                if enabled > 0 and disabled == 0:
+                    runtime_status = "enabled"
+                elif disabled > 0 and enabled == 0:
+                    runtime_status = "not-enabled"
+                elif enabled > 0 and disabled > 0:
+                    runtime_status = "mixed"
+                else:
+                    runtime_status = "unknown"
+        if active_enabled and (standard_failing_scans or standard_failed_checks):
+            verdict = "review-required"
+        elif active_enabled:
+            verdict = "supported"
+        elif configured:
+            verdict = "configured-no-scan"
+        elif content_present:
+            verdict = "content-available"
+        elif standard_failing_scans or standard_failed_checks:
+            verdict = "review-required"
+        else:
+            verdict = "not-configured"
+
+        standards_summary.append({
+            "standard": standard_name,
+            "content_present": content_present,
+            "configured": configured,
+            "active_enabled": active_enabled,
+            "profile_count": len(matched_profiles),
+            "tailored_profile_count": len(matched_tailored),
+            "scan_setting_count": len(matched_settings),
+            "scan_setting_binding_count": len(matched_bindings),
+            "profilebundle_count": 0,
+            "suite_count": len(matched_suites),
+            "scan_count": len(matched_scans),
+            "failing_scan_count": len(standard_failing_scans),
+            "failed_check_count": len(standard_failed_checks),
+            "runtime_status": runtime_status,
+            "verdict": verdict,
+            "detail": (
+                (
+                    "configured from Compliance Operator resources"
+                    if configured
+                    else (
+                        "matching Compliance Operator content is present but not bound into current scans"
+                        if content_present else
+                        "no matching Compliance Operator standard configuration detected"
+                    )
+                )
+            ),
+        })
+
+        if configured and verdict == "configured-no-scan":
+            standards_findings.append({
+                "severity": "warning",
+                "area": "compliance",
+                "standard": standard_name,
+                "detail": f"{standard_name} configuration was detected, but no ComplianceSuite or ComplianceScan evidence was found."
+            })
+        if content_present and not configured:
+            standards_findings.append({
+                "severity": "info",
+                "area": "compliance",
+                "standard": standard_name,
+                "detail": f"{standard_name} compliance content is available, but no current binding, suite, or scan evidence shows it is configured."
+            })
+        if len(standard_failing_scans) > 0:
+            standards_findings.append({
+                "severity": "warning",
+                "area": "compliance",
+                "standard": standard_name,
+                "detail": f"{standard_name} has failing or incomplete compliance scans: {len(standard_failing_scans)}."
+            })
+        if len(standard_failed_checks) > 0:
+            standards_findings.append({
+                "severity": "warning",
+                "area": "compliance",
+                "standard": standard_name,
+                "detail": f"{standard_name} has failed compliance checks: {len(standard_failed_checks)}."
+            })
+        if standard_name == "FIPS" and configured:
+            if runtime_status == "unknown":
+                standards_findings.append({
+                    "severity": "info",
+                    "area": "compliance",
+                    "standard": standard_name,
+                    "detail": "FIPS-related compliance content is configured. Runtime FIPS mode remains unknown because no explicit node evidence was collected."
+                })
+            elif runtime_status in {"not-enabled", "mixed"}:
+                standards_findings.append({
+                    "severity": "warning",
+                    "area": "compliance",
+                    "standard": standard_name,
+                    "detail": f"FIPS compliance content is configured, but runtime node evidence is {runtime_status}."
+                })
+
+    if not operator_present:
+        operator_verdict = "not-installed"
+    elif invalid_profilebundle_count > 0 or failing_scan_count > 0 or check_fail_count > 0:
+        operator_verdict = "review-required"
+    elif suites or scans:
+        operator_verdict = "supported"
+    else:
+        operator_verdict = "configured-no-scan"
+
+    findings = []
+    if operator_present and invalid_profilebundle_count > 0:
+        findings.append({"severity": "warning", "area": "compliance", "detail": f"Compliance Operator profile bundles not reporting VALID: {invalid_profilebundle_count}."})
+    if operator_present and failing_scan_count > 0:
+        findings.append({"severity": "warning", "area": "compliance", "detail": f"Compliance Operator scans failing or incomplete: {failing_scan_count}."})
+    if operator_present and check_fail_count > 0:
+        findings.append({"severity": "warning", "area": "compliance", "detail": f"Compliance check results not passing: {check_fail_count}."})
+    findings.extend(standards_findings)
+
+    print(json.dumps({
+        "operator_summary": {
+            "present": operator_present,
+            "namespace_present": "openshift-compliance" in namespace_names,
+            "suite_count": len(suites),
+            "scan_count": len(scans),
+            "scan_setting_count": len(scan_settings),
+            "scan_setting_binding_count": len(scan_setting_bindings),
+            "profile_count": len(profiles),
+            "tailored_profile_count": len(tailored_profiles),
+            "profilebundle_count": len(profile_bundles),
+            "valid_profilebundle_count": valid_profilebundle_count,
+            "invalid_profilebundle_count": invalid_profilebundle_count,
+            "failing_scan_count": failing_scan_count,
+            "failed_check_count": check_fail_count,
+            "standards_configured_count": len([item for item in standards_summary if item["configured"]]),
+            "verdict": operator_verdict,
+            "profilebundle_summary": profilebundle_summary,
+            "scan_summary": scan_summary[:20],
+        },
+        "standards_summary": standards_summary,
+        "findings": findings,
+    }))
+    PY
+  register: compliance_program_summary_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize compliance program posture summary
+  ansible.builtin.set_fact:
+    compliance_operator_summary: "{{ (compliance_program_summary_cmd.stdout | from_json).operator_summary if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0)) else {'present': false, 'namespace_present': false, 'suite_count': 0, 'scan_count': 0, 'scan_setting_count': 0, 'scan_setting_binding_count': 0, 'profile_count': 0, 'tailored_profile_count': 0, 'profilebundle_count': 0, 'valid_profilebundle_count': 0, 'invalid_profilebundle_count': 0, 'failing_scan_count': 0, 'failed_check_count': 0, 'standards_configured_count': 0, 'verdict': 'unknown', 'profilebundle_summary': [], 'scan_summary': []} }}"
+    compliance_standards_summary: "{{ (compliance_program_summary_cmd.stdout | from_json).standards_summary if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0)) else [] }}"
+    compliance_standards_findings: "{{ (compliance_program_summary_cmd.stdout | from_json).findings if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0)) else [] }}"
+
 - name: Build DataProtectionApplication summary
   ansible.builtin.set_fact:
     dataprotectionapplication_summary: "{{ dataprotectionapplication_summary | default([]) + [dpa_summary_entry] }}"
-  loop: "{{ (dataprotectionapplications | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.dataprotectionapplications | default({})).get('items', []) }}"
   vars:
     reconciled_condition: "{{ (item.status.conditions | default([]) | selectattr('type', 'equalto', 'Reconciled') | list | first) | default({}) }}"
     dpa_summary_entry:
@@ -146,11 +509,11 @@
     from datetime import datetime, timezone, timedelta
 
     data = json.loads(r'''{{ {
-      "dataprotectionapplications": (dataprotectionapplications | default({})).get('items', []),
-      "backupstoragelocations": (backupstoragelocations | default({})).get('items', []),
-      "schedules": (schedules | default({})).get('items', []),
-      "backups": (backups | default({})).get('items', []),
-      "restores": (restores | default({})).get('items', [])
+      "dataprotectionapplications": (analysis_graph.dataprotectionapplications | default({})).get('items', []),
+      "backupstoragelocations": (analysis_graph.backupstoragelocations | default({})).get('items', []),
+      "schedules": (analysis_graph.schedules | default({})).get('items', []),
+      "backups": (analysis_graph.backups | default({})).get('items', []),
+      "restores": (analysis_graph.restores | default({})).get('items', [])
     } | to_json }}''')
 
     def parse_time(value):
@@ -207,6 +570,7 @@
         })
 
     successful_backups = []
+    clean_successful_backups = []
     backup_summary = []
     for item in backup_items:
         meta = item.get("metadata", {}) or {}
@@ -225,8 +589,11 @@
         })
         if phase == "Completed":
             successful_backups.append(parse_time(completion))
+            if int(status.get("warnings", 0) or 0) == 0 and int(status.get("errors", 0) or 0) == 0:
+                clean_successful_backups.append(parse_time(completion))
 
     completed_restores = []
+    clean_completed_restores = []
     restore_summary = []
     for item in restore_items:
         meta = item.get("metadata", {}) or {}
@@ -245,6 +612,8 @@
         })
         if phase == "Completed":
             completed_restores.append(parse_time(completion))
+            if int(status.get("warnings", 0) or 0) == 0 and int(status.get("errors", 0) or 0) == 0:
+                clean_completed_restores.append(parse_time(completion))
 
     findings = []
     if dpas or bsl_items or schedule_items or backup_items or restore_items:
@@ -259,16 +628,22 @@
             findings.append({"issue": "backup-schedule-paused", "detail": ", ".join(paused_schedules[:10])})
 
         successful_count = len([item for item in successful_backups if item is not None])
+        clean_successful_count = len([item for item in clean_successful_backups if item is not None])
         if successful_count == 0:
             findings.append({"issue": "successful-backup-missing", "detail": "no Velero Backup resource reported phase=Completed"})
+        elif clean_successful_count == 0:
+            findings.append({"issue": "successful-backup-has-warnings-or-errors", "detail": "completed backups were found, but all recent completed backups reported warnings or errors"})
         else:
-            latest_success = max(item for item in successful_backups if item is not None)
+            latest_success = max(item for item in clean_successful_backups if item is not None)
             if latest_success < datetime.now(timezone.utc) - timedelta(days=7):
                 findings.append({"issue": "successful-backup-stale", "detail": latest_success.isoformat()})
 
         completed_restore_count = len([item for item in completed_restores if item is not None])
+        clean_completed_restore_count = len([item for item in clean_completed_restores if item is not None])
         if completed_restore_count == 0:
-            findings.append({"issue": "restore-evidence-missing", "detail": "no Velero Restore resource reported phase=Completed"})
+            findings.append({"issue": "restore-evidence-not-demonstrated", "detail": "no Velero Restore resource reported phase=Completed"})
+        elif clean_completed_restore_count == 0:
+            findings.append({"issue": "restore-evidence-has-warnings-or-errors", "detail": "completed restores were found, but all reported warnings or errors"})
     else:
         findings.append({
             "issue": "backup-tooling-not-detected",
@@ -282,7 +657,9 @@
         "restore_summary": sorted(restore_summary, key=lambda item: (item["completion_timestamp"], item["namespace"], item["name"]), reverse=True)[:15],
         "backup_posture_findings": findings,
         "successful_backup_count": len([item for item in successful_backups if item is not None]),
+        "clean_successful_backup_count": len([item for item in clean_successful_backups if item is not None]),
         "completed_restore_count": len([item for item in completed_restores if item is not None]),
+        "clean_completed_restore_count": len([item for item in clean_completed_restores if item is not None]),
     }))
     PY
   register: backup_posture_cmd
@@ -291,7 +668,7 @@
 
 - name: Normalize backup posture summary
   ansible.builtin.set_fact:
-    backup_posture_data: "{{ backup_posture_cmd.stdout | from_json if (backup_posture_cmd.rc == 0 and (backup_posture_cmd.stdout | default('') | length > 0)) else {'backup_storage_location_summary': [], 'backup_schedule_summary': [], 'backup_summary': [], 'restore_summary': [], 'backup_posture_findings': [], 'successful_backup_count': 0, 'completed_restore_count': 0} }}"
+    backup_posture_data: "{{ backup_posture_cmd.stdout | from_json if (backup_posture_cmd.rc == 0 and (backup_posture_cmd.stdout | default('') | length > 0)) else {'backup_storage_location_summary': [], 'backup_schedule_summary': [], 'backup_summary': [], 'restore_summary': [], 'backup_posture_findings': [], 'successful_backup_count': 0, 'clean_successful_backup_count': 0, 'completed_restore_count': 0, 'clean_completed_restore_count': 0} }}"
 
 - name: Expand backup posture summary facts
   ansible.builtin.set_fact:
@@ -307,8 +684,8 @@
     import json
 
     data = json.loads(r'''{{ {
-      "machinesets": (machinesets | default({})).get('items', []),
-      "machinehealthchecks": (machinehealthchecks | default({})).get('items', [])
+      "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
+      "machinehealthchecks": (analysis_graph.machinehealthchecks | default({})).get('items', [])
     } | to_json }}''')
 
     machine_sets = data.get("machinesets", []) or []
@@ -373,7 +750,7 @@
     python3 - <<'PY'
     import json
 
-    sccs = json.loads(r'''{{ (securitycontextconstraints | default({})).get('items', []) | to_json }}''')
+    sccs = json.loads(r'''{{ (analysis_graph.securitycontextconstraints | default({})).get('items', []) | to_json }}''')
     summary = []
     findings = []
 

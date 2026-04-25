@@ -1,0 +1,407 @@
+---
+- name: Build product-specific evidence summaries
+  vars:
+    product_graph: "{{ analysis_graph | default(collected_resource_graph | default({})) }}"
+  ansible.builtin.set_fact:
+    assessment_product_evidence:
+      pipelines:
+        installed: "{{ ((product_graph.pipelines | default({'items': []})).get('items', []) | length > 0) or ((product_graph.pipelineruns | default({'items': []})).get('items', []) | length > 0) }}"
+        health_applicable: "{{ ((product_graph.pipelines | default({'items': []})).get('items', []) | length > 0) or ((product_graph.pipelineruns | default({'items': []})).get('items', []) | length > 0) }}"
+        present: "{{ ((product_graph.pipelines | default({'items': []})).get('items', []) | length > 0) or ((product_graph.pipelineruns | default({'items': []})).get('items', []) | length > 0) }}"
+        pipeline_count: "{{ (product_graph.pipelines | default({'items': []})).get('items', []) | length }}"
+        pipelinerun_count: "{{ (product_graph.pipelineruns | default({'items': []})).get('items', []) | length }}"
+        failed_pipelinerun_count: >-
+          {{
+            (product_graph.pipelineruns | default({'items': []})).get('items', [])
+            | map('to_json')
+            | select('search', '"type": "Succeeded"')
+            | select('search', '"status": "False"')
+            | list
+            | length
+          }}
+        evidence_sources: >-
+          {{
+            (
+              ((product_graph.pipelines | default({'items': []})).get('items', [])
+              + (product_graph.pipelineruns | default({'items': []})).get('items', []))
+              | map(attribute='_evidence_sources')
+              | list
+              | flatten
+              | unique
+            )
+          }}
+      logging:
+        installed: >-
+          {{
+            ((product_graph.clusterlogforwarders | default({'items': []})).get('items', []) | length > 0)
+            or ('openshift-logging' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list))
+          }}
+        health_applicable: >-
+          {{
+            ((product_graph.clusterlogforwarders | default({'items': []})).get('items', []) | length > 0)
+            or ('openshift-logging' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list))
+          }}
+        present: >-
+          {{
+            ((product_graph.clusterlogforwarders | default({'items': []})).get('items', []) | length > 0)
+            or ('openshift-logging' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list))
+          }}
+        namespace_present: "{{ 'openshift-logging' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list) }}"
+        clusterlogforwarder_count: "{{ (product_graph.clusterlogforwarders | default({'items': []})).get('items', []) | length }}"
+        output_count: >-
+          {{
+            (product_graph.clusterlogforwarders | default({'items': []})).get('items', [])
+            | map(attribute='spec.outputs')
+            | map('default', [])
+            | map('length')
+            | map('int')
+            | sum
+          }}
+        clusterlogforwarders_with_outputs: >-
+          {{
+            (product_graph.clusterlogforwarders | default({'items': []})).get('items', [])
+            | map(attribute='spec.outputs')
+            | map('default', [])
+            | map('length')
+            | map('int')
+            | select('gt', 0)
+            | list
+            | length
+          }}
+        evidence_sources: >-
+          {{
+            (
+              ((product_graph.clusterlogforwarders | default({'items': []})).get('items', [])
+              + (((product_graph.namespaces | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', 'openshift-logging') | list)))
+              | map(attribute='_evidence_sources')
+              | list
+              | flatten
+              | unique
+            )
+          }}
+      gitops:
+        installed: >-
+          {{
+            ((product_graph.argocds | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.gitops_applications | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.gitops_appprojects | default({'items': []})).get('items', []) | length > 0)
+            or ('openshift-gitops' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list))
+          }}
+        health_applicable: >-
+          {{
+            ((product_graph.argocds | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.gitops_applications | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.gitops_appprojects | default({'items': []})).get('items', []) | length > 0)
+            or ('openshift-gitops' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list))
+          }}
+        present: >-
+          {{
+            ((product_graph.argocds | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.gitops_applications | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.gitops_appprojects | default({'items': []})).get('items', []) | length > 0)
+            or ('openshift-gitops' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list))
+          }}
+        namespace_present: "{{ 'openshift-gitops' in ((product_graph.namespaces | default({'items': []})).get('items', []) | map(attribute='metadata.name') | list) }}"
+        argocd_count: "{{ (product_graph.argocds | default({'items': []})).get('items', []) | length }}"
+        application_count: "{{ (product_graph.gitops_applications | default({'items': []})).get('items', []) | length }}"
+        appproject_count: "{{ (product_graph.gitops_appprojects | default({'items': []})).get('items', []) | length }}"
+        evidence_sources: >-
+          {{
+            (
+              ((product_graph.argocds | default({'items': []})).get('items', [])
+              + (product_graph.gitops_applications | default({'items': []})).get('items', [])
+              + (product_graph.gitops_appprojects | default({'items': []})).get('items', [])
+              + (((product_graph.namespaces | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', 'openshift-gitops') | list)))
+              | map(attribute='_evidence_sources')
+              | list
+              | flatten
+              | unique
+            )
+          }}
+      odf:
+        installed: >-
+          {{
+            ((product_graph.storageclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.cephclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.noobaas | default({'items': []})).get('items', []) | length > 0)
+          }}
+        health_applicable: >-
+          {{
+            ((product_graph.storageclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.cephclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.noobaas | default({'items': []})).get('items', []) | length > 0)
+          }}
+        present: >-
+          {{
+            ((product_graph.storageclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.cephclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.noobaas | default({'items': []})).get('items', []) | length > 0)
+          }}
+        storagecluster_count: "{{ (product_graph.storageclusters | default({'items': []})).get('items', []) | length }}"
+        cephcluster_count: "{{ (product_graph.cephclusters | default({'items': []})).get('items', []) | length }}"
+        noobaa_count: "{{ (product_graph.noobaas | default({'items': []})).get('items', []) | length }}"
+        volumesnapshotclass_count: "{{ (product_graph.volumesnapshotclasses | default({'items': []})).get('items', []) | length }}"
+        dataprotectionapplication_count: "{{ (product_graph.dataprotectionapplications | default({'items': []})).get('items', []) | length }}"
+        snapshot_protection_ready: "{{ ((product_graph.volumesnapshotclasses | default({'items': []})).get('items', []) | length) > 0 }}"
+        backup_integration_present: "{{ ((product_graph.dataprotectionapplications | default({'items': []})).get('items', []) | length) > 0 }}"
+        evidence_sources: >-
+          {{
+            (
+              ((product_graph.storageclusters | default({'items': []})).get('items', [])
+              + (product_graph.cephclusters | default({'items': []})).get('items', [])
+              + (product_graph.noobaas | default({'items': []})).get('items', [])
+              + (product_graph.volumesnapshotclasses | default({'items': []})).get('items', [])
+              + (product_graph.dataprotectionapplications | default({'items': []})).get('items', []))
+              | map(attribute='_evidence_sources')
+              | list
+              | flatten
+              | unique
+            )
+          }}
+      virtualization:
+        installed: >-
+          {{
+            ((product_graph.kubevirts | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.hyperconvergeds | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.virtualmachines | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.virtualmachineinstances | default({'items': []})).get('items', []) | length > 0)
+          }}
+        health_applicable: >-
+          {{
+            ((product_graph.kubevirts | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.hyperconvergeds | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.virtualmachines | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.virtualmachineinstances | default({'items': []})).get('items', []) | length > 0)
+          }}
+        present: >-
+          {{
+            ((product_graph.kubevirts | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.hyperconvergeds | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.virtualmachines | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.virtualmachineinstances | default({'items': []})).get('items', []) | length > 0)
+          }}
+        kubevirt_count: "{{ (product_graph.kubevirts | default({'items': []})).get('items', []) | length }}"
+        hyperconverged_count: "{{ (product_graph.hyperconvergeds | default({'items': []})).get('items', []) | length }}"
+        ssp_count: "{{ (product_graph.ssps | default({'items': []})).get('items', []) | length }}"
+        cdi_count: "{{ (product_graph.cdis | default({'items': []})).get('items', []) | length }}"
+        virtualmachine_count: "{{ (product_graph.virtualmachines | default({'items': []})).get('items', []) | length }}"
+        virtualmachineinstance_count: "{{ (product_graph.virtualmachineinstances | default({'items': []})).get('items', []) | length }}"
+        datavolume_count: "{{ (product_graph.datavolumes | default({'items': []})).get('items', []) | length }}"
+        unhealthy_kubevirt_count: >-
+          {{
+            (product_graph.kubevirts | default({'items': []})).get('items', [])
+            | map(attribute='status.conditions')
+            | map('default', [])
+            | map('to_json')
+            | reject('search', '"type": "Available", "status": "True"')
+            | list
+            | length
+          }}
+        unhealthy_hyperconverged_count: >-
+          {{
+            (product_graph.hyperconvergeds | default({'items': []})).get('items', [])
+            | map(attribute='status.conditions')
+            | map('default', [])
+            | map('to_json')
+            | reject('search', '"type": "Available", "status": "True"')
+            | list
+            | length
+          }}
+        nonrunning_vmi_count: >-
+          {{
+            (product_graph.virtualmachineinstances | default({'items': []})).get('items', [])
+            | rejectattr('status.phase', 'defined')
+            | list
+            | length
+            +
+            (
+              (product_graph.virtualmachineinstances | default({'items': []})).get('items', [])
+              | selectattr('status.phase', 'defined')
+              | rejectattr('status.phase', 'equalto', 'Running')
+              | list
+              | length
+            )
+          }}
+        evidence_sources: >-
+          {{
+            (
+              ((product_graph.kubevirts | default({'items': []})).get('items', [])
+              + (product_graph.hyperconvergeds | default({'items': []})).get('items', [])
+              + (product_graph.ssps | default({'items': []})).get('items', [])
+              + (product_graph.cdis | default({'items': []})).get('items', [])
+              + (product_graph.datavolumes | default({'items': []})).get('items', [])
+              + (product_graph.virtualmachines | default({'items': []})).get('items', [])
+              + (product_graph.virtualmachineinstances | default({'items': []})).get('items', []))
+              | map(attribute='_evidence_sources')
+              | list
+              | flatten
+              | unique
+            )
+          }}
+      ai:
+        installed: >-
+          {{
+            ((product_graph.datascienceclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.dscinitializations | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.notebooks | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.servingruntimes | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.inferenceservices | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.modelmeshservings | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.acceleratorprofiles | default({'items': []})).get('items', []) | length > 0)
+          }}
+        health_applicable: >-
+          {{
+            ((product_graph.datascienceclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.dscinitializations | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.notebooks | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.servingruntimes | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.inferenceservices | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.modelmeshservings | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.acceleratorprofiles | default({'items': []})).get('items', []) | length > 0)
+          }}
+        present: >-
+          {{
+            ((product_graph.datascienceclusters | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.dscinitializations | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.notebooks | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.servingruntimes | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.inferenceservices | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.modelmeshservings | default({'items': []})).get('items', []) | length > 0)
+            or ((product_graph.acceleratorprofiles | default({'items': []})).get('items', []) | length > 0)
+          }}
+        datasciencecluster_count: "{{ (product_graph.datascienceclusters | default({'items': []})).get('items', []) | length }}"
+        dscinitialization_count: "{{ (product_graph.dscinitializations | default({'items': []})).get('items', []) | length }}"
+        notebook_count: "{{ (product_graph.notebooks | default({'items': []})).get('items', []) | length }}"
+        servingruntime_count: "{{ (product_graph.servingruntimes | default({'items': []})).get('items', []) | length }}"
+        inferenceservice_count: "{{ (product_graph.inferenceservices | default({'items': []})).get('items', []) | length }}"
+        modelmeshserving_count: "{{ (product_graph.modelmeshservings | default({'items': []})).get('items', []) | length }}"
+        acceleratorprofile_count: "{{ (product_graph.acceleratorprofiles | default({'items': []})).get('items', []) | length }}"
+        unready_datasciencecluster_count: >-
+          {{
+            (product_graph.datascienceclusters | default({'items': []})).get('items', [])
+            | map(attribute='status.conditions')
+            | map('default', [])
+            | map('to_json')
+            | select('search', '"type": "Ready", "status": "False"|"type": "Available", "status": "False"')
+            | list
+            | length
+          }}
+        unready_inferenceservice_count: >-
+          {{
+            (product_graph.inferenceservices | default({'items': []})).get('items', [])
+            | map(attribute='status.conditions')
+            | map('default', [])
+            | map('to_json')
+            | select('search', '"type": "Ready", "status": "False"')
+            | list
+            | length
+          }}
+        evidence_sources: >-
+          {{
+            (
+              ((product_graph.datascienceclusters | default({'items': []})).get('items', [])
+              + (product_graph.dscinitializations | default({'items': []})).get('items', [])
+              + (product_graph.notebooks | default({'items': []})).get('items', [])
+              + (product_graph.servingruntimes | default({'items': []})).get('items', [])
+              + (product_graph.inferenceservices | default({'items': []})).get('items', [])
+              + (product_graph.modelmeshservings | default({'items': []})).get('items', [])
+              + (product_graph.acceleratorprofiles | default({'items': []})).get('items', []))
+              | map(attribute='_evidence_sources')
+              | list
+              | flatten
+              | unique
+            )
+          }}
+- name: Build product-specific evidence findings
+  vars:
+    product_graph: "{{ analysis_graph | default(collected_resource_graph | default({})) }}"
+  ansible.builtin.set_fact:
+    assessment_product_evidence_findings: >-
+      {{
+        []
+        + (
+          [{'severity': 'info', 'area': 'pipelines', 'detail': 'Pipelines evidence is present from sources: ' ~ ((assessment_product_evidence.pipelines.evidence_sources | default([])) | join(', ')) ~ '.'}]
+          if (assessment_product_evidence.pipelines.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'logging', 'detail': 'Cluster logging evidence is present from sources: ' ~ ((assessment_product_evidence.logging.evidence_sources | default([])) | join(', ')) ~ '.'}]
+          if (assessment_product_evidence.logging.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'logging', 'detail': 'openshift-logging namespace is present but no ClusterLogForwarder resource was detected.'}]
+          if ((assessment_product_evidence.logging.namespace_present | default(false) | bool) and ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0) | int) == 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'logging', 'detail': 'ClusterLogForwarder resources were detected without any configured outputs.'}]
+          if ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0) | int) > 0 and (assessment_product_evidence.logging.output_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'gitops', 'detail': 'GitOps evidence is present from sources: ' ~ ((assessment_product_evidence.gitops.evidence_sources | default([])) | join(', ')) ~ '.'}]
+          if (assessment_product_evidence.gitops.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'gitops', 'detail': 'Argo CD is present but no GitOps Application resources were detected.'}]
+          if ((assessment_product_evidence.gitops.argocd_count | default(0) | int) > 0 and (assessment_product_evidence.gitops.application_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'gitops', 'detail': 'GitOps evidence is present but no AppProject resources were detected.'}]
+          if ((assessment_product_evidence.gitops.present | default(false) | bool) and (assessment_product_evidence.gitops.appproject_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'odf', 'detail': 'ODF or storage-platform evidence is present from sources: ' ~ ((assessment_product_evidence.odf.evidence_sources | default([])) | join(', ')) ~ '.'}]
+          if (assessment_product_evidence.odf.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'odf', 'detail': 'ODF evidence is present but no VolumeSnapshotClass resources were detected.'}]
+          if ((assessment_product_evidence.odf.present | default(false) | bool) and not (assessment_product_evidence.odf.snapshot_protection_ready | default(false) | bool))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'odf', 'detail': 'ODF evidence is present but no DataProtectionApplication resources were detected for backup integration.'}]
+          if ((assessment_product_evidence.odf.present | default(false) | bool) and not (assessment_product_evidence.odf.backup_integration_present | default(false) | bool))
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'virtualization', 'detail': 'OpenShift Virtualization evidence is present from sources: ' ~ ((assessment_product_evidence.virtualization.evidence_sources | default([])) | join(', ')) ~ '.'}]
+          if (assessment_product_evidence.virtualization.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'OpenShift Virtualization is installed but no KubeVirt control-plane resource was detected.'}]
+          if ((assessment_product_evidence.virtualization.present | default(false) | bool) and ((assessment_product_evidence.virtualization.kubevirt_count | default(0) | int) == 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'OpenShift Virtualization reported unhealthy KubeVirt or HyperConverged resources.'}]
+          if (((assessment_product_evidence.virtualization.unhealthy_kubevirt_count | default(0) | int) > 0) or ((assessment_product_evidence.virtualization.unhealthy_hyperconverged_count | default(0) | int) > 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'VirtualMachineInstances not in Running phase: ' ~ ((assessment_product_evidence.virtualization.nonrunning_vmi_count | string))}]
+          if (((assessment_product_evidence.virtualization.virtualmachineinstance_count | default(0) | int) > 0) and ((assessment_product_evidence.virtualization.nonrunning_vmi_count | default(0) | int) > 0))
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'ai', 'detail': 'OpenShift AI evidence is present from sources: ' ~ ((assessment_product_evidence.ai.evidence_sources | default([])) | join(', ')) ~ '.'}]
+          if (assessment_product_evidence.ai.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'ai', 'detail': 'OpenShift AI reported DataScienceCluster resources that are not Ready or Available.'}]
+          if ((assessment_product_evidence.ai.unready_datasciencecluster_count | default(0) | int) > 0)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'ai', 'detail': 'InferenceService resources with Ready=False: ' ~ ((assessment_product_evidence.ai.unready_inferenceservice_count | string))}]
+          if ((assessment_product_evidence.ai.unready_inferenceservice_count | default(0) | int) > 0)
+          else []
+        )
+      }}

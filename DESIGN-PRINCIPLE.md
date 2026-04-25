@@ -1,4 +1,4 @@
-# Kubernetes Cluster Health Check Design Guide
+# Kubernetes Cluster Health Check Design Notes
 
 This guide explains the design behind the cluster health report in this repo.
 
@@ -8,6 +8,61 @@ The original design started from OpenShift operations, but the repo now has a br
 - a shared Kubernetes path
 - provider-aware reporting for AKS, EKS, GKE, Rancher, and Minikube
 - profile-aware scoring for production, development, and lightweight use
+
+The execution model is also broader than the original live-only design:
+
+- one primary OpenShift playbook, `playbooks/openshift_cluster_health_report.yml`
+- a live cluster scan path that gathers directly from the cluster
+- a collected-state reprocessing path for `must-gather`, `inspect`, `cluster-compare`, Advisor export, managed gates, `sosreport`, and case bundles
+- one shared OpenShift analysis/report model used by both paths
+
+That matters because the design is not just about what is checked. It is also about making live scans and collected-state analysis land in the same report taxonomy and the same decision model.
+
+## Current OpenShift Model
+
+The OpenShift path now follows these principles:
+
+1. Prefer live cluster collection when access is available.
+2. Treat collected-state inputs as a first-class supported path, not a separate product.
+3. Normalize both paths into the same analysis graph.
+4. Keep one OpenShift report model, even when the source is `must-gather` or another collected-state input.
+5. Use optional support analyzers only when they add signal and are actually available.
+
+Examples of those optional analyzers:
+
+- `etcd-ocp-diag` for must-gather etcd log analysis
+- `omc` for must-gather etcd and alert/rule enrichment when installed
+- `cluster-compare` for reference drift
+- `sosreport` for node-level diagnostics
+
+The design intent is that these tools enrich the report, not fragment it into separate report families.
+
+## Current Report Model
+
+The OpenShift report now follows one clear order, from urgent risk to overall readiness:
+
+1. `P1` Supportability
+2. `P2` Core platform health
+3. `P3` Platform architecture and lifecycle
+4. `P4` Networking architecture
+5. `P5` Security and compliance
+6. `P6` Observability
+7. `P7` Backup and disaster recovery
+8. `P8` Node health and capacity planning
+9. `P9` Workload health and deployment hygiene
+10. `P10` Operations and lifecycle maturity
+11. `P11` Container platform adoption and release engineering
+12. `P12` Workload capability extensions
+13. `P13` Day 2 production readiness
+
+This split keeps the later sections clear:
+
+- `P10` covers daily operations
+- `P11` covers delivery and platform adoption
+- `P12` covers workload extensions, mainly Virtualization and AI
+- `P13` is the final readiness roll-up
+
+Each posture section should start with a short recommendation and summary before the detailed tables.
 
 ## Supported Cluster Types
 

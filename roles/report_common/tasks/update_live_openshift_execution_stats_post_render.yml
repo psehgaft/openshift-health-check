@@ -1,0 +1,26 @@
+---
+- name: Update live OpenShift generated format status
+  ansible.builtin.set_fact:
+    execution_stats: "{{ execution_stats | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True) }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True))}, recursive=True) }}"
+    report_pdf_status_reason: >-
+      {{
+        'generated'
+        if ((report_pdf_cmd.rc | default(1)) == 0)
+        else (
+          'skipped: pandoc not found'
+          if not (report_pandoc_available | bool)
+          else (
+            'skipped: no supported PDF engine found'
+            if (report_pdf_engine | default('') | length) == 0
+            else (
+              'skipped: PDF generation disabled'
+              if not (report_generate_pdf | bool)
+              else (
+                'failed: ' ~ ((report_pdf_cmd.stderr | default(report_pdf_cmd.stdout | default('unknown error')) | trim) or 'unknown error')
+              )
+            )
+          )
+        )
+      }}
+
