@@ -792,6 +792,8 @@ HTML and PDF rendering now use a shared report stylesheet. The PDF path prefers 
 - aggressive cell wrapping
 - repeated table headers
 - landscape layout when `wkhtmltopdf` is the active PDF engine
+- tighter print padding and smart shrinking for wide tables
+- landscape and smaller base font for LaTeX-based fallback PDF engines too
 
 Near the top of the report, the `Cluster Current State` section shows what the cluster looks like before you get into the findings. This includes version, visibility, uptime, node counts, worker pool shapes, node platform details, and average resource usage when Prometheus data is available.
 

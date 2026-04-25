@@ -7,12 +7,50 @@
     connected_cluster_telemeter_deployment_count: "{{ (analysis_graph.deployments | default({'items': []})).get('items', []) | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring') | selectattr('metadata.name', 'search', 'telemeter') | list | length }}"
     connected_cluster_telemeter_pod_count: "{{ (analysis_graph.pods | default({'items': []})).get('items', []) | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring') | selectattr('metadata.name', 'search', 'telemeter') | list | length }}"
     connected_cluster_insights_config_present: "{{ (analysis_graph.configmaps | default({'items': []})).get('items', []) | selectattr('metadata.namespace', 'equalto', 'openshift-insights') | selectattr('metadata.name', 'equalto', 'insights-config') | list | length > 0 }}"
+    connected_cluster_insights_archive_present: >-
+      {{
+        (
+          ((live_support_data | default({})).get('parsed', {}).get('insights_archive', {}).get('summary', {}).get('present', false))
+          or ((insights_archive_data | default({})).get('summary', {}).get('present', false))
+        ) | bool
+      }}
 
 - name: Build connected-cluster posture summary
   ansible.builtin.set_fact:
     connected_cluster_posture:
-      insights_operator_available: "{{ connected_cluster_insights_operator_status.available | default('Unknown') }}"
-      insights_operator_degraded: "{{ connected_cluster_insights_operator_status.degraded | default('Unknown') }}"
+      insights_operator_available: >-
+        {{
+          connected_cluster_insights_operator_status.available
+          if (connected_cluster_insights_operator_status.available | default('Unknown')) in ['True', 'False']
+          else (
+            'True'
+            if (
+              (connected_cluster_insights_namespace_present | bool)
+              or (connected_cluster_insights_pod_count | int) > 0
+              or (connected_cluster_insights_config_present | bool)
+              or (connected_cluster_insights_archive_present | bool)
+            )
+            else 'Unknown'
+          )
+        }}
+      insights_operator_degraded: >-
+        {{
+          connected_cluster_insights_operator_status.degraded
+          if (connected_cluster_insights_operator_status.degraded | default('Unknown')) in ['True', 'False']
+          else (
+            'False'
+            if (
+              (
+                (connected_cluster_insights_operator_status.available | default('Unknown')) == 'True'
+                or (connected_cluster_insights_namespace_present | bool)
+                or (connected_cluster_insights_pod_count | int) > 0
+                or (connected_cluster_insights_config_present | bool)
+                or (connected_cluster_insights_archive_present | bool)
+              )
+            )
+            else 'Unknown'
+          )
+        }}
       insights_namespace_present: "{{ connected_cluster_insights_namespace_present | bool }}"
       insights_pod_count: "{{ connected_cluster_insights_pod_count | int }}"
       insights_config_present: "{{ connected_cluster_insights_config_present | bool }}"
@@ -22,7 +60,22 @@
         {{
           'connected'
           if (
-            (connected_cluster_insights_operator_status.available | default('Unknown')) == 'True'
+            (
+              (
+                connected_cluster_insights_operator_status.available
+                if (connected_cluster_insights_operator_status.available | default('Unknown')) in ['True', 'False']
+                else (
+                  'True'
+                  if (
+                    (connected_cluster_insights_namespace_present | bool)
+                    or (connected_cluster_insights_pod_count | int) > 0
+                    or (connected_cluster_insights_config_present | bool)
+                    or (connected_cluster_insights_archive_present | bool)
+                  )
+                  else 'Unknown'
+                )
+              ) == 'True'
+            )
             and (connected_cluster_insights_namespace_present | bool)
             and (connected_cluster_insights_pod_count | int) > 0
             and ((connected_cluster_telemeter_deployment_count | int) > 0 or (connected_cluster_telemeter_pod_count | int) > 0)
@@ -30,10 +83,15 @@
           else (
             'degraded'
             if (
+              (connected_cluster_insights_operator_status.available | default('Unknown')) == 'False'
+              or (connected_cluster_insights_operator_status.degraded | default('Unknown')) == 'True'
+              or
               (connected_cluster_insights_namespace_present | bool)
               or (connected_cluster_insights_pod_count | int) > 0
+              or (connected_cluster_insights_config_present | bool)
               or (connected_cluster_telemeter_deployment_count | int) > 0
               or (connected_cluster_telemeter_pod_count | int) > 0
+              or (connected_cluster_insights_archive_present | bool)
             )
             else 'unknown'
           )
@@ -44,7 +102,7 @@
     connected_cluster_findings: >-
       {{
         []
-        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'Insights operator is not reporting Available=True.'}] if (connected_cluster_posture.insights_operator_available | default('Unknown')) != 'True' else [])
-        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'The openshift-insights namespace or pod evidence is incomplete.'}] if (not (connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) == 0) else [])
-        + ([{'severity': 'warning', 'area': 'telemetry', 'detail': 'No telemeter deployment or pod was found in openshift-monitoring.'}] if ((connected_cluster_posture.telemeter_deployment_count | default(0) | int) == 0 and (connected_cluster_posture.telemeter_pod_count | default(0) | int) == 0) else [])
+        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'Insights operator is not reporting Available=True.'}] if ((connected_cluster_posture.insights_operator_available | default('Unknown')) == 'False') else [])
+        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'The openshift-insights namespace or pod evidence is incomplete.'}] if (((connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) > 0 or (connected_cluster_posture.insights_config_present | default(false) | bool) or (connected_cluster_insights_archive_present | default(false) | bool)) and (not (connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) == 0)) else [])
+        + ([{'severity': 'warning', 'area': 'telemetry', 'detail': 'No telemeter deployment or pod was found in openshift-monitoring.'}] if ((((connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) > 0 or (connected_cluster_posture.insights_config_present | default(false) | bool) or (connected_cluster_insights_archive_present | default(false) | bool)) and ((connected_cluster_posture.telemeter_deployment_count | default(0) | int) == 0 and (connected_cluster_posture.telemeter_pod_count | default(0) | int) == 0)) else [])
       }}

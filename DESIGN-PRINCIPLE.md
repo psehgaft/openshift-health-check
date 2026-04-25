@@ -739,7 +739,7 @@ That split is intentional:
 
 Optional HTML and PDF exist for teams that want easy sharing, but the core outputs are still `md` and `json`.
 
-For HTML and PDF output, the repo now uses a shared stylesheet so wide tables are easier to read. The print path prefers smaller table fonts, aggressive cell wrapping, repeated headers, and landscape layout when `wkhtmltopdf` is the active PDF engine.
+For HTML and PDF output, the repo now uses a shared stylesheet so wide tables are easier to read. The print path prefers smaller table fonts, aggressive cell wrapping, tighter cell padding, repeated headers, and landscape output for both `wkhtmltopdf` and LaTeX-based fallback PDF engines.
 
 ## Limits Of Any Health Report
 

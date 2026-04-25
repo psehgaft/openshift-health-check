@@ -1109,7 +1109,33 @@
         ) | join('; ')
       }}
     deployment_type_confidence_warning: "{{ (cluster_profile.deployment_type_confidence | default('low')) == 'low' }}"
-    machine_networks_evidence_gap: "{{ (cluster_profile.machine_networks | default([]) | length) == 0 }}"
+    derived_machine_networks: >-
+      {{
+        (cluster_profile.machine_networks | default([]))
+        if ((cluster_profile.machine_networks | default([]) | length) > 0)
+        else (
+          (node_ip_capacity_summary.range_list | default([]))
+          if (
+            (node_ip_capacity_summary.source | default('')) not in ['', 'unknown', 'not-found']
+            and ((node_ip_capacity_summary.range_list | default([])) | length) > 0
+          )
+          else []
+        )
+      }}
+    derived_machine_networks_source: >-
+      {{
+        cluster_profile.machine_networks_source | default('not-exposed-via-cluster-api')
+        if ((cluster_profile.machine_networks | default([]) | length) > 0)
+        else (
+          'derived-from-' ~ (node_ip_capacity_summary.source | default('node-ip-analysis'))
+          if (
+            (node_ip_capacity_summary.source | default('')) not in ['', 'unknown', 'not-found']
+            and ((node_ip_capacity_summary.range_list | default([])) | length) > 0
+          )
+          else (cluster_profile.machine_networks_source | default('not-exposed-via-cluster-api'))
+        )
+      }}
+    machine_networks_evidence_gap: "{{ (derived_machine_networks | default([]) | length) == 0 }}"
     lifecycle_support_phase: >-
       {{
         'unknown'
@@ -1272,9 +1298,9 @@
       deployment_type_source: "{{ cluster_profile.deployment_type_source | default('default-openshift-fallback') }}"
       deployment_type_confidence: "{{ cluster_profile.deployment_type_confidence | default('low') }}"
       deployment_type_confidence_warning: "{{ deployment_type_confidence_warning }}"
-      machine_networks: "{{ cluster_profile.machine_networks | default([]) }}"
-      machine_networks_known: "{{ (cluster_profile.machine_networks | default([]) | length) > 0 }}"
-      machine_networks_source: "{{ cluster_profile.machine_networks_source | default('not-exposed-via-cluster-api') }}"
+      machine_networks: "{{ derived_machine_networks }}"
+      machine_networks_known: "{{ (derived_machine_networks | default([]) | length) > 0 }}"
+      machine_networks_source: "{{ derived_machine_networks_source }}"
       machine_networks_evidence_gap: "{{ machine_networks_evidence_gap }}"
       lifecycle_policy_source: repo-local-versioned-policy
 
@@ -1789,6 +1815,7 @@
       'machineconfigpool_count': ((graph.machineconfigpools | default({})).get('items', []) | length),
       'machineconfigpools': graph.machineconfigpools | default({'items': []}),
       'ingresscontrollers': (graph.ingresscontrollers | default({})).get('items', []),
+      'services': (graph.services | default({})).get('items', []),
       'node_pod_counts': node_pod_counts | default({}),
       'node_cpu_utilization_results': node_cpu_utilization_results | default([]),
       'node_memory_utilization_results': node_memory_utilization_results | default([]),

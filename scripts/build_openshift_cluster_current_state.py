@@ -97,6 +97,28 @@ def choose_primary_role(roles):
     return sorted(roles)[0] if roles else "worker"
 
 
+def is_internal_lb_service(service):
+    meta = service.get("metadata", {}) or {}
+    annotations = meta.get("annotations", {}) or {}
+    values = {str(v).lower() for v in annotations.values() if v not in (None, "")}
+    keys = {str(k).lower() for k in annotations.keys()}
+
+    if "true" in values and any(
+        needle in key
+        for key in keys
+        for needle in [
+            "aws-load-balancer-internal",
+            "azure-load-balancer-internal",
+            "gcp-load-balancer-type",
+            "network-load-balancer-internal",
+        ]
+    ):
+        return True
+    if "internal" in values:
+        return True
+    return False
+
+
 def classify_provider(provider_id, labels, platform):
     text = str(provider_id or "").lower()
     p = str(platform or "").lower()
@@ -352,6 +374,20 @@ def main():
         elif ingress_strategy == "LoadBalancerService" and scope in {"external", ""}:
             ingress_visibility = "public"
 
+    if ingress_visibility == "unknown":
+        router_service = None
+        for svc in data.get("services", []):
+            meta = svc.get("metadata", {}) or {}
+            if meta.get("namespace") == "openshift-ingress" and meta.get("name") == "router-default":
+                router_service = svc
+                break
+        if router_service:
+            service_type = str(((router_service.get("spec", {}) or {}).get("type")) or "")
+            if service_type == "LoadBalancer":
+                ingress_visibility = "private" if is_internal_lb_service(router_service) else "public"
+            elif service_type == "NodePort":
+                ingress_visibility = "public"
+
     api_url = (((data.get("cluster_profile") or {}).get("api_url")) or "").lower()
     api_internal_url = (((data.get("cluster_profile") or {}).get("api_internal_url")) or "").lower()
     api_visibility = "unknown"
@@ -362,6 +398,8 @@ def main():
             api_visibility = "public"
     elif api_url:
         api_visibility = "private" if (".internal." in api_url or api_url.startswith("https://api-int.")) else "public"
+    elif api_internal_url:
+        api_visibility = "private"
 
     cluster_visibility = "unknown"
     if api_visibility == "private" and ingress_visibility == "private":
@@ -377,6 +415,9 @@ def main():
         install_candidates.append(entry.get("startedTime"))
         install_candidates.append(entry.get("completionTime"))
     install_candidates.append((cv.get("metadata", {}) or {}).get("creationTimestamp"))
+    install_candidates.append(((data.get("cluster_profile") or {}).get("infrastructure_creation_timestamp")))
+    for node in data.get("nodes", []):
+        install_candidates.append(((node.get("metadata", {}) or {}).get("creationTimestamp")))
     install_dt_values = [iso_to_dt(x) for x in install_candidates if x]
     install_dt_values = [x for x in install_dt_values if x is not None]
     installed_at = None

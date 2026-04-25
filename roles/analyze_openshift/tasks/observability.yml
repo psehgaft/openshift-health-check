@@ -40,9 +40,78 @@
 - name: Build observability forwarding summary
   ansible.builtin.set_fact:
     observability_forwarding_summary:
-      monitoring_operator_available: "{{ clusteroperator_status_map.monitoring.available | default('Unknown') }}"
-      monitoring_operator_degraded: "{{ clusteroperator_status_map.monitoring.degraded | default('Unknown') }}"
-      thanos_querier_route_found: false
+      monitoring_operator_available: >-
+        {{
+          clusteroperator_status_map.monitoring.available
+          if ((clusteroperator_status_map | default({})).get('monitoring', {}) | length) > 0
+          else (
+            'True'
+            if (
+              (
+                (analysis_graph.namespaces | default({'items': []})).get('items', [])
+                | selectattr('metadata.name', 'equalto', 'openshift-monitoring')
+                | list
+                | length
+              ) > 0
+              and (
+                (
+                  (analysis_graph.pods | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+                or (
+                  (analysis_graph.deployments | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+              )
+            )
+            else 'Unknown'
+          )
+        }}
+      monitoring_operator_degraded: >-
+        {{
+          clusteroperator_status_map.monitoring.degraded
+          if ((clusteroperator_status_map | default({})).get('monitoring', {}) | length) > 0
+          else (
+            'False'
+            if (
+              (
+                (analysis_graph.namespaces | default({'items': []})).get('items', [])
+                | selectattr('metadata.name', 'equalto', 'openshift-monitoring')
+                | list
+                | length
+              ) > 0
+              and (
+                (
+                  (analysis_graph.pods | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+                or (
+                  (analysis_graph.deployments | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+              )
+            )
+            else 'Unknown'
+          )
+        }}
+      thanos_querier_route_found: >-
+        {{
+          (
+            (analysis_graph.routes | default({'items': []})).get('items', [])
+            | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+            | selectattr('metadata.name', 'equalto', 'thanos-querier')
+            | list
+            | length
+          ) > 0
+        }}
       cluster_log_forwarder_count: "{{ (analysis_graph.clusterlogforwarders | default({})).get('items', []) | length }}"
       alertmanagerconfig_count: "{{ (analysis_graph.alertmanagerconfigs | default({})).get('items', []) | length }}"
       cluster_alertmanager_additional_config_count: "{{ ((((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([])) | length)) }}"
@@ -82,7 +151,7 @@
 
 - name: Update thanos route capability in observability summary
   ansible.builtin.set_fact:
-    observability_forwarding_summary: "{{ observability_forwarding_summary | combine({'thanos_querier_route_found': ((thanos_route_cmd.rc | default(1)) == 0 and (thanos_route_cmd.stdout | default('') | trim | length > 0))}, recursive=True) }}"
+    observability_forwarding_summary: "{{ observability_forwarding_summary | combine({'thanos_querier_route_found': (((thanos_route_cmd.rc | default(1)) == 0 and (thanos_route_cmd.stdout | default('') | trim | length > 0)) or (observability_forwarding_summary.thanos_querier_route_found | default(false)))}, recursive=True) }}"
 
 - name: Build log forwarding findings
   ansible.builtin.shell: |
