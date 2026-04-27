@@ -107,6 +107,34 @@ RESOURCE_KEYS = {
     "secrets": ("Secret", None, None),
 }
 
+SOURCE_PRIORITY = {
+    "must-gather": 0,
+    "inspect": 1,
+    "oc get": 2,
+    "oc-get": 2,
+    "insights": 3,
+    "insights-archive": 3,
+}
+
+
+def source_rank(name: str) -> tuple[int, str]:
+    normalized = str(name or "").strip().lower()
+    return (SOURCE_PRIORITY.get(normalized, 99), normalized)
+
+
+def ordered_sources(items):
+    seen = set()
+    ordered = []
+    for item in sorted((str(x or "").strip() for x in (items or [])), key=source_rank):
+        if not item:
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(item)
+    return ordered
+
 
 def iter_docs(path: Path):
     if path.suffix.lower() == ".json":
@@ -153,6 +181,7 @@ def annotate(doc, source_name: str, path: Path, root: Path):
     existing_sources = list(data.get("_evidence_sources") or [])
     if source_name not in existing_sources:
         existing_sources.append(source_name)
+    existing_sources = ordered_sources(existing_sources)
     data["_evidence_source"] = existing_sources[0] if existing_sources else source_name
     data["_evidence_sources"] = existing_sources
     data["_evidence_path"] = str(path.relative_to(root))
@@ -226,7 +255,9 @@ def main() -> int:
                             for item in doc.get("_evidence_sources") or []:
                                 if item not in prior_sources:
                                     prior_sources.append(item)
+                            prior_sources = ordered_sources(prior_sources)
                             collected[key][obj_id]["_evidence_sources"] = prior_sources
+                            collected[key][obj_id]["_evidence_source"] = prior_sources[0] if prior_sources else source_name
                     elif key not in singles:
                         singles[key] = doc
 
@@ -332,8 +363,9 @@ def main() -> int:
         for key, value in {**collected, **singles}.items()
     }
     payload["source_summary"] = {
-        "sources": [name for name, _ in source_pairs],
+        "sources": ordered_sources([name for name, _ in source_pairs]),
         "file_counts": source_file_counts,
+        "preferred_order": ["must-gather", "inspect", "oc get", "insights"],
     }
     print(json.dumps(payload))
     return 0

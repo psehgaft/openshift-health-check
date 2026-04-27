@@ -1,6 +1,10 @@
 {% macro status_badge(value) -%}
 {%- set text = value | string -%}
 {%- set key = text | trim | upper -%}
+{%- if key in ['UNKONWN', 'UNKNWON', 'UNKNONW'] -%}
+{%- set key = 'UNKNOWN' -%}
+{%- set text = 'UNKNOWN' -%}
+{%- endif -%}
 {%- if key in ['CRITICAL', 'FAILED', 'FAIL', 'ERROR', 'DEGRADED', 'UNSUPPORTED-RISK'] -%}
 <span class="status-critical">{{ text }}</span>
 {%- elif key in ['WARNING', 'WARN', 'LOW', 'POOR', 'REVIEW-REQUIRED'] -%}
@@ -18,6 +22,9 @@
 
 {% macro posture_score(status) -%}
 {%- set key = (status | default('unknown') | string | trim | upper) -%}
+{%- if key in ['UNKONWN', 'UNKNWON', 'UNKNONW'] -%}
+{%- set key = 'UNKNOWN' -%}
+{%- endif -%}
 {%- if key in ['CRITICAL', 'BLOCKED', 'UNSUPPORTED-RISK'] -%}
 25/100
 {%- elif key in ['WARNING', 'WARN', 'REVIEW-REQUIRED'] -%}
@@ -151,6 +158,7 @@ No specific next steps were generated for this run.
 ### Recommendations
 
 Findings summary: `{{ architecture_lifecycle_summary.reason_summary | default('no major architecture or lifecycle issues were summarized') }}`.
+
 Recommended actions: {{ architecture_lifecycle_summary.recommendation | default('Review release support status, topology spread, and upgrade readiness before treating the cluster architecture posture as production-ready.') }}
 
 ### Findings
@@ -237,8 +245,7 @@ Collection notes:
 - service and pod ranges are derived from collected network configuration plus observed Service and Pod objects
 - node IP ranges are derived from collected machine-network CIDRs when available, or inferred from observed node InternalIPs as a fallback
 {% if cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-services') | list | length > 0 or cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-pods') | list | length > 0 %}
-- sanity check:
-  {% for item in cluster_current_state_sanity_findings | default([]) if item.area in ['ip-capacity-services', 'ip-capacity-pods'] %}`{{ item.detail }}`{% if not loop.last %}; {% endif %}{% endfor %}
+Sanity check: {% for item in cluster_current_state_sanity_findings | default([]) if item.area in ['ip-capacity-services', 'ip-capacity-pods'] %}`{{ item.detail }}`{% if not loop.last %}; {% endif %}{% endfor %}
 {% endif %}
 
 | Signal | Value |
@@ -417,6 +424,24 @@ No MachineConfigPool data found.
 
 ## Health Scoring
 
+### Health Score
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Cluster health score | `{{ cluster_health_score }}/100` | {{ status_badge(cluster_health_score_label) }} |
+| Score total | `{{ audit_score_total }}/{{ audit_score_max }}` | {{ status_badge('INFO') }} |
+| Report confidence | `{{ report_confidence | default('unknown') | upper }}` | {{ status_badge(report_confidence | default('unknown') | upper) }} |
+| Critical checks | `{{ audit_critical_checks | length }}` | {{ status_badge('WARN' if (audit_critical_checks | length) > 0 else 'OK') }} |
+| Warning checks | `{{ audit_warning_checks | length }}` | {{ status_badge('INFO' if (audit_warning_checks | length) > 0 else 'OK') }} |
+
+### Recommendations
+
+Findings summary: cluster score=`{{ cluster_health_score }}/100`, critical checks=`{{ audit_critical_checks | length }}`, warning checks=`{{ audit_warning_checks | length }}`, confidence=`{{ report_confidence | default('unknown') | upper }}`.
+
+Recommended actions: Use the section scoring below to prioritize remediation work, starting with critical checks, then warning checks, before treating the cluster score as representative of steady-state health.
+
+### Findings
+
 ### Scoring Legend
 
 | Score Range | Rating | Meaning |
@@ -424,6 +449,8 @@ No MachineConfigPool data found.
 {% for item in cluster_health_score_legend %}
 | `{{ item.min }}-{{ item.max }}` | `{{ item.label }}` | {{ item.meaning }} |
 {% endfor %}
+
+### Score Summary
 
 | Metric | Value |
 | --- | --- |
@@ -443,13 +470,22 @@ No MachineConfigPool data found.
 
 ## Operational Risk Summary
 
-This section highlights the cluster signals that are most important for resilience, control-plane stability, access review, and audit readiness.
+### Health Score
 
-Status guide:
-- {{ status_badge('OK') }} means no immediate issue was detected in that signal
-- {{ status_badge('WARN') }} means the signal needs investigation or remediation
-- {{ status_badge('INFO') }} means the row is mainly context or non-failing posture information
-- {{ status_badge('UNKNOWN') }} means the signal was not available or could not be derived confidently
+| Signal | Value | Status |
+| --- | --- | --- |
+| Overall cluster status | `{{ health_summary.status | default('unknown') }}` | {{ status_badge(health_summary.status | default('UNKNOWN')) }} |
+| Health score | `{{ cluster_health_score }}/100` | {{ status_badge(cluster_health_score_label) }} |
+| Report confidence | `{{ report_confidence | default('unknown') | upper }}` | {{ status_badge(report_confidence | default('unknown') | upper) }} |
+| Primary concerns identified | `{{ top_risk_areas | length }}` | {{ status_badge('WARN' if (top_risk_areas | length) > 0 else 'OK') }} |
+
+### Recommendations
+
+Findings summary: `{{ top_risk_areas[:3] | join('; ') or 'no major operational risk themes were summarized' }}`.
+
+Recommended actions: Start with the highest-severity runtime, topology, traffic, security, and recovery signals below, and use the grouped findings tables to sequence remediation from control plane outward.
+
+### Findings
 
 ### Control Plane And Change
 {% set prom_transport_label = (
@@ -628,6 +664,23 @@ Collection notes:
 
 ## Assessment Domains By Priority
 
+### Health Score
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Prioritized domain count | `13` | {{ status_badge('INFO') }} |
+| Highest-priority domain | `P1 Supportability` | {{ status_badge('INFO') }} |
+| Overall status anchor | `{{ health_summary.status | default('unknown') }}` | {{ status_badge(health_summary.status | default('UNKNOWN')) }} |
+| Day 2 readiness anchor | `{{ (audit_report.domains.production_day2_readiness.day2_production_readiness_summary | default({})).status | default('unknown') }}` | {{ status_badge(((audit_report.domains.production_day2_readiness.day2_production_readiness_summary | default({})).status | default('UNKNOWN'))) }} |
+
+### Recommendations
+
+Findings summary: the report prioritizes supportability first, then core platform health, then lifecycle, networking, security, observability, recovery, capacity, workload health, operations maturity, release engineering, capability extensions, and final Day 2 readiness.
+
+Recommended actions: Use this domain order to decide what to fix first. Treat lower-priority posture items as secondary until higher-priority sections are stable enough to trust the rest of the report.
+
+### Findings
+
 | Priority | Posture Area | Headline Signal | Primary Section |
 | --- | --- | --- | --- |
 | `P1` | Supportability | `{{ audit_report.supportability.summary.verdict | default('unknown') }}` | `Supportability And Evidence` |
@@ -666,6 +719,7 @@ Collection notes:
 ### Recommendations
 
 Findings summary: `{{ operations_maturity_summary.reason_summary | default('operations maturity gaps were not summarized') }}`.
+
 Recommended actions: {{ audit_report.domains.production_day2_readiness.operations_recommendations | default('Review GitOps coverage, identity providers, backup schedules, and machine remediation so day-to-day operations are repeatable and recoverable.') }}
 
 ### Findings
@@ -702,6 +756,7 @@ Detected baseline profile:
 ### Recommendations
 
 Findings summary: `{{ capability_extensions_summary.reason_summary | default('no extension-specific findings were summarized') }}`.
+
 Recommended actions: {{ capability_extensions_summary.recommendation | default('Review extension-specific health for capabilities that are actually present, and treat absent optional capabilities as inventory context rather than automatic defects.') }}
 
 ### Findings
@@ -757,6 +812,7 @@ Recommended actions: {{ capability_extensions_summary.recommendation | default('
 ### Recommendations
 
 Findings summary: `{{ health_summary.core_platform_runtime_reason_summary | default('no core platform runtime issues were summarized') or 'no core platform runtime issues were summarized' }}`.
+
 Recommended actions: {{ audit_report.domains.platform_health.recommendations | default('Review operator availability, APIService health, and core control-plane diagnostics before treating the platform as stable.') }}
 
 ### Findings
@@ -883,6 +939,7 @@ No APIService availability issues were detected in the collected registration ob
 ### Recommendations
 
 Findings summary: lifecycle support=`{{ architecture_lifecycle_summary.support_status | default('unknown') }}`, conditional update risks=`{{ architecture_lifecycle_summary.conditional_update_count | default(0) }}`, topology warnings=`{{ architecture_lifecycle_summary.topology_warning_count | default(0) }}`.
+
 Recommended actions: {{ architecture_lifecycle_summary.recommendation | default('Review release support status, topology spread, and upgrade readiness before treating the cluster architecture posture as production-ready.') }}
 
 ### Findings
@@ -890,6 +947,7 @@ Recommended actions: {{ architecture_lifecycle_summary.recommendation | default(
 ### Upgrade Readiness
 
 Upgrade findings summary: blockers=`{{ upgrade_readiness_summary.blocker_count | default(0) }}`, warnings=`{{ upgrade_readiness_summary.warning_count | default(0) }}`, available updates=`{{ upgrade_readiness_summary.available_update_count | default(0) }}`.
+
 Upgrade guidance: {{ upgrade_readiness_summary.recommendation | default('Review lifecycle support, deprecations, control-plane health, and conditional update risks before scheduling an upgrade.') }}
 
 | Signal | Value |
@@ -1055,6 +1113,7 @@ Operator version note:
 ### Recommendations
 
 Findings summary: not ready nodes=`{{ node_health_capacity_summary.not_ready_node_count | default(0) }}`, pressure nodes=`{{ node_health_capacity_summary.node_pressure_count | default(0) }}`, high-density nodes=`{{ node_health_capacity_summary.high_pod_density_node_count | default(0) }}`, diagnostics verdict=`{{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}`.
+
 Recommended actions: {{ audit_report.domains.node_health_and_capacity.recommendations | default('Review node readiness, pressure, pod density, capacity hotspots, node diagnostics coverage, and persistent storage posture before treating node capacity as healthy.') }}
 
 ### Findings
@@ -1140,6 +1199,7 @@ MachineConfigPool data was not collected.
 ### Recommendations
 
 Findings summary: available backup locations=`{{ backup_recovery_summary.available_backup_storage_location_count | default(0) }}`, backup schedules=`{{ backup_recovery_summary.backup_schedule_count | default(0) }}`, clean successful backups=`{{ backup_recovery_summary.clean_successful_backup_count | default(0) }}`, clean restores=`{{ backup_recovery_summary.clean_completed_restore_count | default(0) }}`.
+
 Recommended actions: {{ audit_report.domains.storage_and_resilience.recommendations | default('Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.') }}
 
 ### Findings
@@ -1272,12 +1332,13 @@ Default StorageClasses: none detected
 ### Recommendations
 
 Findings summary: supportability verdict=`{{ audit_report.supportability.summary.verdict | default('unknown') }}`, health verdict=`{{ audit_report.supportability.summary.health_verdict | default('unknown') }}`, evidence confidence=`{{ audit_report.supportability.summary.evidence_confidence | default('unknown') }}`.
+
 Recommended actions: {{ audit_report.supportability.summary.recommendations | default('Review failed collectors, evidence gaps, and node diagnostic coverage before treating the report as a complete supportability baseline.') }}
 
 ### Findings
 
 {% if audit_report.supportability.summary.key_findings | default([]) | length > 0 %}
-### Key Supportability Findings
+### Supportability Findings Table
 
 | Signal | Severity | Detail |
 | --- | --- | --- |
@@ -1287,7 +1348,7 @@ Recommended actions: {{ audit_report.supportability.summary.recommendations | de
 {% endif %}
 
 {% if audit_report.evidence.coverage is defined %}
-### Collector Capability Matrix
+### Evidence Coverage Table
 
 | Collector | Category | Applicability | Status | Collected | Detail |
 | --- | --- | --- | --- | --- | --- |
@@ -1302,43 +1363,43 @@ Recommended actions: {{ audit_report.supportability.summary.recommendations | de
 {% endif %}
 
 {% if live_support_parsed.must_gather_inventory.summary is defined %}
-### Must-Gather Coverage
+### Must-Gather Findings Table
 
 {% include 'partials/live_must_gather_coverage.md.j2' %}
 {% endif %}
 
 {% if live_support_parsed.inspect.summary is defined %}
-### Inspect Coverage
+### Inspect Findings Table
 
 {% include 'partials/live_inspect_coverage.md.j2' %}
 {% endif %}
 
 {% if live_support_parsed.cluster_compare.summary is defined %}
-### Cluster-Compare
+### Cluster-Compare Findings Table
 
 {% include 'partials/live_cluster_compare_summary.md.j2' %}
 {% endif %}
 
 {% if live_support_parsed.managed_gates.summary is defined %}
-### Managed-Service Gates
+### Managed-Service Gate Findings Table
 
 {% include 'partials/live_managed_gates_summary.md.j2' %}
 {% endif %}
 
 {% if live_support_parsed.advisor_export.summary is defined %}
-### Advisor Export
+### Advisor Findings Table
 
 {% include 'partials/live_advisor_export_summary.md.j2' %}
 {% endif %}
 
 {% if live_support_parsed.insights_archive.summary is defined and (live_support_parsed.insights_archive.summary.present | default(false)) %}
-### Insights Operator Archive
+### Insights Archive Findings Table
 
 {% include 'partials/live_insights_archive_summary.md.j2' %}
 {% endif %}
 
 {% if live_support_parsed.sosreport.summary is defined %}
-### Node-Level Sosreport Coverage
+### Node Diagnostic Findings Table
 
 {% include 'partials/live_sosreport_coverage.md.j2' %}
 {% endif %}
@@ -1371,11 +1432,12 @@ Recommended actions: {{ audit_report.supportability.summary.recommendations | de
 ### Recommendations
 
 Findings summary: firing alerts=`{{ observability_summary.firing_alert_count | default(0) }}`, warning events=`{{ observability_summary.warning_event_count | default(0) }}`, log gaps=`{{ observability_summary.log_gap_count | default(0) }}`, metrics gaps=`{{ observability_summary.metrics_gap_count | default(0) }}`, alerting gaps=`{{ observability_summary.alerting_gap_count | default(0) }}`.
+
 Recommended actions: {{ audit_report.domains.observability.recommendations | default('Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}
 
 ### Findings
 
-### Forwarding Inventory
+### Forwarding Findings Table
 
 | Signal | Value |
 | --- | --- |
@@ -1412,13 +1474,13 @@ Recommended actions: {{ audit_report.domains.observability.recommendations | def
 | Metrics delivery verification | `{{ observability_forwarding_summary.metrics_delivery_verification_status | default('not-configured') }}` |
 
 {% if observability_forwarding_summary.alert_delivery_source_count | default(0) | int > 0 and observability_forwarding_summary.external_alert_receiver_count | default(0) | int == 0 %}
-- additional Alertmanager configuration was detected, but no explicitly external receiver could be verified from parsed resources
+Additional Alertmanager configuration was detected, but no explicitly external receiver could be verified from parsed resources.
 {% endif %}
 
 {% if top_observability_findings | default([]) | length == 0 %}
 No observability setup gaps were detected from the collected data.
 {% else %}
-### Observability Best-Practice Findings
+### Observability Gap Findings Table
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -1428,7 +1490,7 @@ No observability setup gaps were detected from the collected data.
 {% endif %}
 
 {% if observability_forwarding_summary.external_alert_receivers | default([]) | length > 0 %}
-### External Alert Delivery Receivers
+### External Alert Receiver Findings Table
 
 | Namespace | AlertmanagerConfig | Receiver | Type | Target |
 | --- | --- | --- | --- | --- |
@@ -1438,7 +1500,7 @@ No observability setup gaps were detected from the collected data.
 {% endif %}
 
 {% if observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length > 0 %}
-### External Log Forwarding Outputs
+### External Log Output Findings Table
 
 | Namespace | ClusterLogForwarder | Output | Type | Target |
 | --- | --- | --- | --- | --- |
@@ -1448,7 +1510,7 @@ No observability setup gaps were detected from the collected data.
 {% endif %}
 
 {% if top_live_advisor_findings | default([]) | length > 0 %}
-### Advisor Findings
+### Advisor Findings Table
 
 | Signal | Severity | Detail |
 | --- | --- | --- |
@@ -1457,7 +1519,7 @@ No observability setup gaps were detected from the collected data.
 {% endfor %}
 {% endif %}
 
-### Recent Warning Events
+### Warning Event Findings Table
 
 {% if top_event_reasons | default([]) | length == 0 %}
 No warning events were returned from the collected event data.
@@ -1468,7 +1530,7 @@ No warning events were returned from the collected event data.
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 
-### Samples
+### Warning Event Sample Findings Table
 
 | Namespace | Object | Reason | Last Seen | Message |
 | --- | --- | --- | --- | --- |
@@ -1479,8 +1541,6 @@ No warning events were returned from the collected event data.
 
 ## Appendix: Supporting Evidence
 
-This section keeps only lower-level evidence that is not already expanded in later domain sections.
-
 {% set has_supporting_evidence =
   (top_namespace_issue_summary | default([]) | length > 0)
   or (report_collection_failures_list | length > 0)
@@ -1489,6 +1549,23 @@ This section keeps only lower-level evidence that is not already expanded in lat
   or (expiring_certificates_warning | default([]) | length > 0)
   or (expiring_certificates_critical | default([]) | length > 0)
 %}
+
+### Health Score
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Supporting evidence present | `{{ has_supporting_evidence }}` | {{ status_badge('INFO' if has_supporting_evidence else 'OK') }} |
+| Namespace evidence samples | `{{ top_namespace_issue_summary | default([]) | length }}` | {{ status_badge('INFO' if (top_namespace_issue_summary | default([]) | length) > 0 else 'OK') }} |
+| Storage issue samples | `{{ (top_pv_issues | default([]) | length) + (top_pvc_issues | default([]) | length) }}` | {{ status_badge('INFO' if ((top_pv_issues | default([]) | length) + (top_pvc_issues | default([]) | length)) > 0 else 'OK') }} |
+| Expiring certificate samples | `{{ (expiring_certificates_critical | default([]) | length) + (expiring_certificates_warning | default([]) | length) }}` | {{ status_badge('WARN' if ((expiring_certificates_critical | default([]) | length) + (expiring_certificates_warning | default([]) | length)) > 0 else 'OK') }} |
+
+### Recommendations
+
+Findings summary: this appendix contains lower-level evidence that supports the main domain conclusions when namespace state, storage issues, certificate expiry, or collection failures need extra detail.
+
+Recommended actions: Use these tables only to drill into a problem already identified in a higher-priority section; do not start remediation sequencing from this appendix.
+
+### Findings
 {% if not has_supporting_evidence %}
 No additional supporting evidence tables were needed for this run.
 {% else %}
@@ -1647,6 +1724,7 @@ Inter-node latency note:
 ### Recommendations
 
 Findings summary: route issues=`{{ network_architecture_summary.route_issue_count | default(0) }}`, ingress issues=`{{ network_architecture_summary.ingress_issue_count | default(0) }}`, host conflicts=`{{ network_architecture_summary.cross_host_conflict_count | default(0) }}`, exposed namespaces without policy=`{{ network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | length }}`.
+
 Recommended actions: {{ network_architecture_summary.recommendation | default('Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.') }}
 
 ### Findings
@@ -1727,6 +1805,7 @@ No route or ingress issues were detected in the collected `Route` and `Ingress` 
 ### Recommendations
 
 Findings summary: unhealthy user pods=`{{ (audit_report.domains.workload_health.summary | default({})).unhealthy_user_pod_count | default(0) }}`, rollout issues=`{{ (audit_report.domains.workload_health.summary | default({})).workload_health_issue_count | default(0) }}`, restart hotspots=`{{ (audit_report.domains.workload_health.summary | default({})).high_restart_pod_count | default(0) }}`, hygiene debt=`{{ (audit_report.domains.workload_health.summary | default({})).workload_hygiene_debt_count | default(0) }}`.
+
 Recommended actions: {{ audit_report.domains.workload_health.recommendations | default('Review unhealthy pods, rollout failures, restart hotspots, and workload hygiene gaps before treating workload posture as healthy.') }}
 
 ### Findings
@@ -1734,12 +1813,10 @@ Recommended actions: {{ audit_report.domains.workload_health.recommendations | d
 {% if workload_health_issues | default([]) | length == 0 and unhealthy_user_pods | default([]) | length == 0 and high_replica_workloads | default([]) | length == 0 and orphan_pods | default([]) | length == 0 and workload_label_governance_findings | default([]) | length == 0 and workload_probe_findings | default([]) | length == 0 %}
 No non-running pod, rollout, replica governance, orphan pod, recommended app label, or probe coverage issues were detected in the collected user workload objects.
 {% else %}
-Workload-oriented checks in this section exclude namespaces matched by `user_namespaces_exclude_regex`, including `openshift-*`.
-
-### Runtime Health
+### Runtime Findings Tables
 
 {% if top_unhealthy_user_pods | default([]) | length > 0 %}
-#### Unhealthy User Pods
+### Unhealthy Pod Findings Table
 
 | Namespace | Pod | Phase | Ready |
 | --- | --- | --- | --- |
@@ -1749,7 +1826,7 @@ Workload-oriented checks in this section exclude namespaces matched by `user_nam
 {% endif %}
 
 {% if workload_health_issues | default([]) | length > 0 %}
-#### Workload Rollout Issues
+### Rollout Findings Table
 
 | Kind | Namespace | Name | Desired | Ready | Updated |
 | --- | --- | --- | --- | --- | --- |
@@ -1759,9 +1836,7 @@ Workload-oriented checks in this section exclude namespaces matched by `user_nam
 {% endif %}
 
 {% if top_high_restart_pods | default([]) | length > 0 %}
-#### High Restart Pod Summary
-
-Pods in this section are limited to non-platform namespaces and have restart count greater than or equal to `{{ pod_restart_warning_threshold | default(5) }}`.
+### Restart Findings Table
 
 | Namespace | Pod | Phase | Restarts |
 | --- | --- | --- | --- |
@@ -1770,12 +1845,10 @@ Pods in this section are limited to non-platform namespaces and have restart cou
 {% endfor %}
 {% endif %}
 
-### Deployment Hygiene
+### Hygiene Findings Tables
 
 {% if top_high_replica_workloads | default([]) | length > 0 %}
-#### Large Replica Workloads
-
-These entries use a simple review threshold of more than `10` desired replicas.
+### Replica Density Findings Table
 
 | Kind | Namespace | Name | Desired Replicas |
 | --- | --- | --- | --- |
@@ -1785,7 +1858,7 @@ These entries use a simple review threshold of more than `10` desired replicas.
 {% endif %}
 
 {% if top_orphan_pods | default([]) | length > 0 %}
-#### Pods Without Parent Owner
+### Orphan Pod Findings Table
 
 | Namespace | Pod | Phase |
 | --- | --- | --- |
@@ -1795,9 +1868,7 @@ These entries use a simple review threshold of more than `10` desired replicas.
 {% endif %}
 
 {% if top_workload_label_governance_findings | default([]) | length > 0 %}
-#### Workloads Missing Recommended App Labels
-
-This review checks for the common Kubernetes application labels and, for OpenShift deployment configs, the OpenShift runtime label.
+### Label Governance Findings Table
 
 | Kind | Namespace | Name | Missing Labels |
 | --- | --- | --- | --- |
@@ -1807,7 +1878,7 @@ This review checks for the common Kubernetes application labels and, for OpenShi
 {% endif %}
 
 {% if workload_probe_issue_type_counts | default({}) | length > 0 %}
-#### Probe Coverage Summary
+### Probe Coverage Summary Table
 
 | Missing Probe Type | Count |
 | --- | --- |
@@ -1817,7 +1888,7 @@ This review checks for the common Kubernetes application labels and, for OpenShi
 {% endif %}
 
 {% if top_workload_probe_findings | default([]) | length > 0 %}
-#### Probe Coverage Samples
+### Probe Coverage Findings Table
 
 | Kind | Namespace | Name | Missing Probe Type | Containers |
 | --- | --- | --- | --- | --- |
@@ -1828,9 +1899,7 @@ This review checks for the common Kubernetes application labels and, for OpenShi
 {% endif %}
 
 {% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
-### Top User Pod CPU Usage
-
-These Prometheus samples exclude namespaces matching `openshift-*`.
+### CPU Utilization Findings Table
 
 | Namespace | Pod | CPU m |
 | --- | --- | --- |
@@ -1840,9 +1909,7 @@ These Prometheus samples exclude namespaces matching `openshift-*`.
 {% endif %}
 
 {% if top_pod_memory_usage_summary | default([]) | length > 0 %}
-### Top User Pod Memory Usage
-
-These Prometheus samples exclude namespaces matching `openshift-*`.
+### Memory Utilization Findings Table
 
 | Namespace | Pod | Memory MiB |
 | --- | --- | --- |
@@ -1870,6 +1937,7 @@ These Prometheus samples exclude namespaces matching `openshift-*`.
 ### Recommendations
 
 Findings summary: failed PipelineRuns=`{{ release_engineering_summary.failed_pipelinerun_count | default(0) }}`, triggerless BuildConfigs needing review=`{{ release_engineering_summary.triggerless_buildconfig_warning_count | default(0) }}`, detected platform capabilities=`{{ release_engineering_summary.product_evidence_present_count | default(0) }}`.
+
 Recommended actions: {{ release_engineering_summary.recommendation | default('Review delivery failures first, then treat triggerless build resources and platform adoption evidence as supporting context rather than automatic defects.') }}
 
 ### Findings
@@ -1885,22 +1953,24 @@ Recommended actions: {{ release_engineering_summary.recommendation | default('Re
 | BuildConfigs without triggers | `{{ buildconfigs_without_triggers | default([]) | length }}` |
 
 {% if (audit_report.domains.production_day2_readiness.product_evidence | default({}) | length) > 0 %}
-### Product And Platform Adoption Evidence
+### Product Adoption Evidence Table
 
 {% set product_evidence = audit_report.domains.production_day2_readiness.product_evidence %}
 {% include 'partials/openshift_product_evidence.md.j2' %}
 
 {% if audit_report.domains.production_day2_readiness.product_evidence_findings | default([]) | length > 0 %}
-### Product And Platform Adoption Findings
+### Product Adoption Findings Table
 
+| Severity | Area | Detail |
+| --- | --- | --- |
 {% for item in audit_report.domains.production_day2_readiness.product_evidence_findings %}
-- `{{ item.severity | upper }}` `{{ item.area }}`: {{ item.detail }}
+| `{{ item.severity | upper }}` | `{{ item.area }}` | {{ item.detail }} |
 {% endfor %}
 {% endif %}
 {% endif %}
 
 {% if (buildconfig_strategy_counts | default({}) | length) > 0 %}
-### BuildConfig Strategy Summary
+### Build Strategy Findings Table
 
 | Strategy | Count |
 | --- | --- |
@@ -1910,7 +1980,7 @@ Recommended actions: {{ release_engineering_summary.recommendation | default('Re
 {% endif %}
 
 {% if (pipelinerun_status_counts | default({}) | length) > 0 %}
-### PipelineRun Status Summary
+### Pipeline Status Findings Table
 
 | Status | Count |
 | --- | --- |
@@ -1920,7 +1990,7 @@ Recommended actions: {{ release_engineering_summary.recommendation | default('Re
 {% endif %}
 
 {% if top_failed_pipelineruns | default([]) | length > 0 %}
-### Failed PipelineRuns
+### Failed PipelineRun Findings Table
 
 | Namespace | PipelineRun | Pipeline | Reason | Started | Completed |
 | --- | --- | --- | --- | --- | --- |
@@ -1930,7 +2000,7 @@ Recommended actions: {{ release_engineering_summary.recommendation | default('Re
 {% endif %}
 
 {% if top_buildconfigs_without_triggers | default([]) | length > 0 %}
-### BuildConfigs Without Triggers
+### Trigger Findings Table
 
 | Namespace | BuildConfig | Strategy |
 | --- | --- | --- |
@@ -1940,26 +2010,29 @@ Recommended actions: {{ release_engineering_summary.recommendation | default('Re
 {% endif %}
 
 {% if high_pod_density_nodes | default([]) | length > 0 %}
-### Pod Density Best-Practice Exceptions
+### Pod Density Findings Table
+| Node | Pod Density % |
+| --- | --- |
 {% for item in high_pod_density_nodes[:15] %}
-- node=`{{ item.node }}` density_pct=`{{ item.value }}`
+| `{{ item.node }}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
 
 {% if low_cpu_nodes | default([]) | length > 0 or high_cpu_nodes | default([]) | length > 0 or low_memory_nodes | default([]) | length > 0 or high_memory_nodes | default([]) | length > 0 %}
-### Prometheus Utilization Summary
-
+### Node Utilization Findings Table
+| Signal | Count |
+| --- | --- |
 {% if low_cpu_nodes | default([]) | length > 0 %}
-- low CPU utilization nodes (`<20%`): `{{ low_cpu_nodes | length }}`
+| `low CPU utilization nodes (<20%)` | `{{ low_cpu_nodes | length }}` |
 {% endif %}
 {% if high_cpu_nodes | default([]) | length > 0 %}
-- high CPU utilization nodes (`>85%`): `{{ high_cpu_nodes | length }}`
+| `high CPU utilization nodes (>85%)` | `{{ high_cpu_nodes | length }}` |
 {% endif %}
 {% if low_memory_nodes | default([]) | length > 0 %}
-- low memory utilization nodes (`<30%`): `{{ low_memory_nodes | length }}`
+| `low memory utilization nodes (<30%)` | `{{ low_memory_nodes | length }}` |
 {% endif %}
 {% if high_memory_nodes | default([]) | length > 0 %}
-- high memory utilization nodes (`>85%`): `{{ high_memory_nodes | length }}`
+| `high memory utilization nodes (>85%)` | `{{ high_memory_nodes | length }}` |
 {% endif %}
 {% endif %}
 
@@ -1987,6 +2060,7 @@ Recommended actions: {{ release_engineering_summary.recommendation | default('Re
 ### Recommendations
 
 Findings summary: privileged access grants=`{{ security_governance_summary.privileged_access_count | default(0) }}`, high-risk SCC grants=`{{ security_governance_summary.scc_grant_findings | default(0) }}`, expiring certs <=7d=`{{ security_governance_summary.expiring_certificates_critical | default(0) }}`, compliance standards needing review=`{{ security_governance_summary.compliance_active_standards_review_count | default(0) }}`.
+
 Recommended actions: {{ audit_report.domains.security_and_governance.recommendations | default('Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.') }}
 
 ### Findings
@@ -1997,9 +2071,7 @@ Recommended actions: {{ audit_report.domains.security_and_governance.recommendat
 {% set top_namespace_resourcequota_gaps = (namespaces_without_resourcequota | default([]))[:10] %}
 {% set top_namespace_limitrange_gaps = (namespaces_without_limitrange | default([]))[:10] %}
 
-### Namespace Baseline Guardrails
-
-These are governance baseline checks. Treat gaps here as platform hygiene debt unless they overlap with exposed, sensitive, or regulated workloads.
+### Namespace Guardrail Findings Table
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -2010,7 +2082,7 @@ These are governance baseline checks. Treat gaps here as platform hygiene debt u
 | `LimitRange coverage` | {% if namespaces_without_limitrange | default([]) | length > 0 %}{{ status_badge('INFO') }} baseline gaps found{% elif user_namespace_names | default([]) | length > 0 %}{{ status_badge('OK') }} baseline present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespaces_without_limitrange | default([]) | length > 0 %}`{{ top_namespace_limitrange_gaps | join(', ') }}`{% if (namespaces_without_limitrange | length) > (top_namespace_limitrange_gaps | length) %} and `{{ (namespaces_without_limitrange | length) - (top_namespace_limitrange_gaps | length) }}` more{% endif %}{% elif user_namespace_names | default([]) | length > 0 %}all evaluated user namespaces had at least one `LimitRange` (`{{ user_namespace_names | length }}` namespaces checked){% else %}no user namespaces were in scope for the `LimitRange` hygiene check{% endif %} |
 
 {% if (security_issue_type_counts | default({}) | length) > 0 %}
-### Pod Security Summary
+### Pod Security Summary Table
 
 | Finding | Count |
 | --- | --- |
@@ -2020,7 +2092,7 @@ These are governance baseline checks. Treat gaps here as platform hygiene debt u
 {% endif %}
 
 {% if (workload_practice_issue_type_counts | default({}) | length) > 0 %}
-### Workload Practice Summary
+### Workload Practice Summary Table
 
 | Finding | Count |
 | --- | --- |
@@ -2031,7 +2103,7 @@ These are governance baseline checks. Treat gaps here as platform hygiene debt u
 
 {% set privileged_findings = top_security_findings | default([]) | selectattr('issue', 'equalto', 'privileged-containers') | list %}
 {% if privileged_findings | length > 0 %}
-### Privileged Pod Findings
+### Privileged Pod Findings Table
 
 | Namespace | Pod | Privileged Containers |
 | --- | --- | --- |
@@ -2041,7 +2113,7 @@ These are governance baseline checks. Treat gaps here as platform hygiene debt u
 {% endif %}
 
 {% if top_security_findings | default([]) | length > 0 %}
-### Pod Security Findings
+### Pod Security Findings Table
 
 | Namespace | Pod | Check | Detail |
 | --- | --- | --- | --- |
@@ -2049,17 +2121,15 @@ These are governance baseline checks. Treat gaps here as platform hygiene debt u
 | `{{ item.namespace }}` | `{{ item.pod }}` | `{% if item.issue == 'privileged-containers' %}Privileged containers{% elif item.issue == 'host-network' %}Host network{% elif item.issue == 'host-pid' %}Host PID{% elif item.issue == 'host-ipc' %}Host IPC{% elif item.issue == 'hostpath-volume' %}Local hostPath storage{% elif item.issue == 'run-as-root' %}Run as root{% elif item.issue == 'missing-seccomp-profile' %}Missing seccomp profile{% elif item.issue == 'unconfined-seccomp-profile' %}Unconfined seccomp profile{% elif item.issue == 'allow-privilege-escalation-not-disabled' %}Privilege escalation not disabled{% elif item.issue == 'run-as-non-root-not-enforced' %}Run as non-root not enforced{% elif item.issue == 'read-only-root-filesystem-not-enabled' %}Read-only root filesystem not enabled{% elif item.issue == 'capabilities-not-fully-dropped' %}Capabilities not fully dropped{% elif item.issue == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.issue == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
 {% if (security_findings | default([]) | length) > (top_security_findings | length) %}
-- additional pod security findings omitted: `{{ (security_findings | length) - (top_security_findings | length) }}`
+Additional pod security findings omitted: `{{ (security_findings | length) - (top_security_findings | length) }}`.
 {% endif %}
 {% endif %}
 
 {% if top_privileged_serviceaccount_access | default([]) | length > 0 or top_privileged_user_access | default([]) | length > 0 or top_privileged_group_access | default([]) | length > 0 %}
-### Privileged Access Review
-
-This section shows non-system principals with `cluster-admin` grants discovered from collected `RoleBinding` and `ClusterRoleBinding` objects.
+### Privileged Access Findings Tables
 
 {% if top_privileged_serviceaccount_access | default([]) | length > 0 %}
-#### Service Accounts With Privileged Access
+### Privileged Service Account Findings Table
 
 | Namespace | Service Account | Scope | Grant Source |
 | --- | --- | --- | --- |
@@ -2069,7 +2139,7 @@ This section shows non-system principals with `cluster-admin` grants discovered 
 {% endif %}
 
 {% if top_privileged_user_access | default([]) | length > 0 %}
-#### Users With Privileged Access
+### Privileged User Findings Table
 
 | User | Scope | Grant Source |
 | --- | --- | --- |
@@ -2079,7 +2149,7 @@ This section shows non-system principals with `cluster-admin` grants discovered 
 {% endif %}
 
 {% if top_privileged_group_access | default([]) | length > 0 %}
-#### Groups With Privileged Access
+### Privileged Group Findings Table
 
 | Group | Scope | Grant Source |
 | --- | --- | --- |
@@ -2090,12 +2160,10 @@ This section shows non-system principals with `cluster-admin` grants discovered 
 {% endif %}
 
 {% if top_stale_access_review_serviceaccounts | default([]) | length > 0 or top_stale_access_review_users | default([]) | length > 0 or top_stale_access_review_groups | default([]) | length > 0 %}
-### Stale Access Review Candidates
-
-These are review candidates, not confirmed stale identities. Service account entries come from missing workload references. User and group entries come from RBAC subjects that were not backed by a matching collected OpenShift identity object, or from collected groups with no listed members.
+### Access Review Findings Tables
 
 {% if top_stale_access_review_serviceaccounts | default([]) | length > 0 %}
-#### Service Accounts Likely Unused
+### Service Account Review Findings Table
 
 | Namespace | Service Account | Evidence |
 | --- | --- | --- |
@@ -2105,7 +2173,7 @@ These are review candidates, not confirmed stale identities. Service account ent
 {% endif %}
 
 {% if top_stale_access_review_users | default([]) | length > 0 %}
-#### Users Requiring Review
+### User Review Findings Table
 
 | User | Scope | Grant Source | Review Reason |
 | --- | --- | --- | --- |
@@ -2115,7 +2183,7 @@ These are review candidates, not confirmed stale identities. Service account ent
 {% endif %}
 
 {% if top_stale_access_review_groups | default([]) | length > 0 %}
-#### Groups Requiring Review
+### Group Review Findings Table
 
 | Group | Scope | Grant Source | Review Reason |
 | --- | --- | --- | --- |
@@ -2127,7 +2195,7 @@ These are review candidates, not confirmed stale identities. Service account ent
 
 {% set high_risk_sccs = scc_posture_summary | default([]) | rejectattr('risk_summary', 'equalto', 'restricted') | list %}
 {% if securitycontextconstraints_items | length > 0 %}
-### Security Context Constraints
+### Security Context Constraint Findings Tables
 
 {% if high_risk_sccs | length == 0 %}
 No high-risk SCC characteristics were identified in the collected SCC objects.
@@ -2140,7 +2208,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 
 {% if top_scc_grant_findings | default([]) | length > 0 %}
-#### High-Risk SCC Grants
+### SCC Grant Findings Table
 
 | SCC | Subject Kind | Subject | Risk Summary |
 | --- | --- | --- | --- |
@@ -2151,7 +2219,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 
 {% if top_workload_resource_findings | default([]) | length > 0 or top_workload_practice_findings | default([]) | length > 0 or top_overprovisioned_pods | default([]) | length > 0 %}
-### Workload Resource Practices
+### Workload Resource Findings Tables
 
 {% if top_workload_resource_findings | default([]) | length > 0 %}
 | Kind | Namespace | Workload | Check | Containers |
@@ -2170,7 +2238,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 
 {% if top_overprovisioned_pods | default([]) | length > 0 %}
-### Rightsizing Candidates
+### Rightsizing Findings Table
 
 | Namespace | Pod | CPU Request | CPU Use | Memory Request | Memory Use |
 | --- | --- | --- | --- | --- | --- |
@@ -2181,7 +2249,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 
 {% if auth_posture_summary | default({}) | length > 0 %}
-### Authentication Configuration
+### Authentication Findings Table
 
 | Signal | Value |
 | --- | --- |
@@ -2201,7 +2269,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 {% endif %}
 
-### Secrets Management
+### Secret Findings Table
 
 | Signal | Value |
 | --- | --- |
@@ -2213,7 +2281,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 | Certificates expiring in <= 7d | `{{ expiring_certificates_critical | default([]) | length }}` |
 
 {% if top_image_registry_findings | default([]) | length > 0 or top_internal_registry_workloads | default([]) | length > 0 or top_feature_findings | default([]) | length > 0 or imagestreams_items | length > 0 or buildconfigs_items | length > 0 %}
-### Container Image Management
+### Image Management Findings Table
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -2236,7 +2304,7 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 
 {% if compliancesuites_items | length > 0 or (audit_report.domains.security_and_governance.compliance.operator_summary.present | default(false)) %}
-### Compliance Signals
+### Compliance Findings Tables
 
 {% set compliance_operator_summary = audit_report.domains.security_and_governance.compliance.operator_summary | default({}) %}
 {% set compliance_standards_summary = audit_report.domains.security_and_governance.compliance.standards_summary | default([]) %}
@@ -2284,10 +2352,12 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 {% endif %}
 
 {% if empty_user_namespaces | default([]) | length > 0 or top_services_without_endpoints | default([]) | length > 0 or top_likely_unused_serviceaccounts | default([]) | length > 0 or top_likely_unused_configmaps | default([]) | length > 0 or top_likely_unused_secrets | default([]) | length > 0 or top_likely_unused_crds | default([]) | length > 0 %}
-### Unused Resource Heuristics
+### Unused Resource Findings Table
 
 {% if empty_user_namespaces | default([]) | length > 0 %}
-- empty user namespaces: `{{ empty_user_namespaces | join(', ') }}`
+| Scope | Resource | Type | Detail |
+| --- | --- | --- | --- |
+| `cluster` | `{{ empty_user_namespaces | join(', ') }}` | `empty user namespaces` | `no active objects were detected in these user namespaces` |
 {% endif %}
 
 {% if top_services_without_endpoints | default([]) | length > 0 %}
@@ -2355,18 +2425,54 @@ No high-risk SCC characteristics were identified in the collected SCC objects.
 ### Recommendations
 
 Findings summary: `{{ day2_readiness_summary.reason_summary | default('no overall production-readiness blockers were summarized') }}`{% if day2_readiness_summary.top_blockers | default([]) | length > 0 %}; top blockers=`{{ (day2_readiness_summary.top_blockers | default([])) | join('; ') }}`{% endif %}.
+
 Recommended actions: {{ day2_readiness_summary.recommendation | default('Use this section as the final production-readiness synthesis across lifecycle, observability, recovery, operations maturity, and workload capability-extension posture.') }}
 
 ### Findings
 
 ## Appendix: Notes
 
-- This report is a point-in-time read of cluster state.
-- It combines health, upgrade, workload, security, and configuration signals.
-- It prefers grouped summaries and top-N sections to reduce duplicate noise.
-- If this report shows `CRITICAL`, start with operators, nodes, routes, warning event summaries, and firing alerts.
+### Health Score
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Scored section | `false` | {{ status_badge('INFO') }} |
+| Report type | `point-in-time assessment` | {{ status_badge('INFO') }} |
+| Summary guidance items | `4` | {{ status_badge('INFO') }} |
+
+### Recommendations
+
+Findings summary: these notes describe how to interpret the report, its point-in-time nature, and the intended order of review when critical conditions exist.
+
+Recommended actions: Read these notes before using the report for decision-making, especially when critical findings are present or when the report will be shared outside the immediate operations team.
+
+### Findings
+
+| Note | Detail |
+| --- | --- |
+| `Snapshot scope` | `This report is a point-in-time read of cluster state.` |
+| `Signal coverage` | `It combines health, upgrade, workload, security, and configuration signals.` |
+| `Noise control` | `It prefers grouped summaries and top-N sections to reduce duplicate noise.` |
+| `Critical-first review` | `If this report shows CRITICAL, start with operators, nodes, routes, warning event summaries, and firing alerts.` |
 
 ## Appendix: Data Collection
+
+### Health Score
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Collection success rate | `{{ report_collection_success_pct }}`% | {{ status_badge('WARN' if (report_collection.core_failed_commands | default(0) | int) > 0 else ('INFO' if (report_collection.failed_commands | default(0) | int) > 0 else 'OK')) }} |
+| Failed commands | `{{ report_collection.failed_commands | default(0) }}` | {{ status_badge('WARN' if (report_collection.failed_commands | default(0) | int) > 0 else 'OK') }} |
+| Timed out commands | `{{ report_collection.timed_out_commands | default(0) }}` | {{ status_badge('WARN' if (report_collection.timed_out_commands | default(0) | int) > 0 else 'OK') }} |
+| Core command failures | `{{ report_collection.core_failed_commands | default(0) }}` | {{ status_badge('CRITICAL' if (report_collection.core_failed_commands | default(0) | int) > 0 else 'OK') }} |
+
+### Recommendations
+
+Findings summary: attempted commands=`{{ report_collection.command_count | default(0) }}`, failed commands=`{{ report_collection.failed_commands | default(0) }}`, timed out commands=`{{ report_collection.timed_out_commands | default(0) }}`, core failures=`{{ report_collection.core_failed_commands | default(0) }}`.
+
+Recommended actions: Review failed and skipped collection commands first when report confidence is low or sections appear incomplete; rerun with broader access where RBAC denied optional collectors.
+
+### Findings
 
 | Signal | Value |
 | --- | --- |
@@ -2406,6 +2512,23 @@ Collection warning:
 {% endif %}
 
 ## Appendix: Execution Stats
+
+### Health Score
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| OpenShift user known | `{{ execution_stats.ocp_user | default('unknown') != 'unknown' }}` | {{ status_badge('INFO') }} |
+| API server known | `{{ execution_stats.api_server | default('unknown') != 'unknown' }}` | {{ status_badge('INFO') }} |
+| Run time minutes | `{{ execution_stats.duration_minutes | default(0) }}` | {{ status_badge('INFO') }} |
+| Execution stats collected | `true` | {{ status_badge('INFO') }} |
+
+### Recommendations
+
+Findings summary: this appendix records execution context, local runtime details, and collection timing metadata for the scan that generated the report.
+
+Recommended actions: Use these execution stats only for traceability, troubleshooting, or comparing repeated runs; they should not drive health conclusions directly.
+
+### Findings
 
 | Stat | Value |
 | --- | --- |

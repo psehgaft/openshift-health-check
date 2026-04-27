@@ -173,28 +173,28 @@
         "External secrets integration",
         "OK" if ext_secrets_present else "WARN",
         f"clustersecretstores={len(clustersecretstores)} secretstores={len(secretstores)} externalsecrets={len(externalsecrets)}",
-        "aro-gitops external-secrets",
+        "external secrets integration guidance",
         level=external_secrets_level,
     )
     if not ext_secrets_present:
         add_finding(
             "prod-day2-external-secrets-missing",
             "no External Secrets Operator stores or ExternalSecret resources were found",
-            source="aro-gitops external-secrets",
+            source="external secrets integration guidance",
         )
 
     add_check(
         "User workload monitoring enabled",
         "OK" if enable_user_workload else "WARN",
         f"enableUserWorkload={enable_user_workload}",
-        "aro-gitops user-workload-monitoring + Red Hat monitoring",
+        "user workload monitoring and platform monitoring guidance",
         level=base_required_level,
     )
     if not enable_user_workload:
         add_finding(
             "prod-day2-user-workload-monitoring-disabled",
             "cluster-monitoring-config does not enable user workload monitoring",
-            source="aro-gitops user-workload-monitoring + Red Hat monitoring",
+            source="user workload monitoring and platform monitoring guidance",
         )
 
     add_check(
@@ -216,14 +216,14 @@
         "External log forwarding",
         "OK" if len(obs.get("external_log_forwarding_outputs") or []) > 0 else "WARN",
         f"clusterlogforwarders={len(clusterlogforwarders)} external_outputs={len(obs.get('external_log_forwarding_outputs') or [])}",
-        "aro-gitops cluster-logging + vendor logging guidance",
+        "cluster logging and external forwarding guidance",
         level=telemetry_level,
     )
     if not log_forwarding_present or len(obs.get("external_log_forwarding_outputs") or []) == 0:
         add_finding(
             "prod-day2-external-log-forwarding-missing",
             "no external log forwarding outputs were detected from ClusterLogForwarder resources",
-            source="aro-gitops cluster-logging + vendor logging guidance",
+            source="cluster logging and external forwarding guidance",
         )
 
     cluster_remote_write = int(obs.get("external_cluster_metrics_remote_write_count") or 0)
@@ -248,14 +248,14 @@
         "Backup and restore baseline",
         "OK" if backup_ready and successful_backups > 0 else "WARN",
         f"dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} successful_backups={successful_backups}",
-        "aro-gitops OADP + vendor backup guidance",
+        "OADP and backup posture guidance",
         level=base_required_level,
     )
     if not backup_ready or successful_backups == 0:
         add_finding(
             "prod-day2-backup-baseline-incomplete",
             "backup posture is missing OADP resources, active schedules, or successful backup evidence",
-            source="aro-gitops OADP + vendor backup guidance",
+            source="OADP and backup posture guidance",
         )
 
     compliance_present = len(compliancesuites) > 0
@@ -263,14 +263,14 @@
         "Compliance scanning",
         "OK" if compliance_present else "WARN",
         f"compliancesuites={len(compliancesuites)} findings={len(data.get('compliance_suite_findings') or [])}",
-        "aro-gitops compliance-operator",
+        "compliance operator guidance",
         level=compliance_level,
     )
     if not compliance_present:
         add_finding(
             "prod-day2-compliance-scanning-missing",
             "no ComplianceSuite resources were found",
-            source="aro-gitops compliance-operator",
+            source="compliance operator guidance",
         )
 
     idp_count = int(data.get("identity_provider_count") or 0)
@@ -278,28 +278,28 @@
         "Central identity provider integration",
         "OK" if idp_count > 0 else "WARN",
         f"identity_providers={idp_count}",
-        "aro-gitops identity-providers + production auth practice",
+        "identity provider and production authentication guidance",
         level=base_required_level,
     )
     if idp_count == 0:
         add_finding(
             "prod-day2-identity-provider-missing",
             "oauth cluster has no configured identity provider",
-            source="aro-gitops identity-providers + production auth practice",
+            source="identity provider and production authentication guidance",
         )
 
     add_check(
         "Red Hat Insights connectivity",
         "OK" if insights_healthy else "WARN",
         f"available={insights.get('available', 'Unknown')} degraded={insights.get('degraded', 'Unknown')}",
-        "aro-gitops redhat-insights",
+        "Red Hat Insights guidance",
         level=insights_level,
     )
     if not insights_healthy:
         add_finding(
             "prod-day2-insights-not-healthy",
             "the insights operator is not healthy",
-            source="aro-gitops redhat-insights",
+            source="Red Hat Insights guidance",
         )
 
     mhc_expected = cloud_managed and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane
@@ -324,14 +324,14 @@
         "Cluster autoscaler",
         "OK" if (autoscaler_present or not autoscaler_expected) else "WARN",
         f"platform={platform} clusterautoscalers={len(clusterautoscalers)}",
-        "aro-gitops cluster-autoscaler + managed-cloud practice",
+        "cluster autoscaler and managed-cloud guidance",
         level=autoscaler_level,
     )
     if autoscaler_expected and not autoscaler_present:
         add_finding(
             "prod-day2-cluster-autoscaler-missing",
             "no ClusterAutoscaler resource was found for a cloud cluster with MachineSets",
-            source="aro-gitops cluster-autoscaler + managed-cloud practice",
+            source="cluster autoscaler and managed-cloud guidance",
         )
 
     image_policy_clean = len(data.get("image_registry_findings") or []) == 0
@@ -339,7 +339,7 @@
         "Registry governance baseline",
         "OK" if image_policy_clean else "WARN",
         f"image_registry_findings={len(data.get('image_registry_findings') or [])}",
-        "aro-gitops registry governance",
+        "registry governance guidance",
         level="informational" if is_sno else "recommended",
     )
 
