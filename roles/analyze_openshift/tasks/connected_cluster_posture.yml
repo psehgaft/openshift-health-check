@@ -39,15 +39,7 @@
           if (connected_cluster_insights_operator_status.degraded | default('Unknown')) in ['True', 'False']
           else (
             'False'
-            if (
-              (
-                (connected_cluster_insights_operator_status.available | default('Unknown')) == 'True'
-                or (connected_cluster_insights_namespace_present | bool)
-                or (connected_cluster_insights_pod_count | int) > 0
-                or (connected_cluster_insights_config_present | bool)
-                or (connected_cluster_insights_archive_present | bool)
-              )
-            )
+            if ((connected_cluster_insights_operator_status.available | default('Unknown')) == 'True')
             else 'Unknown'
           )
         }}
@@ -99,10 +91,48 @@
 
 - name: Build connected-cluster posture findings
   ansible.builtin.set_fact:
+    connected_cluster_insights_evidence_present: >-
+      {{
+        (connected_cluster_posture.insights_namespace_present | default(false) | bool)
+        or (connected_cluster_posture.insights_pod_count | default(0) | int) > 0
+        or (connected_cluster_posture.insights_config_present | default(false) | bool)
+        or (connected_cluster_insights_archive_present | default(false) | bool)
+      }}
+    connected_cluster_insights_evidence_incomplete: >-
+      {{
+        (
+          (connected_cluster_posture.insights_namespace_present | default(false) | bool)
+          or (connected_cluster_posture.insights_pod_count | default(0) | int) > 0
+          or (connected_cluster_posture.insights_config_present | default(false) | bool)
+          or (connected_cluster_insights_archive_present | default(false) | bool)
+        )
+        and
+        (
+          (not (connected_cluster_posture.insights_namespace_present | default(false) | bool))
+          or ((connected_cluster_posture.insights_pod_count | default(0) | int) == 0)
+        )
+      }}
+    connected_cluster_telemeter_missing_with_insights_evidence: >-
+      {{
+        (
+          (connected_cluster_posture.insights_namespace_present | default(false) | bool)
+          or (connected_cluster_posture.insights_pod_count | default(0) | int) > 0
+          or (connected_cluster_posture.insights_config_present | default(false) | bool)
+          or (connected_cluster_insights_archive_present | default(false) | bool)
+        )
+        and
+        (
+          ((connected_cluster_posture.telemeter_deployment_count | default(0) | int) == 0)
+          and ((connected_cluster_posture.telemeter_pod_count | default(0) | int) == 0)
+        )
+      }}
+
+- name: Finalize connected-cluster posture findings
+  ansible.builtin.set_fact:
     connected_cluster_findings: >-
       {{
         []
         + ([{'severity': 'warning', 'area': 'insights', 'detail': 'Insights operator is not reporting Available=True.'}] if ((connected_cluster_posture.insights_operator_available | default('Unknown')) == 'False') else [])
-        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'The openshift-insights namespace or pod evidence is incomplete.'}] if (((connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) > 0 or (connected_cluster_posture.insights_config_present | default(false) | bool) or (connected_cluster_insights_archive_present | default(false) | bool)) and (not (connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) == 0)) else [])
-        + ([{'severity': 'warning', 'area': 'telemetry', 'detail': 'No telemeter deployment or pod was found in openshift-monitoring.'}] if ((((connected_cluster_posture.insights_namespace_present | default(false) | bool) or (connected_cluster_posture.insights_pod_count | default(0) | int) > 0 or (connected_cluster_posture.insights_config_present | default(false) | bool) or (connected_cluster_insights_archive_present | default(false) | bool)) and ((connected_cluster_posture.telemeter_deployment_count | default(0) | int) == 0 and (connected_cluster_posture.telemeter_pod_count | default(0) | int) == 0)) else [])
+        + ([{'severity': 'warning', 'area': 'insights', 'detail': 'The openshift-insights namespace or pod evidence is incomplete.'}] if (connected_cluster_insights_evidence_incomplete | bool) else [])
+        + ([{'severity': 'warning', 'area': 'telemetry', 'detail': 'No telemeter deployment or pod was found in openshift-monitoring.'}] if (connected_cluster_telemeter_missing_with_insights_evidence | bool) else [])
       }}

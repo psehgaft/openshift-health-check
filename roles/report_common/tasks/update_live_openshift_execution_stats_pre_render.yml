@@ -8,8 +8,9 @@
     final_report_completion_iso: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(final_report_completion_epoch | int, utc=true) }}"
 
 - name: Update final live OpenShift execution stats and audit payload
+  vars:
+    updated_execution_stats: "{{ execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True) }}"
   ansible.builtin.set_fact:
     report_completed_at: "{{ final_report_completion_iso }}"
-    execution_stats: "{{ execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True) }}"
-    audit_report: "{{ audit_report | combine({'execution_stats': (execution_stats | combine({'completed_at': final_report_completion_iso, 'duration_seconds': ((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)), 'duration_minutes': ((((final_report_completion_epoch | int) - (ansible_date_time.epoch | int)) | float) / 60.0) | round(1), 'report_formats_generated': {'markdown': true, 'json': true, 'html': false, 'pdf': false}}, recursive=True)), 'metadata': (audit_report.metadata | combine({'completed_at': final_report_completion_iso, 'local_user': execution_stats.local_user, 'local_hostname': execution_stats.local_hostname}, recursive=True))}, recursive=True) }}"
-
+    execution_stats: "{{ updated_execution_stats }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': updated_execution_stats, 'metadata': (audit_report.metadata | combine({'completed_at': final_report_completion_iso, 'local_user': execution_stats.local_user, 'local_hostname': execution_stats.local_hostname}, recursive=True))}, recursive=True) }}"

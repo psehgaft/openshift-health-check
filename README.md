@@ -1,6 +1,6 @@
 # Kubernetes Cluster Health Check
 
-This repo contains an Ansible-based health report framework for a single cluster.
+This repo is an Ansible-based tool for building a health report for one cluster at a time.
 
 It supports:
 
@@ -16,28 +16,36 @@ It supports:
 - Rancher-managed Kubernetes
 - Minikube
 
-The tool uses your current `oc` or `kubectl` session, reads cluster state, and writes:
+It uses your current `oc` or `kubectl` session, reads cluster state, and writes:
 
 - a Markdown report for people
 - a JSON report for automation
 
 Report file names include the cluster type and cluster name.
 
-It is read-only. It does not make changes to the cluster.
+It is read-only, so it does not make changes to the cluster.
 
-By default, it collects data in parallel so the run finishes faster. It also reports collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete.
-Optional collectors that target APIs or config objects which are not installed on the cluster are tracked separately as not applicable, rather than counted as hard collection failures.
+By default, it collects data in parallel so the run finishes faster. It also tells you about collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete. Optional collectors that target APIs or config objects which are not installed on the cluster are tracked separately as not applicable, rather than counted as hard collection failures.
 
 > [!IMPORTANT]
 > This tool is a reporting aid, not a replacement for operator judgment. It helps surface health signals, risks, and likely issues, but no automated report can fully understand every cluster design,
   business requirement, or accepted exception. Review the findings critically and use your own operational judgment before making decisions.
 
+## Start Here
+
+If you are new to this repo, use this reading order:
+
+1. Stay in [README.md](README.md) to learn what the tool does and how to run it.
+2. Read [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md) to understand why the report is structured the way it is.
+3. Read [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md) when you want a simple review order for reading the final OpenShift report.
+
 ## Design Notes
 
 The check set in this repo follows the design in [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md).
 
-Use this `README.md` when you want to install, run, and read the tool.
-Use the design notes when you want to understand why the checks exist and how the report is meant to be used.
+Use this `README.md` when you want to install, run, or use the tool.
+Use the design notes when you want to understand why the checks exist and how the report is meant to be read.
+Use [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md) when you want a simple walkthrough order for the OpenShift posture sections.
 
 ## Quick Start
 
@@ -51,7 +59,7 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml
 
 For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
 
-For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the primary live cluster entrypoint and now defaults to a live support collection profile of `all`. The scan builds a capability-based collector plan from the cluster type, installed tools, configured commands, and available access, then runs all applicable collectors during the same scan.
+For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and now defaults to a live support collection profile of `all`. The scan builds a collector plan from the cluster type, installed tools, configured commands, and available access, then runs the collectors that actually apply.
 
 Example live OpenShift run:
 
@@ -59,9 +67,9 @@ Example live OpenShift run:
 ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
-`must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` requires the plugin plus an explicit baseline/reference command. Provider-managed gates, Advisor export, and node-level `sosreport` also run in the same scan when their tool or command prerequisites are available. If possible, install `omc` as well. The OpenShift path can use it as a must-gather post-analyzer to enrich etcd and alert/rule analysis from collected support data.
+`must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates, Advisor export, and node-level `sosreport` can run in the same scan when their tool or command prerequisites are available. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
 
-The same OpenShift playbook also supports collected-state reprocessing. If you set any of these inputs, the playbook automatically resolves into the collected-state path:
+The same OpenShift playbook also supports collected-state reprocessing. If you set any of these inputs, the playbook automatically switches to the collected-state path:
 
 - `must_gather_path`
 - `inspect_path`
@@ -92,7 +100,7 @@ The CI report is organized by priority:
 
 ## What This Tool Does
 
-In simple terms, the tool tries to answer two questions:
+In simple terms, the tool is trying to answer two questions:
 
 1. Is the cluster healthy right now?
 2. Is there anything risky, weak, or badly configured that should be fixed?
@@ -133,7 +141,7 @@ For OpenShift, the final report is organized by priority:
 - `P12` Workload capability extensions
 - `P13` Day 2 production readiness
 
-Each section starts with a short recommendation and summary. The report moves from urgent problems to longer-term readiness.
+Each section starts with a short recommendation and summary. The report moves from urgent problems first to longer-term readiness later.
 
 Main areas:
 
@@ -200,19 +208,21 @@ The report also includes:
 - OpenShift deployment type labels for SNO and ROSA HCP
 - cleaned-up section formatting that prefers readable tables and plain-language labels over debug-style issue dumps
 
+If you want help reading the OpenShift report in order, go to [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md).
+
 
 ## Signal Notes
 
 The report prefers signals that are cluster-local, explainable, and actionable.
 
-Use these rules when reading it:
+These rules help when reading it:
 
 - `direct`: the signal comes from a collected object or metric and is rendered directly
 - `derived`: the signal is computed from collected data using a documented heuristic
 - `unknown`: the cluster did not expose enough data to support a defensible value
 - `not applicable`: the report looked for an optional feature or API that is not installed or not configured on this cluster
 
-Important examples:
+A few examples:
 
 - Node growth headroom:
   - `derived`
@@ -251,7 +261,7 @@ Important examples:
 
 ## OpenShift Review Coverage
 
-The OpenShift path is designed to support a structured cluster review, but not every topic can be proven from cluster-state data alone.
+The OpenShift path is meant to support a structured cluster review, but not every topic can be proven from cluster-state data alone.
 
 Use this rule when reading the report:
 

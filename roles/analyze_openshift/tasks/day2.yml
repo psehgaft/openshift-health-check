@@ -506,9 +506,50 @@
   failed_when: false
 
 - name: Normalize production Day 2 posture summary
+  vars:
+    day2_posture_payload: >-
+      {{
+        day2_posture_cmd.stdout | from_json
+        if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0))
+        else {
+          'day2_posture_checks': [],
+          'day2_posture_findings': [],
+          'scored_day2_posture_findings': [],
+          'day2_posture_summary': {
+            'checks_total': 0,
+            'checks_warn': 0,
+            'scored_findings_count': 0,
+            'baseline_profile': {},
+            'gitops_present': false,
+            'argocd_count': 0,
+            'gitops_application_count': 0,
+            'gitops_appproject_count': 0,
+            'external_secret_store_count': 0,
+            'external_secret_count': 0,
+            'clusterautoscaler_count': 0,
+            'clusterautoscaler_expected': false,
+            'machinehealthcheck_count': 0,
+            'machinehealthcheck_expected': false,
+            'acm_managed': false,
+            'acm_klusterlet_count': 0,
+            'acm_managedclusteraddon_count': 0,
+            'acm_agent_namespace_count': 0,
+            'enable_user_workload_monitoring': false,
+            'monitoring_persistent_storage_configured': false,
+            'external_log_forwarding_output_count': 0,
+            'external_cluster_metrics_remote_write_count': 0,
+            'external_user_workload_metrics_remote_write_count': 0,
+            'backup_schedule_count': 0,
+            'successful_backup_count': 0,
+            'compliancesuite_count': 0,
+            'identity_provider_count': 0,
+            'insights_healthy': false
+          }
+        }
+      }}
   ansible.builtin.set_fact:
-    day2_posture_data: "{{ day2_posture_cmd.stdout | from_json if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else {'day2_posture_checks': [], 'day2_posture_findings': [], 'scored_day2_posture_findings': [], 'day2_posture_summary': {'checks_total': 0, 'checks_warn': 0, 'scored_findings_count': 0, 'baseline_profile': {}, 'gitops_present': false, 'argocd_count': 0, 'gitops_application_count': 0, 'gitops_appproject_count': 0, 'external_secret_store_count': 0, 'external_secret_count': 0, 'clusterautoscaler_count': 0, 'clusterautoscaler_expected': false, 'machinehealthcheck_count': 0, 'machinehealthcheck_expected': false, 'acm_managed': false, 'acm_klusterlet_count': 0, 'acm_managedclusteraddon_count': 0, 'acm_agent_namespace_count': 0, 'enable_user_workload_monitoring': false, 'monitoring_persistent_storage_configured': false, 'external_log_forwarding_output_count': 0, 'external_cluster_metrics_remote_write_count': 0, 'external_user_workload_metrics_remote_write_count': 0, 'backup_schedule_count': 0, 'successful_backup_count': 0, 'compliancesuite_count': 0, 'identity_provider_count': 0, 'insights_healthy': false}} }}"
-    day2_posture_checks: "{{ (day2_posture_cmd.stdout | from_json).day2_posture_checks if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else [] }}"
-    day2_posture_findings: "{{ (day2_posture_cmd.stdout | from_json).day2_posture_findings if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else [] }}"
-    scored_day2_posture_findings: "{{ (day2_posture_cmd.stdout | from_json).scored_day2_posture_findings if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else [] }}"
-    day2_posture_summary: "{{ (day2_posture_cmd.stdout | from_json).day2_posture_summary if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0)) else {'checks_total': 0, 'checks_warn': 0, 'scored_findings_count': 0, 'baseline_profile': {}, 'gitops_present': false, 'argocd_count': 0, 'gitops_application_count': 0, 'gitops_appproject_count': 0, 'external_secret_store_count': 0, 'external_secret_count': 0, 'clusterautoscaler_count': 0, 'clusterautoscaler_expected': false, 'machinehealthcheck_count': 0, 'machinehealthcheck_expected': false, 'acm_managed': false, 'acm_klusterlet_count': 0, 'acm_managedclusteraddon_count': 0, 'acm_agent_namespace_count': 0, 'enable_user_workload_monitoring': false, 'monitoring_persistent_storage_configured': false, 'external_log_forwarding_output_count': 0, 'external_cluster_metrics_remote_write_count': 0, 'external_user_workload_metrics_remote_write_count': 0, 'backup_schedule_count': 0, 'successful_backup_count': 0, 'compliancesuite_count': 0, 'identity_provider_count': 0, 'insights_healthy': false} }}"
+    day2_posture_data: "{{ day2_posture_payload }}"
+    day2_posture_checks: "{{ day2_posture_payload.day2_posture_checks | default([]) }}"
+    day2_posture_findings: "{{ day2_posture_payload.day2_posture_findings | default([]) }}"
+    scored_day2_posture_findings: "{{ day2_posture_payload.scored_day2_posture_findings | default([]) }}"
+    day2_posture_summary: "{{ day2_posture_payload.day2_posture_summary | default({}) }}"

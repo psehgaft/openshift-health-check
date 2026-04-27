@@ -509,14 +509,19 @@
       recent_warning_events: "{{ recent_warning_events | default([]) | length }}"
       firing_alerts: "{{ firing_alerts | default([]) | length }}"
 
-- name: Build networking architecture summary
+- name: Precompute networking architecture summary inputs
   vars:
     graph: "{{ analysis_graph | default({}) }}"
-    route_namespaces: "{{ (graph.routes | default({})).get('items', []) | map(attribute='metadata.namespace') | select('defined') | list | unique }}"
-    ingress_namespaces: "{{ (graph.ingresses | default({})).get('items', []) | map(attribute='metadata.namespace') | select('defined') | list | unique }}"
-    service_exposure_namespaces: >-
+    route_items: "{{ (graph.routes | default({})).get('items', []) }}"
+    ingress_items: "{{ (graph.ingresses | default({})).get('items', []) }}"
+    service_items: "{{ (graph.services | default({})).get('items', []) }}"
+    proxy_spec: "{{ graph.proxy_config.spec | default({}) }}"
+  ansible.builtin.set_fact:
+    networking_route_namespaces: "{{ route_items | map(attribute='metadata.namespace') | select('defined') | list | unique }}"
+    networking_ingress_namespaces: "{{ ingress_items | map(attribute='metadata.namespace') | select('defined') | list | unique }}"
+    networking_service_exposure_namespaces: >-
       {{
-        (graph.services | default({})).get('items', [])
+        service_items
         | selectattr('metadata.namespace', 'defined')
         | selectattr('spec.type', 'defined')
         | selectattr('spec.type', 'in', ['LoadBalancer', 'NodePort'])
@@ -524,33 +529,34 @@
         | list
         | unique
       }}
-    external_ip_service_namespaces: >-
+    networking_external_ip_service_namespaces: >-
       {{
-        (graph.services | default({})).get('items', [])
+        service_items
         | selectattr('metadata.namespace', 'defined')
         | selectattr('spec.externalIPs', 'defined')
         | map(attribute='metadata.namespace')
         | list
         | unique
       }}
-    exposed_user_namespaces: "{{ ((route_namespaces + ingress_namespaces + service_exposure_namespaces + external_ip_service_namespaces) | unique) | reject('match', user_namespaces_exclude_regex | default('^$')) | list }}"
+    networking_proxy_status: "{{ graph.proxy_config.status | default({}) }}"
+    networking_proxy_http: "{{ proxy_spec.httpProxy | default('') }}"
+    networking_proxy_https: "{{ proxy_spec.httpsProxy | default('') }}"
+    networking_proxy_trusted_ca: "{{ proxy_spec.trustedCA.name | default('') }}"
+    networking_proxy_no_proxy_entries: "{{ ((proxy_spec.noProxy | default('')).split(',') | map('trim') | reject('equalto', '') | list) if ((proxy_spec.noProxy | default('') | length) > 0) else [] }}"
+    networking_cluster_proxy_configured: "{{ ((proxy_spec.httpProxy | default('')) | length > 0) or ((proxy_spec.httpsProxy | default('')) | length > 0) }}"
+    networking_default_ingresscontroller_issue_count: "{{ ingresscontroller_issues | default([]) | selectattr('component', 'equalto', 'ingresscontroller/default') | list | length }}"
+    networking_nondefault_ingresscontroller_issue_count: "{{ (ingresscontroller_issues | default([]) | length) - (ingresscontroller_issues | default([]) | selectattr('component', 'equalto', 'ingresscontroller/default') | list | length) }}"
+
+- name: Build networking architecture summary
+  vars:
+    exposed_user_namespaces: "{{ ((networking_route_namespaces | default([])) + (networking_ingress_namespaces | default([])) + (networking_service_exposure_namespaces | default([])) + (networking_external_ip_service_namespaces | default([]))) | unique | reject('match', user_namespaces_exclude_regex | default('^$')) | list }}"
     exposed_namespaces_without_networkpolicy: "{{ exposed_user_namespaces | intersect(namespaces_without_networkpolicy | default([])) }}"
     exposed_namespaces_missing_ingress_policies: "{{ exposed_user_namespaces | intersect(namespaces_missing_ingress_policies | default([])) }}"
     exposed_namespaces_missing_egress_policies: "{{ exposed_user_namespaces | intersect(namespaces_missing_egress_policies | default([])) }}"
-    proxy_spec: "{{ graph.proxy_config.spec | default({}) }}"
-    proxy_status: "{{ graph.proxy_config.status | default({}) }}"
-    proxy_http: "{{ proxy_spec.httpProxy | default('') }}"
-    proxy_https: "{{ proxy_spec.httpsProxy | default('') }}"
-    proxy_trusted_ca: "{{ proxy_spec.trustedCA.name | default('') }}"
-    proxy_no_proxy_raw: "{{ proxy_spec.noProxy | default('') }}"
-    proxy_no_proxy_entries: "{{ (proxy_no_proxy_raw.split(',') | map('trim') | reject('equalto', '') | list) if (proxy_no_proxy_raw | length > 0) else [] }}"
-    cluster_proxy_configured: "{{ (proxy_http | length > 0) or (proxy_https | length > 0) }}"
     proxy_required_internal_no_proxy_entries:
       - ".svc"
       - ".cluster.local"
-    proxy_missing_internal_no_proxy_entries: "{{ proxy_required_internal_no_proxy_entries | difference(proxy_no_proxy_entries | default([])) if cluster_proxy_configured else [] }}"
-    default_ingresscontroller_issue_count: "{{ ingresscontroller_issues | default([]) | selectattr('component', 'equalto', 'ingresscontroller/default') | list | length }}"
-    nondefault_ingresscontroller_issue_count: "{{ ((ingresscontroller_issues | default([]) | length) - (default_ingresscontroller_issue_count | int)) }}"
+    proxy_missing_internal_no_proxy_entries: "{{ proxy_required_internal_no_proxy_entries | difference(networking_proxy_no_proxy_entries | default([])) if (networking_cluster_proxy_configured | default(false) | bool) else [] }}"
     network_architecture_status: >-
       {{
         'CRITICAL'
@@ -558,14 +564,14 @@
           (route_host_conflicts | default([]) | length) > 0
           or (ingress_host_conflicts | default([]) | length) > 0
           or (route_ingress_host_conflicts | default([]) | length) > 0
-          or (default_ingresscontroller_issue_count | int) > 0
+          or (networking_default_ingresscontroller_issue_count | int) > 0
         )
         else (
           'WARNING'
           if (
             (route_issues | default([]) | length) > 0
             or (ingress_issues | default([]) | length) > 0
-            or (nondefault_ingresscontroller_issue_count | int) > 0
+            or (networking_nondefault_ingresscontroller_issue_count | int) > 0
             or (exposed_namespaces_without_networkpolicy | length) > 0
             or (exposed_namespaces_missing_ingress_policies | length) > 0
             or (exposed_namespaces_missing_egress_policies | length) > 0
@@ -583,8 +589,8 @@
           + (['route host conflicts=' ~ ((route_host_conflicts | default([]) | length) | string)] if (route_host_conflicts | default([]) | length) > 0 else [])
           + (['ingress host conflicts=' ~ ((ingress_host_conflicts | default([]) | length) | string)] if (ingress_host_conflicts | default([]) | length) > 0 else [])
           + (['cross route/ingress host conflicts=' ~ ((route_ingress_host_conflicts | default([]) | length) | string)] if (route_ingress_host_conflicts | default([]) | length) > 0 else [])
-          + (['default ingress controller issues=' ~ ((default_ingresscontroller_issue_count | int) | string)] if (default_ingresscontroller_issue_count | int) > 0 else [])
-          + (['non-default ingress controller issues=' ~ ((nondefault_ingresscontroller_issue_count | int) | string)] if (nondefault_ingresscontroller_issue_count | int) > 0 else [])
+          + (['default ingress controller issues=' ~ ((networking_default_ingresscontroller_issue_count | int) | string)] if (networking_default_ingresscontroller_issue_count | int) > 0 else [])
+          + (['non-default ingress controller issues=' ~ ((networking_nondefault_ingresscontroller_issue_count | int) | string)] if (networking_nondefault_ingresscontroller_issue_count | int) > 0 else [])
           + (['exposed namespaces without NetworkPolicy=' ~ ((exposed_namespaces_without_networkpolicy | length) | string)] if (exposed_namespaces_without_networkpolicy | length) > 0 else [])
           + (['exposed namespaces missing ingress policy=' ~ ((exposed_namespaces_missing_ingress_policies | length) | string)] if (exposed_namespaces_missing_ingress_policies | length) > 0 else [])
           + (['exposed namespaces missing egress policy=' ~ ((exposed_namespaces_missing_egress_policies | length) | string)] if (exposed_namespaces_missing_egress_policies | length) > 0 else [])
@@ -614,21 +620,21 @@
       ingress_host_conflict_count: "{{ ingress_host_conflicts | default([]) | length }}"
       cross_host_conflict_count: "{{ route_ingress_host_conflicts | default([]) | length }}"
       ingresscontroller_issue_count: "{{ ingresscontroller_issues | default([]) | length }}"
-      default_ingresscontroller_issue_count: "{{ default_ingresscontroller_issue_count }}"
-      nondefault_ingresscontroller_issue_count: "{{ nondefault_ingresscontroller_issue_count }}"
+      default_ingresscontroller_issue_count: "{{ networking_default_ingresscontroller_issue_count }}"
+      nondefault_ingresscontroller_issue_count: "{{ networking_nondefault_ingresscontroller_issue_count }}"
       exposed_namespace_count: "{{ exposed_user_namespaces | length }}"
-      service_exposure_namespace_count: "{{ ((service_exposure_namespaces + external_ip_service_namespaces) | unique | reject('match', user_namespaces_exclude_regex | default('^$')) | list | length) }}"
+      service_exposure_namespace_count: "{{ (((networking_service_exposure_namespaces | default([])) + (networking_external_ip_service_namespaces | default([]))) | unique | reject('match', user_namespaces_exclude_regex | default('^$')) | list | length) }}"
       exposed_namespaces_without_networkpolicy: "{{ exposed_namespaces_without_networkpolicy }}"
       exposed_namespaces_missing_ingress_policies: "{{ exposed_namespaces_missing_ingress_policies }}"
       exposed_namespaces_missing_egress_policies: "{{ exposed_namespaces_missing_egress_policies }}"
-      cluster_proxy_configured: "{{ cluster_proxy_configured }}"
-      http_proxy_configured: "{{ proxy_http | length > 0 }}"
-      https_proxy_configured: "{{ proxy_https | length > 0 }}"
-      trusted_ca_configured: "{{ proxy_trusted_ca | length > 0 }}"
-      no_proxy_entry_count: "{{ proxy_no_proxy_entries | length }}"
-      no_proxy_entries_sample: "{{ proxy_no_proxy_entries[:10] }}"
+      cluster_proxy_configured: "{{ networking_cluster_proxy_configured }}"
+      http_proxy_configured: "{{ networking_proxy_http | length > 0 }}"
+      https_proxy_configured: "{{ networking_proxy_https | length > 0 }}"
+      trusted_ca_configured: "{{ networking_proxy_trusted_ca | length > 0 }}"
+      no_proxy_entry_count: "{{ networking_proxy_no_proxy_entries | length }}"
+      no_proxy_entries_sample: "{{ (networking_proxy_no_proxy_entries | default([]))[:10] }}"
       proxy_missing_internal_no_proxy_entries: "{{ proxy_missing_internal_no_proxy_entries }}"
-      proxy_status: "{{ proxy_status }}"
+      proxy_status: "{{ networking_proxy_status }}"
 
 - name: Build security and compliance posture summary
   vars:
@@ -748,6 +754,8 @@
         (firing_alerts | default([]) | length)
         - ((firing_alerts_by_severity | default({})).critical | default(0) | int)
       }}
+    warning_event_count: "{{ recent_warning_events | default([]) | length }}"
+    warning_event_posture_threshold: "{{ observability_warning_event_threshold | default(10) | int }}"
     log_gap_count: >-
       {{
         (
@@ -783,8 +791,11 @@
         else (
           'WARNING'
           if (
-            (observability_findings | default([]) | length) > 0
-            or ((recent_warning_events | default([]) | length) > 0)
+            (log_gap_count | int) > 0
+            or (metrics_gap_count | int) > 0
+            or (alerting_gap_count | int) > 0
+            or ((insights_archive_findings | default([]) | length) > 0)
+            or ((warning_event_count | int) >= (warning_event_posture_threshold | int))
             or (firing_warning_alert_count | int) > 0
           )
           else 'HEALTHY'
@@ -801,7 +812,7 @@
           + (['log forwarding gaps=' ~ ((log_gap_count | int) | string)] if (log_gap_count | int) > 0 else [])
           + (['metrics forwarding gaps=' ~ ((metrics_gap_count | int) | string)] if (metrics_gap_count | int) > 0 else [])
           + (['alert delivery gaps=' ~ ((alerting_gap_count | int) | string)] if (alerting_gap_count | int) > 0 else [])
-          + (['insights archive findings=' ~ ((insights_archive_findings | default([]) | length) | string)] if (insights_archive_findings | default([]) | length > 0 else []))
+          + (['insights archive findings=' ~ ((insights_archive_findings | default([]) | length) | string)] if ((insights_archive_findings | default([]) | length) > 0) else [])
         ) | join('; ')
       }}
     observability_recommendation: >-
@@ -886,7 +897,7 @@
           + (['completed backups with warnings/errors=' ~ ((completed_backup_with_issues_count | int) | string)] if (completed_backup_with_issues_count | int) > 0 else [])
           + (['clean restore evidence=' ~ ((clean_completed_restore_count | int) | string)] if (clean_completed_restore_count | int) > 0 else [])
           + (['completed restores with warnings/errors=' ~ ((completed_restore_with_issues_count | int) | string)] if (completed_restore_with_issues_count | int) > 0 else [])
-          + (['machine remediation findings=' ~ ((machine_healthcheck_findings | default([]) | length) | string)] if (machine_healthcheck_findings | default([]) | length > 0 else []))
+          + (['machine remediation findings=' ~ ((machine_healthcheck_findings | default([]) | length) | string)] if ((machine_healthcheck_findings | default([]) | length) > 0) else [])
         ) | join('; ')
       }}
     backup_recovery_recommendation: >-
@@ -945,14 +956,14 @@
       {{
         (
           []
-          + (['not ready nodes=' ~ ((not_ready_nodes | default([]) | length) | string)] if (not_ready_nodes | default([]) | length > 0 else [])
-          + (['nodes under pressure=' ~ ((pressure_nodes | default([]) | length) | string)] if (pressure_nodes | default([]) | length > 0 else [])
-          + (['critical pod density nodes=' ~ ((critical_pod_density_nodes | default([]) | length) | string)] if (critical_pod_density_nodes | default([]) | length > 0 else [])
-          + (['high pod density nodes=' ~ ((high_pod_density_nodes | default([]) | length) | string)] if (high_pod_density_nodes | default([]) | length > 0 else [])
-          + (['quota pressure findings=' ~ ((quota_pressure_findings | default([]) | length) | string)] if (quota_pressure_findings | default([]) | length > 0 else [])
-          + (['high CPU nodes=' ~ ((high_cpu_nodes | default([]) | length) | string)] if (high_cpu_nodes | default([]) | length > 0 else [])
-          + (['high memory nodes=' ~ ((high_memory_nodes | default([]) | length) | string)] if (high_memory_nodes | default([]) | length > 0 else [])
-          + (['high disk nodes=' ~ ((high_disk_nodes | default([]) | length) | string)] if (high_disk_nodes | default([]) | length > 0 else [])
+          + (['not ready nodes=' ~ ((not_ready_nodes | default([]) | length) | string)] if ((not_ready_nodes | default([]) | length) > 0) else [])
+          + (['nodes under pressure=' ~ ((pressure_nodes | default([]) | length) | string)] if ((pressure_nodes | default([]) | length) > 0) else [])
+          + (['critical pod density nodes=' ~ ((critical_pod_density_nodes | default([]) | length) | string)] if ((critical_pod_density_nodes | default([]) | length) > 0) else [])
+          + (['high pod density nodes=' ~ ((high_pod_density_nodes | default([]) | length) | string)] if ((high_pod_density_nodes | default([]) | length) > 0) else [])
+          + (['quota pressure findings=' ~ ((quota_pressure_findings | default([]) | length) | string)] if ((quota_pressure_findings | default([]) | length) > 0) else [])
+          + (['high CPU nodes=' ~ ((high_cpu_nodes | default([]) | length) | string)] if ((high_cpu_nodes | default([]) | length) > 0) else [])
+          + (['high memory nodes=' ~ ((high_memory_nodes | default([]) | length) | string)] if ((high_memory_nodes | default([]) | length) > 0) else [])
+          + (['high disk nodes=' ~ ((high_disk_nodes | default([]) | length) | string)] if ((high_disk_nodes | default([]) | length) > 0) else [])
           + (['node diagnostics evidence=' ~ (node_diagnostics_summary.verdict | default('unknown'))] if node_diagnostics_evidence_gap else [])
           + (['external storage provider not detected'] if not (storage_posture_summary.has_external_storage_provider | default(false) | bool) else [])
           + (['local or ephemeral storage only risk'] if (storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool) else [])
@@ -1040,9 +1051,9 @@
       {{
         (
           []
-          + (['unhealthy user pods=' ~ ((unhealthy_user_pods | default([]) | length) | string)] if (unhealthy_user_pods | default([]) | length > 0 else [])
-          + (['workload rollout issues=' ~ ((workload_health_issues | default([]) | length) | string)] if (workload_health_issues | default([]) | length > 0 else [])
-          + (['restart hotspots=' ~ ((high_restart_pods | default([]) | length) | string)] if (high_restart_pods | default([]) | length > 0 else [])
+          + (['unhealthy user pods=' ~ ((unhealthy_user_pods | default([]) | length) | string)] if ((unhealthy_user_pods | default([]) | length) > 0) else [])
+          + (['workload rollout issues=' ~ ((workload_health_issues | default([]) | length) | string)] if ((workload_health_issues | default([]) | length) > 0) else [])
+          + (['restart hotspots=' ~ ((high_restart_pods | default([]) | length) | string)] if ((high_restart_pods | default([]) | length) > 0) else [])
           + (['workload hygiene debt=' ~ ((workload_hygiene_debt_count | int) | string)] if (workload_hygiene_debt_count | int) > 0 else [])
           + (['softer efficiency or cleanup signals=' ~ ((workload_efficiency_context_count | int) | string)] if (workload_efficiency_context_count | int) > 0 else [])
         ) | join('; ')
@@ -1311,9 +1322,14 @@
         'WARNING'
         if (
           ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0)
-          or (day2_posture_summary.identity_provider_count | default(0) | int) == 0
+          or (
+            (auth_posture_summary.status | default('unknown')) in ['warning', 'review']
+            and (
+              (auth_posture_summary.external_identity_provider_count | default(0) | int) == 0
+              or (auth_posture_summary.kubeadmin_secret_present | default(false) | bool)
+            )
+          )
           or (day2_posture_summary.backup_schedule_count | default(0) | int) == 0
-          or (day2_posture_summary.successful_backup_count | default(0) | int) == 0
           or ((day2_posture_summary.machinehealthcheck_expected | default(false)) and (day2_posture_summary.machinehealthcheck_count | default(0) | int) == 0)
         )
         else 'HEALTHY'
@@ -1324,9 +1340,9 @@
           []
           + (['GitOps not detected; treat as operating-model context, not an automatic maturity defect'] if not (day2_posture_summary.gitops_present | default(false)) else [])
           + (['GitOps applications missing'] if ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0) else [])
-          + (['identity providers=' ~ ((day2_posture_summary.identity_provider_count | default(0) | int) | string)] if (day2_posture_summary.identity_provider_count | default(0) | int) == 0 else [])
+          + (['identity integration needs review'] if ((auth_posture_summary.status | default('unknown')) in ['warning', 'review'] and (((auth_posture_summary.external_identity_provider_count | default(0) | int) == 0) or (auth_posture_summary.kubeadmin_secret_present | default(false) | bool))) else [])
           + (['backup schedules=' ~ ((day2_posture_summary.backup_schedule_count | default(0) | int) | string)] if (day2_posture_summary.backup_schedule_count | default(0) | int) == 0 else [])
-          + (['successful backups=' ~ ((day2_posture_summary.successful_backup_count | default(0) | int) | string)] if (day2_posture_summary.successful_backup_count | default(0) | int) == 0 else [])
+          + (['successful backups currently visible=' ~ ((day2_posture_summary.successful_backup_count | default(0) | int) | string)] if ((day2_posture_summary.backup_schedule_count | default(0) | int) > 0 and (day2_posture_summary.successful_backup_count | default(0) | int) == 0) else [])
           + (['machine remediation missing where expected'] if ((day2_posture_summary.machinehealthcheck_expected | default(false)) and (day2_posture_summary.machinehealthcheck_count | default(0) | int) == 0) else [])
         ) | join('; ')
       }}
@@ -1562,12 +1578,15 @@
           assessment_product_evidence | default({})
         ) | dict2items | selectattr('value.present', 'defined') | selectattr('value.present', 'equalto', true) | list | length
       }}
+    gitops_argocd_count: "{{ (gitops_summary | default({}))['argocd_count'] | default(0) }}"
+    gitops_application_count: "{{ (gitops_summary | default({}))['application_count'] | default(0) }}"
+    day2_tekton_present: "{{ (day2_posture_summary | default({}))['tekton_present'] | default(false) }}"
     external_delivery_evidence_present: >-
       {{
         (
-          gitops_summary | default({}).get('argocd_count', 0) | int > 0
-          or gitops_summary | default({}).get('application_count', 0) | int > 0
-          or day2_posture_summary | default({}).get('tekton_present', false)
+          (gitops_argocd_count | int) > 0
+          or (gitops_application_count | int) > 0
+          or (day2_tekton_present | bool)
           or (pipeline_inventory_count | int) > 0
           or (pipelinerun_inventory_count | int) > 0
         )
@@ -1612,7 +1631,7 @@
       {{
         (
           []
-          + (['failed PipelineRuns=' ~ ((failed_pipelineruns | default([]) | length) | string)] if (failed_pipelineruns | default([]) | length > 0 else [])
+          + (['failed PipelineRuns=' ~ ((failed_pipelineruns | default([]) | length) | string)] if ((failed_pipelineruns | default([]) | length) > 0) else [])
           + (['BuildConfigs without triggers=' ~ ((triggerless_buildconfig_warning_count | int) | string)] if (triggerless_buildconfig_warning_count | int) > 0 else [])
           + (['BuildConfigs without triggers treated as automation context=' ~ ((triggerless_buildconfig_info_count | int) | string)] if (triggerless_buildconfig_info_count | int) > 0 else [])
           + (['pipelines=' ~ ((pipeline_inventory_count | int) | string)] if (pipeline_inventory_count | int) > 0 else [])

@@ -1,8 +1,14 @@
 # Kubernetes Cluster Health Check Design Notes
 
-This guide explains the design behind the cluster health report in this repo.
+This guide explains how the cluster health report in this repo is designed and why it works the way it does.
 
-The original design started from OpenShift operations, but the repo now has a broader shape:
+If you are new here, read the docs in this order:
+
+1. Start with [README.md](README.md) for setup and basic usage.
+2. Read this file to understand the design.
+3. Then use [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md) as a practical guide when reading the OpenShift report.
+
+The original design started from OpenShift operations, but the repo has grown into something broader:
 
 - a rich OpenShift path
 - a shared Kubernetes path
@@ -16,11 +22,11 @@ The execution model is also broader than the original live-only design:
 - a collected-state reprocessing path for `must-gather`, `inspect`, `cluster-compare`, Advisor export, managed gates, `sosreport`, and case bundles
 - one shared OpenShift analysis/report model used by both paths
 
-That matters because the design is not just about what is checked. It is also about making live scans and collected-state analysis land in the same report taxonomy and the same decision model.
+That matters because the design is not only about what gets checked. It is also about making live scans and collected-state analysis land in the same report structure and the same decision model.
 
 ## Current OpenShift Model
 
-The OpenShift path now follows these principles:
+The OpenShift path now follows a few simple principles:
 
 1. Prefer live cluster collection when access is available.
 2. Treat collected-state inputs as a first-class supported path, not a separate product.
@@ -35,7 +41,7 @@ Examples of those optional analyzers:
 - `cluster-compare` for reference drift
 - `sosreport` for node-level diagnostics
 
-The design intent is that these tools enrich the report, not fragment it into separate report families.
+The goal is to let these tools enrich the report, not split the repo into separate report families.
 
 ## Current Report Model
 
@@ -55,7 +61,7 @@ The OpenShift report now follows one clear order, from urgent risk to overall re
 12. `P12` Workload capability extensions
 13. `P13` Day 2 production readiness
 
-This split keeps the later sections clear:
+This split keeps the later sections easier to understand:
 
 - `P10` covers daily operations
 - `P11` covers delivery and platform adoption
@@ -64,9 +70,11 @@ This split keeps the later sections clear:
 
 Each posture section should start with a short recommendation and summary before the detailed tables.
 
+If you want the short version of that review flow, use [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md).
+
 ## Supported Cluster Types
 
-Today the repo is designed to support these cluster types:
+Right now the repo is designed to support these cluster types:
 
 - OpenShift
 - OpenShift SNO
@@ -91,7 +99,7 @@ OpenShift is still the deepest path in the repo. The Kubernetes path is broader 
 
 ## Best-Practice Sources
 
-The check design and report behavior are based on a mix of vendor, upstream, and operations sources.
+The check design and report behavior come from a mix of vendor docs, upstream guidance, and real operations practice.
 
 Main source groups:
 
@@ -138,17 +146,17 @@ How those sources are used:
 - GitHub OpenShift runbooks are used as operational references for what should have an owner and a response path
 - AKS, EKS, and GKE guidance shape the provider-aware sections in the Kubernetes path
 
-This repo does not try to copy one vendor document line by line. It turns the common themes from those sources into a practical health-review model that can run from inside the cluster with cluster-local data.
+This repo does not try to copy one vendor document line by line. It turns the common themes from those sources into a practical review model that can run from inside the cluster with cluster-local data.
 
 Rancher-managed Kubernetes and Minikube are supported cluster types in the repo, but the current best-practice model for those paths is still driven mostly by the shared Kubernetes guidance above, not by a deep Rancher-specific or Minikube-specific source set.
 
-The best-practice checks in the repo are a synthesis of those sources, not a direct copy of any single document.
+The best-practice checks in the repo are a blend of those sources, not a direct copy of any single document.
 
 ## The Basic Idea
 
 Cluster health should not be reduced to a tiny shell script that runs a few `oc` commands and prints `green` or `red`.
 
-That kind of check is easy to write, but it usually misses the things that matter:
+That kind of check is easy to write, but it usually misses the things that really matter:
 
 - partial control-plane problems
 - operator degradation
@@ -186,7 +194,7 @@ If a solution skips most of that, it may still be useful as a quick script, but 
 
 ## Review Scope Mapping
 
-The OpenShift path is intended to support a real platform review, not just a pass or fail health check. That said, the design separates three kinds of review coverage:
+The OpenShift path is meant to support a real platform review, not just a pass or fail health check. That said, the design still separates three kinds of review coverage:
 
 - `direct`: the report can support the review area with cluster-local data and clear findings
 - `partial`: the report can provide strong supporting signals, but not a complete judgment
@@ -235,7 +243,7 @@ That distinction matters because several important customer review topics are no
 - Container image management: `partial`
   The report evaluates image-registry posture, internal image-registry use in workloads, and some registry policy risks, but not the full external image governance chain.
 
-The design goal is not to overclaim. The report should help an assessor move faster, show strong technical evidence, and clearly identify where human review is still required.
+The design goal is not to overclaim. The report should help an assessor move faster, show strong technical evidence, and clearly point out where human review is still needed.
 
 ## What The Different Sources Agree On
 

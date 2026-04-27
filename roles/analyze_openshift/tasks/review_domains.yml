@@ -153,7 +153,7 @@
         ("FedRAMP", [r"\bfedramp\b"]),
         ("HIPAA", [r"\bhipaa\b"]),
         ("PCI-DSS", [r"\bpci(?:[-_ ]?dss)?\b"]),
-        ("SOC", [r"\bsoc(?:[-_ ]?\d+)?\b"]),
+        ("SOC", [r"\bsoc[-_ ]?[123]\b", r"\bservice organization control\b"]),
         ("SOX", [r"\bsox\b"]),
         ("NIST", [r"\bnist\b"]),
         ("CIS", [r"\bcis\b"]),
@@ -483,10 +483,39 @@
   failed_when: false
 
 - name: Normalize compliance program posture summary
+  vars:
+    compliance_program_summary_payload: >-
+      {{
+        compliance_program_summary_cmd.stdout | from_json
+        if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0))
+        else {
+          'operator_summary': {
+            'present': false,
+            'namespace_present': false,
+            'suite_count': 0,
+            'scan_count': 0,
+            'scan_setting_count': 0,
+            'scan_setting_binding_count': 0,
+            'profile_count': 0,
+            'tailored_profile_count': 0,
+            'profilebundle_count': 0,
+            'valid_profilebundle_count': 0,
+            'invalid_profilebundle_count': 0,
+            'failing_scan_count': 0,
+            'failed_check_count': 0,
+            'standards_configured_count': 0,
+            'verdict': 'unknown',
+            'profilebundle_summary': [],
+            'scan_summary': []
+          },
+          'standards_summary': [],
+          'findings': []
+        }
+      }}
   ansible.builtin.set_fact:
-    compliance_operator_summary: "{{ (compliance_program_summary_cmd.stdout | from_json).operator_summary if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0)) else {'present': false, 'namespace_present': false, 'suite_count': 0, 'scan_count': 0, 'scan_setting_count': 0, 'scan_setting_binding_count': 0, 'profile_count': 0, 'tailored_profile_count': 0, 'profilebundle_count': 0, 'valid_profilebundle_count': 0, 'invalid_profilebundle_count': 0, 'failing_scan_count': 0, 'failed_check_count': 0, 'standards_configured_count': 0, 'verdict': 'unknown', 'profilebundle_summary': [], 'scan_summary': []} }}"
-    compliance_standards_summary: "{{ (compliance_program_summary_cmd.stdout | from_json).standards_summary if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0)) else [] }}"
-    compliance_standards_findings: "{{ (compliance_program_summary_cmd.stdout | from_json).findings if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0)) else [] }}"
+    compliance_operator_summary: "{{ compliance_program_summary_payload.operator_summary }}"
+    compliance_standards_summary: "{{ compliance_program_summary_payload.standards_summary }}"
+    compliance_standards_findings: "{{ compliance_program_summary_payload.findings }}"
 
 - name: Build DataProtectionApplication summary
   ansible.builtin.set_fact:

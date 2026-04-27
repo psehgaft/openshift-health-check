@@ -18,6 +18,17 @@
   changed_when: false
 
 - name: Build core collected-state health findings
+  vars:
+    collected_state_external_delivery_evidence_present: >-
+      {{
+        (
+          (gitops_summary | default({})).get('argocd_count', 0) | int > 0
+          or (gitops_summary | default({})).get('application_count', 0) | int > 0
+          or (day2_posture_summary | default({})).get('tekton_present', false)
+          or ((analysis_graph.pipelines | default({'items': []})).get('items', []) | length) > 0
+          or ((analysis_graph.pipelineruns | default({'items': []})).get('items', []) | length) > 0
+        )
+      }}
   ansible.builtin.set_fact:
     assessment_core_health_findings: >-
       {{
@@ -43,7 +54,7 @@
         + ([{'severity': 'warning', 'area': 'image-registry', 'detail': 'Image registry and governance findings: ' ~ (((image_registry_findings | default([]) | length) + (feature_findings | default([]) | length)) | string)}] if ((image_registry_findings | default([]) | length > 0) or (feature_findings | default([]) | length > 0)) else [])
         + ([{'severity': 'warning', 'area': 'apiservices', 'detail': 'Unavailable aggregated API services: ' ~ ((apiservice_issues | default([]) | length) | string)}] if (apiservice_issues | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'pipelines', 'detail': 'Failed PipelineRuns: ' ~ ((failed_pipelineruns | default([]) | length) | string)}] if (failed_pipelineruns | default([]) | length > 0) else [])
-        + ([{'severity': 'warning', 'area': 'buildconfigs', 'detail': 'BuildConfigs without triggers: ' ~ ((buildconfigs_without_triggers | default([]) | length) | string)}] if (buildconfigs_without_triggers | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'buildconfigs', 'detail': 'BuildConfigs without triggers: ' ~ ((buildconfigs_without_triggers | default([]) | length) | string)}] if ((buildconfigs_without_triggers | default([]) | length) > 0 and not (collected_state_external_delivery_evidence_present | bool)) else [])
         + ([{'severity': 'warning', 'area': 'compliance', 'detail': 'Compliance findings: ' ~ ((((compliance_suite_findings | default([]) | length) + (compliance_standards_findings | default([]) | length))) | string)}] if ((compliance_suite_findings | default([]) | length > 0) or (compliance_standards_findings | default([]) | length > 0)) else [])
         + ([{'severity': 'warning', 'area': 'backup', 'detail': 'Backup posture findings: ' ~ ((backup_posture_findings | default([]) | length) | string)}] if (backup_posture_findings | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'machine-remediation', 'detail': 'MachineHealthCheck findings: ' ~ ((machine_healthcheck_findings | default([]) | length) | string)}] if (machine_healthcheck_findings | default([]) | length > 0) else [])

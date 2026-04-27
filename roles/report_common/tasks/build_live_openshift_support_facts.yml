@@ -1,4 +1,30 @@
 ---
+- name: Build live supportability helper facts
+  ansible.builtin.set_fact:
+    live_reference_compliance_summary:
+      verdict: "{{ 'not-collected' if (reference_compliance_summary.verdict | default('insufficient-evidence')) == 'insufficient-evidence' else (reference_compliance_summary.verdict | default('not-collected')) }}"
+      evidence_present: "{{ reference_compliance_summary.evidence_present | default(false) }}"
+      comparison_count: "{{ reference_compliance_summary.comparison_count | default(0) }}"
+      diff_count: "{{ reference_compliance_summary.diff_count | default(0) }}"
+      missing_count: "{{ reference_compliance_summary.missing_count | default(0) }}"
+      error_count: "{{ reference_compliance_summary.error_count | default(0) }}"
+      warning_count: "{{ reference_compliance_summary.warning_count | default(0) }}"
+      format: "{{ reference_compliance_summary.format | default('missing') }}"
+    live_node_diagnostics_summary:
+      verdict: "{{ 'not-collected' if (node_diagnostics_summary.verdict | default('insufficient-evidence')) == 'insufficient-evidence' else (node_diagnostics_summary.verdict | default('not-collected')) }}"
+      inspect_present: "{{ node_diagnostics_summary.inspect_present | default(false) }}"
+      inspect_file_count: "{{ node_diagnostics_summary.inspect_file_count | default(0) }}"
+      inspect_namespace_count: "{{ node_diagnostics_summary.inspect_namespace_count | default(0) }}"
+      inspect_resource_markers: "{{ node_diagnostics_summary.inspect_resource_markers | default({}) }}"
+      sosreport_present: "{{ node_diagnostics_summary.sosreport_present | default(false) }}"
+      sosreport_count: "{{ node_diagnostics_summary.sosreport_count | default(0) }}"
+      sosreport_node_names: "{{ node_diagnostics_summary.sosreport_node_names | default([]) }}"
+      sosreport_with_journal: "{{ node_diagnostics_summary.sosreport_with_journal | default(0) }}"
+      sosreport_with_kubelet_logs: "{{ node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) }}"
+      sosreport_with_crio_logs: "{{ node_diagnostics_summary.sosreport_with_crio_logs | default(0) }}"
+      sosreport_with_network_data: "{{ node_diagnostics_summary.sosreport_with_network_data | default(0) }}"
+  changed_when: false
+
 - name: Build live evidence and supportability facts
   vars:
     live_support_parsed: "{{ (live_support_data | default({})).get('parsed', {}) }}"
@@ -89,28 +115,6 @@
         )
       }}
   ansible.builtin.set_fact:
-    live_reference_compliance_summary:
-      verdict: "{{ 'not-collected' if (reference_compliance_summary.verdict | default('insufficient-evidence')) == 'insufficient-evidence' else (reference_compliance_summary.verdict | default('not-collected')) }}"
-      evidence_present: "{{ reference_compliance_summary.evidence_present | default(false) }}"
-      comparison_count: "{{ reference_compliance_summary.comparison_count | default(0) }}"
-      diff_count: "{{ reference_compliance_summary.diff_count | default(0) }}"
-      missing_count: "{{ reference_compliance_summary.missing_count | default(0) }}"
-      error_count: "{{ reference_compliance_summary.error_count | default(0) }}"
-      warning_count: "{{ reference_compliance_summary.warning_count | default(0) }}"
-      format: "{{ reference_compliance_summary.format | default('missing') }}"
-    live_node_diagnostics_summary:
-      verdict: "{{ 'not-collected' if (node_diagnostics_summary.verdict | default('insufficient-evidence')) == 'insufficient-evidence' else (node_diagnostics_summary.verdict | default('not-collected')) }}"
-      inspect_present: "{{ node_diagnostics_summary.inspect_present | default(false) }}"
-      inspect_file_count: "{{ node_diagnostics_summary.inspect_file_count | default(0) }}"
-      inspect_namespace_count: "{{ node_diagnostics_summary.inspect_namespace_count | default(0) }}"
-      inspect_resource_markers: "{{ node_diagnostics_summary.inspect_resource_markers | default({}) }}"
-      sosreport_present: "{{ node_diagnostics_summary.sosreport_present | default(false) }}"
-      sosreport_count: "{{ node_diagnostics_summary.sosreport_count | default(0) }}"
-      sosreport_node_names: "{{ node_diagnostics_summary.sosreport_node_names | default([]) }}"
-      sosreport_with_journal: "{{ node_diagnostics_summary.sosreport_with_journal | default(0) }}"
-      sosreport_with_kubelet_logs: "{{ node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) }}"
-      sosreport_with_crio_logs: "{{ node_diagnostics_summary.sosreport_with_crio_logs | default(0) }}"
-      sosreport_with_network_data: "{{ node_diagnostics_summary.sosreport_with_network_data | default(0) }}"
     live_supportability_summary:
       health_verdict: "{{ supportability_summary.health_verdict | default('supported') }}"
       supportability_verdict: "{{ live_supportability_verdict_resolved }}"

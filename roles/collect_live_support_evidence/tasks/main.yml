@@ -25,58 +25,65 @@
     mode: "0755"
   when: collect_live_support_artifacts | bool
 
+- name: Normalize OpenShift collector capability source
+  ansible.builtin.set_fact:
+    openshift_scan_collectors: "{{ (openshift_scan_capabilities | default({})).get('collectors', {}) }}"
+
 - name: Resolve live support collector plan
   ansible.builtin.set_fact:
     live_support_collector_capabilities:
       must-gather:
-        category: "{{ openshift_scan_capabilities.collectors.must_gather.category | default('oc-native') }}"
-        applicable: "{{ openshift_scan_capabilities.collectors.must_gather.applicable | default(true) | bool }}"
-        tool_available: "{{ openshift_scan_capabilities.collectors.must_gather.tool_available | default(true) | bool }}"
-        configured: "{{ openshift_scan_capabilities.collectors.must_gather.configured | default(true) | bool }}"
+        category: "{{ openshift_scan_collectors.must_gather.category | default('oc-native') }}"
+        applicable: "{{ openshift_scan_collectors.must_gather.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_collectors.must_gather.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_collectors.must_gather.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_must_gather | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_capabilities.collectors.must_gather.requirement_summary | default('Requires oc access to the cluster and the ability to run must-gather pods.') }}"
+        requirement_summary: "{{ openshift_scan_collectors.must_gather.requirement_summary | default('Requires oc access to the cluster and the ability to run must-gather pods.') }}"
       inspect:
-        category: "{{ openshift_scan_capabilities.collectors.inspect.category | default('oc-native') }}"
-        applicable: "{{ openshift_scan_capabilities.collectors.inspect.applicable | default(true) | bool }}"
-        tool_available: "{{ openshift_scan_capabilities.collectors.inspect.tool_available | default(true) | bool }}"
-        configured: "{{ openshift_scan_capabilities.collectors.inspect.configured | default(true) | bool }}"
+        category: "{{ openshift_scan_collectors.inspect.category | default('oc-native') }}"
+        applicable: "{{ openshift_scan_collectors.inspect.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_collectors.inspect.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_collectors.inspect.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_inspect | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_capabilities.collectors.inspect.requirement_summary | default('Requires oc access to inspect cluster resources.') }}"
+        requirement_summary: "{{ openshift_scan_collectors.inspect.requirement_summary | default('Requires oc access to inspect cluster resources.') }}"
       cluster-compare:
-        category: "{{ openshift_scan_capabilities.collectors.cluster_compare.category | default('oc-plugin') }}"
-        applicable: "{{ openshift_scan_capabilities.collectors.cluster_compare.applicable | default(true) | bool }}"
-        tool_available: "{{ openshift_scan_capabilities.collectors.cluster_compare.tool_available | default(false) | bool }}"
-        configured: "{{ openshift_scan_capabilities.collectors.cluster_compare.configured | default(false) | bool }}"
+        category: "{{ openshift_scan_collectors.cluster_compare.category | default('oc-plugin') }}"
+        applicable: "{{ openshift_scan_collectors.cluster_compare.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_collectors.cluster_compare.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_collectors.cluster_compare.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_cluster_compare | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_capabilities.collectors.cluster_compare.requirement_summary | default('Requires the oc cluster-compare plugin plus a configured reference command.') }}"
+        requirement_summary: "{{ openshift_scan_collectors.cluster_compare.requirement_summary | default('Requires the oc cluster-compare plugin plus a configured reference command.') }}"
       managed-gates:
-        category: "{{ openshift_scan_capabilities.collectors.managed_gates.category | default('provider-api') }}"
-        applicable: "{{ openshift_scan_capabilities.collectors.managed_gates.applicable | default(false) | bool }}"
-        tool_available: "{{ openshift_scan_capabilities.collectors.managed_gates.tool_available | default(false) | bool }}"
-        configured: "{{ openshift_scan_capabilities.collectors.managed_gates.configured | default(false) | bool }}"
+        category: "{{ openshift_scan_collectors.managed_gates.category | default('provider-api') }}"
+        applicable: "{{ openshift_scan_collectors.managed_gates.applicable | default(false) | bool }}"
+        tool_available: "{{ openshift_scan_collectors.managed_gates.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_collectors.managed_gates.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_managed_gates | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_capabilities.collectors.managed_gates.requirement_summary | default('Requires provider-side tooling or an explicit managed-gates command for managed OpenShift offerings.') }}"
+        requirement_summary: "{{ openshift_scan_collectors.managed_gates.requirement_summary | default('Requires provider-side tooling or an explicit managed-gates command for managed OpenShift offerings.') }}"
       advisor-export:
-        category: "{{ openshift_scan_capabilities.collectors.advisor_export.category | default('external-service') }}"
-        applicable: "{{ openshift_scan_capabilities.collectors.advisor_export.applicable | default(true) | bool }}"
-        tool_available: "{{ openshift_scan_capabilities.collectors.advisor_export.tool_available | default(false) | bool }}"
-        configured: "{{ openshift_scan_capabilities.collectors.advisor_export.configured | default(false) | bool }}"
+        category: "{{ openshift_scan_collectors.advisor_export.category | default('external-service') }}"
+        applicable: "{{ openshift_scan_collectors.advisor_export.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_collectors.advisor_export.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_collectors.advisor_export.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_advisor_export | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_capabilities.collectors.advisor_export.requirement_summary | default('Requires an explicit Advisor or Insights export command.') }}"
+        requirement_summary: "{{ openshift_scan_collectors.advisor_export.requirement_summary | default('Requires an explicit Advisor or Insights export command.') }}"
       insights-archive:
-        category: "{{ openshift_scan_capabilities.collectors.insights_archive.category | default('oc-native') }}"
-        applicable: "{{ openshift_scan_capabilities.collectors.insights_archive.applicable | default(true) | bool }}"
-        tool_available: "{{ openshift_scan_capabilities.collectors.insights_archive.tool_available | default(true) | bool }}"
-        configured: "{{ openshift_scan_capabilities.collectors.insights_archive.configured | default(true) | bool }}"
+        category: "{{ openshift_scan_collectors.insights_archive.category | default('oc-native') }}"
+        applicable: "{{ openshift_scan_collectors.insights_archive.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_collectors.insights_archive.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_collectors.insights_archive.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_insights_archive | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_capabilities.collectors.insights_archive.requirement_summary | default('Uses oc to copy the Insights Operator archive from a running pod.') }}"
+        requirement_summary: "{{ openshift_scan_collectors.insights_archive.requirement_summary | default('Uses oc to copy the Insights Operator archive from a running pod.') }}"
       sosreport:
-        category: "{{ openshift_scan_capabilities.collectors.sosreport.category | default('node-level') }}"
-        applicable: "{{ openshift_scan_capabilities.collectors.sosreport.applicable | default(true) | bool }}"
-        tool_available: "{{ openshift_scan_capabilities.collectors.sosreport.tool_available | default(false) | bool }}"
-        configured: "{{ openshift_scan_capabilities.collectors.sosreport.configured | default(false) | bool }}"
+        category: "{{ openshift_scan_collectors.sosreport.category | default('node-level') }}"
+        applicable: "{{ openshift_scan_collectors.sosreport.applicable | default(true) | bool }}"
+        tool_available: "{{ openshift_scan_collectors.sosreport.tool_available | default(false) | bool }}"
+        configured: "{{ openshift_scan_collectors.sosreport.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_sosreport | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_capabilities.collectors.sosreport.requirement_summary | default('Requires node-level access such as oc debug node or SSH plus a sosreport command.') }}"
+        requirement_summary: "{{ openshift_scan_collectors.sosreport.requirement_summary | default('Requires node-level access such as oc debug node or SSH plus a sosreport command.') }}"
+
+- name: Resolve enabled live support collectors
+  ansible.builtin.set_fact:
     live_support_collect_must_gather_resolved: >-
       {{
         (live_support_collector_capabilities['must-gather'].requested | bool)

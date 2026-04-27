@@ -1,8 +1,15 @@
 ---
 - name: Update live OpenShift generated format status
+  vars:
+    generated_format_status:
+      markdown: true
+      json: true
+      html: "{{ (report_html_cmd.rc | default(1)) == 0 }}"
+      pdf: "{{ (report_pdf_cmd.rc | default(1)) == 0 }}"
+    updated_execution_stats: "{{ execution_stats | combine({'report_formats_generated': generated_format_status}, recursive=True) }}"
   ansible.builtin.set_fact:
-    execution_stats: "{{ execution_stats | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True) }}"
-    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': {'markdown': true, 'json': true, 'html': ((report_html_cmd.rc | default(1)) == 0), 'pdf': ((report_pdf_cmd.rc | default(1)) == 0)}}, recursive=True))}, recursive=True) }}"
+    execution_stats: "{{ updated_execution_stats }}"
+    audit_report: "{{ audit_report | combine({'execution_stats': ((audit_report.execution_stats | default(execution_stats)) | combine({'report_formats_generated': generated_format_status}, recursive=True))}, recursive=True) }}"
     report_pdf_status_reason: >-
       {{
         'generated'
@@ -23,4 +30,3 @@
           )
         )
       }}
-
