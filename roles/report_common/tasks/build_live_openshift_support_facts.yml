@@ -185,6 +185,21 @@
         collected: "{{ (live_support_parsed.inspect.summary.file_count | default(0) | int) > 0 }}"
         file_count: "{{ live_support_parsed.inspect.summary.file_count | default(0) }}"
         namespace_count: "{{ live_support_parsed.inspect.summary.namespace_count | default(0) }}"
+      prometheus_query:
+        category: metric-api
+        applicable: true
+        status: "{{ prometheus_evidence_summary.status | default('unavailable') }}"
+        detail: >-
+          {{
+            'Queried openshift-monitoring/thanos-querier for alerting, API server, etcd, node, pod, and optional latency metrics.'
+            if (prometheus_evidence_summary.collected | default(false) | bool)
+            else 'Prometheus/Thanos query path was unavailable; metric-backed fields may be not-assessed.'
+          }}
+        requested: true
+        collected: "{{ prometheus_evidence_summary.collected | default(false) | bool }}"
+        transport: "{{ prometheus_evidence_summary.transport | default('unavailable') }}"
+        query_count: "{{ prometheus_evidence_summary.query_count | default(0) }}"
+        non_empty_result_count: "{{ prometheus_evidence_summary.non_empty_result_count | default(0) }}"
       cluster_compare:
         category: "{{ live_support_data.capabilities['cluster-compare'].category | default('oc-plugin') }}"
         applicable: "{{ live_support_data.capabilities['cluster-compare'].applicable | default(true) | bool }}"
@@ -226,4 +241,6 @@
         requested: "{{ live_support_data.capabilities['sosreport'].requested | default(false) | bool }}"
         collected: "{{ (live_support_parsed.sosreport.summary.count | default(0) | int) > 0 }}"
         count: "{{ live_support_parsed.sosreport.summary.count | default(0) }}"
+        target_nodes: "{{ live_support_data.artifacts.summary.node_debug_target_nodes | default([]) }}"
+        target_reasons: "{{ live_support_data.artifacts.summary.node_debug_target_reason_map | default({}) }}"
   changed_when: false

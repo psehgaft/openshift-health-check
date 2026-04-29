@@ -1,0 +1,323 @@
+---
+- name: Build Kubernetes capability profile summary
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+
+    data = json.loads(r'''{{ {
+      "profile": kubernetes_report_capability_profile | default({}),
+      "provider_family": resolved_provider_family | default(provider_family | default("generic")),
+      "cluster_profile_mode": resolved_cluster_profile_mode | default(cluster_profile_mode | default("production")),
+      "namespaces": (namespaces | default({})).get("items", []),
+      "pods": (pods | default({})).get("items", []),
+      "deployments": (deployments | default({})).get("items", []),
+      "statefulsets": (statefulsets | default({})).get("items", []),
+      "daemonsets": (daemonsets | default({})).get("items", []),
+      "crds": (crds | default({})).get("items", []),
+      "ingresses": (ingresses | default({})).get("items", []),
+      "secrets": (secrets | default({})).get("items", []),
+      "configmaps": (configmaps | default({})).get("items", []),
+      "serviceaccounts": (serviceaccounts | default({})).get("items", []),
+      "networkpolicies": (networkpolicies | default({})).get("items", []),
+      "resourcequotas": (resourcequotas | default({})).get("items", []),
+      "limitranges": (limitranges | default({})).get("items", []),
+      "poddisruptionbudgets": (poddisruptionbudgets | default({})).get("items", []),
+      "horizontalpodautoscalers": (horizontalpodautoscalers | default({})).get("items", []),
+      "servicemonitors": (servicemonitors | default({})).get("items", []),
+      "podmonitors": (podmonitors | default({})).get("items", []),
+      "storage_posture_summary": storage_posture_summary | default({}),
+      "topology_resilience": topology_resilience | default({}),
+      "user_namespace_names": user_namespace_names | default([]),
+      "namespaces_without_networkpolicy": namespaces_without_networkpolicy | default([]),
+      "namespaces_without_resourcequota": namespaces_without_resourcequota | default([]),
+      "namespaces_without_limitrange": namespaces_without_limitrange | default([]),
+      "workload_resilience_data": workload_resilience_data | default({}),
+      "workload_resource_findings": workload_resource_findings | default([]),
+      "workload_probe_findings": workload_probe_findings | default([]),
+      "deprecated_crd_findings": deprecated_crd_findings | default([]),
+      "deprecated_api_lines": deprecated_api_lines | default([]),
+      "certificate_expiry_findings": certificate_expiry_findings | default([]),
+      "provider_nodepool_summary": provider_nodepool_summary | default([]),
+      "provider_component_summary": provider_component_summary | default([])
+    } | to_json }}''')
+
+    profile = data.get("profile") or {}
+    user_namespaces = set(data.get("user_namespace_names") or [])
+    ns_names = {((item.get("metadata") or {}).get("name") or "") for item in data.get("namespaces") or []}
+    crd_names = {((item.get("metadata") or {}).get("name") or "").lower() for item in data.get("crds") or []}
+
+    def pod_spec_from(obj):
+        spec = obj.get("spec") or {}
+        return ((spec.get("template") or {}).get("spec") or spec)
+
+    def text_blob(obj):
+        parts = []
+        meta = obj.get("metadata") or {}
+        parts.extend([meta.get("name") or "", meta.get("namespace") or ""])
+        labels = meta.get("labels") or {}
+        parts.extend([str(k) for k in labels.keys()])
+        parts.extend([str(v) for v in labels.values()])
+        spec = pod_spec_from(obj)
+        for container in (spec.get("containers") or []) + (spec.get("initContainers") or []):
+            parts.extend([container.get("name") or "", container.get("image") or ""])
+        return " ".join(parts).lower()
+
+    def image_registry(image):
+        value = str(image or "").strip()
+        first = value.split("/", 1)[0]
+        if "." in first or ":" in first or first == "localhost":
+            return first.lower()
+        return "docker.io"
+
+    internal_registry_markers = [
+        ".svc", ".cluster.local", "image-registry.openshift-image-registry.svc",
+        "registry.k8s.io", "k8s.gcr.io", "quay.io/openshift", "registry.redhat.io",
+    ]
+    public_registry_names = {"docker.io", "index.docker.io", "quay.io", "ghcr.io", "gcr.io", "registry.k8s.io", "k8s.gcr.io"}
+
+    workloads = [item for key in ("pods", "deployments", "statefulsets", "daemonsets") for item in data.get(key) or []]
+    external_image_registries = set()
+    credentialed_public_image_registries = set()
+    workloads_with_pull_secret = 0
+    for obj in workloads:
+        spec = pod_spec_from(obj)
+        pull_secrets = spec.get("imagePullSecrets") or []
+        if pull_secrets:
+            workloads_with_pull_secret += 1
+        for container in (spec.get("containers") or []) + (spec.get("initContainers") or []):
+            registry = image_registry(container.get("image"))
+            if registry and registry not in public_registry_names and not any(marker in registry for marker in internal_registry_markers):
+                external_image_registries.add(registry)
+            elif registry in public_registry_names and pull_secrets:
+                credentialed_public_image_registries.add(registry)
+
+    dockerconfig_secret_count = len([
+        item for item in data.get("secrets") or []
+        if item.get("type") in ["kubernetes.io/dockerconfigjson", "kubernetes.io/dockercfg"]
+    ])
+    serviceaccount_pull_secret_count = sum(len((item.get("imagePullSecrets") or [])) for item in data.get("serviceaccounts") or [])
+
+    grafana_keywords = ["grafana"]
+    dashboard_configmaps = [
+        item for item in data.get("configmaps") or []
+        if (
+            any("grafana_dashboard" in str(k).lower() or "grafana_dashboard" in str(v).lower() for k, v in ((item.get("metadata") or {}).get("labels") or {}).items())
+            or any(str(key).lower().endswith(".json") and "dashboard" in str(value).lower() for key, value in ((item.get("data") or {}).items()))
+        )
+    ]
+
+    pod_blobs = [text_blob(pod) for pod in data.get("pods") or []]
+    all_workload_blobs = pod_blobs + [text_blob(item) for key in ("deployments", "statefulsets", "daemonsets") for item in data.get(key) or []]
+
+    def any_keyword(keywords, values):
+        return any(any(keyword in value for keyword in keywords) for value in values)
+
+    def crd_has(*needles):
+        return any(any(needle in name for needle in needles) for name in crd_names)
+
+    storage = data.get("storage_posture_summary") or {}
+    topology = data.get("topology_resilience") or {}
+    resilience = data.get("workload_resilience_data") or {}
+    provider = str(data.get("provider_family") or "generic")
+    mode = str(data.get("cluster_profile_mode") or "production")
+
+    signal_map = {
+        "network_policy_baseline": {
+            "present": bool(user_namespaces) and not data.get("namespaces_without_networkpolicy"),
+            "value": f"{len(data.get('networkpolicies') or [])} NetworkPolicies; {len(data.get('namespaces_without_networkpolicy') or [])} user namespaces without coverage",
+            "gap": f"{len(data.get('namespaces_without_networkpolicy') or [])} user namespaces do not have NetworkPolicy coverage",
+            "action": "Add baseline ingress and egress NetworkPolicies to the listed user namespaces, or document the approved alternate segmentation control.",
+        },
+        "resource_quota_governance": {
+            "present": bool(user_namespaces) and not data.get("namespaces_without_resourcequota"),
+            "value": f"{len(data.get('resourcequotas') or [])} ResourceQuotas; {len(data.get('namespaces_without_resourcequota') or [])} user namespaces without quota",
+            "gap": f"{len(data.get('namespaces_without_resourcequota') or [])} user namespaces do not have ResourceQuota coverage",
+            "action": "Define ResourceQuota objects for user namespaces based on tenant capacity and application ownership.",
+        },
+        "limit_range_defaults": {
+            "present": bool(user_namespaces) and not data.get("namespaces_without_limitrange"),
+            "value": f"{len(data.get('limitranges') or [])} LimitRanges; {len(data.get('namespaces_without_limitrange') or [])} user namespaces without defaults",
+            "gap": f"{len(data.get('namespaces_without_limitrange') or [])} user namespaces do not have LimitRange defaults",
+            "action": "Create LimitRange defaults for user namespaces so unset container requests and limits are bounded.",
+        },
+        "workload_resilience": {
+            "present": int(resilience.get("multi_replica_workload_count") or 0) > 0 and int(resilience.get("multi_replica_workloads_without_pdb") or 0) == 0 and int(resilience.get("multi_replica_workloads_without_spread_policy") or 0) == 0,
+            "value": f"{resilience.get('multi_replica_workload_count', 0)} multi-replica workloads checked; {resilience.get('multi_replica_workloads_without_pdb', 0)} without PDB; {resilience.get('multi_replica_workloads_without_spread_policy', 0)} without spread policy",
+            "gap": "one or more multi-replica workloads are missing PodDisruptionBudget or topology spread controls",
+            "action": "Add PodDisruptionBudgets and topology spread constraints or anti-affinity to production multi-replica workloads.",
+        },
+        "resource_requests_limits": {
+            "present": len(data.get("workload_resource_findings") or []) == 0,
+            "value": f"{len(data.get('workload_resource_findings') or [])} resource request or limit findings",
+            "gap": "one or more workloads are missing resource requests or limits",
+            "action": "Set CPU and memory requests and limits for the listed workloads and align namespace quotas with those values.",
+        },
+        "external_storage": {
+            "present": bool(storage.get("has_external_storage_provider")),
+            "value": f"{storage.get('external_storageclass_count', 0)} external StorageClasses; {storage.get('external_pv_count', 0)} external PV backends",
+            "gap": "no external persistent storage provider was detected",
+            "action": "Configure a supported CSI-backed StorageClass and validate persistent volume provisioning and restore behavior.",
+        },
+        "ingress_exposure": {
+            "present": len(data.get("ingresses") or []) > 0,
+            "value": f"{len(data.get('ingresses') or [])} Ingress objects",
+            "gap": "no Ingress objects were detected",
+            "action": "If applications require external access, define Ingress resources with TLS and ownership metadata; otherwise mark this capability not required.",
+        },
+        "tls_certificate_hygiene": {
+            "present": len([s for s in data.get("secrets") or [] if (s.get("type") == "kubernetes.io/tls")]) > 0,
+            "value": f"{len([s for s in data.get('secrets') or [] if (s.get('type') == 'kubernetes.io/tls')])} TLS secrets; {len(data.get('certificate_expiry_findings') or [])} certificate expiry findings",
+            "gap": "no TLS secrets were collected or certificate hygiene evidence is incomplete",
+            "action": "Inventory application TLS secrets, define certificate ownership, and remediate any expiry findings.",
+        },
+        "deprecated_api_review": {
+            "present": len(data.get("deprecated_crd_findings") or []) == 0 and len(data.get("deprecated_api_lines") or []) == 0,
+            "value": f"{len(data.get('deprecated_crd_findings') or [])} deprecated CRD findings; {len(data.get('deprecated_api_lines') or [])} deprecated API findings",
+            "gap": "deprecated API or CRD findings were detected",
+            "action": "Update manifests, operators, and custom resources before the next Kubernetes upgrade.",
+        },
+        "backup": {
+            "present": ("velero" in ns_names or "kasten-io" in ns_names or crd_has("velero.io", "k10.kasten.io", "kanister", "trilio")),
+            "value": "backup tooling detected" if ("velero" in ns_names or "kasten-io" in ns_names or crd_has("velero.io", "k10.kasten.io", "kanister", "trilio")) else "backup tooling not detected",
+            "gap": "no common backup operator, namespace, or CRD was detected",
+            "action": "Install or document the cluster backup solution and provide evidence of recent successful backup and restore tests.",
+        },
+        "external_logging": {
+            "present": any_keyword(["fluent-bit", "fluentd", "logstash", "promtail", "vector", "opentelemetry", "otel-collector"], all_workload_blobs),
+            "value": "logging collector workload detected" if any_keyword(["fluent-bit", "fluentd", "logstash", "promtail", "vector", "opentelemetry", "otel-collector"], all_workload_blobs) else "logging collector not detected",
+            "gap": "no common log collector or forwarding workload was detected",
+            "action": "Deploy or document cluster log collection and forwarding, including destination ownership and retention.",
+        },
+        "external_monitoring": {
+            "present": any_keyword(["prometheus", "thanos", "datadog", "dynatrace", "newrelic", "grafana-agent", "otel-collector"], all_workload_blobs) or crd_has("monitoring.coreos.com"),
+            "value": "monitoring signal detected" if any_keyword(["prometheus", "thanos", "datadog", "dynatrace", "newrelic", "grafana-agent", "otel-collector"], all_workload_blobs) or crd_has("monitoring.coreos.com") else "monitoring signal not detected",
+            "gap": "no common monitoring, metric collection, or alerting signal was detected",
+            "action": "Configure monitoring and alert routing, or document the external monitoring platform used for this cluster.",
+        },
+        "user_workload_monitoring": {
+            "present": len(data.get("servicemonitors") or []) > 0 or len(data.get("podmonitors") or []) > 0,
+            "value": f"{len(data.get('servicemonitors') or [])} ServiceMonitors; {len(data.get('podmonitors') or [])} PodMonitors",
+            "gap": "no ServiceMonitor or PodMonitor resources were detected for application metrics scraping",
+            "action": "Create ServiceMonitor or PodMonitor resources for user workloads, or document the alternate metrics collection path.",
+        },
+        "grafana_dashboards": {
+            "present": any_keyword(grafana_keywords, all_workload_blobs) and (len(dashboard_configmaps) > 0 or crd_has("grafanadashboards", "grafana.integreatly.org", "grafana.com")),
+            "value": f"grafana workloads detected={any_keyword(grafana_keywords, all_workload_blobs)}; dashboard ConfigMaps={len(dashboard_configmaps)}; Grafana CRDs detected={crd_has('grafanadashboards', 'grafana.integreatly.org', 'grafana.com')}",
+            "gap": "no Grafana dashboard ConfigMap or Grafana dashboard CRD signal was detected",
+            "action": "Provide Grafana dashboards through labeled ConfigMaps, Grafana operator CRs, or an approved external dashboard system.",
+        },
+        "external_private_registry": {
+            "present": (len(external_image_registries) > 0 and (workloads_with_pull_secret > 0 or dockerconfig_secret_count > 0 or serviceaccount_pull_secret_count > 0)) or len(credentialed_public_image_registries) > 0,
+            "value": f"external registries={len(external_image_registries)}; credentialed public registries={len(credentialed_public_image_registries)}; workloads with imagePullSecrets={workloads_with_pull_secret}; docker registry secrets={dockerconfig_secret_count}; service account pull secrets={serviceaccount_pull_secret_count}",
+            "gap": "no workload evidence showed external non-public image registries with image pull credentials",
+            "action": "If applications use a private registry, configure imagePullSecrets or service account pull secrets and verify workload image references use the expected registry.",
+        },
+        "autoscaling": {
+            "present": len(data.get("horizontalpodautoscalers") or []) > 0 or crd_has("clusterautoscaler", "karpenter", "keda.sh"),
+            "value": f"{len(data.get('horizontalpodautoscalers') or [])} HPAs; autoscaling CRDs detected={crd_has('clusterautoscaler', 'karpenter', 'keda.sh')}",
+            "gap": "no HPA, KEDA, Cluster Autoscaler, or Karpenter signal was detected",
+            "action": "Configure workload or node autoscaling where elasticity is required, or mark this capability not required.",
+        },
+        "policy_engine": {
+            "present": ("gatekeeper-system" in ns_names or "kyverno" in ns_names or crd_has("gatekeeper.sh", "kyverno.io")),
+            "value": "policy engine detected" if ("gatekeeper-system" in ns_names or "kyverno" in ns_names or crd_has("gatekeeper.sh", "kyverno.io")) else "policy engine not detected",
+            "gap": "no Gatekeeper or Kyverno signal was detected",
+            "action": "Install or document the admission policy engine if policy-as-code is part of the customer baseline.",
+        },
+        "secrets_management": {
+            "present": ("external-secrets" in ns_names or "sealed-secrets" in ns_names or crd_has("external-secrets.io", "bitnami.com")),
+            "value": "external or sealed secret workflow detected" if ("external-secrets" in ns_names or "sealed-secrets" in ns_names or crd_has("external-secrets.io", "bitnami.com")) else "external secret workflow not detected",
+            "gap": "no external-secrets or sealed-secrets signal was detected",
+            "action": "Configure external secret synchronization or sealed-secret workflows if required by the security baseline.",
+        },
+        "workload_vulnerability_scanner": {
+            "present": any_keyword(["trivy-operator", "starboard", "stackrox", "collector", "sensor", "twistlock", "defender", "sysdig-agent", "falco"], all_workload_blobs) or crd_has("aquasecurity.github.io", "vulnerabilityreports", "stackrox.io", "falcosecurity.dev", "falco.org"),
+            "value": "scanner agent or vulnerability-report CRD signal detected" if any_keyword(["trivy-operator", "starboard", "stackrox", "collector", "sensor", "twistlock", "defender", "sysdig-agent", "falco"], all_workload_blobs) or crd_has("aquasecurity.github.io", "vulnerabilityreports", "stackrox.io", "falcosecurity.dev", "falco.org") else "scanner agent signal not detected",
+            "gap": "no common workload vulnerability scanner agent, operator, or vulnerability report CRD was detected",
+            "action": "Deploy or document the workload vulnerability scanner, such as Trivy Operator or secured-cluster services, and verify scan reports are being produced.",
+        },
+        "cicd_runners": {
+            "present": any_keyword(["gitlab-runner", "jenkins-agent", "jenkins-slave", "actions-runner", "azure-pipelines-agent", "azp-agent", "buildkite-agent"], pod_blobs),
+            "value": "cluster-hosted runner pods detected" if any_keyword(["gitlab-runner", "jenkins-agent", "jenkins-slave", "actions-runner", "azure-pipelines-agent", "azp-agent", "buildkite-agent"], pod_blobs) else "runner pods not detected",
+            "gap": "no cluster-hosted CI/CD runner pods were detected",
+            "action": "If the cluster hosts CI/CD agents, ensure runner pods have resource requests, isolation, and monitoring; otherwise leave optional.",
+        },
+        "service_mesh": {
+            "present": ("istio-system" in ns_names or "linkerd" in ns_names or crd_has("istio.io", "linkerd.io", "smi-spec.io")),
+            "value": "service mesh detected" if ("istio-system" in ns_names or "linkerd" in ns_names or crd_has("istio.io", "linkerd.io", "smi-spec.io")) else "service mesh not detected",
+            "gap": "no common service mesh signal was detected",
+            "action": "If service mesh is required, validate control plane health, sidecar injection, mTLS policy, and gateway ownership.",
+        },
+        "provider_node_pools": {
+            "present": provider in ["aks", "eks", "gke", "rancher", "minikube"] or bool(data.get("provider_nodepool_summary") or data.get("provider_component_summary") or topology.get("worker_failure_domains_observed")),
+            "value": f"provider={provider}; node pools={len(data.get('provider_nodepool_summary') or [])}; worker zones={len(topology.get('worker_failure_domains_observed') or [])}",
+            "gap": "provider node-pool or failure-domain metadata was not fully derived",
+            "action": "Verify node-pool, zone, and provider labels are available to the report, or provide provider-specific evidence outside Kubernetes API data.",
+        },
+    }
+
+    rows = []
+    findings = []
+    counts = {"ok": 0, "warning": 0, "missing": 0, "not_applicable": 0}
+    for key, spec in sorted(profile.items()):
+        signal = signal_map.get(key, {
+            "present": False,
+            "value": "no detector implemented for this capability",
+            "gap": "capability detector is not implemented for this Kubernetes report path",
+            "action": "Review this capability manually and extend collection if it should be automated.",
+        })
+        required = bool(spec.get("required"))
+        present = bool(signal.get("present"))
+        if present:
+            status = "OK"
+            counts["ok"] += 1
+        elif required:
+            status = "MISSING"
+            counts["missing"] += 1
+        else:
+            status = "NOT_APPLICABLE"
+            counts["not_applicable"] += 1
+        if status == "MISSING":
+            findings.append({
+                "capability": key,
+                "severity": spec.get("criticality", "medium"),
+                "finding": signal.get("gap", "required capability evidence was not detected"),
+                "action": signal.get("action", spec.get("notes", "Review and remediate this required capability.")),
+            })
+        rows.append({
+            "capability": key,
+            "required": required,
+            "criticality": spec.get("criticality", "medium"),
+            "expected_state": spec.get("expected_state", "present"),
+            "owner": spec.get("owner", "platform"),
+            "evidence_required": spec.get("evidence_required", []),
+            "status": status,
+            "signal": signal.get("value", ""),
+            "recommended_action": signal.get("action", spec.get("notes", "")),
+        })
+
+    overall = "WARNING" if counts["missing"] else "OK"
+    print(json.dumps({
+        "summary": {
+            "status": overall,
+            "capability_count": len(rows),
+            "ok_count": counts["ok"],
+            "missing_required_count": counts["missing"],
+            "optional_absent_count": counts["not_applicable"],
+            "profile_mode": mode,
+            "provider_family": provider,
+        },
+        "rows": rows,
+        "findings": findings,
+    }))
+    PY
+  register: kubernetes_capability_profile_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize Kubernetes capability profile summary
+  ansible.builtin.set_fact:
+    kubernetes_capability_profile_result: "{{ kubernetes_capability_profile_cmd.stdout | from_json if (kubernetes_capability_profile_cmd.rc == 0 and (kubernetes_capability_profile_cmd.stdout | default('') | length > 0)) else {'summary': {'status': 'UNKNOWN', 'capability_count': 0, 'ok_count': 0, 'missing_required_count': 0, 'optional_absent_count': 0}, 'rows': [], 'findings': []} }}"
+    kubernetes_capability_profile_summary: "{{ (kubernetes_capability_profile_cmd.stdout | from_json).summary if (kubernetes_capability_profile_cmd.rc == 0 and (kubernetes_capability_profile_cmd.stdout | default('') | length > 0)) else {'status': 'UNKNOWN', 'capability_count': 0, 'ok_count': 0, 'missing_required_count': 0, 'optional_absent_count': 0} }}"
+    kubernetes_capability_profile_rows: "{{ (kubernetes_capability_profile_cmd.stdout | from_json).rows if (kubernetes_capability_profile_cmd.rc == 0 and (kubernetes_capability_profile_cmd.stdout | default('') | length > 0)) else [] }}"
+    kubernetes_capability_profile_findings: "{{ (kubernetes_capability_profile_cmd.stdout | from_json).findings if (kubernetes_capability_profile_cmd.rc == 0 and (kubernetes_capability_profile_cmd.stdout | default('') | length > 0)) else [] }}"

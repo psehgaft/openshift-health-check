@@ -28,6 +28,12 @@
       - configmaps
       - storageclasses
       - warning_events
+      - horizontalpodautoscalers
+      - servicemonitors
+      - podmonitors
+    collection_optional_missing_resource_command_names:
+      - servicemonitors
+      - podmonitors
     collection_commands:
       - name: nodes
         argv: ["{{ kube_cli | default('oc') }}", "get", "nodes", "-o", "json"]
@@ -77,6 +83,12 @@
         argv: ["{{ kube_cli | default('oc') }}", "get", "pvc", "-A", "-o", "json"]
       - name: warning_events
         argv: ["{{ kube_cli | default('oc') }}", "get", "events", "-A", "--field-selector", "type=Warning", "-o", "json"]
+      - name: horizontalpodautoscalers
+        argv: ["{{ kube_cli | default('oc') }}", "get", "horizontalpodautoscalers.autoscaling", "-A", "-o", "json"]
+      - name: servicemonitors
+        argv: ["{{ kube_cli | default('oc') }}", "get", "servicemonitors.monitoring.coreos.com", "-A", "-o", "json", "--ignore-not-found"]
+      - name: podmonitors
+        argv: ["{{ kube_cli | default('oc') }}", "get", "podmonitors.monitoring.coreos.com", "-A", "-o", "json", "--ignore-not-found"]
 
 - name: Collect common cluster data in parallel
   ansible.builtin.shell: |
@@ -195,6 +207,15 @@
           or 'unauthorized' in collection_failure_stderr_lower
         )
       }}
+    optional_missing_resource_failure: >-
+      {{
+        (item.key in (collection_optional_missing_resource_command_names | default([])))
+        and (
+          'the server doesn' in collection_failure_stderr_lower
+          or 'no matches for kind' in collection_failure_stderr_lower
+          or 'not found' in collection_failure_stderr_lower
+        )
+      }}
     collection_failure_entry:
       name: "{{ item.key }}"
       rc: "{{ item.value.rc | default(1) }}"
@@ -203,6 +224,7 @@
   when:
     - (item.value.rc | default(1) | int) != 0
     - not optional_forbidden_failure
+    - not optional_missing_resource_failure
   changed_when: false
 
 - name: Capture common optional permission skips
@@ -220,14 +242,23 @@
           or 'unauthorized' in collection_failure_stderr_lower
         )
       }}
+    optional_missing_resource_failure: >-
+      {{
+        (item.key in (collection_optional_missing_resource_command_names | default([])))
+        and (
+          'the server doesn' in collection_failure_stderr_lower
+          or 'no matches for kind' in collection_failure_stderr_lower
+          or 'not found' in collection_failure_stderr_lower
+        )
+      }}
     collection_skip_entry:
       name: "{{ item.key }}"
       rc: "{{ item.value.rc | default(1) }}"
-      category: "optional-access-denied"
+      category: "{{ 'optional-not-installed' if optional_missing_resource_failure else 'optional-access-denied' }}"
       detail: "{{ collection_failure_stderr }}"
   when:
     - (item.value.rc | default(1) | int) != 0
-    - optional_forbidden_failure
+    - optional_forbidden_failure or optional_missing_resource_failure
   changed_when: false
 
 - name: Build common collection summary
@@ -273,19 +304,37 @@
     persistentvolumes: "{{ collected_commands.persistentvolumes.stdout | from_json if (collected_commands.persistentvolumes.rc | default(1)) == 0 else {'items': []} }}"
     persistentvolumeclaims: "{{ collected_commands.persistentvolumeclaims.stdout | from_json if (collected_commands.persistentvolumeclaims.rc | default(1)) == 0 else {'items': []} }}"
     warning_events: "{{ collected_commands.warning_events.stdout | from_json if (collected_commands.warning_events.rc | default(1)) == 0 else {'items': []} }}"
-    routes: "{{ {'items': []} }}"
-    clusteroperators: "{{ {'items': []} }}"
-    clusterversion: "{{ {} }}"
-    infrastructure: "{{ {} }}"
-    network_config: "{{ {} }}"
-    ingress_config: "{{ {} }}"
-    image_config: "{{ {} }}"
-    image_registry_config: "{{ {} }}"
-    image_pruner_config: "{{ {} }}"
-    dns_config: "{{ {} }}"
-    oauth_config: "{{ {} }}"
-    machineconfigpools: "{{ {'items': []} }}"
-    ingresscontrollers: "{{ {'items': []} }}"
-    clusterlogforwarders: "{{ {'items': []} }}"
-    cluster_monitoring_config: "{{ {} }}"
-    user_workload_monitoring_config: "{{ {} }}"
+    horizontalpodautoscalers: "{{ collected_commands.horizontalpodautoscalers.stdout | from_json if ((collected_commands.horizontalpodautoscalers.rc | default(1)) == 0 and (collected_commands.horizontalpodautoscalers.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    servicemonitors: "{{ collected_commands.servicemonitors.stdout | from_json if ((collected_commands.servicemonitors.rc | default(1)) == 0 and (collected_commands.servicemonitors.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    podmonitors: "{{ collected_commands.podmonitors.stdout | from_json if ((collected_commands.podmonitors.rc | default(1)) == 0 and (collected_commands.podmonitors.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    routes:
+      items: []
+    clusteroperators:
+      items: []
+    clusterversion: {}
+    infrastructure: {}
+    network_config: {}
+    apiserver_config: {}
+    proxy_config: {}
+    ingress_config: {}
+    image_config: {}
+    image_registry_config: {}
+    image_pruner_config: {}
+    dns_config: {}
+    oauth_config: {}
+    imagedigestmirrorsets:
+      items: []
+    imagetagmirrorsets:
+      items: []
+    imagecontentsourcepolicies:
+      items: []
+    catalogsources:
+      items: []
+    machineconfigpools:
+      items: []
+    ingresscontrollers:
+      items: []
+    clusterlogforwarders:
+      items: []
+    cluster_monitoring_config: {}
+    user_workload_monitoring_config: {}

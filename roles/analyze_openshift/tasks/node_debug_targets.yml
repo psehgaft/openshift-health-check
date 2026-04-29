@@ -1,0 +1,71 @@
+---
+- name: Initialize node debug target candidates
+  ansible.builtin.set_fact:
+    node_debug_target_reason_map: {}
+    node_debug_target_candidates: []
+
+- name: Add not-ready node debug target candidates
+  ansible.builtin.set_fact:
+    node_debug_target_candidates: "{{ node_debug_target_candidates | default([]) + [{'node': item, 'reason': 'not-ready'}] }}"
+  loop: "{{ not_ready_nodes | default([]) }}"
+  when:
+    - item | default('') | string | length > 0
+    - item | default('') not in ['unknown', 'unscheduled']
+  changed_when: false
+
+- name: Add node-pressure debug target candidates
+  ansible.builtin.set_fact:
+    node_debug_target_candidates: "{{ node_debug_target_candidates | default([]) + [{'node': item, 'reason': 'node-pressure'}] }}"
+  loop: "{{ pressure_nodes | default([]) | map(attribute='name') | list }}"
+  when:
+    - item | default('') | string | length > 0
+    - item | default('') not in ['unknown', 'unscheduled']
+  changed_when: false
+
+- name: Add high pod-density debug target candidates
+  ansible.builtin.set_fact:
+    node_debug_target_candidates: "{{ node_debug_target_candidates | default([]) + [{'node': item, 'reason': 'high-pod-density'}] }}"
+  loop: "{{ high_pod_density_nodes | default([]) | map(attribute='node') | list }}"
+  when:
+    - item | default('') | string | length > 0
+    - item | default('') not in ['unknown', 'unscheduled']
+  changed_when: false
+
+- name: Add critical pod-density debug target candidates
+  ansible.builtin.set_fact:
+    node_debug_target_candidates: "{{ node_debug_target_candidates | default([]) + [{'node': item, 'reason': 'critical-pod-density'}] }}"
+  loop: "{{ critical_pod_density_nodes | default([]) | map(attribute='node') | list }}"
+  when:
+    - item | default('') | string | length > 0
+    - item | default('') not in ['unknown', 'unscheduled']
+  changed_when: false
+
+- name: Add high-restart pod debug target candidates
+  ansible.builtin.set_fact:
+    node_debug_target_candidates: "{{ node_debug_target_candidates | default([]) + [{'node': item, 'reason': 'restart-hotspot'}] }}"
+  loop: "{{ top_high_restart_pods | default(high_restart_pods | default([])) | map(attribute='node') | list }}"
+  when:
+    - item | default('') | string | length > 0
+    - item | default('') not in ['unknown', 'unscheduled']
+  changed_when: false
+
+- name: Add restart-hotspot debug target candidates
+  ansible.builtin.set_fact:
+    node_debug_target_candidates: "{{ node_debug_target_candidates | default([]) + [{'node': item, 'reason': 'restart-hotspot'}] }}"
+  loop: "{{ pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', pod_restart_warning_threshold | default(5) | int) | map(attribute='node') | list }}"
+  when:
+    - item | default('') | string | length > 0
+    - item | default('') not in ['unknown', 'unscheduled']
+  changed_when: false
+
+- name: Build unique node debug target list
+  ansible.builtin.set_fact:
+    node_debug_target_nodes: "{{ node_debug_target_candidates | default([]) | map(attribute='node') | unique | list }}"
+
+- name: Build simplified node debug target reason map
+  ansible.builtin.set_fact:
+    node_debug_target_reason_map: "{{ node_debug_target_reason_map | default({}) | combine({item: reasons}, recursive=True) }}"
+  loop: "{{ node_debug_target_nodes | default([]) }}"
+  vars:
+    reasons: "{{ node_debug_target_candidates | default([]) | selectattr('node', 'equalto', item) | map(attribute='reason') | unique | list }}"
+  changed_when: false

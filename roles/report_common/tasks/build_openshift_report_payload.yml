@@ -35,7 +35,80 @@
         omc_findings: "{{ omc_findings | default([]) }}"
       evidence:
         summary: "{{ evidence_summary | default({}) }}"
-        coverage: "{{ evidence_coverage | default({}) }}"
+        coverage: >-
+          {{
+            (evidence_coverage | default({}))
+            | combine({
+                'must_gather': {
+                  'category': 'oc-native',
+                  'applicable': true,
+                  'status': 'present' if (must_gather_path | default('') | trim | length > 0) else 'missing',
+                  'detail': 'Collected from oc adm must-gather.' if (must_gather_path | default('') | trim | length > 0) else 'No oc adm must-gather directory was provided.',
+                  'requested': true,
+                  'collected': (must_gather_path | default('') | trim | length > 0)
+                },
+                'inspect': {
+                  'category': 'oc-native',
+                  'applicable': true,
+                  'status': evidence_coverage.inspect | default('missing'),
+                  'detail': 'Collected from oc adm inspect.' if (inspect_path | default('') | trim | length > 0) else 'No oc adm inspect directory was provided.',
+                  'requested': true,
+                  'collected': (inspect_path | default('') | trim | length > 0)
+                },
+                'prometheus_query': {
+                  'category': 'metric-api',
+                  'applicable': false,
+                  'status': (prometheus_evidence_summary | default({})).status | default('not-collected'),
+                  'detail': 'Prometheus/Thanos metrics are queried only during live runs; collected-state mode relies on metrics already present in must-gather or support artifacts.',
+                  'requested': false,
+                  'collected': (prometheus_evidence_summary | default({})).collected | default(false),
+                  'transport': (prometheus_evidence_summary | default({})).transport | default('unavailable'),
+                  'query_count': (prometheus_evidence_summary | default({})).query_count | default(0),
+                  'non_empty_result_count': (prometheus_evidence_summary | default({})).non_empty_result_count | default(0)
+                },
+                'cluster_compare': {
+                  'category': 'oc-plugin',
+                  'applicable': true,
+                  'status': evidence_coverage.cluster_compare | default('missing'),
+                  'detail': 'Collected from oc cluster-compare output.' if (cluster_compare_path | default('') | trim | length > 0) else 'No oc cluster-compare output was provided.',
+                  'requested': false,
+                  'collected': (cluster_compare_path | default('') | trim | length > 0)
+                },
+                'managed_gates': {
+                  'category': 'provider-api',
+                  'applicable': (managed_gates_path | default('') | trim | length > 0),
+                  'status': evidence_coverage.managed_gates | default('missing'),
+                  'detail': 'Collected from provider-managed gate evidence.' if (managed_gates_path | default('') | trim | length > 0) else 'No provider-managed gate evidence was provided.',
+                  'requested': false,
+                  'collected': (managed_gates_path | default('') | trim | length > 0)
+                },
+                'advisor_export': {
+                  'category': 'external-service',
+                  'applicable': true,
+                  'status': evidence_coverage.advisor_data | default('missing'),
+                  'detail': 'Collected from Advisor or Insights export.' if (advisor_export_path | default('') | trim | length > 0) else 'No Advisor or Insights export was provided.',
+                  'requested': false,
+                  'collected': (advisor_export_path | default('') | trim | length > 0)
+                },
+                'insights_archive': {
+                  'category': 'oc-native',
+                  'applicable': true,
+                  'status': evidence_coverage.insights_archive | default('missing'),
+                  'detail': 'No live Insights Operator archive is available in collected-state mode unless supplied in the bundle.',
+                  'requested': false,
+                  'collected': false
+                },
+                'sosreport': {
+                  'category': 'node-level',
+                  'applicable': true,
+                  'status': evidence_coverage.node_diagnostics | default('missing'),
+                  'detail': 'Collected from oc debug node/<node> plus sosreport or provided node-level archives.' if ((sosreport_paths | default([])) | length > 0) else 'No oc debug node/<node> sosreport or node-level archive was provided.',
+                  'requested': false,
+                  'collected': ((sosreport_paths | default([])) | length > 0),
+                  'count': ((sosreport_paths | default([])) | length)
+                }
+              }, recursive=True)
+          }}
         limitations: "{{ evidence_limitations | default([]) }}"
         sources: "{{ evidence_sources | default([]) }}"
         must_gather_inventory: "{{ must_gather_inventory | default({}) }}"
@@ -59,6 +132,7 @@
         product_evidence: "{{ assessment_product_evidence_findings | default([]) }}"
       metrics:
         diagnostics_coverage: "{{ diagnostics_coverage | default({}) }}"
+        prometheus_evidence_summary: "{{ prometheus_evidence_summary | default({}) }}"
         evidence_coverage: "{{ evidence_coverage | default({}) }}"
         must_gather_inventory: "{{ must_gather_inventory | default({}) }}"
         day2_posture_summary: "{{ day2_posture_summary | default({}) }}"
@@ -180,6 +254,7 @@
         live_managed_gates_summary: "{{ live_support_data.parsed.managed_gates.summary | default({}) }}"
         live_advisor_summary: "{{ live_support_data.parsed.advisor_export.summary | default({}) }}"
         live_insights_archive_summary: "{{ live_support_data.parsed.insights_archive.summary | default({}) }}"
+        prometheus_evidence_summary: "{{ prometheus_evidence_summary | default({}) }}"
         live_inspect_summary: "{{ live_support_data.parsed.inspect.summary | default({}) }}"
         live_sosreport_summary: "{{ live_support_data.parsed.sosreport.summary | default({}) }}"
         report_collection_success_rate_pct: "{{ report_collection_success_rate_pct | default(0) }}"

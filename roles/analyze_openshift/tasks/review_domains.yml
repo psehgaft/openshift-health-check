@@ -230,6 +230,10 @@
     profile_bundles = data.get("profilebundles") or []
     check_results = data.get("compliancecheckresults") or []
     sosreport_reports = data.get("sosreport_reports") or []
+    fips_enabled_nodes = sum(1 for item in sosreport_reports if str(item.get("fips_enabled_status") or "") == "enabled")
+    fips_disabled_nodes = sum(1 for item in sosreport_reports if str(item.get("fips_enabled_status") or "") == "disabled")
+    fips_crypto_policy_nodes = sum(1 for item in sosreport_reports if "FIPS" in str(item.get("crypto_policy") or "").upper())
+    fips_runtime_evidence_count = fips_enabled_nodes + fips_disabled_nodes
     namespace_names = {(item.get("metadata") or {}).get("name", "") for item in (data.get("namespaces") or [])}
 
     operator_present = bool(
@@ -337,20 +341,29 @@
 
         runtime_status = "not-applicable"
         if standard_name == "FIPS":
-            if not configured:
-                runtime_status = "not-applicable"
+            configured = fips_runtime_evidence_count > 0
+            active_enabled = False
+            if fips_enabled_nodes > 0 and fips_disabled_nodes == 0:
+                runtime_status = "enabled"
+            elif fips_disabled_nodes > 0 and fips_enabled_nodes == 0:
+                runtime_status = "not-enabled"
+            elif fips_enabled_nodes > 0 and fips_disabled_nodes > 0:
+                runtime_status = "mixed"
+            elif fips_crypto_policy_nodes > 0:
+                runtime_status = "crypto-policy-fips"
             else:
-                enabled = sum(1 for item in sosreport_reports if str(item.get("fips_enabled_status") or "") == "enabled")
-                disabled = sum(1 for item in sosreport_reports if str(item.get("fips_enabled_status") or "") == "disabled")
-                if enabled > 0 and disabled == 0:
-                    runtime_status = "enabled"
-                elif disabled > 0 and enabled == 0:
-                    runtime_status = "not-enabled"
-                elif enabled > 0 and disabled > 0:
-                    runtime_status = "mixed"
-                else:
-                    runtime_status = "unknown"
-        if active_enabled and (standard_failing_scans or standard_failed_checks):
+                runtime_status = "unknown"
+        if standard_name == "FIPS" and runtime_status == "enabled":
+            verdict = "supported"
+        elif standard_name == "FIPS" and runtime_status == "crypto-policy-fips":
+            verdict = "partial-evidence"
+        elif standard_name == "FIPS" and runtime_status in {"not-enabled", "mixed"}:
+            verdict = "review-required"
+        elif standard_name == "FIPS" and content_present and not configured:
+            verdict = "content-available"
+        elif standard_name == "FIPS":
+            verdict = "not-configured"
+        elif active_enabled and (standard_failing_scans or standard_failed_checks):
             verdict = "review-required"
         elif active_enabled:
             verdict = "supported"
@@ -378,8 +391,24 @@
             "failing_scan_count": len(standard_failing_scans),
             "failed_check_count": len(standard_failed_checks),
             "runtime_status": runtime_status,
+            "runtime_evidence_count": fips_runtime_evidence_count if standard_name == "FIPS" else 0,
             "verdict": verdict,
             "detail": (
+                (
+                    f"runtime FIPS evidence: enabled_nodes={fips_enabled_nodes}, disabled_nodes={fips_disabled_nodes}, crypto_policy_fips_nodes={fips_crypto_policy_nodes}"
+                    if standard_name == "FIPS" and configured
+                    else (
+                        "FIPS compliance content is present, but runtime node FIPS evidence was not collected"
+                        if standard_name == "FIPS" and content_present
+                        else (
+                            "no runtime node FIPS evidence was collected"
+                            if standard_name == "FIPS"
+                            else ""
+                        )
+                    )
+                )
+                if standard_name == "FIPS"
+                else
                 (
                     "configured from Compliance Operator resources"
                     if configured
@@ -420,20 +449,27 @@
                 "standard": standard_name,
                 "detail": f"{standard_name} has failed compliance checks: {len(standard_failed_checks)}."
             })
-        if standard_name == "FIPS" and configured:
+        if standard_name == "FIPS":
             if runtime_status == "unknown":
                 standards_findings.append({
                     "severity": "info",
                     "area": "compliance",
                     "standard": standard_name,
-                    "detail": "FIPS-related compliance content is configured. Runtime FIPS mode remains unknown because no explicit node evidence was collected."
+                    "detail": "FIPS is an install-time cluster setting. Runtime FIPS mode remains unknown because no explicit node evidence was collected from sosreport or equivalent node diagnostics."
+                })
+            elif runtime_status == "crypto-policy-fips":
+                standards_findings.append({
+                    "severity": "info",
+                    "area": "compliance",
+                    "standard": standard_name,
+                    "detail": "FIPS crypto policy was detected, but /proc/sys/crypto/fips_enabled evidence was not collected to confirm runtime FIPS mode."
                 })
             elif runtime_status in {"not-enabled", "mixed"}:
                 standards_findings.append({
                     "severity": "warning",
                     "area": "compliance",
                     "standard": standard_name,
-                    "detail": f"FIPS compliance content is configured, but runtime node evidence is {runtime_status}."
+                    "detail": f"FIPS is expected to be enabled at installation time, but runtime node evidence is {runtime_status}."
                 })
 
     if not operator_present:
@@ -470,6 +506,9 @@
             "failing_scan_count": failing_scan_count,
             "failed_check_count": check_fail_count,
             "standards_configured_count": len([item for item in standards_summary if item["configured"]]),
+            "fips_runtime_status": next((item["runtime_status"] for item in standards_summary if item["standard"] == "FIPS"), "unknown"),
+            "fips_enabled_node_count": fips_enabled_nodes,
+            "fips_disabled_node_count": fips_disabled_nodes,
             "verdict": operator_verdict,
             "profilebundle_summary": profilebundle_summary,
             "scan_summary": scan_summary[:20],

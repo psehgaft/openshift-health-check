@@ -3,20 +3,20 @@
   ansible.builtin.set_fact:
     openshift_report_domain_payload:
       platform_health:
-        summary: "{{ assessment_health_summary | default({}) }}"
+        summary: "{{ core_platform_health_summary | default(assessment_health_summary | default({})) }}"
         recommendations: >-
           {{
             (
               'Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.'
-              if (assessment_health_summary.status | default('unknown')) == 'CRITICAL'
+              if ((core_platform_health_summary | default(assessment_health_summary | default({}))).status | default('unknown')) == 'CRITICAL'
               else (
                 'Reduce platform warning conditions next: review high-impact progressing operators, API or etcd runtime degradation, node pressure, and route or APIService warnings before treating the cluster as steady state.'
-                if (assessment_health_summary.status | default('unknown')) == 'WARNING'
+                if ((core_platform_health_summary | default(assessment_health_summary | default({}))).status | default('unknown')) == 'WARNING'
                 else 'Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.'
               )
             )
           }}
-        findings: "{{ assessment_health_findings | default([]) }}"
+        findings: "{{ core_platform_health_findings | default(assessment_health_findings | default([])) }}"
         operators: "{{ assessment_operator_status_summary | default([]) }}"
         infrastructure_components:
           summary: "{{ infrastructure_component_summary | default([]) }}"
@@ -34,6 +34,7 @@
         summary: "{{ observability_summary | default({}) }}"
         recommendations: "{{ (observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}"
         forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
+        prometheus_query: "{{ prometheus_evidence_summary | default({}) }}"
         findings: "{{ observability_findings | default([]) }}"
         connected_cluster_posture: "{{ assessment_connected_cluster_posture | default({}) }}"
         connected_cluster_findings: "{{ assessment_connected_cluster_findings | default([]) }}"
@@ -43,7 +44,7 @@
         insights_archive_findings: "{{ insights_archive_findings | default([]) }}"
       node_health_and_capacity:
         summary: "{{ node_health_capacity_summary | default({}) }}"
-        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, node diagnostics coverage, and persistent storage posture before treating node capacity as healthy.') }}"
+        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, quota pressure, metric-backed utilization, and node diagnostics coverage before treating node capacity as healthy.') }}"
         diagnostics_summary: "{{ node_diagnostics_summary | default({}) }}"
         diagnostics_findings: "{{ node_diagnostics_findings | default([]) }}"
         machineconfigpools: "{{ assessment_mcp_summary | default([]) }}"
@@ -60,8 +61,8 @@
         operations_lifecycle_maturity_summary: "{{ operations_lifecycle_maturity_summary | default({}) }}"
         workload_capability_extensions_summary: "{{ workload_capability_extensions_summary | default({}) }}"
         day2_production_readiness_summary: "{{ day2_production_readiness_summary | default({}) }}"
-        operations_recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen identity integration, backup execution, machine remediation, and repeatable operating practices before treating operations maturity as strong.') }}"
-        recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen GitOps control, identity integration, backup execution, and machine remediation before treating operations maturity as strong.') }}"
+        operations_recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating operations maturity as strong.') }}"
+        recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating operations maturity as strong.') }}"
         release_engineering_adoption_summary: "{{ release_engineering_adoption_summary | default({}) }}"
         checks: "{{ day2_posture_checks | default([]) }}"
         findings: "{{ day2_posture_findings | default([]) }}"
@@ -100,12 +101,13 @@
         ingress_issues: "{{ ingress_issues | default([]) }}"
         ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) }}"
         route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
+        services_without_endpoints: "{{ services_without_endpoints | default([]) }}"
         ingresscontrollers:
           summary: "{{ ingresscontroller_summary | default([]) }}"
           issues: "{{ ingresscontroller_issues | default([]) }}"
       workload_health:
         summary: "{{ workload_health_summary | default({}) }}"
-        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, service endpoint gaps, and workload hygiene debt before treating workload posture as healthy.') }}"
+        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, probe coverage, resource hygiene, ownership, labels, and rightsizing context before treating workload posture as healthy.') }}"
         platform_pod_issues: "{{ platform_pod_issues | default([]) }}"
         unhealthy_user_pods: "{{ unhealthy_user_pods | default([]) }}"
         restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:15] }}"
@@ -138,20 +140,20 @@
   ansible.builtin.set_fact:
     openshift_report_domain_payload:
       platform_health:
-        summary: "{{ health_summary | default({}) }}"
+        summary: "{{ core_platform_health_summary | default(health_summary | default({})) }}"
         recommendations: >-
           {{
             (
               'Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.'
-              if (health_summary.status | default('unknown')) == 'CRITICAL'
+              if ((core_platform_health_summary | default(health_summary | default({}))).status | default('unknown')) == 'CRITICAL'
               else (
-                'Reduce platform warning conditions next: review ' ~ ((health_summary.core_platform_runtime_reason_summary | default('')) or 'high-impact progressing operators, runtime degradation, and node or route warnings') ~ ' before treating the cluster as steady state.'
-                if (health_summary.status | default('unknown')) == 'WARNING'
+                'Reduce platform warning conditions next: review ' ~ (((core_platform_health_summary | default(health_summary | default({}))).core_platform_runtime_reason_summary | default('')) or 'high-impact progressing operators, runtime degradation, and node or route warnings') ~ ' before treating the cluster as steady state.'
+                if ((core_platform_health_summary | default(health_summary | default({}))).status | default('unknown')) == 'WARNING'
                 else 'Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.'
               )
             )
           }}
-        findings: "{{ (degraded_operators | default([])) + (unavailable_operators | default([])) + (top_apiservice_issues | default([])) }}"
+        findings: "{{ core_platform_health_findings | default([]) }}"
         operators: []
         infrastructure_components:
           summary: "{{ infrastructure_component_summary | default([]) }}"
@@ -169,6 +171,7 @@
         summary: "{{ observability_summary | default({}) }}"
         recommendations: "{{ (observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}"
         forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
+        prometheus_query: "{{ prometheus_evidence_summary | default({}) }}"
         findings: "{{ top_observability_findings | default([]) }}"
         connected_cluster_posture: {}
         connected_cluster_findings: []
@@ -178,7 +181,7 @@
         insights_archive_findings: "{{ insights_archive_findings | default([]) }}"
       node_health_and_capacity:
         summary: "{{ node_health_capacity_summary | default({}) }}"
-        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, node diagnostics coverage, and persistent storage posture before treating node capacity as healthy.') }}"
+        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, quota pressure, metric-backed utilization, and node diagnostics coverage before treating node capacity as healthy.') }}"
         diagnostics_summary: "{{ node_diagnostics_summary | default({}) }}"
         diagnostics_findings: "{{ (top_live_inspect_findings | default([])) + (top_live_sosreport_findings | default([])) }}"
         machineconfigpools: "{{ cluster_current_state.machineconfigpools | default([]) }}"
@@ -208,8 +211,8 @@
         operations_lifecycle_maturity_summary: "{{ operations_lifecycle_maturity_summary | default({}) }}"
         workload_capability_extensions_summary: "{{ workload_capability_extensions_summary | default({}) }}"
         day2_production_readiness_summary: "{{ day2_production_readiness_summary | default({}) }}"
-        operations_recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen identity integration, backup execution, machine remediation, and repeatable operating practices before treating operations maturity as strong.') }}"
-        recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Strengthen GitOps control, identity integration, backup execution, and machine remediation before treating operations maturity as strong.') }}"
+        operations_recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating operations maturity as strong.') }}"
+        recommendations: "{{ (operations_lifecycle_maturity_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating operations maturity as strong.') }}"
         release_engineering_adoption_summary: "{{ release_engineering_adoption_summary | default({}) }}"
         checks: "{{ day2_posture_checks | default([]) }}"
         findings: "{{ day2_posture_findings | default([]) }}"
@@ -248,12 +251,13 @@
         ingress_issues: "{{ top_ingress_issues | default([]) }}"
         ingress_host_conflicts: "{{ top_ingress_host_conflicts | default([]) }}"
         route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
+        services_without_endpoints: "{{ top_services_without_endpoints | default([]) }}"
         ingresscontrollers:
           summary: "{{ ingresscontroller_summary | default([]) }}"
           issues: "{{ ingresscontroller_issues | default([]) }}"
       workload_health:
         summary: "{{ workload_health_summary | default({}) }}"
-        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, service endpoint gaps, and workload hygiene debt before treating workload posture as healthy.') }}"
+        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, probe coverage, resource hygiene, ownership, labels, and rightsizing context before treating workload posture as healthy.') }}"
         platform_pod_issues: "{{ platform_pod_issues | default([]) }}"
         unhealthy_user_pods: "{{ top_unhealthy_user_pods | default([]) }}"
         restart_hotspots: "{{ top_high_restart_pods | default([]) }}"

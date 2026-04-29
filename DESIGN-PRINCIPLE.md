@@ -145,6 +145,7 @@ How those sources are used:
 - Kubernetes and CNCF are the main sources for portable node, workload, storage, networking, lifecycle, and observability practices
 - GitHub OpenShift runbooks are used as operational references for what should have an owner and a response path
 - AKS, EKS, and GKE guidance shape the provider-aware sections in the Kubernetes path
+- Prometheus/Thanos metrics from OpenShift monitoring are treated as an official data source for checks where time-series evidence improves accuracy, after cluster-state evidence sources have established object and configuration context
 
 This repo does not try to copy one vendor document line by line. It turns the common themes from those sources into a practical review model that can run from inside the cluster with cluster-local data.
 
@@ -223,6 +224,8 @@ That distinction matters because several important customer review topics are no
   The report checks rollout health, probe coverage, resource requests and limits, restart hotspots, build inventory, pipeline signals, and image-registry posture. It does not inspect every container build workflow or image construction practice.
 - Pipeline usage: `partial`
   The OpenShift path inventories `Pipeline`, `PipelineRun`, failed `PipelineRun` state, and `BuildConfig` trigger posture, but does not prove CI/CD process quality on its own.
+- Cluster-hosted CI/CD runners and agents: `partial`
+  The report inventories runner-like pods for GitLab Runner, Jenkins agents, GitHub Actions runners, Azure DevOps agents, and generic CI/CD runners when they are visible in cluster evidence. It reports pod health, scheduling pressure, restarts, resource-request coverage, and privileged runner pods, but queue depth, busy runner percentage, job duration, and failure-rate trends require runner-native metrics, Prometheus/Thanos, or the CI/CD product API.
 - Liveness, readiness, requests, limits, and project quotas: `direct`
   These are already first-class checks in the report.
 - Capacity planning: `partial`

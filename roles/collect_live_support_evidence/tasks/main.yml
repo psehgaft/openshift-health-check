@@ -7,6 +7,19 @@
         if (live_support_artifact_output_dir | default('') | trim | length > 0)
         else (report_output_dir ~ '/support-artifacts-' ~ report_timestamp)
       }}
+    live_support_sosreport_explicit_targets: >-
+      {{
+        (live_support_sosreport_nodes | default([]))
+        if ((live_support_sosreport_nodes | default([])) | length > 0)
+        else (node_debug_target_nodes | default([]))
+      }}
+    live_support_sosreport_no_targets: >-
+      {{
+        ((live_support_sosreport_nodes | default([])) | length == 0)
+        and ((node_debug_target_nodes | default([])) | length == 0)
+        and ((live_support_sosreport_node_selector | default('') | trim | length) == 0)
+        and ((live_support_sosreport_command_argv | default([])) | length == 0)
+      }}
 
 - name: Resolve live support artifact paths
   ansible.builtin.set_fact:
@@ -16,6 +29,7 @@
     live_support_insights_archive_path: "{{ live_support_artifact_root }}/insights-archive"
     live_support_inspect_path: "{{ live_support_artifact_root }}/inspect"
     live_support_must_gather_root: "{{ live_support_artifact_root }}/must-gather"
+    live_support_sosreport_output_dir: "{{ live_support_artifact_root }}/oc-debug-node-sosreport"
     live_support_collected_sosreport_paths: []
 
 - name: Ensure live artifact root exists
@@ -80,7 +94,8 @@
         tool_available: "{{ openshift_scan_collectors.sosreport.tool_available | default(false) | bool }}"
         configured: "{{ openshift_scan_collectors.sosreport.configured | default(false) | bool }}"
         requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_sosreport | default(false) | bool)) }}"
-        requirement_summary: "{{ openshift_scan_collectors.sosreport.requirement_summary | default('Requires node-level access such as oc debug node or SSH plus a sosreport command.') }}"
+        access_path: "{{ openshift_scan_collectors.sosreport.access_path | default('oc-debug-node') }}"
+        requirement_summary: "{{ openshift_scan_collectors.sosreport.requirement_summary | default('Requires node-level access through oc debug node/<node> or SSH, then toolbox/sosreport collection.') }}"
 
 - name: Resolve enabled live support collectors
   ansible.builtin.set_fact:
@@ -132,6 +147,13 @@
         and (live_support_collector_capabilities['sosreport'].applicable | bool)
         and (live_support_collector_capabilities['sosreport'].tool_available | bool)
         and (live_support_collector_capabilities['sosreport'].configured | bool)
+        and (
+          ((live_support_sosreport_nodes | default([])) | length > 0)
+          or ((live_support_sosreport_node_selector | default('') | trim | length) > 0)
+          or ((node_debug_target_nodes | default([])) | length > 0)
+          or (live_support_sosreport_no_targets | bool)
+          or ((live_support_sosreport_command_argv | default([])) | length > 0)
+        )
       }}
 
 - name: Finalize live support collector capability statuses
@@ -220,7 +242,11 @@
                           else (
                             'Collector prerequisites are available, but no command or baseline was configured.'
                             if not (item.value.configured | bool)
-                            else 'Collector is planned for this scan.'
+                            else (
+                              'No symptom-based node targets were derived; the default sosreport collector will skip without collecting arbitrary nodes.'
+                              if (item.key == 'sosreport' and (live_support_sosreport_no_targets | default(false) | bool))
+                              else 'Collector is planned for this scan.'
+                            )
                           )
                         )
                       )
@@ -298,7 +324,45 @@
         timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
       - name: sosreport
         enabled: "{{ live_support_collect_sosreport_resolved | bool }}"
-        argv: "{{ live_support_sosreport_command_argv | default([]) }}"
+        argv: >-
+          {{
+            live_support_sosreport_command_argv
+            if ((live_support_sosreport_command_argv | default([])) | length > 0)
+            else (
+              [
+                'python3',
+                playbook_dir ~ '/../scripts/collect_node_sosreports.py',
+                '--kube-cli',
+                kube_cli | default('oc'),
+                '--output-dir',
+                live_support_sosreport_output_dir,
+                '--timeout-seconds',
+                live_support_artifact_timeout_seconds | string,
+                '--node-limit',
+                live_support_sosreport_node_limit | default(0) | string
+              ]
+              + (
+                ['--require-explicit-nodes']
+                if (live_support_sosreport_no_targets | default(false) | bool)
+                else []
+              )
+              + (
+                ['--node-selector', live_support_sosreport_node_selector]
+                if (live_support_sosreport_node_selector | default('') | trim | length > 0)
+                else []
+              )
+              + (
+                (live_support_sosreport_explicit_targets | default([]))
+                | map('regex_replace', '^', '--node=')
+                | list
+              )
+              + (
+                (live_support_sosreport_args | default([]))
+                | map('regex_replace', '^', '--sos-arg=')
+                | list
+              )
+            )
+          }}
         output_kind: none
         output_path: ""
         timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
@@ -333,6 +397,57 @@
         )
         else {'parallelism': 0, 'collector_count': 0, 'results': {}}
       }}
+
+- name: Update live support collector statuses from execution results
+  ansible.builtin.set_fact:
+    live_support_collector_capabilities: >-
+      {{
+        live_support_collector_capabilities
+        | combine({
+            item.key: (
+              item.value
+              | combine({
+                  'status': (
+                    item.value.status
+                    if not (item.value.enabled | default(false) | bool)
+                    else (
+                      'not-run'
+                      if (collector_result | length) == 0
+                      else (
+                        'timed-out'
+                        if (collector_result.timed_out | default(false) | bool)
+                        else (
+                          'completed'
+                          if (collector_result.rc | default(1) | int) == 0
+                          else 'failed'
+                        )
+                      )
+                    )
+                  ),
+                  'detail': (
+                    item.value.detail
+                    if not (item.value.enabled | default(false) | bool)
+                    else (
+                      'Collector was enabled but did not return an execution result.'
+                      if (collector_result | length) == 0
+                      else (
+                        'Collector completed successfully.'
+                        if (collector_result.rc | default(1) | int) == 0
+                        else (
+                          (collector_result.stderr | default('Collector failed.')) | string | trim | truncate(240, true, '...')
+                        )
+                      )
+                    )
+                  ),
+                  'rc': (collector_result.rc | default('')),
+                  'duration_seconds': (collector_result.duration_seconds | default(''))
+                }, recursive=True)
+            )
+          }, recursive=True)
+      }}
+  vars:
+    collector_result: "{{ (live_support_artifact_collection.results | default({})).get(item.key, {}) }}"
+  loop: "{{ live_support_collector_capabilities | dict2items }}"
 
 - name: Discover live support case bundle outputs
   ansible.builtin.command:
@@ -529,6 +644,8 @@
     live_support_artifact_summary:
       enabled: "{{ collect_live_support_artifacts | bool }}"
       root: "{{ live_support_artifact_root }}"
+      node_debug_target_nodes: "{{ node_debug_target_nodes | default([]) }}"
+      node_debug_target_reason_map: "{{ node_debug_target_reason_map | default({}) }}"
       parallelism: "{{ live_support_artifact_collection.parallelism | default(0) }}"
       collector_count: "{{ live_support_artifact_collection.collector_count | default(0) }}"
       success_count: >-
@@ -610,7 +727,8 @@
     evidence_limitations: >-
       {{
         []
-        + ([{'area': 'node diagnostics', 'detail': 'No sosreport or node-level archive input was collected during this scan.'}] if ((live_support_sosreport_data.summary.count | default(0) | int) == 0) else [])
+        + ([{'area': 'node diagnostics', 'detail': 'No symptom-based node targets were derived for oc debug node/<node> sosreport collection; no arbitrary node sosreport was collected.'}] if ((live_support_sosreport_data.summary.count | default(0) | int) == 0 and ((node_debug_target_nodes | default([])) | length == 0)) else [])
+        + ([{'area': 'node diagnostics', 'detail': 'Targeted oc debug node/<node> sosreport collection was requested but no node-level archive was collected.'}] if ((live_support_sosreport_data.summary.count | default(0) | int) == 0 and ((node_debug_target_nodes | default([])) | length > 0)) else [])
         + ([{'area': 'targeted inspect evidence', 'detail': 'No oc adm inspect directory was collected during this scan.'}] if ((live_support_inspect_data.summary.file_count | default(0) | int) == 0) else [])
         + ([{'area': 'reference compliance', 'detail': 'No cluster-compare output or baseline reference was collected during this scan.'}] if (live_support_cluster_compare_data.summary is not defined) else [])
         + ([{'area': 'managed-service gates', 'detail': 'No provider-managed gate export was collected during this scan.'}] if (live_support_managed_gates_data.summary is not defined) else [])
@@ -629,7 +747,7 @@
         + ([{'name': 'insights-archive', 'type': 'archive-directory', 'mode': 'live', 'path': live_support_collected_insights_archive_path, 'parser': 'parse_insights_archive.py'}] if (live_support_collected_insights_archive_path | default('') | length > 0) else [])
         + (
           (live_support_sosreport_data.reports | default([]))
-          | map('combine', {'name': 'sosreport', 'type': 'node-archive', 'mode': 'live', 'parser': 'parse_sosreport.py'})
+          | map('combine', {'name': 'oc-debug-node-sosreport', 'type': 'node-archive', 'mode': 'live', 'parser': 'parse_sosreport.py'})
           | list
         )
       }}

@@ -6,6 +6,27 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CI_MD="${ROOT_DIR}/reports/ci-cluster-report.md"
 CI_JSON="${ROOT_DIR}/reports/ci-cluster-report.json"
 
+python3 "${ROOT_DIR}/scripts/validate_openshift_report_template.py" \
+  "${ROOT_DIR}/templates/openshift_cluster_health_report.md.j2"
+
+python3 "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
+  "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
+  "${ROOT_DIR}/inputs/openshift-capability-profile.yml"
+
+for capability_profile in \
+  "${ROOT_DIR}/inputs/kubernetes-capability-profile.yml" \
+  "${ROOT_DIR}/inputs/development-k8s-capability-profile.yml" \
+  "${ROOT_DIR}/inputs/aks-capability-profile.yml" \
+  "${ROOT_DIR}/inputs/eks-capability-profile.yml" \
+  "${ROOT_DIR}/inputs/gke-capability-profile.yml" \
+  "${ROOT_DIR}/inputs/rancher-capability-profile.yml" \
+  "${ROOT_DIR}/inputs/minikube-capability-profile.yml"; do
+  python3 "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
+    "${ROOT_DIR}/playbooks/k8s_cluster_health_report.yml" \
+    "${capability_profile}" \
+    kubernetes_report_capability_profile
+done
+
 "${ROOT_DIR}/scripts/run_ci_report.sh" \
   "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_basename=cluster-supportability \
@@ -30,6 +51,10 @@ assert payload["evidence"]["hygiene_summary"]["candidate_count"] >= 2
 assert len(payload["findings"]["assessment_health"]) > 0
 print(path)
 PY
+
+python3 "${ROOT_DIR}/scripts/validate_openshift_report_output.py" \
+  "${CI_MD}" \
+  "${CI_JSON}"
 
 rg -q '^# ' "${CI_MD}"
 rg -q '^## Summary' "${CI_MD}"

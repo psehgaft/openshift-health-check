@@ -274,8 +274,8 @@
   ansible.builtin.set_fact:
     suggested_next_steps: "{{ suggested_next_steps + [{
       'priority': 'next',
-      'summary': 'Rebalance worker capacity across failure domains and MachineSets.',
-      'detail': 'Review worker pool groups limited to one zone, nodes or MachineSets missing zone labels, and uneven MachineSet replica counts so worker capacity remains spread across availability zones during failures.'
+      'summary': 'Review worker topology resilience and correct confirmed zone or MachineSet spread gaps.',
+      'detail': 'Validate worker node and MachineSet zone labels, single-zone worker pools, and uneven MachineSet replica counts. Rebalance capacity only when the collected topology evidence confirms that worker placement does not meet the customer failure-domain standard.'
     }] }}"
   when: (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 or (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 or (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) or (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 or (topology_resilience.machineset_replica_unbalanced | default(false) | bool)
 
@@ -441,6 +441,11 @@
     - (scored_workload_practice_findings | default([]) | length) == 0
     - (observability_findings | default([]) | length) == 0
 
+- name: Build live evidence and supportability facts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: build_live_openshift_support_facts.yml
+
 - name: Build shared OpenShift domain payload
   ansible.builtin.include_role:
     name: report_common
@@ -450,11 +455,6 @@
   ansible.builtin.include_role:
     name: report_common
     tasks_from: build_openshift_report_payload.yml
-
-- name: Build live evidence and supportability facts
-  ansible.builtin.include_role:
-    name: report_common
-    tasks_from: build_live_openshift_support_facts.yml
 
 - name: Build live OpenShift audit payload
   ansible.builtin.include_role:

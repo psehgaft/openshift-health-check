@@ -67,7 +67,7 @@ Example live OpenShift run:
 ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
-`must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates, Advisor export, and node-level `sosreport` can run in the same scan when their tool or command prerequisites are available. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
+`must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates and Advisor export can run in the same scan when their command prerequisites are available. Node-level `oc debug node/<node>` plus `sosreport` collection is enabled by default for derived symptom nodes, capped by `live_support_sosreport_node_limit`; if no symptom-based targets are found, the collector skips cleanly instead of collecting arbitrary nodes. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
 
 The same OpenShift playbook also supports collected-state reprocessing. If you set any of these inputs, the playbook automatically switches to the collected-state path:
 
@@ -258,6 +258,10 @@ A few examples:
 - Security and workload-practice findings:
   - `direct` from collected pod and workload specs
   - scope excludes platform namespaces for user-workload checks
+- Prometheus/Thanos metric queries:
+  - `direct` during live runs when `openshift-monitoring/thanos-querier` is reachable
+  - official metric source after `oc adm must-gather`, `oc adm inspect`, `oc get`, and `insights`
+  - used for alerting, API server, etcd, node utilization, pod usage, pod density, and optional latency signals where metrics improve accuracy
 
 ## OpenShift Review Coverage
 
@@ -286,6 +290,7 @@ Use this rule when reading the report:
 | --- | --- | --- |
 | Build and deploy practices | `partial` | Workload rollout health, probe coverage, restart hotspots, resource requests and limits, image-registry findings; this does not fully audit Dockerfiles or build pipelines |
 | Pipeline usage | `partial` | OpenShift path inventories `Pipeline`, `PipelineRun`, failed `PipelineRun` status, and `BuildConfig` trigger posture; full CI/CD process maturity still needs human review |
+| Cluster-hosted CI/CD runners and agents | `partial` | Inventories visible GitLab Runner, Jenkins agent, GitHub Actions runner, Azure DevOps agent, and generic CI/CD runner pods; reports runner pod health, scheduling pressure, restarts, resource requests, and privileged runner pods; queue depth, busy runner percentage, job duration, and failure-rate trends require runner-native metrics, Prometheus/Thanos, or product APIs |
 | Liveness, readiness, requests, limits, and project quotas | `direct` | Probe findings, rollout findings, missing requests and limits, namespace quotas, LimitRange, NetworkPolicy, quota-pressure signals |
 | Capacity planning | `partial` | Current allocatable capacity, pod density, top CPU and memory consumers, average utilization, quota pressure, restart hotspots; future growth still requires platform and application planning input |
 
@@ -302,6 +307,80 @@ Use this rule when reading the report:
 
 The tool is strongest as a structured evidence-gathering report. It is explicit about which areas are backed by cluster-local evidence and which still need human review.
 
+## Capability Profile
+
+Optional or customer-specific capabilities are controlled by a capability profile input file. Each capability defines whether absence should be reported, how severe it is, what state is expected, who owns it, and which evidence sources are expected.
+
+OpenShift uses `openshift_report_capability_profile` because its report can use OpenShift-specific evidence such as `oc adm must-gather`, `oc adm inspect`, `oc get`, Insights, Prometheus/Thanos, and node diagnostics. Kubernetes-family reports use `kubernetes_report_capability_profile` because they rely on portable `kubectl get`, provider metadata, and optional metrics evidence.
+
+Use the matching example as-is, or copy and adjust the values for a customer environment:
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e @inputs/openshift-capability-profile.yml
+
+ansible-playbook playbooks/k8s_cluster_health_report.yml \
+  -e @inputs/kubernetes-capability-profile.yml
+
+ansible-playbook playbooks/aks_cluster_health_report.yml \
+  -e @inputs/aks-capability-profile.yml
+
+ansible-playbook playbooks/eks_cluster_health_report.yml \
+  -e @inputs/eks-capability-profile.yml
+
+ansible-playbook playbooks/gke_cluster_health_report.yml \
+  -e @inputs/gke-capability-profile.yml
+
+ansible-playbook playbooks/rancher_cluster_health_report.yml \
+  -e @inputs/rancher-capability-profile.yml
+
+ansible-playbook playbooks/development_k8s_cluster_health_report.yml \
+  -e @inputs/development-k8s-capability-profile.yml
+
+ansible-playbook playbooks/minikube_cluster_health_report.yml \
+  -e @inputs/minikube-capability-profile.yml
+```
+
+```yaml
+openshift_report_capability_profile:
+  acs:
+    required: false
+    criticality: high
+    expected_state: present
+    owner: security
+    evidence_required: [must-gather, oc-get]
+    notes: "Require when Advanced Cluster Security is part of the customer security baseline."
+```
+
+Supported `expected_state` values are `present`, `absent`, `configured`, `healthy`, and `not_applicable`. Optional capabilities are hidden or treated as inventory context when absent unless they have findings or `required: true`.
+
+Capability profile input files:
+
+| Cluster type | Playbook | Capability input file |
+| --- | --- | --- |
+| OpenShift, ARO, ROSA, ROSA HCP, SNO | [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml) | [inputs/openshift-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/openshift-capability-profile.yml) |
+| Generic Kubernetes | [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml) | [inputs/kubernetes-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/kubernetes-capability-profile.yml) |
+| Development Kubernetes | [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml) | [inputs/development-k8s-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/development-k8s-capability-profile.yml) |
+| AKS | [playbooks/aks_cluster_health_report.yml](playbooks/aks_cluster_health_report.yml) | [inputs/aks-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/aks-capability-profile.yml) |
+| EKS | [playbooks/eks_cluster_health_report.yml](playbooks/eks_cluster_health_report.yml) | [inputs/eks-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/eks-capability-profile.yml) |
+| GKE | [playbooks/gke_cluster_health_report.yml](playbooks/gke_cluster_health_report.yml) | [inputs/gke-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/gke-capability-profile.yml) |
+| Rancher-managed Kubernetes | [playbooks/rancher_cluster_health_report.yml](playbooks/rancher_cluster_health_report.yml) | [inputs/rancher-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/rancher-capability-profile.yml) |
+| Minikube | [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml) | [inputs/minikube-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/minikube-capability-profile.yml) |
+
+Capability evidence is collected from cluster-local APIs first. OpenShift runs prefer `oc adm must-gather`, `oc adm inspect`, `oc get`, Insights, Prometheus/Thanos, and node diagnostics when available. Kubernetes-family runs use portable `kubectl get` evidence plus optional metrics.
+
+| Capability key | Supported reports | Primary evidence used |
+| --- | --- | --- |
+| `external_private_registry` | OpenShift and Kubernetes-family | Workload container image registries, explicit workload `imagePullSecrets`, service account pull secrets, and `kubernetes.io/dockerconfigjson` or `kubernetes.io/dockercfg` secrets. External non-platform registries with pull credentials are treated as private-registry evidence; public registries such as Docker Hub, Quay, GHCR, or GCR are counted only when the workload explicitly declares image pull secrets. |
+| `oauth_identity_provider` | OpenShift | `oauth.config.openshift.io/cluster.spec.identityProviders` from collected OpenShift API data. Absence is reported only when the capability profile marks this capability required or expected for the customer baseline. |
+| `user_workload_monitoring` | OpenShift and Kubernetes-family | OpenShift checks `cluster-monitoring-config` for `enableUserWorkload: true` and also inventories `ServiceMonitor` and `PodMonitor` resources. Kubernetes-family checks `ServiceMonitor` and `PodMonitor` resources when the Prometheus Operator CRDs are installed. |
+| `grafana_dashboards` | OpenShift and Kubernetes-family | Grafana workloads or namespaces plus dashboard ConfigMaps, Grafana dashboard CRDs, or Grafana operator CRDs. Dashboard ConfigMaps are detected from common Grafana sidecar labels such as `grafana_dashboard` and JSON dashboard payloads. |
+| `workload_vulnerability_scanner` | OpenShift and Kubernetes-family | Scanner operators, agents, namespaces, and CRDs. Current detection covers common Trivy Operator or Starboard signals, `VulnerabilityReport` CRDs, RHACS or StackRox secured-cluster signals, Falco signals, Sysdig agents, and Prisma/Twistlock Defender naming patterns. |
+| `disconnected_installation` | OpenShift | OpenShift image mirror resources (`ImageDigestMirrorSet`, `ImageTagMirrorSet`, legacy `ImageContentSourcePolicy`) plus non-public Operator `CatalogSource` images. |
+| `private_registry_mirrors` | OpenShift | OpenShift image mirror resources generated or applied for mirrored registries: `ImageDigestMirrorSet`, `ImageTagMirrorSet`, and legacy `ImageContentSourcePolicy`. |
+| `ipsec_enabled` | OpenShift | `networks.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig` from collected Network operator configuration. Mark this required when the customer baseline expects OVN-Kubernetes IPsec encryption. |
+| `etcd_encryption_enabled` | OpenShift | `apiserver.config.openshift.io/cluster.spec.encryption.type` from collected OpenShift APIServer configuration. `aescbc` and `aesgcm` are treated as enabled; `identity` or a missing value is treated as not enabled. |
+
 ## Signal Catalog
 
 This section maps the main report signals to their reason for inclusion and the main condition behind them.
@@ -311,6 +390,7 @@ This section maps the main report signals to their reason for inclusion and the 
 | ClusterVersion and update risk | upgrade safety and change readiness | `Available`, `Progressing`, `Failing`, available updates, conditional risks, and update history are first-class OpenShift lifecycle signals |
 | Cluster operators and infrastructure components | control-plane and platform health | operators should normally report `Available=True`, `Progressing=False`, `Degraded=False` |
 | API and etcd metrics | control-plane responsiveness and stability | latency, 5xx, inflight requests, leader changes, and peer RTT are high-signal failure predictors |
+| Prometheus/Thanos query results | metric-backed accuracy for live health checks | official metric source used for alerting, API server, etcd, node utilization, pod density, pod usage, and optional latency signals |
 | Node readiness and pressure | platform continuity | `NotReady`, `MemoryPressure`, `DiskPressure`, and `PIDPressure` are treated as urgent platform signals |
 | Worker-pool and failure-domain spread | resilience during zone or node failure | the report warns when worker groups are single-zone, zone labels are missing, or MachineSets are uneven |
 | Service, pod, and node IP capacity | network exhaustion risk | each node needs an IP, workloads need pod IPs, and services need service IPs; remaining IP space is surfaced when CIDRs are known |
@@ -500,6 +580,7 @@ For Ansible:
 Nice to have:
 
 - OpenShift: access to `openshift-monitoring/thanos-querier`
+- OpenShift: permission to query Prometheus/Thanos through the `thanos-querier` route or the `oc get --raw` service proxy. Metric queries are used only where time-series evidence improves accuracy, such as API server latency, etcd health, firing alerts, node utilization, pod density, and workload usage.
 
 Optional OpenShift helper tools:
 
@@ -665,7 +746,13 @@ These parameters work across the playbooks:
 - `managed_gates_path`
   Path to saved managed-service gate JSON
 - `sosreport_paths`
-  One or more extracted `sosreport` directories or archives
+  One or more extracted `sosreport` directories or archives, typically collected through `oc debug node/<node>` when host-level node diagnostics are required
+- `collect_live_sosreport`
+  Enable or disable live `oc debug node/<node>` sosreport collection; defaults to `true` for OpenShift live scans
+- `live_support_sosreport_nodes`
+  Optional explicit node list for live sosreport collection; when empty, the scan uses derived symptom nodes
+- `live_support_sosreport_node_limit`
+  Maximum number of target nodes for default live sosreport collection
 - `case_bundle_path`
   Folder containing a mix of collected-state inputs discovered automatically
 

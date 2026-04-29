@@ -54,6 +54,9 @@
 {% if (provider_specific_findings | default([]) | length) > 0 %}
 {% set _ = top_risk_areas.append('provider-specific platform findings were detected') %}
 {% endif %}
+{% if (kubernetes_capability_profile_summary.missing_required_count | default(0) | int) > 0 %}
+{% set _ = top_risk_areas.append('required capability profile signals are missing or incomplete') %}
+{% endif %}
 
 | Summary | Value |
 | --- | --- |
@@ -159,7 +162,7 @@ State summary note:
 | `{{ item.type | default('worker') }}` | `{{ item.provider | default(report_cluster_type | default('kubernetes')) }}` | `{{ item.architecture | default('unknown') }}` | `{{ item.nodes | default(0) }}` | `{{ item.zones | default([]) | join(', ') }}` |
 {% endfor %}
 {% else %}
-Worker pool groups could not be derived from the collected node inventory.
+Worker pool groups could not be derived from the available node inventory.
 {% endif %}
 
 ## Failure Domain And Zone Spread
@@ -271,6 +274,7 @@ Status guide:
 | Deprecated API findings | `{{ health_summary.deprecated_api_lines | default(0) }}` | {{ status_badge('WARN' if (health_summary.deprecated_api_lines | default(0) | int) > 0 else 'OK') }} |
 | Certificate expiry findings | `{{ health_summary.certificate_expiry_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.certificate_expiry_findings | default(0) | int) > 0 else 'OK') }} |
 | Provider-specific findings | `{{ health_summary.provider_specific_findings | default(0) }}` | {{ status_badge('WARN' if (health_summary.provider_specific_findings | default(0) | int) > 0 else 'OK') }} |
+| Missing required capabilities | `{{ health_summary.missing_required_capabilities | default(kubernetes_capability_profile_summary.missing_required_count | default(0)) }}` | {{ status_badge('WARN' if (kubernetes_capability_profile_summary.missing_required_count | default(0) | int) > 0 else 'OK') }} |
 | Collection success rate | `{{ report_collection_success_pct }}`% | {{ status_badge('WARN' if (report_collection.core_failed_commands | default(0) | int) > 0 else ('INFO' if (report_collection.failed_commands | default(0) | int) > 0 else 'OK')) }} |
 | Report confidence | `{{ report_confidence | default('unknown') | upper }}` | {{ status_badge('WARN' if report_confidence | default('unknown') == 'low' else ('INFO' if report_confidence | default('unknown') == 'medium' else 'OK')) }} |
 
@@ -303,6 +307,40 @@ Status guide:
 | Local or ephemeral storage only risk | `{{ health_summary.local_or_ephemeral_only_risk | default(false) }}` | {{ status_badge('WARN' if health_summary.local_or_ephemeral_only_risk | default(false) else 'OK') }} |
 | PV issues | `{{ health_summary.pv_issues | default(0) }}` | {{ status_badge('WARN' if (health_summary.pv_issues | default(0) | int) > 0 else 'OK') }} |
 | PVC issues | `{{ health_summary.pvc_issues | default(0) }}` | {{ status_badge('WARN' if (health_summary.pvc_issues | default(0) | int) > 0 else 'OK') }} |
+
+## Capability Profile
+
+This section applies the customer capability profile to observed Kubernetes state. Optional capabilities stay informational unless they are required in the input file or detected on the cluster.
+
+| Signal | Value |
+| --- | --- |
+| Profile provider | `{{ kubernetes_capability_profile_summary.provider_family | default(resolved_provider_family | default(provider_family | default('generic'))) }}` |
+| Profile mode | `{{ kubernetes_capability_profile_summary.profile_mode | default(resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) }}` |
+| Capabilities evaluated | `{{ kubernetes_capability_profile_summary.capability_count | default(kubernetes_capability_profile_rows | default([]) | length) }}` |
+| Required capabilities missing | `{{ kubernetes_capability_profile_summary.missing_required_count | default(0) }}` |
+| Optional capabilities absent | `{{ kubernetes_capability_profile_summary.optional_absent_count | default(0) }}` |
+
+{% if kubernetes_capability_profile_findings | default([]) | length > 0 %}
+Findings summary: required capabilities are missing or incomplete: {% for item in kubernetes_capability_profile_findings[:8] %}`{{ item.capability }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+
+Recommended actions: remediate the missing required capability signals listed below, or update the customer capability profile when a capability is intentionally not required for this cluster.
+
+| Capability | Severity | Finding | Recommended Action |
+| --- | --- | --- | --- |
+{% for item in kubernetes_capability_profile_findings %}
+| `{{ item.capability }}` | `{{ item.severity }}` | {{ item.finding }} | {{ item.action }} |
+{% endfor %}
+{% else %}
+Findings summary: no required capability gaps were detected in the observed Kubernetes state.
+
+Recommended actions: keep the capability profile aligned with customer requirements and review optional capabilities only when they are installed or explicitly required.
+{% endif %}
+
+| Capability | Required | Expected State | Owner | Status | Required Signals | Observed State |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in kubernetes_capability_profile_rows | default([]) %}
+| `{{ item.capability }}` | `{{ item.required }}` | `{{ item.expected_state }}` | `{{ item.owner }}` | {{ status_badge(item.status) }} | `{{ item.evidence_required | default([]) | join(', ') }}` | {{ item.signal }} |
+{% endfor %}
 
 ## Security And Governance Detail
 

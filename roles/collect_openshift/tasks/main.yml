@@ -15,12 +15,22 @@
         argv: ["oc", "get", "infrastructure", "cluster", "-o", "json"]
       - name: network
         argv: ["oc", "get", "network", "cluster", "-o", "json"]
+      - name: apiserver_config
+        argv: ["oc", "get", "apiserver.config.openshift.io", "cluster", "-o", "json"]
       - name: proxy_config
         argv: ["oc", "get", "proxy.config.openshift.io", "cluster", "-o", "json"]
       - name: ingress_config
         argv: ["oc", "get", "ingress.config.openshift.io", "cluster", "-o", "json"]
       - name: image_config
         argv: ["oc", "get", "image.config.openshift.io", "cluster", "-o", "json"]
+      - name: imagedigestmirrorsets
+        argv: ["oc", "get", "imagedigestmirrorsets.config.openshift.io", "-o", "json", "--ignore-not-found"]
+      - name: imagetagmirrorsets
+        argv: ["oc", "get", "imagetagmirrorsets.config.openshift.io", "-o", "json", "--ignore-not-found"]
+      - name: imagecontentsourcepolicies
+        argv: ["oc", "get", "imagecontentsourcepolicies.operator.openshift.io", "-o", "json", "--ignore-not-found"]
+      - name: catalogsources
+        argv: ["oc", "get", "catalogsources.operators.coreos.com", "-A", "-o", "json", "--ignore-not-found"]
       - name: image_registry_config
         argv: ["oc", "get", "configs.imageregistry.operator.openshift.io", "cluster", "-o", "json"]
       - name: image_pruner
@@ -146,6 +156,10 @@
     openshift_optional_missing_resource_commands:
       - pipelines
       - pipelineruns
+      - imagedigestmirrorsets
+      - imagetagmirrorsets
+      - imagecontentsourcepolicies
+      - catalogsources
       - volumesnapshotclasses
       - dataprotectionapplications
       - backupstoragelocations
@@ -395,8 +409,14 @@
     clusteroperators: "{{ openshift_collected_commands.clusteroperators.stdout | from_json if ((openshift_collected_commands.clusteroperators.rc | default(1)) == 0 and (openshift_collected_commands.clusteroperators.stdout | default('') | trim | length > 0)) else {'items': []} }}"
     infrastructure: "{{ openshift_collected_commands.infrastructure.stdout | from_json if ((openshift_collected_commands.infrastructure.rc | default(1)) == 0 and (openshift_collected_commands.infrastructure.stdout | default('') | trim | length > 0)) else {} }}"
     network_config: "{{ openshift_collected_commands.network.stdout | from_json if ((openshift_collected_commands.network.rc | default(1)) == 0 and (openshift_collected_commands.network.stdout | default('') | trim | length > 0)) else {} }}"
+    apiserver_config: "{{ openshift_collected_commands.apiserver_config.stdout | from_json if ((openshift_collected_commands.apiserver_config.rc | default(1)) == 0 and (openshift_collected_commands.apiserver_config.stdout | default('') | trim | length > 0)) else {} }}"
+    proxy_config: "{{ openshift_collected_commands.proxy_config.stdout | from_json if ((openshift_collected_commands.proxy_config.rc | default(1)) == 0 and (openshift_collected_commands.proxy_config.stdout | default('') | trim | length > 0)) else {} }}"
     ingress_config: "{{ openshift_collected_commands.ingress_config.stdout | from_json if ((openshift_collected_commands.ingress_config.rc | default(1)) == 0 and (openshift_collected_commands.ingress_config.stdout | default('') | trim | length > 0)) else {} }}"
     image_config: "{{ openshift_collected_commands.image_config.stdout | from_json if ((openshift_collected_commands.image_config.rc | default(1)) == 0 and (openshift_collected_commands.image_config.stdout | default('') | trim | length > 0)) else {} }}"
+    imagedigestmirrorsets: "{{ openshift_collected_commands.imagedigestmirrorsets.stdout | from_json if ((openshift_collected_commands.imagedigestmirrorsets.rc | default(1)) == 0 and (openshift_collected_commands.imagedigestmirrorsets.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    imagetagmirrorsets: "{{ openshift_collected_commands.imagetagmirrorsets.stdout | from_json if ((openshift_collected_commands.imagetagmirrorsets.rc | default(1)) == 0 and (openshift_collected_commands.imagetagmirrorsets.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    imagecontentsourcepolicies: "{{ openshift_collected_commands.imagecontentsourcepolicies.stdout | from_json if ((openshift_collected_commands.imagecontentsourcepolicies.rc | default(1)) == 0 and (openshift_collected_commands.imagecontentsourcepolicies.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    catalogsources: "{{ openshift_collected_commands.catalogsources.stdout | from_json if ((openshift_collected_commands.catalogsources.rc | default(1)) == 0 and (openshift_collected_commands.catalogsources.stdout | default('') | trim | length > 0)) else {'items': []} }}"
     image_registry_config: "{{ openshift_collected_commands.image_registry_config.stdout | from_json if ((openshift_collected_commands.image_registry_config.rc | default(1)) == 0 and (openshift_collected_commands.image_registry_config.stdout | default('') | trim | length > 0)) else {} }}"
     image_pruner_config: "{{ openshift_collected_commands.image_pruner.stdout | from_json if ((openshift_collected_commands.image_pruner.rc | default(1)) == 0 and (openshift_collected_commands.image_pruner.stdout | default('') | trim | length > 0)) else {} }}"
     dns_config: "{{ openshift_collected_commands.dns.stdout | from_json if ((openshift_collected_commands.dns.rc | default(1)) == 0 and (openshift_collected_commands.dns.stdout | default('') | trim | length > 0)) else {} }}"
@@ -451,10 +471,16 @@
       clusterversion: "{{ clusterversion | default({}) }}"
       infrastructure: "{{ infrastructure | default({}) }}"
       network_config: "{{ network_config | default({}) }}"
+      apiserver_config: "{{ apiserver_config | default({}) }}"
+      proxy_config: "{{ proxy_config | default({}) }}"
       ingress_config: "{{ ingress_config | default({}) }}"
       dns_config: "{{ dns_config | default({}) }}"
       oauth_config: "{{ oauth_config | default({}) }}"
       image_config: "{{ image_config | default({}) }}"
+      imagedigestmirrorsets: "{{ imagedigestmirrorsets | default({'items': []}) }}"
+      imagetagmirrorsets: "{{ imagetagmirrorsets | default({'items': []}) }}"
+      imagecontentsourcepolicies: "{{ imagecontentsourcepolicies | default({'items': []}) }}"
+      catalogsources: "{{ catalogsources | default({'items': []}) }}"
       image_registry_config: "{{ image_registry_config | default({}) }}"
       image_pruner_config: "{{ image_pruner_config | default({}) }}"
       clusteroperators: "{{ clusteroperators | default({'items': []}) }}"
@@ -520,6 +546,8 @@
       statefulsets: "{{ statefulsets | default({'items': []}) }}"
       daemonsets: "{{ daemonsets | default({'items': []}) }}"
       poddisruptionbudgets: "{{ poddisruptionbudgets | default({'items': []}) }}"
+      servicemonitors: "{{ servicemonitors | default({'items': []}) }}"
+      podmonitors: "{{ podmonitors | default({'items': []}) }}"
       ingresses: "{{ ingresses | default({'items': []}) }}"
       serviceaccounts: "{{ serviceaccounts | default({'items': []}) }}"
       rolebindings: "{{ rolebindings | default({'items': []}) }}"

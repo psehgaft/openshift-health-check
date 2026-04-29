@@ -104,13 +104,16 @@ assert standards["CIS"]["configured"] is True
 assert standards["CIS"]["active_enabled"] is True
 assert standards["PCI-DSS"]["configured"] is True
 assert standards["PCI-DSS"]["active_enabled"] is True
-assert standards["HIPAA"]["configured"] is True
+assert standards["HIPAA"]["configured"] is False
+assert standards["HIPAA"]["content_present"] is True
 assert standards["HIPAA"]["active_enabled"] is False
-assert standards["FedRAMP"]["configured"] is True
+assert standards["FedRAMP"]["configured"] is False
+assert standards["FedRAMP"]["content_present"] is True
 assert standards["FedRAMP"]["active_enabled"] is False
 assert standards["SOC"]["configured"] is False
 assert standards["SOC"]["active_enabled"] is False
-assert standards["SOX"]["configured"] is True
+assert standards["SOX"]["configured"] is False
+assert standards["SOX"]["content_present"] is True
 assert standards["SOX"]["active_enabled"] is False
 assert standards["FIPS"]["configured"] is True
 assert standards["FIPS"]["active_enabled"] is False
@@ -126,20 +129,20 @@ rg -q '## Node Health And Capacity' "${report_md}"
 rg -q '## Reference Compliance' "${report_md}"
 rg -q '### Advisor' "${report_md}"
 rg -q '## Upgrade And Lifecycle Risk' "${report_md}"
-rg -q '### Upgrade Readiness' "${report_md}"
 rg -q '| Upgrade readiness status |' "${report_md}"
 rg -q '## Observability' "${report_md}"
 rg -q '| Observability posture status |' "${report_md}"
 rg -q '## Security And Governance' "${report_md}"
 rg -q '| Security posture status |' "${report_md}"
-rg -q '## Day 2 Production Readiness' "${report_md}"
+rg -q '## Production Day 2 Readiness' "${report_md}"
 rg -q '| Top blockers |' "${report_md}"
-rg -q '### Product And Platform Adoption Evidence' "${report_md}"
+rg -q '### Product Evidence' "${report_md}"
 rg -q '| AI | `True` |' "${report_md}"
-rg -q '### Compliance Signals' "${report_md}"
+rg -q '### Compliance' "${report_md}"
 rg -q '| `FIPS` | `True` |' "${report_md}"
-rg -q '| `FedRAMP` | `True` |' "${report_md}"
+rg -q '| `FedRAMP` | `True` | `False` |' "${report_md}"
 rg -q '| `PCI-DSS` | `True` |' "${report_md}"
+rg -q 'content-available' "${report_md}"
 rg -q 'enabled' "${report_md}"
 rg -q '### etcd Must-Gather Diagnostics' "${report_md}"
 rg -q '### OMC Must-Gather Diagnostics' "${report_md}"

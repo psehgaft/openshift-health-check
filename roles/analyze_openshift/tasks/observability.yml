@@ -662,6 +662,31 @@
     prom_result_map: "{{ ((prom_query_helper_cmd.stdout | from_json).results) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
     prom_collection_transport: "{{ ((prom_query_helper_cmd.stdout | from_json).transport) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else 'unavailable' }}"
 
+- name: Build Prometheus evidence summary
+  ansible.builtin.set_fact:
+    prometheus_evidence_summary:
+      applicable: "{{ (report_mode_resolved | default('live')) == 'live' }}"
+      collected: "{{ prom_available | default(false) | bool }}"
+      status: "{{ 'collected' if (prom_available | default(false) | bool) else 'unavailable' }}"
+      transport: "{{ prom_collection_transport | default('unavailable') }}"
+      route_working: "{{ prom_query_helper_data.route_working | default(false) }}"
+      proxy_working: "{{ prom_query_helper_data.proxy_working | default(false) }}"
+      query_count: "{{ prom_result_map | default({}) | length }}"
+      non_empty_result_count: "{{ (prom_result_map | default({}) | dict2items | rejectattr('value', 'equalto', []) | list | length) }}"
+      source: "openshift-monitoring/thanos-querier"
+      collection_method: "{{ 'route' if (prom_collection_transport | default('unavailable')) == 'route' else ('oc get --raw service proxy' if (prom_collection_transport | default('unavailable')) == 'oc-proxy' else 'not-collected') }}"
+      source_order_note: "Prometheus/Thanos is one of the official cluster data sources and is used where time-series metrics improve accuracy; object and configuration evidence still follows must-gather, inspect, oc get, then insights."
+      metric_scopes:
+        - alerting
+        - api-server
+        - etcd
+        - node-utilization
+        - pod-usage
+        - pod-density
+        - optional-network-latency
+      route_error: "{{ prom_query_helper_data.route_error | default('') }}"
+      proxy_error: "{{ prom_query_helper_data.proxy_error | default('') }}"
+
 - name: Record Prometheus query availability finding
   ansible.builtin.set_fact:
     observability_findings: "{{ (observability_findings | default([])) + [{'issue': 'prometheus-query-endpoint-unavailable', 'detail': prom_query_error_detail}] }}"
@@ -740,6 +765,14 @@
   loop: "{{ node_memory_utilization_results | default([]) }}"
   vars:
     mem_value: "{{ (item.value[1] | float | round(1)) }}"
+  changed_when: false
+
+- name: Build disk summaries
+  ansible.builtin.set_fact:
+    high_disk_nodes: "{{ high_disk_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (disk_value | float)}] if (disk_value | float) > 85 else []) }}"
+  loop: "{{ node_disk_utilization_results | default([]) }}"
+  vars:
+    disk_value: "{{ (item.value[1] | float | round(1)) }}"
   changed_when: false
 
 - name: Build pod density summaries

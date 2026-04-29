@@ -216,7 +216,11 @@
           'issue': 'sosreport-node-coverage-missing',
           'severity': 'warning',
           'detail': 'node-level sosreport data was requested but no node reports were captured'
-        }] if ((live_support_collect_sosreport_resolved | default(false) | bool) and ((live_support_parsed.sosreport.summary.count | default(0) | int) == 0)) else []) +
+        }] if (
+          (live_support_collect_sosreport_resolved | default(false) | bool)
+          and ((live_support_parsed.sosreport.summary.count | default(0) | int) == 0)
+          and ((node_debug_target_nodes | default([])) | length > 0)
+        ) else []) +
         ([{
           'issue': 'sosreport-node-coverage-partial',
           'severity': 'warning',
@@ -509,6 +513,123 @@
       recent_warning_events: "{{ recent_warning_events | default([]) | length }}"
       firing_alerts: "{{ firing_alerts | default([]) | length }}"
 
+- name: Build core platform health posture summary
+  vars:
+    apiserver_readyz_failed: >-
+      {{
+        (apiserver_readyz_status | default('unavailable')) == 'failed'
+        or (apiserver_readyz_failed_checks | default(0) | int) > 0
+      }}
+    high_impact_progressing_operators: >-
+      {{
+        (progressing_operators | default([]))
+        | select('in', ['authentication', 'dns', 'etcd', 'ingress', 'kube-apiserver', 'network'])
+        | list
+      }}
+    etcd_leader_unhealthy: >-
+      {{
+        (etcd_leader_count | default('') | string | length > 0)
+        and ((etcd_leader_count | float) != 1)
+      }}
+    apiserver_runtime_degraded: >-
+      {{
+        ((apiserver_request_5xx_rate | default('') | string | length > 0) and ((apiserver_request_5xx_rate | float) > 0))
+        or ((apiserver_request_p99_seconds | default('') | string | length > 0) and ((apiserver_request_p99_seconds | float) > (apiserver_latency_p99_warn_seconds | default(1) | float)))
+      }}
+    etcd_runtime_degraded: >-
+      {{
+        ((etcd_wal_fsync_p99_ms | default('') | string | length > 0) and ((etcd_wal_fsync_p99_ms | float) > (etcd_wal_fsync_p99_warn_ms | default(10) | float)))
+        or ((etcd_peer_rtt_p99_ms | default('') | string | length > 0) and ((etcd_peer_rtt_p99_ms | float) > (etcd_peer_rtt_p99_warn_ms | default(50) | float)))
+        or ((etcd_leader_changes_5m | default('') | string | length > 0) and ((etcd_leader_changes_5m | float) > 0))
+      }}
+    core_platform_critical: >-
+      {{
+        cv_failing == 'True'
+        or (cv_available == 'False' and cv_progressing != 'True')
+        or (degraded_operators | default([]) | length > 0)
+        or (unavailable_operators | default([]) | length > 0)
+        or (not_ready_nodes | default([]) | length > 0)
+        or (degraded_mcps | default([]) | length > 0)
+        or (route_issues | default([]) | length > 0)
+        or (ingress_issues | default([]) | length > 0)
+        or (route_host_conflicts | default([]) | length > 0)
+        or (ingress_host_conflicts | default([]) | length > 0)
+        or (ingresscontroller_issues | default([]) | length > 0)
+        or (infrastructure_component_issues | default([]) | length > 0)
+        or (apiservice_issues | default([]) | length > 0)
+        or apiserver_readyz_failed
+        or etcd_leader_unhealthy
+      }}
+    core_platform_warning: >-
+      {{
+        cv_progressing == 'True'
+        or cv_available == 'Unknown'
+        or (high_impact_progressing_operators | length > 0)
+        or (pressure_nodes | default([]) | length > 0)
+        or apiserver_runtime_degraded
+        or etcd_runtime_degraded
+        or (platform_pod_issues | default([]) | length > 0)
+        or (image_registry_findings | default([]) | length > 0)
+      }}
+    core_platform_status: "{{ 'CRITICAL' if (core_platform_critical | bool) else ('WARNING' if (core_platform_warning | bool) else 'HEALTHY') }}"
+    core_platform_runtime_reason_summary: >-
+      {{
+        (
+          []
+          + (['ClusterVersion failing or unavailable'] if (cv_failing == 'True' or (cv_available == 'False' and cv_progressing != 'True')) else [])
+          + (['degraded operators: ' ~ (degraded_operators | join(', '))] if (degraded_operators | default([]) | length > 0) else [])
+          + (['unavailable operators: ' ~ (unavailable_operators | join(', '))] if (unavailable_operators | default([]) | length > 0) else [])
+          + (['not-ready nodes: ' ~ (not_ready_nodes | join(', '))] if (not_ready_nodes | default([]) | length > 0) else [])
+          + (['degraded MCPs: ' ~ (degraded_mcps | join(', '))] if (degraded_mcps | default([]) | length > 0) else [])
+          + (['route or ingress admission issues'] if ((route_issues | default([]) | length > 0) or (ingress_issues | default([]) | length > 0) or (route_host_conflicts | default([]) | length > 0) or (ingress_host_conflicts | default([]) | length > 0) or (ingresscontroller_issues | default([]) | length > 0)) else [])
+          + (['APIService availability issues'] if (apiservice_issues | default([]) | length > 0) else [])
+          + (['API /readyz failed'] if apiserver_readyz_failed else [])
+          + (['API runtime degraded'] if apiserver_runtime_degraded else [])
+          + (['etcd leader unhealthy'] if etcd_leader_unhealthy else [])
+          + (['etcd runtime degraded'] if etcd_runtime_degraded else [])
+          + (['platform pod issues'] if (platform_pod_issues | default([]) | length > 0) else [])
+          + (['image registry findings'] if (image_registry_findings | default([]) | length > 0) else [])
+          + (['high-impact operators progressing: ' ~ (high_impact_progressing_operators | join(', '))] if (high_impact_progressing_operators | length > 0) else [])
+        ) | join('; ')
+      }}
+  ansible.builtin.set_fact:
+    core_platform_health_findings: >-
+      {{
+        []
+        + ([{'severity': 'critical', 'area': 'cluster-version', 'detail': 'ClusterVersion reports failing=True or unavailable without progressing.'}] if (cv_failing == 'True' or (cv_available == 'False' and cv_progressing != 'True')) else [])
+        + ([{'severity': 'critical', 'area': 'operators', 'detail': 'Degraded operators: ' ~ (degraded_operators | join(', '))}] if (degraded_operators | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'operators', 'detail': 'Unavailable operators: ' ~ (unavailable_operators | join(', '))}] if (unavailable_operators | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'nodes', 'detail': 'NotReady nodes: ' ~ (not_ready_nodes | join(', '))}] if (not_ready_nodes | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'machine-config', 'detail': 'Degraded MachineConfigPools: ' ~ (degraded_mcps | join(', '))}] if (degraded_mcps | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'network-access', 'detail': 'Route, ingress, or ingress-controller health issues were detected.'}] if ((route_issues | default([]) | length > 0) or (ingress_issues | default([]) | length > 0) or (route_host_conflicts | default([]) | length > 0) or (ingress_host_conflicts | default([]) | length > 0) or (ingresscontroller_issues | default([]) | length > 0)) else [])
+        + ([{'severity': 'critical', 'area': 'apiservices', 'detail': 'Unavailable aggregated API services: ' ~ ((apiservice_issues | default([]) | length) | string)}] if (apiservice_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'api-readyz', 'detail': 'API /readyz failed or reported failed checks.'}] if apiserver_readyz_failed else [])
+        + ([{'severity': 'critical', 'area': 'etcd', 'detail': 'etcd leader count is not healthy.'}] if etcd_leader_unhealthy else [])
+        + ([{'severity': 'warning', 'area': 'cluster-version', 'detail': 'ClusterVersion is progressing or availability is unknown.'}] if (cv_progressing == 'True' or cv_available == 'Unknown') else [])
+        + ([{'severity': 'warning', 'area': 'operators', 'detail': 'High-impact operators progressing: ' ~ (high_impact_progressing_operators | join(', '))}] if (high_impact_progressing_operators | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'nodes', 'detail': 'Nodes under pressure: ' ~ ((pressure_nodes | default([]) | map(attribute='name') | list) | join(', '))}] if (pressure_nodes | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'api-runtime', 'detail': 'API request errors or latency exceeded warning thresholds.'}] if apiserver_runtime_degraded else [])
+        + ([{'severity': 'warning', 'area': 'etcd-runtime', 'detail': 'etcd latency or leader-change metrics exceeded warning thresholds.'}] if etcd_runtime_degraded else [])
+        + ([{'severity': 'warning', 'area': 'platform-pods', 'detail': 'Platform namespace pod issues: ' ~ ((platform_pod_issues | default([]) | length) | string)}] if (platform_pod_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'image-registry', 'detail': 'Image registry findings: ' ~ ((image_registry_findings | default([]) | length) | string)}] if (image_registry_findings | default([]) | length > 0) else [])
+      }}
+
+- name: Finalize core platform health posture summary
+  vars:
+    core_platform_critical_count: "{{ core_platform_health_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length }}"
+    core_platform_warning_count: "{{ core_platform_health_findings | default([]) | selectattr('severity', 'equalto', 'warning') | list | length }}"
+  ansible.builtin.set_fact:
+    core_platform_health_summary: "{{ (health_summary | default({})) | combine({
+      'status': ('CRITICAL' if (core_platform_critical_count | int) > 0 else ('WARNING' if (core_platform_warning_count | int) > 0 else 'HEALTHY')),
+      'core_platform_runtime_reason_summary': (
+        core_platform_health_findings | default([]) | map(attribute='detail') | list | join('; ')
+        if ((core_platform_critical_count | int) + (core_platform_warning_count | int)) > 0
+        else ''
+      ),
+      'critical_findings': core_platform_critical_count,
+      'warning_findings': core_platform_warning_count
+    }, recursive=True) }}"
+
 - name: Precompute networking architecture summary inputs
   vars:
     graph: "{{ analysis_graph | default({}) }}"
@@ -557,6 +678,7 @@
       - ".svc"
       - ".cluster.local"
     proxy_missing_internal_no_proxy_entries: "{{ proxy_required_internal_no_proxy_entries | difference(networking_proxy_no_proxy_entries | default([])) if (networking_cluster_proxy_configured | default(false) | bool) else [] }}"
+    networking_service_endpoint_gap_count: "{{ services_without_endpoints | default([]) | length }}"
     network_architecture_status: >-
       {{
         'CRITICAL'
@@ -572,9 +694,7 @@
             (route_issues | default([]) | length) > 0
             or (ingress_issues | default([]) | length) > 0
             or (networking_nondefault_ingresscontroller_issue_count | int) > 0
-            or (exposed_namespaces_without_networkpolicy | length) > 0
-            or (exposed_namespaces_missing_ingress_policies | length) > 0
-            or (exposed_namespaces_missing_egress_policies | length) > 0
+            or (networking_service_endpoint_gap_count | int) > 0
             or (proxy_missing_internal_no_proxy_entries | length) > 0
           )
           else 'HEALTHY'
@@ -591,9 +711,8 @@
           + (['cross route/ingress host conflicts=' ~ ((route_ingress_host_conflicts | default([]) | length) | string)] if (route_ingress_host_conflicts | default([]) | length) > 0 else [])
           + (['default ingress controller issues=' ~ ((networking_default_ingresscontroller_issue_count | int) | string)] if (networking_default_ingresscontroller_issue_count | int) > 0 else [])
           + (['non-default ingress controller issues=' ~ ((networking_nondefault_ingresscontroller_issue_count | int) | string)] if (networking_nondefault_ingresscontroller_issue_count | int) > 0 else [])
-          + (['exposed namespaces without NetworkPolicy=' ~ ((exposed_namespaces_without_networkpolicy | length) | string)] if (exposed_namespaces_without_networkpolicy | length) > 0 else [])
-          + (['exposed namespaces missing ingress policy=' ~ ((exposed_namespaces_missing_ingress_policies | length) | string)] if (exposed_namespaces_missing_ingress_policies | length) > 0 else [])
-          + (['exposed namespaces missing egress policy=' ~ ((exposed_namespaces_missing_egress_policies | length) | string)] if (exposed_namespaces_missing_egress_policies | length) > 0 else [])
+          + (['service endpoint gaps=' ~ ((networking_service_endpoint_gap_count | int) | string)] if (networking_service_endpoint_gap_count | int) > 0 else [])
+          + (['exposed namespace policy context=' ~ ((exposed_namespaces_without_networkpolicy | length) | string) ~ ' without NetworkPolicy'] if (exposed_namespaces_without_networkpolicy | length) > 0 else [])
           + (['proxy noProxy gaps=' ~ (proxy_missing_internal_no_proxy_entries | join(', '))] if (proxy_missing_internal_no_proxy_entries | length) > 0 else [])
         ) | join('; ')
       }}
@@ -603,9 +722,9 @@
           'Stabilize networking architecture first: resolve default ingress controller problems and duplicate host claims across Route and Ingress objects before treating application access paths as reliable.'
           if network_architecture_status == 'CRITICAL'
           else (
-            'Reduce networking architecture risk next: fix route or ingress admission problems, add isolation policy to exposed namespaces including service-exposed workloads, and review outbound proxy or egress design before treating network access as production-ready.'
+            'Reduce networking architecture risk next: fix route or ingress admission problems, repair Services with no ready endpoints, review non-default ingress controller issues, and correct proxy noProxy gaps before treating application access as production-ready.'
             if network_architecture_status == 'WARNING'
-            else 'Networking architecture looks acceptable for this run. Keep route and ingress ownership clean, preserve namespace isolation where workloads are exposed, and maintain proxy or egress settings as designed.'
+            else 'Networking architecture looks acceptable for this run. Keep route and ingress ownership clean, review namespace isolation requirements for exposed workloads, and maintain proxy or egress settings as designed.'
           )
         )
       }}
@@ -622,6 +741,8 @@
       ingresscontroller_issue_count: "{{ ingresscontroller_issues | default([]) | length }}"
       default_ingresscontroller_issue_count: "{{ networking_default_ingresscontroller_issue_count }}"
       nondefault_ingresscontroller_issue_count: "{{ networking_nondefault_ingresscontroller_issue_count }}"
+      service_endpoint_gap_count: "{{ networking_service_endpoint_gap_count }}"
+      service_endpoint_gap_samples: "{{ top_services_without_endpoints | default([]) }}"
       exposed_namespace_count: "{{ exposed_user_namespaces | length }}"
       service_exposure_namespace_count: "{{ (((networking_service_exposure_namespaces | default([])) + (networking_external_ip_service_namespaces | default([]))) | unique | reject('match', user_namespaces_exclude_regex | default('^$')) | list | length) }}"
       exposed_namespaces_without_networkpolicy: "{{ exposed_namespaces_without_networkpolicy }}"
@@ -674,6 +795,12 @@
         | rejectattr('active_enabled', 'equalto', true)
         | list
       }}
+    stale_access_review_count: >-
+      {{
+        (stale_access_review_serviceaccounts | default([]) | length)
+        + (stale_access_review_users | default([]) | length)
+        + (stale_access_review_groups | default([]) | length)
+      }}
     security_compliance_status: >-
       {{
         'CRITICAL'
@@ -685,6 +812,7 @@
             or (privileged_access_count | int) > 0
             or (scc_grant_findings | default([]) | length) > 0
             or (high_signal_security_findings | length) > 0
+            or (image_registry_findings | default([]) | length) > 0
             or (compliance_suite_findings | default([]) | length) > 0
             or (active_non_supported_standards | length) > 0
             or (compliance_operator_summary.invalid_profilebundle_count | default(0) | int) > 0
@@ -702,6 +830,7 @@
           + (['privileged access grants=' ~ ((privileged_access_count | int) | string)] if (privileged_access_count | int) > 0 else [])
           + (['high-risk SCC grants=' ~ ((scc_grant_findings | default([]) | length) | string)] if (scc_grant_findings | default([]) | length) > 0 else [])
           + (['high-signal pod security findings=' ~ ((high_signal_security_findings | length) | string)] if (high_signal_security_findings | length) > 0 else [])
+          + (['image registry policy findings=' ~ ((image_registry_findings | default([]) | length) | string)] if (image_registry_findings | default([]) | length) > 0 else [])
           + (['warning certificate expiry=' ~ ((expiring_certificates_warning | default([]) | length) | string)] if (expiring_certificates_warning | default([]) | length) > 0 else [])
           + (['active compliance standards needing review=' ~ ((active_non_supported_standards | length) | string)] if (active_non_supported_standards | length) > 0 else [])
           + (['compliance suite findings=' ~ ((compliance_suite_findings | default([]) | length) | string)] if (compliance_suite_findings | default([]) | length) > 0 else [])
@@ -714,7 +843,7 @@
           'Address immediate security posture risks first: rotate or replace critically expiring certificates, reduce privileged access exposure, and correct the highest-signal access or compliance issues before treating the cluster as production-ready.'
           if security_compliance_status == 'CRITICAL'
           else (
-            'Reduce security and compliance risk next: review identity-provider posture, privileged access grants, SCC exposure, active compliance standards, and certificate warnings. Treat namespace guardrail gaps as baseline governance debt rather than the primary security signal.'
+            'Reduce security and compliance risk next: review identity-provider posture, privileged access grants, SCC exposure, image registry policy findings, active compliance standards, and certificate warnings. Treat namespace guardrail gaps as baseline governance debt rather than the primary security signal.'
             if security_compliance_status == 'WARNING'
             else 'Security and compliance posture looks acceptable for this run. Keep access controls, certificate hygiene, and active compliance standards under normal review while tracking namespace baseline guardrails as governance hygiene.'
           )
@@ -731,8 +860,11 @@
       local_identity_provider_count: "{{ auth_posture_summary.local_identity_provider_count | default(0) }}"
       kubeadmin_secret_present: "{{ auth_posture_summary.kubeadmin_secret_present | default(false) }}"
       privileged_access_count: "{{ privileged_access_count }}"
+      stale_access_review_count: "{{ stale_access_review_count }}"
       scc_grant_findings: "{{ scc_grant_findings | default([]) | length }}"
       security_findings: "{{ security_findings | default([]) | length }}"
+      image_registry_findings: "{{ image_registry_findings | default([]) | length }}"
+      likely_unused_secrets: "{{ likely_unused_secrets | default([]) | length }}"
       expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) | length }}"
       expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) | length }}"
       compliance_suite_findings: "{{ compliance_suite_findings | default([]) | length }}"
@@ -781,6 +913,9 @@
         + (1 if ((observability_forwarding_summary.external_alert_receiver_count | default(0) | int) > 0 and not (observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false))) else 0)
         + (1 if ((observability_forwarding_summary.alert_delivery_source_count | default(0) | int) > 0 and (observability_forwarding_summary.external_alert_receiver_count | default(0) | int) == 0) else 0)
       }}
+    prometheus_query_applicable: "{{ prometheus_evidence_summary.applicable | default((report_mode_resolved | default('live')) == 'live') | bool }}"
+    prometheus_query_collected: "{{ prometheus_evidence_summary.collected | default(false) | bool }}"
+    metric_evidence_gap_count: "{{ 1 if (prometheus_query_applicable | bool) and not (prometheus_query_collected | bool) else 0 }}"
     observability_status: >-
       {{
         'CRITICAL'
@@ -794,6 +929,7 @@
             (log_gap_count | int) > 0
             or (metrics_gap_count | int) > 0
             or (alerting_gap_count | int) > 0
+            or (metric_evidence_gap_count | int) > 0
             or ((insights_archive_findings | default([]) | length) > 0)
             or ((warning_event_count | int) >= (warning_event_posture_threshold | int))
             or (firing_warning_alert_count | int) > 0
@@ -808,10 +944,11 @@
           + (['monitoring operator not healthy'] if not monitoring_operator_healthy else [])
           + (['critical firing alerts=' ~ ((firing_critical_alert_count | int) | string)] if (firing_critical_alert_count | int) > 0 else [])
           + (['non-critical firing alerts=' ~ ((firing_warning_alert_count | int) | string)] if (firing_warning_alert_count | int) > 0 else [])
-          + (['warning events=' ~ ((recent_warning_events | default([]) | length) | string)] if (recent_warning_events | default([]) | length) > 0 else [])
+          + (['warning events over threshold=' ~ ((recent_warning_events | default([]) | length) | string)] if (warning_event_count | int) >= (warning_event_posture_threshold | int) else [])
           + (['log forwarding gaps=' ~ ((log_gap_count | int) | string)] if (log_gap_count | int) > 0 else [])
           + (['metrics forwarding gaps=' ~ ((metrics_gap_count | int) | string)] if (metrics_gap_count | int) > 0 else [])
           + (['alert delivery gaps=' ~ ((alerting_gap_count | int) | string)] if (alerting_gap_count | int) > 0 else [])
+          + (['prometheus/thanos metric evidence unavailable'] if (metric_evidence_gap_count | int) > 0 else [])
           + (['insights archive findings=' ~ ((insights_archive_findings | default([]) | length) | string)] if ((insights_archive_findings | default([]) | length) > 0) else [])
         ) | join('; ')
       }}
@@ -821,7 +958,7 @@
           'Stabilize observability first: restore the monitoring operator, triage active firing alerts, and treat configured telemetry paths as unverified until alerting, logging, and metrics delivery are confirmed end to end.'
           if observability_status == 'CRITICAL'
           else (
-            'Reduce observability risk next: close log, alert-routing, and metrics-forwarding gaps, and distinguish externally configured telemetry from actually verified delivery before treating the platform as operationally observable.'
+            'Reduce observability risk next: close log, alert-routing, metrics-forwarding, and Prometheus/Thanos evidence gaps, and distinguish externally configured telemetry from actually verified delivery before treating the platform as operationally observable.'
             if observability_status == 'WARNING'
             else 'Observability posture looks acceptable for this run. Keep monitoring healthy, preserve alerting and forwarding configuration, and periodically verify that configured telemetry paths are still delivering as intended.'
           )
@@ -841,6 +978,13 @@
       log_gap_count: "{{ log_gap_count }}"
       metrics_gap_count: "{{ metrics_gap_count }}"
       alerting_gap_count: "{{ alerting_gap_count }}"
+      metric_evidence_gap_count: "{{ metric_evidence_gap_count }}"
+      prometheus_query_applicable: "{{ prometheus_query_applicable }}"
+      prometheus_query_collected: "{{ prometheus_query_collected }}"
+      prometheus_query_status: "{{ prometheus_evidence_summary.status | default('not-collected') }}"
+      prometheus_query_transport: "{{ prometheus_evidence_summary.transport | default('unavailable') }}"
+      prometheus_query_count: "{{ prometheus_evidence_summary.query_count | default(0) }}"
+      prometheus_non_empty_query_count: "{{ prometheus_evidence_summary.non_empty_result_count | default(0) }}"
       application_logs_delivery_state: "{{ observability_forwarding_summary.application_logs_delivery_state | default('not-collected') }}"
       infrastructure_logs_delivery_state: "{{ observability_forwarding_summary.infrastructure_logs_delivery_state | default('not-collected') }}"
       audit_logs_delivery_state: "{{ observability_forwarding_summary.audit_logs_delivery_state | default('not-collected') }}"
@@ -871,6 +1015,15 @@
         (backup_posture_data.completed_restore_count | default(0) | int)
         - (backup_posture_data.clean_completed_restore_count | default(0) | int)
       }}
+    backup_tooling_detected: >-
+      {{
+        (dataprotectionapplication_summary | default([]) | length) > 0
+        or (backup_storage_location_summary | default([]) | length) > 0
+        or (backup_schedule_summary | default([]) | length) > 0
+        or (backup_summary | default([]) | length) > 0
+        or (restore_summary | default([]) | length) > 0
+      }}
+    storage_provider_warning: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool }}"
     backup_recovery_status: >-
       {{
         'CRITICAL'
@@ -883,6 +1036,7 @@
           if (
             (backup_posture_findings | default([]) | selectattr('issue', 'in', ['backup-schedule-paused', 'successful-backup-has-warnings-or-errors', 'successful-backup-stale', 'restore-evidence-not-demonstrated', 'restore-evidence-has-warnings-or-errors']) | list | length) > 0
             or (machine_healthcheck_findings | default([]) | length) > 0
+            or storage_provider_warning
           )
           else 'HEALTHY'
         )
@@ -891,13 +1045,19 @@
       {{
         (
           []
+          + (['backup tooling not detected'] if not (backup_tooling_detected | bool) else [])
+          + (['available backup storage locations=0'] if (available_backup_storage_locations | length) == 0 else [])
           + (['available backup storage locations=' ~ ((available_backup_storage_locations | length) | string)] if (available_backup_storage_locations | length) > 0 else [])
+          + (['backup schedules=0'] if (backup_schedule_summary | default([]) | length) == 0 else [])
           + (['paused backup schedules=' ~ ((paused_backup_schedules | length) | string)] if (paused_backup_schedules | length) > 0 else [])
+          + (['clean successful backups=0'] if (clean_successful_backup_count | int) == 0 else [])
           + (['clean successful backups=' ~ ((clean_successful_backup_count | int) | string)] if (clean_successful_backup_count | int) > 0 else [])
           + (['completed backups with warnings/errors=' ~ ((completed_backup_with_issues_count | int) | string)] if (completed_backup_with_issues_count | int) > 0 else [])
+          + (['clean restore evidence=0'] if (clean_completed_restore_count | int) == 0 else [])
           + (['clean restore evidence=' ~ ((clean_completed_restore_count | int) | string)] if (clean_completed_restore_count | int) > 0 else [])
           + (['completed restores with warnings/errors=' ~ ((completed_restore_with_issues_count | int) | string)] if (completed_restore_with_issues_count | int) > 0 else [])
           + (['machine remediation findings=' ~ ((machine_healthcheck_findings | default([]) | length) | string)] if ((machine_healthcheck_findings | default([]) | length) > 0) else [])
+          + (['storage provider risk=local-or-ephemeral-only'] if storage_provider_warning else [])
         ) | join('; ')
       }}
     backup_recovery_recommendation: >-
@@ -917,6 +1077,8 @@
       status: "{{ backup_recovery_status }}"
       reason_summary: "{{ backup_recovery_reason_summary }}"
       recommendation: "{{ backup_recovery_recommendation }}"
+      backup_tooling_detected: "{{ backup_tooling_detected }}"
+      dataprotectionapplication_count: "{{ dataprotectionapplication_summary | default([]) | length }}"
       available_backup_storage_location_count: "{{ available_backup_storage_locations | length }}"
       backup_schedule_count: "{{ backup_schedule_summary | default([]) | length }}"
       paused_backup_schedule_count: "{{ paused_backup_schedules | length }}"
@@ -928,10 +1090,16 @@
       completed_restore_with_issues_count: "{{ completed_restore_with_issues_count }}"
       backup_posture_findings: "{{ backup_posture_findings | default([]) | length }}"
       machine_healthcheck_findings: "{{ machine_healthcheck_findings | default([]) | length }}"
+      external_storage_provider_detected: "{{ storage_posture_summary.has_external_storage_provider | default(false) }}"
+      local_or_ephemeral_only_risk: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}"
+      external_storageclass_count: "{{ storage_posture_summary.external_storageclass_count | default(0) }}"
+      local_storageclass_count: "{{ storage_posture_summary.local_storageclass_count | default(0) }}"
+      external_pv_count: "{{ storage_posture_summary.external_pv_count | default(0) }}"
+      local_pv_count: "{{ storage_posture_summary.local_pv_count | default(0) }}"
 
 - name: Build node health and capacity posture summary
   vars:
-    node_diagnostics_evidence_gap: "{{ (node_diagnostics_summary.verdict | default('insufficient-evidence')) != 'supported' }}"
+    node_diagnostics_evidence_gap: "{{ (node_diagnostics_summary.verdict | default('insufficient-evidence')) not in ['supported', 'basic-supported', 'node-level-not-requested', 'node-level-no-targets'] }}"
     node_capacity_status: >-
       {{
         'CRITICAL'
@@ -965,8 +1133,6 @@
           + (['high memory nodes=' ~ ((high_memory_nodes | default([]) | length) | string)] if ((high_memory_nodes | default([]) | length) > 0) else [])
           + (['high disk nodes=' ~ ((high_disk_nodes | default([]) | length) | string)] if ((high_disk_nodes | default([]) | length) > 0) else [])
           + (['node diagnostics evidence=' ~ (node_diagnostics_summary.verdict | default('unknown'))] if node_diagnostics_evidence_gap else [])
-          + (['external storage provider not detected'] if not (storage_posture_summary.has_external_storage_provider | default(false) | bool) else [])
-          + (['local or ephemeral storage only risk'] if (storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool) else [])
         ) | join('; ')
       }}
     node_capacity_recommendation: >-
@@ -975,9 +1141,9 @@
           'Stabilize node health first: restore NotReady nodes, relieve the most saturated nodes, and do not treat node capacity as healthy until critical density issues are cleared.'
           if node_capacity_status == 'CRITICAL'
           else (
-            'Reduce node and capacity risk next: address node pressure, quota pressure, and high utilization or density hotspots. Also review node-level diagnostics coverage and persistent storage posture so future node investigations and capacity planning stay credible.'
+            'Reduce node and capacity risk next: address node pressure, quota pressure, and high utilization or density hotspots. Review node-level diagnostics coverage so future node investigations and capacity planning stay credible.'
             if node_capacity_status == 'WARNING'
-            else 'Node health and capacity posture look acceptable for this run. Keep readiness, pressure, density, and utilization under normal review, and treat diagnostics coverage and storage posture as supporting confidence signals as workloads grow.'
+            else 'Node health and capacity posture look acceptable for this run. Keep readiness, pressure, density, utilization, and diagnostics coverage under normal review as workloads grow.'
           )
         )
       }}
@@ -1029,7 +1195,6 @@
     workload_efficiency_context_count: >-
       {{
         (overprovisioned_pods | default([]) | length)
-        + (services_without_endpoints | default([]) | length)
       }}
     workload_status: >-
       {{
@@ -1054,8 +1219,12 @@
           + (['unhealthy user pods=' ~ ((unhealthy_user_pods | default([]) | length) | string)] if ((unhealthy_user_pods | default([]) | length) > 0) else [])
           + (['workload rollout issues=' ~ ((workload_health_issues | default([]) | length) | string)] if ((workload_health_issues | default([]) | length) > 0) else [])
           + (['restart hotspots=' ~ ((high_restart_pods | default([]) | length) | string)] if ((high_restart_pods | default([]) | length) > 0) else [])
-          + (['workload hygiene debt=' ~ ((workload_hygiene_debt_count | int) | string)] if (workload_hygiene_debt_count | int) > 0 else [])
-          + (['softer efficiency or cleanup signals=' ~ ((workload_efficiency_context_count | int) | string)] if (workload_efficiency_context_count | int) > 0 else [])
+          + (['probe coverage findings=' ~ ((workload_probe_findings | default([]) | length) | string)] if ((workload_probe_findings | default([]) | length) > 0) else [])
+          + (['resource request/limit findings=' ~ ((workload_resource_findings | default([]) | length) | string)] if ((workload_resource_findings | default([]) | length) > 0) else [])
+          + (['label governance findings=' ~ ((workload_label_governance_findings | default([]) | length) | string)] if ((workload_label_governance_findings | default([]) | length) > 0) else [])
+          + (['orphan pods=' ~ ((orphan_pods | default([]) | length) | string)] if ((orphan_pods | default([]) | length) > 0) else [])
+          + (['high replica workloads=' ~ ((high_replica_workloads | default([]) | length) | string)] if ((high_replica_workloads | default([]) | length) > 0) else [])
+          + (['overprovisioned pods=' ~ ((overprovisioned_pods | default([]) | length) | string)] if ((overprovisioned_pods | default([]) | length) > 0) else [])
         ) | join('; ')
       }}
     workload_recommendation: >-
@@ -1064,7 +1233,7 @@
           'Stabilize workload runtime health first: fix unhealthy user pods and incomplete workload rollouts before treating application posture as acceptable.'
           if workload_status == 'CRITICAL'
           else (
-            'Reduce workload deployment risk next: review restart hotspots and workload hygiene debt such as missing probes, resource settings, labels, or owner references. Treat endpoint and overprovisioning signals as softer follow-up context.'
+            'Reduce workload deployment risk next: review restart hotspots and workload hygiene debt such as missing probes, resource settings, labels, or owner references. Treat overprovisioning signals as softer follow-up context.'
             if workload_status == 'WARNING'
             else 'Workload health and deployment hygiene look acceptable for this run. Keep rollout status, restart hotspots, probes, and resource hygiene under normal review.'
           )
@@ -1219,9 +1388,11 @@
             lifecycle_support_status == 'eus-optional'
             or (conditional_updates | default([]) | length > 0)
             or (topology_warning_count | int) > 0
+            or deployment_type_confidence_warning
+            or machine_networks_evidence_gap
           )
           else (
-            'UNKNOWN'
+            'not-assessed'
             if lifecycle_support_status == 'unknown'
             else 'HEALTHY'
           )
@@ -1322,15 +1493,6 @@
         'WARNING'
         if (
           ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0)
-          or (
-            (auth_posture_summary.status | default('unknown')) in ['warning', 'review']
-            and (
-              (auth_posture_summary.external_identity_provider_count | default(0) | int) == 0
-              or (auth_posture_summary.kubeadmin_secret_present | default(false) | bool)
-            )
-          )
-          or (day2_posture_summary.backup_schedule_count | default(0) | int) == 0
-          or ((day2_posture_summary.machinehealthcheck_expected | default(false)) and (day2_posture_summary.machinehealthcheck_count | default(0) | int) == 0)
         )
         else 'HEALTHY'
       }}
@@ -1338,20 +1500,17 @@
       {{
         (
           []
-          + (['GitOps not detected; treat as operating-model context, not an automatic maturity defect'] if not (day2_posture_summary.gitops_present | default(false)) else [])
-          + (['GitOps applications missing'] if ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0) else [])
-          + (['identity integration needs review'] if ((auth_posture_summary.status | default('unknown')) in ['warning', 'review'] and (((auth_posture_summary.external_identity_provider_count | default(0) | int) == 0) or (auth_posture_summary.kubeadmin_secret_present | default(false) | bool))) else [])
-          + (['backup schedules=' ~ ((day2_posture_summary.backup_schedule_count | default(0) | int) | string)] if (day2_posture_summary.backup_schedule_count | default(0) | int) == 0 else [])
-          + (['successful backups currently visible=' ~ ((day2_posture_summary.successful_backup_count | default(0) | int) | string)] if ((day2_posture_summary.backup_schedule_count | default(0) | int) > 0 and (day2_posture_summary.successful_backup_count | default(0) | int) == 0) else [])
-          + (['machine remediation missing where expected'] if ((day2_posture_summary.machinehealthcheck_expected | default(false)) and (day2_posture_summary.machinehealthcheck_count | default(0) | int) == 0) else [])
+          + (['GitOps controller evidence is present but no GitOps Application resources were found'] if ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0) else [])
+          + (['Declarative operations evidence was not detected; treat as operating-model context, not an automatic defect'] if not (day2_posture_summary.gitops_present | default(false)) else [])
+          + (['supporting operations context: identityProviders=' ~ (day2_posture_summary.identity_provider_count | default(0) | string) ~ ', successfulBackups=' ~ (day2_posture_summary.successful_backup_count | default(0) | string) ~ ', machineHealthChecks=' ~ (day2_posture_summary.machinehealthcheck_count | default(0) | string)] if operations_maturity_status != 'WARNING' else [])
         ) | join('; ')
       }}
     operations_maturity_recommendation: >-
       {{
         (
-          'Strengthen the operating model next: ensure identity integration, active backup schedules with successful runs, and worker machine remediation where the platform model expects it. If GitOps is part of the intended operating model, verify that applications as well as controllers are present.'
+          'Strengthen the operating model next: GitOps controller evidence exists, but no GitOps Application resources were found. Confirm whether declarative operations are expected; if yes, onboard platform and application resources into the declared operating model or document the alternate change-control process.'
           if operations_maturity_status == 'WARNING'
-          else 'Operations and lifecycle maturity look acceptable for this run. Keep identity integration, backup execution, and machine remediation under normal review, and treat GitOps plus the broader Day 2 inventory as operating-model context rather than an automatic requirement.'
+          else 'Operations and lifecycle maturity look acceptable for this run. Treat GitOps and broader Day 2 inventory as operating-model context unless the customer requires a declarative operations standard.'
         )
       }}
   ansible.builtin.set_fact:
@@ -1360,12 +1519,22 @@
       reason_summary: "{{ operations_maturity_reason_summary }}"
       recommendation: "{{ operations_maturity_recommendation }}"
       gitops_present: "{{ day2_posture_summary.gitops_present | default(false) }}"
+      argocd_count: "{{ day2_posture_summary.argocd_count | default(0) }}"
       gitops_application_count: "{{ day2_posture_summary.gitops_application_count | default(0) }}"
+      gitops_appproject_count: "{{ day2_posture_summary.gitops_appproject_count | default(0) }}"
+      acm_managed: "{{ day2_posture_summary.acm_managed | default(false) }}"
+      acm_klusterlet_count: "{{ day2_posture_summary.acm_klusterlet_count | default(0) }}"
+      acm_managedclusteraddon_count: "{{ day2_posture_summary.acm_managedclusteraddon_count | default(0) }}"
+      acm_agent_namespace_count: "{{ day2_posture_summary.acm_agent_namespace_count | default(0) }}"
       identity_provider_count: "{{ day2_posture_summary.identity_provider_count | default(0) }}"
       backup_schedule_count: "{{ day2_posture_summary.backup_schedule_count | default(0) }}"
       successful_backup_count: "{{ day2_posture_summary.successful_backup_count | default(0) }}"
       machinehealthcheck_count: "{{ day2_posture_summary.machinehealthcheck_count | default(0) }}"
       machinehealthcheck_expected: "{{ day2_posture_summary.machinehealthcheck_expected | default(false) }}"
+      clusterautoscaler_count: "{{ day2_posture_summary.clusterautoscaler_count | default(0) }}"
+      clusterautoscaler_expected: "{{ day2_posture_summary.clusterautoscaler_expected | default(false) }}"
+      insights_healthy: "{{ day2_posture_summary.insights_healthy | default(false) }}"
+      day2_check_count: "{{ day2_posture_summary.checks_total | default(0) }}"
       capability_check_warning_count: "{{ day2_posture_summary.checks_warn | default(0) }}"
 
 - name: Build workload capability extensions summary
@@ -1419,13 +1588,9 @@
           or (ai_warning_count | int) > 0
         )
         else (
-          'INFO'
-          if (
-            (workload_extension_present_count | int) > 0
-            or (extension_context_present_count | int) > 0
-            or (capability_inventory_info_count | int) > 0
-          )
-          else 'UNKNOWN'
+          'HEALTHY'
+          if (workload_extension_present_count | int) > 0
+          else 'INFO'
         )
       }}
     workload_capability_extensions_reason_summary: >-
@@ -1434,10 +1599,11 @@
           []
           + (['virtualization present'] if (virtualization_present | bool) else [])
           + (['AI present'] if (ai_present | bool) else [])
-          + (['extension context capabilities=' ~ ((extension_context_present_count | int) | string)] if (extension_context_present_count | int) > 0 else [])
           + (['virtualization warnings=' ~ ((virtualization_warning_count | int) | string)] if (virtualization_warning_count | int) > 0 else [])
           + (['AI warnings=' ~ ((ai_warning_count | int) | string)] if (ai_warning_count | int) > 0 else [])
+          + (['optional context capabilities=' ~ ((extension_context_present_count | int) | string)] if (extension_context_present_count | int) > 0 else [])
           + (['optional capability inventory notes=' ~ ((capability_inventory_info_count | int) | string)] if ((capability_inventory_info_count | int) > 0 and (workload_extension_present_count | int) == 0) else [])
+          + (['no virtualization or AI footprint detected'] if (workload_extension_present_count | int) == 0 else [])
         ) | join('; ')
       }}
     workload_capability_extensions_recommendation: >-
@@ -1446,9 +1612,9 @@
           'Reduce workload capability risk next: review OpenShift Virtualization and AI health findings first, because the capability is present but some extension-specific resources are not healthy.'
           if workload_capability_extensions_status == 'WARNING'
           else (
-            'Workload capability extensions are present. Keep virtualization, AI, storage-platform, logging, and GitOps features under normal review, but treat absent optional capabilities as inventory context rather than defects.'
-            if workload_capability_extensions_status == 'INFO'
-            else 'No strong workload capability-extension footprint was detected in collected resources. Treat this as capability inventory context, not as an automatic maturity or health defect.'
+            'Installed workload capability extensions did not report extension-specific warnings in collected evidence. Keep Virtualization or AI resources under normal operator, workload, storage, network, and monitoring review.'
+            if workload_capability_extensions_status == 'HEALTHY'
+            else 'Workload capability-extension posture is inventory context for this run. Treat absent optional Virtualization or AI capabilities as context rather than defects.'
           )
         )
       }}
@@ -1474,22 +1640,38 @@
       {{
         (architecture_lifecycle_summary.support_status | default('unknown')) not in ['supported', 'unknown']
       }}
-    readiness_upgrade_blocked: "{{ (upgrade_readiness_summary.status | default('UNKNOWN')) == 'BLOCKED' }}"
-    readiness_upgrade_warning: "{{ (upgrade_readiness_summary.status | default('UNKNOWN')) == 'WARNING' }}"
-    readiness_observability_warning: "{{ (observability_summary.status | default('UNKNOWN')) in ['CRITICAL', 'WARNING'] }}"
-    readiness_backup_critical: "{{ (backup_recovery_summary.status | default('UNKNOWN')) == 'CRITICAL' }}"
-    readiness_backup_warning: "{{ (backup_recovery_summary.status | default('UNKNOWN')) == 'WARNING' }}"
-    readiness_security_critical: "{{ (security_compliance_summary.status | default('UNKNOWN')) == 'CRITICAL' }}"
-    readiness_security_warning: "{{ (security_compliance_summary.status | default('UNKNOWN')) == 'WARNING' }}"
-    readiness_operations_warning: "{{ (operations_lifecycle_maturity_summary.status | default('UNKNOWN')) == 'WARNING' }}"
-    readiness_extensions_warning: "{{ (workload_capability_extensions_summary.status | default('UNKNOWN')) == 'WARNING' }}"
-    readiness_evidence_confidence: "{{ supportability_summary.evidence_confidence | default(report_confidence | default('unknown')) }}"
+    readiness_upgrade_blocked: "{{ (upgrade_readiness_summary.status | default('not-assessed')) == 'BLOCKED' }}"
+    readiness_upgrade_warning: "{{ (upgrade_readiness_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_observability_critical: "{{ (observability_summary.status | default('not-assessed')) == 'CRITICAL' }}"
+    readiness_observability_warning: "{{ (observability_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_backup_critical: "{{ (backup_recovery_summary.status | default('not-assessed')) == 'CRITICAL' }}"
+    readiness_backup_warning: "{{ (backup_recovery_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_security_critical: "{{ (security_compliance_summary.status | default('not-assessed')) == 'CRITICAL' }}"
+    readiness_security_warning: "{{ (security_compliance_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_operations_warning: "{{ (operations_lifecycle_maturity_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_extensions_warning: "{{ (workload_capability_extensions_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_collection: "{{ assessment_collection_summary | default(report_collection | default({})) }}"
+    readiness_collection_confidence: >-
+      {{
+        'low'
+        if (readiness_collection.core_failed_commands | default(0) | int) > 0
+        else (
+          'medium'
+          if (
+            (readiness_collection.failed_commands | default(0) | int) > 0
+            or (readiness_collection.timed_out_commands | default(0) | int) > 0
+          )
+          else 'high'
+        )
+      }}
+    readiness_evidence_confidence: "{{ supportability_summary.evidence_confidence | default(report_confidence | default(readiness_collection_confidence)) }}"
     readiness_evidence_warning: "{{ readiness_evidence_confidence in ['low', 'unknown'] }}"
     day2_production_readiness_status: >-
       {{
         'CRITICAL'
         if (
           readiness_upgrade_blocked
+          or readiness_observability_critical
           or readiness_backup_critical
           or readiness_security_critical
         )
@@ -1503,6 +1685,7 @@
             or readiness_security_warning
             or readiness_operations_warning
             or readiness_extensions_warning
+            or readiness_evidence_warning
           )
           else 'HEALTHY'
         )
@@ -1512,15 +1695,16 @@
         (
           []
           + (['Upgrade readiness is blocked'] if readiness_upgrade_blocked else [])
+          + (['Observability posture is critical'] if readiness_observability_critical else [])
           + (['Backup and disaster recovery posture is critical'] if readiness_backup_critical else [])
           + (['Security and compliance posture is critical'] if readiness_security_critical else [])
+          + (['Evidence confidence is limited'] if readiness_evidence_warning else [])
           + (['Lifecycle support needs review'] if (not readiness_upgrade_blocked and readiness_lifecycle_warning) else [])
-          + (['Observability posture needs review'] if (not readiness_upgrade_blocked and readiness_observability_warning) else [])
+          + (['Observability posture needs review'] if (not readiness_observability_critical and readiness_observability_warning) else [])
           + (['Backup and disaster recovery posture needs review'] if (not readiness_backup_critical and readiness_backup_warning) else [])
           + (['Security and compliance posture needs review'] if (not readiness_security_critical and readiness_security_warning) else [])
           + (['Operations maturity needs review'] if readiness_operations_warning else [])
           + (['Workload capability extensions need review'] if readiness_extensions_warning else [])
-          + (['Evidence confidence is limited'] if readiness_evidence_warning else [])
         )[:3]
       }}
     day2_production_readiness_reason_summary: >-
@@ -1528,22 +1712,22 @@
         (
           []
           + (['lifecycle support=' ~ (architecture_lifecycle_summary.support_status | default('unknown'))] if readiness_lifecycle_warning else [])
-          + (['upgrade readiness=' ~ (upgrade_readiness_summary.status | default('UNKNOWN'))] if (readiness_upgrade_blocked or readiness_upgrade_warning) else [])
-          + (['observability=' ~ (observability_summary.status | default('UNKNOWN'))] if readiness_observability_warning else [])
-          + (['backup and DR=' ~ (backup_recovery_summary.status | default('UNKNOWN'))] if (readiness_backup_critical or readiness_backup_warning) else [])
-          + (['security and compliance=' ~ (security_compliance_summary.status | default('UNKNOWN'))] if (readiness_security_critical or readiness_security_warning) else [])
-          + (['operations maturity=' ~ (operations_lifecycle_maturity_summary.status | default('UNKNOWN'))] if readiness_operations_warning else [])
-          + (['workload extensions=' ~ (workload_capability_extensions_summary.status | default('UNKNOWN'))] if readiness_extensions_warning else [])
+          + (['upgrade readiness=' ~ (upgrade_readiness_summary.status | default('not-assessed'))] if (readiness_upgrade_blocked or readiness_upgrade_warning) else [])
+          + (['observability=' ~ (observability_summary.status | default('not-assessed'))] if (readiness_observability_critical or readiness_observability_warning) else [])
+          + (['backup and DR=' ~ (backup_recovery_summary.status | default('not-assessed'))] if (readiness_backup_critical or readiness_backup_warning) else [])
+          + (['security and compliance=' ~ (security_compliance_summary.status | default('not-assessed'))] if (readiness_security_critical or readiness_security_warning) else [])
+          + (['operations maturity=' ~ (operations_lifecycle_maturity_summary.status | default('not-assessed'))] if readiness_operations_warning else [])
+          + (['workload extensions=' ~ (workload_capability_extensions_summary.status | default('not-assessed'))] if readiness_extensions_warning else [])
           + (['evidence confidence=' ~ readiness_evidence_confidence] if readiness_evidence_warning else [])
         ) | join('; ')
       }}
     day2_production_readiness_recommendation: >-
       {{
         (
-          'Production readiness is blocked by higher-risk posture gaps. Resolve upgrade blockers and backup or disaster-recovery gaps first, then re-check observability, operations maturity, and extension health before treating the cluster as production-ready.'
+          'Production readiness is blocked by higher-risk posture gaps. Resolve critical blockers in priority order: close evidence gaps if confidence is low, clear upgrade blockers, then fix critical observability, backup, disaster-recovery, security, or compliance findings before treating the cluster as production-ready.'
           if day2_production_readiness_status == 'CRITICAL'
           else (
-            'Production readiness needs follow-up: reduce lifecycle, upgrade, observability, recovery, security, operations-maturity, or extension-health warnings, and use evidence confidence as supporting context where it is still weak.'
+            'Production readiness needs follow-up. Address lifecycle, upgrade, observability, recovery, security, operations, extension, or evidence-confidence warnings in the owning posture sections, then re-run the report before declaring the cluster production-ready.'
             if day2_production_readiness_status == 'WARNING'
             else 'Day 2 production readiness looks acceptable for this run. Keep lifecycle, observability, recovery, operations maturity, and extension health under normal review as the cluster evolves.'
           )
@@ -1555,18 +1739,55 @@
       reason_summary: "{{ day2_production_readiness_reason_summary }}"
       recommendation: "{{ day2_production_readiness_recommendation }}"
       lifecycle_support_status: "{{ architecture_lifecycle_summary.support_status | default('unknown') }}"
-      upgrade_readiness_status: "{{ upgrade_readiness_summary.status | default('UNKNOWN') }}"
-      observability_status: "{{ observability_summary.status | default('UNKNOWN') }}"
-      backup_recovery_status: "{{ backup_recovery_summary.status | default('UNKNOWN') }}"
-      security_compliance_status: "{{ security_compliance_summary.status | default('UNKNOWN') }}"
-      operations_maturity_status: "{{ operations_lifecycle_maturity_summary.status | default('UNKNOWN') }}"
-      workload_capability_extensions_status: "{{ workload_capability_extensions_summary.status | default('UNKNOWN') }}"
+      upgrade_readiness_status: "{{ upgrade_readiness_summary.status | default('not-assessed') }}"
+      observability_status: "{{ observability_summary.status | default('not-assessed') }}"
+      backup_recovery_status: "{{ backup_recovery_summary.status | default('not-assessed') }}"
+      security_compliance_status: "{{ security_compliance_summary.status | default('not-assessed') }}"
+      operations_maturity_status: "{{ operations_lifecycle_maturity_summary.status | default('not-assessed') }}"
+      workload_capability_extensions_status: "{{ workload_capability_extensions_summary.status | default('not-assessed') }}"
       evidence_confidence: "{{ readiness_evidence_confidence }}"
       top_blockers: "{{ day2_production_readiness_top_blockers }}"
+
+- name: Create CI/CD runner summary input
+  ansible.builtin.tempfile:
+    state: file
+    prefix: openshift-cicd-runner-summary-
+    suffix: .json
+  register: cicd_runner_summary_input_file
+  changed_when: false
+
+- name: Write CI/CD runner summary input
+  ansible.builtin.copy:
+    dest: "{{ cicd_runner_summary_input_file.path }}"
+    content: "{{ analysis_graph | default({}) | to_json }}"
+    mode: "0600"
+  changed_when: false
+
+- name: Build CI/CD runner summary
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/build_cicd_runner_summary.py"
+      - "{{ cicd_runner_summary_input_file.path }}"
+  register: cicd_runner_summary_cmd
+  changed_when: false
+  failed_when: cicd_runner_summary_cmd.rc != 0
+
+- name: Normalize CI/CD runner summary
+  ansible.builtin.set_fact:
+    cicd_runner_analysis: "{{ cicd_runner_summary_cmd.stdout | from_json if (cicd_runner_summary_cmd.rc == 0 and (cicd_runner_summary_cmd.stdout | default('') | trim | length > 0)) else {'summary': {}, 'findings': []} }}"
+
+- name: Remove CI/CD runner summary input
+  ansible.builtin.file:
+    path: "{{ cicd_runner_summary_input_file.path }}"
+    state: absent
+  changed_when: false
+  when: cicd_runner_summary_input_file.path is defined
 
 - name: Build container platform adoption and release engineering summary
   vars:
     graph: "{{ analysis_graph | default({}) }}"
+    runner_summary: "{{ (cicd_runner_analysis | default({})).summary | default({}) }}"
     pipeline_inventory_count: "{{ (graph.pipelines | default({})).get('items', []) | length }}"
     pipelinerun_inventory_count: "{{ (graph.pipelineruns | default({})).get('items', []) | length }}"
     buildconfig_inventory_count: "{{ (graph.buildconfigs | default({})).get('items', []) | length }}"
@@ -1589,6 +1810,7 @@
           or (day2_tekton_present | bool)
           or (pipeline_inventory_count | int) > 0
           or (pipelinerun_inventory_count | int) > 0
+          or (runner_summary.present | default(false) | bool)
         )
       }}
     triggerless_buildconfig_warning_count: >-
@@ -1615,16 +1837,21 @@
         if (
           (failed_pipelineruns | default([]) | length) > 0
           or (triggerless_buildconfig_warning_count | int) > 0
+          or (runner_summary.unhealthy_pod_count | default(0) | int) > 0
+          or (runner_summary.unschedulable_pod_count | default(0) | int) > 0
+          or (runner_summary.privileged_pod_count | default(0) | int) > 0
         )
         else (
-          'INFO'
+          'HEALTHY'
           if (
             (pipeline_inventory_count | int) > 0
             or (pipelinerun_inventory_count | int) > 0
             or (buildconfig_inventory_count | int) > 0
-            or (product_evidence_present_count | int) > 0
+            or (build_inventory_count | int) > 0
+            or (imagestream_inventory_count | int) > 0
+            or (runner_summary.present | default(false) | bool)
           )
-          else 'UNKNOWN'
+          else 'INFO'
         )
       }}
     release_engineering_reason_summary: >-
@@ -1637,18 +1864,31 @@
           + (['pipelines=' ~ ((pipeline_inventory_count | int) | string)] if (pipeline_inventory_count | int) > 0 else [])
           + (['PipelineRuns=' ~ ((pipelinerun_inventory_count | int) | string)] if (pipelinerun_inventory_count | int) > 0 else [])
           + (['BuildConfigs=' ~ ((buildconfig_inventory_count | int) | string)] if (buildconfig_inventory_count | int) > 0 else [])
-          + (['product capabilities detected=' ~ ((product_evidence_present_count | int) | string)] if (product_evidence_present_count | int) > 0 else [])
+          + (['Builds=' ~ ((build_inventory_count | int) | string)] if (build_inventory_count | int) > 0 else [])
+          + (['ImageStreams=' ~ ((imagestream_inventory_count | int) | string)] if (imagestream_inventory_count | int) > 0 else [])
+          + (['cluster-hosted runner pods=' ~ ((runner_summary.runner_pod_count | default(0) | int) | string)] if (runner_summary.runner_pod_count | default(0) | int) > 0 else [])
+          + (['unhealthy runner pods=' ~ ((runner_summary.unhealthy_pod_count | default(0) | int) | string)] if (runner_summary.unhealthy_pod_count | default(0) | int) > 0 else [])
+          + (['unschedulable runner pods=' ~ ((runner_summary.unschedulable_pod_count | default(0) | int) | string)] if (runner_summary.unschedulable_pod_count | default(0) | int) > 0 else [])
+          + (['privileged runner pods=' ~ ((runner_summary.privileged_pod_count | default(0) | int) | string)] if (runner_summary.privileged_pod_count | default(0) | int) > 0 else [])
+          + (['no release-engineering footprint detected'] if ((pipeline_inventory_count | int) == 0 and (pipelinerun_inventory_count | int) == 0 and (buildconfig_inventory_count | int) == 0 and (build_inventory_count | int) == 0 and (imagestream_inventory_count | int) == 0 and not (runner_summary.present | default(false) | bool)) else [])
         ) | join('; ')
       }}
     release_engineering_recommendation: >-
       {{
         (
-          'Reduce release-engineering risk next: investigate failed PipelineRuns first, and review triggerless BuildConfigs only where no other delivery automation evidence exists.'
+          'Reduce release-engineering risk next: investigate failed PipelineRuns first, fix unhealthy or unschedulable cluster-hosted runner pods, review privileged or unbounded runner pools, and review triggerless BuildConfigs only where no other delivery automation evidence exists.'
           if release_engineering_status == 'WARNING'
           else (
-            'Release-engineering and platform-adoption evidence is present. Treat triggerless BuildConfigs as context when pipelines or external automation already exist, and keep delivery failures under normal review.'
-            if release_engineering_status == 'INFO'
-            else 'No clear release-engineering or platform-adoption footprint was detected in collected resources. Treat this as absence of evidence rather than an automatic defect unless delivery tooling is expected for this cluster.'
+            'Release-engineering evidence is present. Treat triggerless BuildConfigs as context when pipelines, cluster-hosted runners, or external automation already exist, and keep delivery failures and runner health under normal review.'
+            if (
+              (pipeline_inventory_count | int) > 0
+              or (pipelinerun_inventory_count | int) > 0
+              or (buildconfig_inventory_count | int) > 0
+              or (build_inventory_count | int) > 0
+              or (imagestream_inventory_count | int) > 0
+              or (runner_summary.present | default(false) | bool)
+            )
+            else 'No clear release-engineering footprint was detected in collected resources. Treat this as absence of evidence rather than an automatic defect unless delivery tooling or cluster-hosted runners are expected for this cluster.'
           )
         )
       }}
@@ -1666,6 +1906,9 @@
       triggerless_buildconfig_warning_count: "{{ triggerless_buildconfig_warning_count }}"
       triggerless_buildconfig_info_count: "{{ triggerless_buildconfig_info_count }}"
       product_evidence_present_count: "{{ product_evidence_present_count }}"
+      external_delivery_evidence_present: "{{ external_delivery_evidence_present }}"
+      runner_summary: "{{ runner_summary }}"
+      runner_findings: "{{ (cicd_runner_analysis | default({})).findings | default([]) }}"
 
 - name: Build upgrade readiness summary
   vars:
@@ -1770,7 +2013,7 @@
           'WARNING'
           if (upgrade_warnings | length) > 0
           else (
-            'UNKNOWN'
+            'not-assessed'
             if (architecture_lifecycle_summary.support_status | default('unknown')) == 'unknown'
             else 'READY'
           )

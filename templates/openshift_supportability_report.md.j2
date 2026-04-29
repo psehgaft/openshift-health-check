@@ -4,8 +4,19 @@
 - Evidence mode: `{{ supportability_report_payload.metadata.evidence_mode }}`
 - Platform family: `{{ supportability_report_payload.metadata.platform_family }}`
 - Provider family: `{{ supportability_report_payload.metadata.provider_family }}`
+- Evidence source priority: `1. oc adm must-gather; 2. oc adm inspect; 3. oc get; 4. insights; 5. Prometheus/Thanos query where time-series metrics improve cluster assessment; node-level add-on: oc debug node/<node> + sosreport`
+- Missing-data display: `not-assessed` when a value is not exposed by the configured evidence sources
 
 ## Summary
+
+| Priority | Source | Use In Report |
+| --- | --- | --- |
+| `1` | `oc adm must-gather` | Primary source for collected cluster state and support diagnostics when present. |
+| `2` | `oc adm inspect` | Secondary source for targeted resource and node diagnostic evidence. |
+| `3` | `oc get` | Live fallback source for current cluster objects when collected evidence is absent or incomplete. |
+| `4` | `insights` | Advisory and telemetry-supporting source after cluster-local evidence has been considered. |
+| `5` | `Prometheus/Thanos query` | Official metric source for alerting, API server, etcd, node utilization, pod usage, pod density, and optional latency metrics when live monitoring access is available. |
+| `node-level` | `oc debug node/<node> + sosreport` | Node-level source for host OS, journal, kubelet, CRI-O, podman, and network diagnostics when node-specific evidence is required. |
 
 {% if supportability_report_payload.supportability.summary.recommendations | default('') | length > 0 %}
 Recommendations: {{ supportability_report_payload.supportability.summary.recommendations }}
@@ -152,9 +163,11 @@ Recommendations: {{ supportability_report_payload.domains.platform_health.recomm
 | Item | Value |
 | --- | --- |
 | Verdict | `{{ supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.verdict | default('insufficient-evidence') }}` |
+| Diagnostics interpretation | `{% if (supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.verdict | default('insufficient-evidence')) == 'basic-supported' %}Basic node diagnostics are available for object-level review; host-level diagnostics were not required by a detected symptom.{% elif (supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.verdict | default('insufficient-evidence')) == 'node-level-no-targets' %}No symptom-based target nodes were derived, so node-level host diagnostics are not required for this run unless the customer has a specific node symptom.{% elif (supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.verdict | default('insufficient-evidence')) == 'node-level-not-requested' %}Node-level host diagnostics were not requested for this run; use the node health posture for object-level readiness, pressure, and capacity conclusions.{% elif (supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.verdict | default('insufficient-evidence')) == 'insufficient-evidence' %}Node diagnostic coverage is insufficient for host-level conclusions; add targeted node diagnostics when kubelet, CRI-O, OS, disk, or network symptoms need root-cause analysis.{% else %}Review the node diagnostic counts below for coverage detail.{% endif %}` |
 | Inspect present | `{{ supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.inspect_present | default(false) }}` |
 | Inspect file count | `{{ supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.inspect_file_count | default(0) }}` |
 | Inspect namespace count | `{{ supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.inspect_namespace_count | default(0) }}` |
+| Targeted oc debug node candidates | `{{ (supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.target_nodes | default([])) | join(', ') or 'none' }}` |
 | sosreport present | `{{ supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.sosreport_present | default(false) }}` |
 | sosreport count | `{{ supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.sosreport_count | default(0) }}` |
 | sosreport nodes | `{{ (supportability_report_payload.domains.node_health_and_capacity.diagnostics_summary.sosreport_node_names | default([])) | join(', ') or 'none' }}` |
@@ -427,7 +440,7 @@ Recommendations: {{ supportability_report_payload.domains.security_and_governanc
 {% endfor %}
 {% endif %}
 
-## Storage And Resilience
+## Backup And Disaster Recovery
 
 {% if supportability_report_payload.domains.storage_and_resilience.storage.pv_issues | default([]) | length > 0 or supportability_report_payload.domains.storage_and_resilience.storage.pvc_issues | default([]) | length > 0 %}
 ### Storage
@@ -526,7 +539,7 @@ Recommendations: {{ supportability_report_payload.domains.security_and_governanc
 {% include 'partials/openshift_day2_checks.md.j2' %}
 {% endif %}
 
-## Evidence Summary
+## Evidence And Supportability
 
 {% set evidence_summary = supportability_report_payload.evidence.summary %}
 {% set evidence_coverage = supportability_report_payload.evidence.coverage %}

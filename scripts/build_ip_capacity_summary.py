@@ -128,12 +128,12 @@ def extract_node_cidrs(data):
         return dedupe_preserve_order(cluster_profile_cidrs), "cluster_profile.machine_networks"
 
     key_names = {"machinenetwork", "machinenetworks", "machinecidr", "machinecidrs"}
-    cluster_defined_cidrs = []
-    for source_name in ("infrastructure", "network_config"):
-        cluster_defined_cidrs.extend(collect_cidrs_by_keys(data.get(source_name, {}), key_names))
-    cluster_defined_cidrs = dedupe_preserve_order(cluster_defined_cidrs)
-    if cluster_defined_cidrs:
-        return cluster_defined_cidrs, "cluster-config"
+    for source_name in ("infrastructure", "network_config", "machinesets", "configmaps", "secrets"):
+        cluster_defined_cidrs = dedupe_preserve_order(
+            collect_cidrs_by_keys(data.get(source_name, {}), key_names)
+        )
+        if cluster_defined_cidrs:
+            return cluster_defined_cidrs, source_name
 
     inferred_node_cidrs = infer_network_from_ips(unique_node_internal_ips(data.get("nodes", [])))
     if inferred_node_cidrs:
