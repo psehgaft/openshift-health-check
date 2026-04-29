@@ -14,14 +14,16 @@ except Exception as exc:  # pragma: no cover
     raise SystemExit(1)
 
 
-EXPECTED_FIELDS = {
+REQUIRED_FIELDS = {
     "required",
     "criticality",
     "expected_state",
     "owner",
     "evidence_required",
     "notes",
+    "docs",
 }
+OPTIONAL_FIELDS = {"standards"}
 
 VALID_CRITICALITY = {"critical", "high", "medium", "low", "info"}
 VALID_EXPECTED_STATE = {"present", "absent", "configured", "healthy", "not_applicable"}
@@ -39,12 +41,14 @@ VALID_EVIDENCE = {
     "must-gather",
     "inspect",
     "oc-get",
+    "oc-debug-node",
     "kubectl-get",
     "insights",
     "prometheus",
     "metrics",
     "provider-api",
 }
+VALID_COMPLIANCE_STANDARDS = {"FIPS", "FedRAMP", "HIPAA", "PCI-DSS", "SOC", "SOX", "NIST", "CIS"}
 
 
 def fail(message: str) -> None:
@@ -85,8 +89,8 @@ def validate_profile(path: Path, profile: dict[str, Any]) -> None:
     for name, spec in sorted(profile.items()):
         if not isinstance(spec, dict):
             fail(f"{path}: {name} must be a mapping")
-        missing = EXPECTED_FIELDS - set(spec)
-        extra = set(spec) - EXPECTED_FIELDS
+        missing = REQUIRED_FIELDS - set(spec)
+        extra = set(spec) - (REQUIRED_FIELDS | OPTIONAL_FIELDS)
         if missing:
             fail(f"{path}: {name} missing fields: {', '.join(sorted(missing))}")
         if extra:
@@ -107,6 +111,20 @@ def validate_profile(path: Path, profile: dict[str, Any]) -> None:
             fail(f"{path}: {name}.evidence_required has unsupported values: {', '.join(invalid_evidence)}")
         if not isinstance(spec["notes"], str) or not spec["notes"].strip():
             fail(f"{path}: {name}.notes must be a non-empty string")
+        if not isinstance(spec["docs"], str) or not spec["docs"].strip():
+            fail(f"{path}: {name}.docs must be a non-empty URL string")
+        if not spec["docs"].startswith(("https://", "http://")):
+            fail(f"{path}: {name}.docs must start with http:// or https://")
+        standards = spec.get("standards", [])
+        if standards is not None:
+            if not isinstance(standards, list):
+                fail(f"{path}: {name}.standards must be a list when provided")
+            invalid_standards = [item for item in standards if item not in VALID_COMPLIANCE_STANDARDS]
+            if invalid_standards:
+                fail(
+                    f"{path}: {name}.standards has unsupported values: "
+                    f"{', '.join(sorted(set(invalid_standards)))}"
+                )
 
 
 def main() -> int:

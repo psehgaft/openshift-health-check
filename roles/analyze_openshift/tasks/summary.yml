@@ -1023,6 +1023,15 @@
         or (backup_summary | default([]) | length) > 0
         or (restore_summary | default([]) | length) > 0
       }}
+    control_plane_recovery_applicable: "{{ not (cluster_profile.is_hosted_control_plane | default(false) | bool) }}"
+    control_plane_runtime_healthy: >-
+      {{
+        (platform_health_summary.apiserver_readyz_failed | default(0) | int) == 0
+        and (platform_health_summary.apiserver_runtime_degraded | default(0) | int) == 0
+        and (platform_health_summary.etcd_leader_unhealthy | default(0) | int) == 0
+        and (platform_health_summary.etcd_runtime_degraded | default(0) | int) == 0
+      }}
+    control_plane_snapshot_evidence_collected: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).healthy | default(false) | bool }}"
     storage_provider_warning: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool }}"
     backup_recovery_status: >-
       {{
@@ -1078,6 +1087,11 @@
       reason_summary: "{{ backup_recovery_reason_summary }}"
       recommendation: "{{ backup_recovery_recommendation }}"
       backup_tooling_detected: "{{ backup_tooling_detected }}"
+      control_plane_recovery_applicable: "{{ control_plane_recovery_applicable }}"
+      control_plane_runtime_healthy: "{{ control_plane_runtime_healthy }}"
+      control_plane_snapshot_evidence_collected: "{{ control_plane_snapshot_evidence_collected }}"
+      control_plane_backup_node_count: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).node_count | default(0) }}"
+      control_plane_backup_nodes_with_matching_pairs: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).nodes_with_matching_pairs | default(0) }}"
       dataprotectionapplication_count: "{{ dataprotectionapplication_summary | default([]) | length }}"
       available_backup_storage_location_count: "{{ available_backup_storage_locations | length }}"
       backup_schedule_count: "{{ backup_schedule_summary | default([]) | length }}"
@@ -1492,7 +1506,17 @@
       {{
         'WARNING'
         if (
-          ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0)
+          (
+            (day2_posture_summary.gitops_present | default(false))
+            and (
+              (day2_posture_summary.gitops_application_count | default(0) | int) == 0
+              or not (day2_posture_summary.gitops_operational | default(false))
+            )
+          )
+          or (
+            (day2_posture_summary.gitops_application_count | default(0) | int) > 0
+            and not (day2_posture_summary.gitops_automated_sync_present | default(false))
+          )
         )
         else 'HEALTHY'
       }}
@@ -1501,6 +1525,8 @@
         (
           []
           + (['GitOps controller evidence is present but no GitOps Application resources were found'] if ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0) else [])
+          + (['GitOps Applications were found but none exposed a Git repository source'] if (((day2_posture_summary.gitops_application_count | default(0) | int) > 0) and not (day2_posture_summary.gitops_operational | default(false))) else [])
+          + (['GitOps Applications were found but none showed automated sync'] if (((day2_posture_summary.gitops_application_count | default(0) | int) > 0) and not (day2_posture_summary.gitops_automated_sync_present | default(false))) else [])
           + (['Declarative operations evidence was not detected; treat as operating-model context, not an automatic defect'] if not (day2_posture_summary.gitops_present | default(false)) else [])
           + (['supporting operations context: identityProviders=' ~ (day2_posture_summary.identity_provider_count | default(0) | string) ~ ', successfulBackups=' ~ (day2_posture_summary.successful_backup_count | default(0) | string) ~ ', machineHealthChecks=' ~ (day2_posture_summary.machinehealthcheck_count | default(0) | string)] if operations_maturity_status != 'WARNING' else [])
         ) | join('; ')
@@ -1508,7 +1534,7 @@
     operations_maturity_recommendation: >-
       {{
         (
-          'Strengthen the operating model next: GitOps controller evidence exists, but no GitOps Application resources were found. Confirm whether declarative operations are expected; if yes, onboard platform and application resources into the declared operating model or document the alternate change-control process.'
+          'Strengthen the operating model next: ensure GitOps Applications exist, point to Git repository sources, and use the intended reconciliation policy. If declarative operations are required, onboard platform and application resources into the declared operating model and verify whether automated sync should be enabled for those applications.'
           if operations_maturity_status == 'WARNING'
           else 'Operations and lifecycle maturity look acceptable for this run. Treat GitOps and broader Day 2 inventory as operating-model context unless the customer requires a declarative operations standard.'
         )
@@ -1519,8 +1545,12 @@
       reason_summary: "{{ operations_maturity_reason_summary }}"
       recommendation: "{{ operations_maturity_recommendation }}"
       gitops_present: "{{ day2_posture_summary.gitops_present | default(false) }}"
+      gitops_operational: "{{ day2_posture_summary.gitops_operational | default(false) }}"
+      gitops_automated_sync_present: "{{ day2_posture_summary.gitops_automated_sync_present | default(false) }}"
       argocd_count: "{{ day2_posture_summary.argocd_count | default(0) }}"
       gitops_application_count: "{{ day2_posture_summary.gitops_application_count | default(0) }}"
+      gitops_repo_backed_application_count: "{{ day2_posture_summary.gitops_repo_backed_application_count | default(0) }}"
+      gitops_automated_sync_application_count: "{{ day2_posture_summary.gitops_automated_sync_application_count | default(0) }}"
       gitops_appproject_count: "{{ day2_posture_summary.gitops_appproject_count | default(0) }}"
       acm_managed: "{{ day2_posture_summary.acm_managed | default(false) }}"
       acm_klusterlet_count: "{{ day2_posture_summary.acm_klusterlet_count | default(0) }}"
@@ -2066,6 +2096,8 @@
       'cluster_profile': cluster_profile | default({}),
       'clusterversion': graph.clusterversion | default({}),
       'nodes': (graph.nodes | default({})).get('items', []),
+      'pods': (graph.pods | default({})).get('items', []),
+      'resourcequotas': (graph.resourcequotas | default({})).get('items', []),
       'pod_object_counts': pod_object_counts | default({}),
       'deployment_count': ((graph.deployments | default({})).get('items', []) | length),
       'statefulset_count': ((graph.statefulsets | default({})).get('items', []) | length),
@@ -2082,6 +2114,8 @@
       'node_cpu_utilization_results': node_cpu_utilization_results | default([]),
       'node_memory_utilization_results': node_memory_utilization_results | default([]),
       'node_disk_utilization_results': node_disk_utilization_results | default([]),
+      'pod_cpu_usage_all_results': pod_cpu_usage_all_results | default([]),
+      'pod_memory_usage_all_results': pod_memory_usage_all_results | default([]),
       'kubelet_pod_density_results': kubelet_pod_density_results | default([]),
       'service_ip_capacity_summary': service_ip_capacity_summary | default({}),
       'pod_ip_capacity_summary': pod_ip_capacity_summary | default({}),

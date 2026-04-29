@@ -343,16 +343,17 @@ ansible-playbook playbooks/minikube_cluster_health_report.yml \
 
 ```yaml
 openshift_report_capability_profile:
-  acs:
+  advanced_cluster_security:
     required: false
     criticality: high
     expected_state: present
     owner: security
     evidence_required: [must-gather, oc-get]
     notes: "Require when Advanced Cluster Security is part of the customer security baseline."
+    docs: "https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes/latest"
 ```
 
-Supported `expected_state` values are `present`, `absent`, `configured`, `healthy`, and `not_applicable`. Optional capabilities are hidden or treated as inventory context when absent unless they have findings or `required: true`.
+Supported `expected_state` values are `present`, `absent`, `configured`, `healthy`, and `not_applicable`. Optional capabilities are hidden or treated as inventory context when absent unless they have findings or `required: true`. The `docs` field is used in capability-gap recommendations so report readers can jump directly to configuration guidance for the missing capability.
 
 Capability profile input files:
 
@@ -371,15 +372,16 @@ Capability evidence is collected from cluster-local APIs first. OpenShift runs p
 
 | Capability key | Supported reports | Primary evidence used |
 | --- | --- | --- |
-| `external_private_registry` | OpenShift and Kubernetes-family | Workload container image registries, explicit workload `imagePullSecrets`, service account pull secrets, and `kubernetes.io/dockerconfigjson` or `kubernetes.io/dockercfg` secrets. External non-platform registries with pull credentials are treated as private-registry evidence; public registries such as Docker Hub, Quay, GHCR, or GCR are counted only when the workload explicitly declares image pull secrets. |
-| `oauth_identity_provider` | OpenShift | `oauth.config.openshift.io/cluster.spec.identityProviders` from collected OpenShift API data. Absence is reported only when the capability profile marks this capability required or expected for the customer baseline. |
-| `user_workload_monitoring` | OpenShift and Kubernetes-family | OpenShift checks `cluster-monitoring-config` for `enableUserWorkload: true` and also inventories `ServiceMonitor` and `PodMonitor` resources. Kubernetes-family checks `ServiceMonitor` and `PodMonitor` resources when the Prometheus Operator CRDs are installed. |
-| `grafana_dashboards` | OpenShift and Kubernetes-family | Grafana workloads or namespaces plus dashboard ConfigMaps, Grafana dashboard CRDs, or Grafana operator CRDs. Dashboard ConfigMaps are detected from common Grafana sidecar labels such as `grafana_dashboard` and JSON dashboard payloads. |
-| `workload_vulnerability_scanner` | OpenShift and Kubernetes-family | Scanner operators, agents, namespaces, and CRDs. Current detection covers common Trivy Operator or Starboard signals, `VulnerabilityReport` CRDs, RHACS or StackRox secured-cluster signals, Falco signals, Sysdig agents, and Prisma/Twistlock Defender naming patterns. |
-| `disconnected_installation` | OpenShift | OpenShift image mirror resources (`ImageDigestMirrorSet`, `ImageTagMirrorSet`, legacy `ImageContentSourcePolicy`) plus non-public Operator `CatalogSource` images. |
-| `private_registry_mirrors` | OpenShift | OpenShift image mirror resources generated or applied for mirrored registries: `ImageDigestMirrorSet`, `ImageTagMirrorSet`, and legacy `ImageContentSourcePolicy`. |
-| `ipsec_enabled` | OpenShift | `networks.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig` from collected Network operator configuration. Mark this required when the customer baseline expects OVN-Kubernetes IPsec encryption. |
-| `etcd_encryption_enabled` | OpenShift | `apiserver.config.openshift.io/cluster.spec.encryption.type` from collected OpenShift APIServer configuration. `aescbc` and `aesgcm` are treated as enabled; `identity` or a missing value is treated as not enabled. |
+| `workloads_using_external_private_registries` | OpenShift and Kubernetes-family | Workload container image registries, explicit workload `imagePullSecrets`, service account pull secrets, and `kubernetes.io/dockerconfigjson` or `kubernetes.io/dockercfg` secrets. External non-platform registries with pull credentials are treated as private-registry evidence; public registries such as Docker Hub, Quay, GHCR, or GCR are counted only when the workload explicitly declares image pull secrets. |
+| `oauth_external_identity_provider` | OpenShift | `oauth.config.openshift.io/cluster.spec.identityProviders` from collected OpenShift API data. Absence is reported only when the capability profile marks this capability required or expected for the customer baseline. |
+| `user_workload_metrics_monitoring` | OpenShift and Kubernetes-family | OpenShift checks `cluster-monitoring-config` for `enableUserWorkload: true` and also inventories `ServiceMonitor` and `PodMonitor` resources. Kubernetes-family checks `ServiceMonitor` and `PodMonitor` resources when the Prometheus Operator CRDs are installed. |
+| `grafana_metrics_dashboards` | OpenShift and Kubernetes-family | Grafana workloads or namespaces plus dashboard ConfigMaps, Grafana dashboard CRDs, or Grafana operator CRDs. Dashboard ConfigMaps are detected from common Grafana sidecar labels such as `grafana_dashboard` and JSON dashboard payloads. |
+| `workload_vulnerability_scanning` | OpenShift and Kubernetes-family | Live workload scanner operators, agents, namespaces, subscriptions, and vulnerability-report CRDs. Current detection covers vendor-autodetected signals such as Trivy Operator or Starboard, Aqua, Qualys, Prisma/Twistlock Defender, Sysdig Secure, and similar scanner footprints without requiring the user to specify the vendor in advance. |
+| `cluster_metrics_remote_write` | OpenShift | OpenShift cluster monitoring `prometheusK8s.remoteWrite` configuration used to export cluster metrics to an external observability platform. |
+| `disconnected_cluster_image_sources` | OpenShift | OpenShift image mirror resources (`ImageDigestMirrorSet`, `ImageTagMirrorSet`, legacy `ImageContentSourcePolicy`) plus non-public Operator `CatalogSource` images. |
+| `cluster_image_mirror_configuration` | OpenShift | OpenShift cluster-level image mirror resources used for mirrored release, operator, or workload image resolution: `ImageDigestMirrorSet`, `ImageTagMirrorSet`, and legacy `ImageContentSourcePolicy`. This capability focuses on mirror resource presence and usable internal mirror targets, separate from full disconnected-installation readiness. |
+| `ovn_ipsec_encryption` | OpenShift | `networks.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig` from collected Network operator configuration. Mark this required when the customer baseline expects OVN-Kubernetes IPsec encryption. |
+| `etcd_encryption` | OpenShift | `apiserver.config.openshift.io/cluster.spec.encryption.type` from collected OpenShift APIServer configuration. `aescbc` and `aesgcm` are treated as enabled; `identity` or a missing value is treated as not enabled. |
 
 ## Signal Catalog
 

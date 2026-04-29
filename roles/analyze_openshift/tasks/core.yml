@@ -476,6 +476,10 @@
     phase: "{{ item.status.phase | default('Unknown') }}"
   changed_when: false
 
+- name: Initialize node capacity summary
+  ansible.builtin.set_fact:
+    node_capacity_summary: []
+
 - name: Build node capacity summary
   ansible.builtin.set_fact:
     node_capacity_summary: "{{ node_capacity_summary | default([]) + [node_capacity_entry] }}"
@@ -485,7 +489,7 @@
     pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
     cpu_allocatable_millicores: "{{ (cpu_allocatable_raw | regex_replace('m$', '') | int) if (cpu_allocatable_raw | string | regex_search('m$')) else (((cpu_allocatable_raw | float) * 1000) | int) }}"
     node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
-    role_name: >-
+    node_role_name: >-
       {{
         'master'
         if 'master' in node_roles
@@ -506,7 +510,7 @@
     scheduled_pods: "{{ node_pod_counts[item.metadata.name] | default(0) | int }}"
     node_capacity_entry:
       name: "{{ item.metadata.name }}"
-      role: "{{ role_name }}"
+      role: "{{ node_role_name }}"
       pods_allocatable: "{{ pods_allocatable_raw | int }}"
       scheduled_pods: "{{ scheduled_pods }}"
       pod_density_pct: "{{ (((scheduled_pods | float) / ((pods_allocatable_raw | int) if (pods_allocatable_raw | int) > 0 else 1)) * 100) | round(1) }}"

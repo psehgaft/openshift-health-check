@@ -85,6 +85,13 @@ def normalize_instance_name(raw):
     return text
 
 
+def metric_value_float(item, multiplier=1.0):
+    try:
+        return float((item.get("value") or [None, None])[1]) * multiplier
+    except Exception:
+        return None
+
+
 def choose_primary_role(roles):
     if "master" in roles:
         return "master"
@@ -153,6 +160,105 @@ def build_node_shape(instance_type, cpu_cores, memory_gib, arch):
     cpu_part = int(round(cpu_cores)) if cpu_cores >= 1 else round(cpu_cores, 1)
     mem_part = int(round(memory_gib)) if memory_gib >= 1 else round(memory_gib, 1)
     return f"{cpu_part}cpu-{mem_part}gib-{arch}", "allocatable-shape"
+
+
+def quota_value(quota, section_name, keys, parser):
+    values = ((quota.get("status", {}) or {}).get(section_name, {}) or {})
+    for key in keys:
+        if key in values:
+            return parser(values.get(key))
+    return 0.0
+
+
+def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_bytes):
+    cpu_usage_by_ns = defaultdict(float)
+    for item in data.get("pod_cpu_usage_all_results", []) or []:
+        namespace = (item.get("metric", {}) or {}).get("namespace") or ""
+        if not namespace:
+            continue
+        value = metric_value_float(item, multiplier=1000.0)
+        if value is not None:
+            cpu_usage_by_ns[namespace] += value
+
+    memory_usage_by_ns = defaultdict(float)
+    for item in data.get("pod_memory_usage_all_results", []) or []:
+        namespace = (item.get("metric", {}) or {}).get("namespace") or ""
+        if not namespace:
+            continue
+        value = metric_value_float(item)
+        if value is not None:
+            memory_usage_by_ns[namespace] += value
+
+    requests_by_ns = defaultdict(lambda: {"cpu_millicores": 0.0, "memory_bytes": 0.0, "pods": 0})
+    for pod in data.get("pods", []) or []:
+        namespace = ((pod.get("metadata", {}) or {}).get("namespace")) or ""
+        if not namespace:
+            continue
+        requests_by_ns[namespace]["pods"] += 1
+        for container in (pod.get("spec", {}) or {}).get("containers", []) or []:
+            requests = ((container.get("resources", {}) or {}).get("requests", {}) or {})
+            requests_by_ns[namespace]["cpu_millicores"] += parse_cpu(requests.get("cpu")) * 1000.0
+            requests_by_ns[namespace]["memory_bytes"] += parse_binary_bytes(requests.get("memory"))
+
+    quota_by_ns = defaultdict(lambda: {"cpu_hard_millicores": 0.0, "cpu_used_millicores": 0.0, "memory_hard_bytes": 0.0, "memory_used_bytes": 0.0})
+    for quota in data.get("resourcequotas", []) or []:
+        namespace = ((quota.get("metadata", {}) or {}).get("namespace")) or ""
+        if not namespace:
+            continue
+        quota_by_ns[namespace]["cpu_hard_millicores"] += quota_value(quota, "hard", ["requests.cpu", "limits.cpu", "cpu"], parse_cpu) * 1000.0
+        quota_by_ns[namespace]["cpu_used_millicores"] += quota_value(quota, "used", ["requests.cpu", "limits.cpu", "cpu"], parse_cpu) * 1000.0
+        quota_by_ns[namespace]["memory_hard_bytes"] += quota_value(quota, "hard", ["requests.memory", "limits.memory", "memory"], parse_binary_bytes)
+        quota_by_ns[namespace]["memory_used_bytes"] += quota_value(quota, "used", ["requests.memory", "limits.memory", "memory"], parse_binary_bytes)
+
+    namespaces = set(cpu_usage_by_ns) | set(memory_usage_by_ns) | set(requests_by_ns) | set(quota_by_ns)
+    rows = []
+    for namespace in namespaces:
+        quota = quota_by_ns.get(namespace, {})
+        requests = requests_by_ns.get(namespace, {})
+        cpu_usage = cpu_usage_by_ns.get(namespace, 0.0)
+        memory_usage = memory_usage_by_ns.get(namespace, 0.0)
+        cpu_quota = float(quota.get("cpu_hard_millicores", 0.0) or 0.0)
+        memory_quota = float(quota.get("memory_hard_bytes", 0.0) or 0.0)
+        cpu_used_quota = float(quota.get("cpu_used_millicores", 0.0) or 0.0)
+        memory_used_quota = float(quota.get("memory_used_bytes", 0.0) or 0.0)
+        cpu_request = float(requests.get("cpu_millicores", 0.0) or 0.0)
+        memory_request = float(requests.get("memory_bytes", 0.0) or 0.0)
+
+        cpu_available = max(cpu_quota - cpu_used_quota, 0.0) if cpu_quota > 0 else None
+        memory_available = max(memory_quota - memory_used_quota, 0.0) if memory_quota > 0 else None
+        cpu_denominator = cpu_quota if cpu_quota > 0 else (cluster_cpu_cores * 1000.0 if cluster_cpu_cores > 0 else 0.0)
+        memory_denominator = memory_quota if memory_quota > 0 else cluster_memory_bytes
+
+        cpu_util = round((cpu_usage / cpu_denominator) * 100.0, 1) if cpu_denominator > 0 else None
+        memory_util = round((memory_usage / memory_denominator) * 100.0, 1) if memory_denominator > 0 else None
+
+        rows.append(
+            {
+                "namespace": namespace,
+                "pod_count": int(requests.get("pods", 0) or 0),
+                "cpu_usage_millicores": round(cpu_usage, 1),
+                "cpu_requested_millicores": round(cpu_request, 1),
+                "cpu_available_millicores": round(cpu_available, 1) if cpu_available is not None else None,
+                "cpu_available_display": f"{round(cpu_available, 1)}m" if cpu_available is not None else "not quota-limited",
+                "cpu_utilization_pct": cpu_util,
+                "memory_usage_mib": round(memory_usage / (1024 ** 2), 1),
+                "memory_requested_mib": round(memory_request / (1024 ** 2), 1),
+                "memory_available_mib": round(memory_available / (1024 ** 2), 1) if memory_available is not None else None,
+                "memory_available_display": f"{round(memory_available / (1024 ** 2), 1)}MiB" if memory_available is not None else "not quota-limited",
+                "memory_utilization_pct": memory_util,
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            -(item.get("memory_utilization_pct") if item.get("memory_utilization_pct") is not None else -1),
+            -(item.get("cpu_utilization_pct") if item.get("cpu_utilization_pct") is not None else -1),
+            -float(item.get("memory_usage_mib", 0.0) or 0.0),
+            -float(item.get("cpu_usage_millicores", 0.0) or 0.0),
+            str(item.get("namespace", "")),
+        )
+    )
+    return rows[:50]
 
 
 def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity):
@@ -293,6 +399,7 @@ def main():
     worker_nodes = 0
     infra_nodes = 0
     other_nodes = 0
+    node_resource_rows = []
 
     for node in data.get("nodes", []):
         meta = node.get("metadata", {}) or {}
@@ -351,9 +458,31 @@ def main():
                 feature_counts[key.replace("feature.node.kubernetes.io/", "", 1)] += 1
 
         total_cpu_cores += cpu_cores
-        total_memory_bytes += parse_binary_bytes(allocatable.get("memory", "0"))
+        memory_bytes = parse_binary_bytes(allocatable.get("memory", "0"))
+        total_memory_bytes += memory_bytes
         total_disk_bytes += parse_binary_bytes(allocatable.get("ephemeral-storage", "0"))
         total_pods_scheduled += int((data.get("node_pod_counts") or {}).get(node_name, 0) or 0)
+        cpu_util_pct = cpu_util_by_node.get(node_name)
+        memory_util_pct = mem_util_by_node.get(node_name)
+        cpu_available_millicores = None
+        memory_available_mib = None
+        if cpu_util_pct is not None:
+            cpu_available_millicores = max((cpu_cores * 1000.0) * (1.0 - (cpu_util_pct / 100.0)), 0.0)
+        if memory_util_pct is not None:
+            memory_available_mib = max((memory_bytes / (1024 ** 2)) * (1.0 - (memory_util_pct / 100.0)), 0.0)
+        node_resource_rows.append(
+            {
+                "node": node_name,
+                "role": primary_role,
+                "cpu_allocatable_millicores": int(round(cpu_cores * 1000.0)),
+                "cpu_available_millicores": round(cpu_available_millicores, 1) if cpu_available_millicores is not None else None,
+                "cpu_utilization_pct": round(cpu_util_pct, 1) if cpu_util_pct is not None else None,
+                "memory_allocatable_mib": int(round(memory_bytes / (1024 ** 2))),
+                "memory_available_mib": round(memory_available_mib, 1) if memory_available_mib is not None else None,
+                "memory_utilization_pct": round(memory_util_pct, 1) if memory_util_pct is not None else None,
+                "pod_count": int((data.get("node_pod_counts") or {}).get(node_name, 0) or 0),
+            }
+        )
 
     default_ingress = None
     for ic in data.get("ingresscontrollers", []):
@@ -484,6 +613,14 @@ def main():
         len(data.get("nodes", [])),
         data.get("node_ip_capacity_summary") or {},
     )
+    node_resource_rows.sort(
+        key=lambda item: (
+            -(item.get("memory_utilization_pct") if item.get("memory_utilization_pct") is not None else -1),
+            -(item.get("cpu_utilization_pct") if item.get("cpu_utilization_pct") is not None else -1),
+            str(item.get("node", "")),
+        )
+    )
+    namespace_resource_rows = build_namespace_resource_summary(data, total_cpu_cores, total_memory_bytes)
 
     result = {
         "ocp_version": (((cv.get("status", {}) or {}).get("desired", {}) or {}).get("version", "unknown")),
@@ -547,6 +684,8 @@ def main():
             "nodes": data.get("node_ip_capacity_summary", {}) or {},
         },
         "node_growth_capacity": node_growth_capacity,
+        "node_resource_utilization": node_resource_rows,
+        "namespace_resource_utilization": namespace_resource_rows,
         "node_architectures": summarize_counter(arch_counts, "architecture", "count", limit=10),
         "instance_types": summarize_counter(Counter({k: v for k, v in instance_type_counts.items() if k != "unknown"}), "instance_type", "count", limit=10),
         "node_shapes": summarize_counter(node_shape_counts, "shape", "count", limit=12),

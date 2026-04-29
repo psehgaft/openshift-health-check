@@ -52,7 +52,6 @@ PROVIDER_PATTERNS = {
     ],
 }
 
-RUNNER_WORD_RE = re.compile(r"(runner|agent|jenkins|gitlab|github-actions|azure-pipelines|azdo|vsts)", re.I)
 SYSTEM_NAMESPACE_RE = re.compile(r"^(kube-|openshift-|default$)")
 
 
@@ -92,8 +91,6 @@ def classify_provider(text: str) -> str:
     for provider, patterns in PROVIDER_PATTERNS.items():
         if any(pattern in text for pattern in patterns):
             return provider
-    if RUNNER_WORD_RE.search(text):
-        return "generic-runner"
     return ""
 
 
@@ -204,7 +201,7 @@ def main() -> int:
     phase_counts = Counter(pod["phase"] for pod in runner_pods)
     unhealthy = [
         pod for pod in runner_pods
-        if pod["phase"] not in {"Running", "Succeeded"} or not pod["ready"] or pod["restarts"] > 0
+        if pod["phase"] not in {"Running", "Succeeded"} or (pod["phase"] == "Running" and (not pod["ready"] or pod["restarts"] > 0))
     ]
     pending = [pod for pod in runner_pods if pod["phase"] == "Pending"]
     unschedulable = [pod for pod in runner_pods if pod["unschedulable"]]
@@ -214,8 +211,8 @@ def main() -> int:
 
     controller_counts = detect_controller_resources(graph)
     metric_hint = (
-        "runner-native metrics were not detected from collected Kubernetes objects; use Prometheus/Thanos "
-        "or product APIs for queue depth, busy runner count, job duration, and failure-rate trends"
+        "runner-native queue depth, busy runner count, job duration, and failure-rate trends were not visible "
+        "from the cluster objects in this run"
     )
 
     summary = {
@@ -253,7 +250,10 @@ def main() -> int:
             "severity": "WARNING",
             "current_state": f"unhealthy={len(unhealthy)}, pending={len(pending)}, unschedulable={len(unschedulable)}, restarts={restart_total}",
             "business_impact": "Unhealthy or unschedulable runners can increase CI/CD queue time and delay production fixes.",
-            "technical_evidence": f"top={summary['top_unhealthy_pods'][:5]}",
+            "technical_evidence": "topUnhealthy=" + ", ".join(
+                f"{pod['namespace']}/{pod['name']} phase={pod['phase']} ready={pod['ready']} restarts={pod['restarts']}"
+                for pod in summary["top_unhealthy_pods"][:5]
+            ),
             "recommended_action": "Check runner pod events, namespace quota, node selectors, tolerations, image pulls, secrets, and node capacity before scaling additional delivery workloads.",
         })
     if privileged or missing_requests:

@@ -16,6 +16,24 @@
 {%- endif -%}
 {%- endmacro %}
 
+{% macro docs_links(keys) -%}
+{%- set refs = {
+  'capabilities': [('Kubernetes configuration best practices', 'https://kubernetes.io/docs/concepts/configuration/overview/'), ('Resource management', 'https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'), ('NetworkPolicy', 'https://kubernetes.io/docs/concepts/services-networking/network-policies/'), ('PodDisruptionBudget', 'https://kubernetes.io/docs/tasks/run-application/configure-pdb/')],
+  'workloads': [('Workload probes', 'https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/'), ('Resource management', 'https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/')],
+  'security': [('RBAC', 'https://kubernetes.io/docs/reference/access-authn-authz/rbac/'), ('Pod Security Standards', 'https://kubernetes.io/docs/concepts/security/pod-security-standards/')],
+  'network': [('NetworkPolicy', 'https://kubernetes.io/docs/concepts/services-networking/network-policies/')]
+} -%}
+{%- set ns = namespace(items=[]) -%}
+{%- for key in keys -%}
+{%- for item in refs.get(key, []) -%}
+{%- set ns.items = ns.items + ['[' ~ item[0] ~ '](' ~ item[1] ~ ')'] -%}
+{%- endfor -%}
+{%- endfor -%}
+{%- if ns.items | length > 0 -%}
+{{ ' Docs: ' }}{{ ns.items | unique | join(', ') }}.
+{%- endif -%}
+{%- endmacro %}
+
 {% set report_collection_success_pct = report_collection_success_rate_pct | default(0) %}
 
 # Kubernetes Cluster Health Report
@@ -30,7 +48,7 @@
 - API server: `{{ oc_server_cmd.stdout | default('unknown') | trim }}`
 - User: `{{ oc_user_cmd.stdout | default('unknown') | trim }}`
 
-## At A Glance
+## Cluster Health Overview
 
 {% set top_risk_areas = [] %}
 {% if (report_collection.core_failed_commands | default(0) | int) > 0 %}
@@ -321,9 +339,13 @@ This section applies the customer capability profile to observed Kubernetes stat
 | Optional capabilities absent | `{{ kubernetes_capability_profile_summary.optional_absent_count | default(0) }}` |
 
 {% if kubernetes_capability_profile_findings | default([]) | length > 0 %}
-Findings summary: required capabilities are missing or incomplete: {% for item in kubernetes_capability_profile_findings[:8] %}`{{ item.capability }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+### Recommendations
 
-Recommended actions: remediate the missing required capability signals listed below, or update the customer capability profile when a capability is intentionally not required for this cluster.
+**Findings Summary**
+- required capabilities are missing or incomplete: {% for item in kubernetes_capability_profile_findings[:8] %}`{{ item.capability }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+
+**Recommended Actions**
+- remediate the missing required capability signals listed below, or update the customer capability profile when a capability is intentionally not required for this cluster.{{ docs_links(['capabilities', 'workloads', 'security', 'network']) }}
 
 | Capability | Severity | Finding | Recommended Action |
 | --- | --- | --- | --- |
@@ -331,9 +353,13 @@ Recommended actions: remediate the missing required capability signals listed be
 | `{{ item.capability }}` | `{{ item.severity }}` | {{ item.finding }} | {{ item.action }} |
 {% endfor %}
 {% else %}
-Findings summary: no required capability gaps were detected in the observed Kubernetes state.
+### Recommendations
 
-Recommended actions: keep the capability profile aligned with customer requirements and review optional capabilities only when they are installed or explicitly required.
+**Findings Summary**
+- no required capability gaps were detected in the observed Kubernetes state.
+
+**Recommended Actions**
+- keep the capability profile aligned with customer requirements and review optional capabilities only when they are installed or explicitly required.
 {% endif %}
 
 | Capability | Required | Expected State | Owner | Status | Required Signals | Observed State |
@@ -414,25 +440,3 @@ No external persistent storage provider was detected from StorageClasses or pers
 {% if (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))) in ['development', 'lightweight'] %}
 Profile note: this report used a non-production profile, so some hygiene and unused-resource findings do not reduce the score the same way they do in production.
 {% endif %}
-
-## Appendix: Execution Stats
-
-| Item | Value |
-| --- | --- |
-| Started at | `{{ execution_stats.started_at | default(report_generated_at) }}` |
-| Completed at | `{{ execution_stats.completed_at | default(report_generated_at) }}` |
-| Run time seconds | `{{ execution_stats.duration_seconds | default(0) }}` |
-| Run time minutes | `{{ execution_stats.duration_minutes | default(0) }}` |
-| Cluster user | `{{ execution_stats.ocp_user | default('unknown') }}` |
-| Local user | `{{ execution_stats.local_user | default('unknown') }}` |
-| Local host | `{{ execution_stats.local_hostname | default('unknown') }}` |
-| Local OS | `{{ execution_stats.local_os | default('unknown') }}` |
-| Python | `{{ execution_stats.local_python | default('unknown') }}` |
-| Ansible | `{{ execution_stats.ansible_version | default('unknown') }}` |
-| Collection command count | `{{ execution_stats.collection.command_count | default(0) }}` |
-| Collection success rate | `{{ execution_stats.collection.success_rate_pct | default(0) }}`% |
-| Collection parallelism | `{{ execution_stats.collection.parallelism | default(0) }}` |
-| Collection timeout seconds | `{{ execution_stats.collection.timeout_seconds | default(0) }}` |
-| Failed collection commands | `{{ execution_stats.collection.failed_commands | default(0) }}` |
-| Timed out collection commands | `{{ execution_stats.collection.timed_out_commands | default(0) }}` |
-| Report confidence | `{{ execution_stats.report_confidence | default('unknown') | upper }}` |

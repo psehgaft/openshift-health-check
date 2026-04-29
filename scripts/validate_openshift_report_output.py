@@ -12,7 +12,7 @@ from typing import Any
 
 EXPECTED_CLUSTER_SECTIONS = [
     "Report Context",
-    "At A Glance",
+    "Cluster Health Overview",
     "Evidence And Supportability",
     "Platform Health",
     "Node Health And Capacity",
@@ -67,23 +67,6 @@ def read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def validate_source_priority(markdown: str) -> None:
-    required = [
-        "oc adm must-gather",
-        "oc adm inspect",
-        "oc get",
-        "insights",
-    ]
-    positions = []
-    for item in required:
-        pos = markdown.find(item)
-        if pos < 0:
-            fail(f"missing evidence source priority item: {item}")
-        positions.append(pos)
-    if positions != sorted(positions):
-        fail("evidence source priority is not in the required order")
-
-
 def validate_cluster_posture_sections(markdown: str) -> None:
     lines = markdown.splitlines()
     sections: list[tuple[int, str]] = []
@@ -127,7 +110,6 @@ def validate_markdown(path: Path) -> None:
         if re.search(pattern, markdown, flags=re.IGNORECASE | re.MULTILINE):
             fail(f"{path}: {message}")
 
-    validate_source_priority(markdown)
     validate_markdown_tables(markdown)
 
     if "## Report Context" in markdown:

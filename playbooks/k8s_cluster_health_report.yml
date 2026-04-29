@@ -27,160 +27,246 @@
     platform_namespaces_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*|kubernetes-.*)$"
     user_namespaces_exclude_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*|kubernetes-.*)$"
     kubernetes_report_capability_profile:
-      network_policy_baseline:
+      namespace_network_policy_baseline:
         required: true
         criticality: high
         expected_state: configured
         owner: security
         evidence_required: [kubectl-get]
         notes: "Production namespaces should have NetworkPolicy coverage unless the cluster has an approved alternate segmentation control."
-      resource_quota_governance:
+        docs: "https://kubernetes.io/docs/concepts/services-networking/network-policies/"
+      namespace_resource_quota_governance:
         required: true
         criticality: high
         expected_state: configured
         owner: platform
         evidence_required: [kubectl-get]
         notes: "User namespaces should have ResourceQuota coverage to prevent noisy-neighbor resource exhaustion."
-      limit_range_defaults:
+        docs: "https://kubernetes.io/docs/concepts/policy/resource-quotas/"
+      namespace_limit_range_defaults:
         required: true
         criticality: medium
         expected_state: configured
         owner: platform
         evidence_required: [kubectl-get]
         notes: "User namespaces should have LimitRange defaults so workloads have predictable resource boundaries."
-      workload_resilience:
+        docs: "https://kubernetes.io/docs/concepts/policy/limit-range/"
+      workload_resilience_controls:
         required: true
         criticality: high
         expected_state: configured
         owner: app
         evidence_required: [kubectl-get]
         notes: "Production multi-replica workloads should use PodDisruptionBudgets and spread controls."
-      resource_requests_limits:
+        docs: "https://kubernetes.io/docs/tasks/run-application/configure-pdb/"
+      workload_resource_requests_limits:
         required: true
         criticality: high
         expected_state: configured
         owner: app
         evidence_required: [kubectl-get]
         notes: "Workloads should set resource requests and limits for scheduling accuracy, quota enforcement, and capacity planning."
-      external_storage:
+        docs: "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"
+      persistent_storage_integration:
         required: true
         criticality: high
         expected_state: present
         owner: storage
         evidence_required: [kubectl-get]
         notes: "Production clusters normally need external persistent storage instead of only local, hostPath, or ephemeral storage."
-      ingress_exposure:
+        docs: "https://kubernetes.io/docs/concepts/storage/storage-classes/"
+      ingress_external_exposure:
         required: true
         criticality: medium
         expected_state: configured
         owner: network
         evidence_required: [kubectl-get]
         notes: "Ingress usage should be intentionally configured and reviewed for exposure, TLS, and ownership."
-      tls_certificate_hygiene:
+        docs: "https://kubernetes.io/docs/concepts/services-networking/ingress/"
+      tls_certificate_lifecycle_hygiene:
         required: true
         criticality: medium
         expected_state: configured
         owner: security
         evidence_required: [kubectl-get]
         notes: "TLS certificates exposed through Kubernetes secrets should be inventoried and reviewed for expiry."
-      deprecated_api_review:
+        docs: "https://kubernetes.io/docs/concepts/configuration/secret/#tls-secrets"
+      deprecated_api_upgrade_review:
         required: true
         criticality: high
         expected_state: configured
         owner: platform
         evidence_required: [kubectl-get]
         notes: "Deprecated APIs and deprecated CRDs should be reviewed before upgrades."
-      backup:
+        docs: "https://kubernetes.io/docs/reference/using-api/deprecation-guide/"
+      backup_and_restore_readiness:
         required: true
         criticality: critical
         expected_state: healthy
         owner: operations
         evidence_required: [kubectl-get]
         notes: "Production clusters should have backup tooling plus evidence of successful backup and restore processes."
-      external_logging:
+        docs: "https://velero.io/docs/latest/"
+      external_log_forwarding:
         required: true
         criticality: high
         expected_state: configured
         owner: observability
         evidence_required: [kubectl-get]
         notes: "Cluster and application logs should have an intentional collection or forwarding path."
-      external_monitoring:
+        docs: "https://kubernetes.io/docs/concepts/cluster-administration/logging/"
+      external_monitoring_integration:
         required: true
         criticality: high
         expected_state: configured
         owner: observability
         evidence_required: [kubectl-get, metrics]
         notes: "Production clusters should have monitoring and alerting coverage through in-cluster or external systems."
-      user_workload_monitoring:
+        docs: "https://prometheus-operator.dev/docs/developer/getting-started/"
+      user_workload_metrics_monitoring:
         required: true
         criticality: high
         expected_state: configured
         owner: observability
         evidence_required: [kubectl-get, metrics]
         notes: "Application teams should expose scrape configuration through ServiceMonitor, PodMonitor, or an approved equivalent."
-      grafana_dashboards:
+        docs: "https://prometheus-operator.dev/docs/developer/getting-started/"
+      grafana_metrics_dashboards:
         required: false
         criticality: medium
         expected_state: present
         owner: observability
         evidence_required: [kubectl-get]
         notes: "Require when the customer expects in-cluster Grafana dashboards for application or platform metrics."
-      external_private_registry:
+        docs: "https://grafana.github.io/grafana-operator/docs/"
+      dynatrace_observability:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: observability
+        evidence_required: [kubectl-get, metrics]
+        notes: "Require when Dynatrace Operator, DynaKube, OneAgent, ActiveGate, or related Dynatrace-managed observability components are expected on the cluster."
+        docs: "https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s"
+      qualys_scanning_agents:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: security
+        evidence_required: [kubectl-get]
+        notes: "Require when Qualys Container Security sensors, Qualys Cloud Agent, or related Qualys scanning agents are expected to run on cluster nodes or workloads."
+        docs: "https://docs.qualys.com/en/cs-sensor/latest/deploying_sensor_in_k8s/deploying_sensor_in_kubernetes.htm"
+      prisma_twistlock_defenders:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: security
+        evidence_required: [kubectl-get]
+        notes: "Require when Prisma Cloud Compute or legacy Twistlock Defender agents are expected to protect cluster nodes or workloads."
+        docs: "https://pan.dev/prisma-cloud/docs/cwpp/deploy-defenders/"
+      aqua_security_platform:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: security
+        evidence_required: [kubectl-get]
+        notes: "Require when Aqua platform components such as Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or related Aqua-managed security services are expected on the cluster."
+        docs: "https://github.com/aquasecurity/deployments"
+      splunk_observability:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: observability
+        evidence_required: [kubectl-get, metrics]
+        notes: "Require when Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, or other Splunk-managed telemetry components are expected on the cluster."
+        docs: "https://help.splunk.com/en/splunk-enterprise/get-started/get-data-in/9.2/get-other-kinds-of-data-in/overview-of-the-splunk-opentelemetry-collector-for-kubernetes"
+      loki_stack_logging:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: observability
+        evidence_required: [kubectl-get]
+        notes: "Require when LokiStack or Loki-based in-cluster log storage is expected on the cluster."
+        docs: "https://grafana.com/docs/loki/latest/setup/install/"
+      datadog_observability:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: observability
+        evidence_required: [kubectl-get, metrics]
+        notes: "Require when Datadog Operator, DatadogAgent custom resources, or Datadog agents are expected to collect cluster telemetry."
+        docs: "https://docs.datadoghq.com/containers/kubernetes/installation/"
+      appdynamics_observability:
+        required: false
+        criticality: medium
+        expected_state: present
+        owner: observability
+        evidence_required: [kubectl-get, metrics]
+        notes: "Require when AppDynamics Cluster Agent, InfraViz, or related AppDynamics observability components are expected on the cluster."
+        docs: "https://docs.appdynamics.com/appd/24.x/latest/en/infrastructure-visibility/monitor-kubernetes-with-the-cluster-agent/install-the-cluster-agent"
+      workloads_using_external_private_registries:
         required: false
         criticality: medium
         expected_state: configured
         owner: delivery
         evidence_required: [kubectl-get]
         notes: "Require when workloads are expected to pull application images from an external private registry."
-      autoscaling:
+        docs: "https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/"
+      workload_autoscaling:
         required: false
         criticality: medium
         expected_state: configured
         owner: platform
         evidence_required: [kubectl-get, metrics]
         notes: "Require this when workload or node autoscaling is part of the customer operating model."
-      policy_engine:
+        docs: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/"
+      admission_policy_engine:
         required: false
         criticality: medium
         expected_state: present
         owner: security
         evidence_required: [kubectl-get]
         notes: "Require this when Gatekeeper, Kyverno, or another admission-policy engine is part of the security baseline."
-      secrets_management:
+        docs: "https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/"
+      external_or_sealed_secrets_management:
         required: false
         criticality: medium
         expected_state: present
         owner: security
         evidence_required: [kubectl-get]
         notes: "Require this when external secret synchronization or sealed-secret workflows are part of the customer baseline."
-      workload_vulnerability_scanner:
+        docs: "https://external-secrets.io/latest/"
+      workload_vulnerability_scanning:
         required: false
         criticality: high
         expected_state: present
         owner: security
         evidence_required: [kubectl-get]
         notes: "Require when workload image vulnerability scanning or secured-cluster scanner agents are part of the security baseline."
-      cicd_runners:
+        docs: "https://aquasecurity.github.io/trivy-operator/latest/"
+      cluster_hosted_cicd_runners:
         required: false
         criticality: medium
         expected_state: present
         owner: delivery
         evidence_required: [kubectl-get, metrics]
         notes: "Show when GitLab, Jenkins, GitHub Actions, Azure DevOps, or generic runner pods are detected or required."
-      service_mesh:
+        docs: "https://docs.gitlab.com/runner/executors/kubernetes/"
+      service_mesh_control_plane:
         required: false
         criticality: low
         expected_state: present
         owner: network
         evidence_required: [kubectl-get]
         notes: "Require this only when service mesh is part of the application platform baseline."
-      provider_node_pools:
+        docs: "https://istio.io/latest/docs/setup/install/"
+      provider_node_pool_inventory:
         required: true
         criticality: medium
         expected_state: configured
         owner: platform
         evidence_required: [kubectl-get, provider-api]
         notes: "Managed or provider-backed clusters should expose enough node-pool, zone, and provider metadata for capacity and resilience review."
+        docs: "https://kubernetes.io/docs/reference/labels-annotations-taints/"
   tasks:
     - name: Run Kubernetes cluster health report scaffold
       block:

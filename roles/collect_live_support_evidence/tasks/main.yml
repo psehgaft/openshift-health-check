@@ -29,6 +29,7 @@
     live_support_insights_archive_path: "{{ live_support_artifact_root }}/insights-archive"
     live_support_inspect_path: "{{ live_support_artifact_root }}/inspect"
     live_support_must_gather_root: "{{ live_support_artifact_root }}/must-gather"
+    live_support_control_plane_backup_evidence_path: "{{ live_support_artifact_root }}/control-plane-backup/control-plane-backup-evidence.json"
     live_support_sosreport_output_dir: "{{ live_support_artifact_root }}/oc-debug-node-sosreport"
     live_support_collected_sosreport_paths: []
 
@@ -460,6 +461,33 @@
   failed_when: false
   when: collect_live_support_artifacts | bool
 
+- name: Collect live control-plane backup evidence
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'python3',
+          playbook_dir ~ '/../scripts/collect_control_plane_backup_evidence.py',
+          '--kube-cli',
+          kube_cli | default('oc'),
+          '--output',
+          live_support_control_plane_backup_evidence_path,
+          '--timeout-seconds',
+          (live_support_artifact_timeout_seconds | int) | string
+        ]
+        + (
+          (control_plane_backup_search_paths | default([]))
+          | map('regex_replace', '^', '--search-path=')
+          | list
+        )
+      }}
+  register: live_support_control_plane_backup_collect_cmd
+  changed_when: false
+  failed_when: false
+  when:
+    - collect_live_support_artifacts | bool
+    - not (cluster_profile.is_hosted_control_plane | default(false) | bool)
+
 - name: Normalize live support bundle payload
   ansible.builtin.set_fact:
     live_support_bundle_data: >-
@@ -480,6 +508,15 @@
     live_support_collected_managed_gates_path: "{{ live_support_bundle_data.managed_gates_path | default('') }}"
     live_support_collected_inspect_path: "{{ live_support_bundle_data.inspect_path | default('') }}"
     live_support_collected_advisor_export_path: "{{ live_support_bundle_data.advisor_export_path | default('') }}"
+    live_support_collected_control_plane_backup_evidence_path: >-
+      {{
+        live_support_control_plane_backup_evidence_path
+        if (
+          (live_support_control_plane_backup_collect_cmd is defined)
+          and ((live_support_control_plane_backup_collect_cmd.rc | default(1)) == 0)
+        )
+        else ''
+      }}
     live_support_collected_insights_archive_path: >-
       {{
         live_support_insights_archive_path
@@ -585,6 +622,17 @@
   failed_when: false
   when: (live_support_collected_sosreport_paths | default([])) | length > 0
 
+- name: Parse collected control-plane backup evidence
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_control_plane_backup_evidence.py"
+      - "{{ live_support_collected_control_plane_backup_evidence_path }}"
+  register: live_support_control_plane_backup_cmd
+  changed_when: false
+  failed_when: false
+  when: live_support_collected_control_plane_backup_evidence_path | default('') | length > 0
+
 - name: Build live support artifact facts
   ansible.builtin.set_fact:
     live_support_must_gather_inventory: >-
@@ -641,6 +689,12 @@
         if ((live_support_sosreport_cmd.rc | default(1)) == 0 and (live_support_sosreport_cmd.stdout | default('') | length > 0))
         else {}
       }}
+    live_support_control_plane_backup_evidence_data: >-
+      {{
+        (live_support_control_plane_backup_cmd.stdout | from_json)
+        if ((live_support_control_plane_backup_cmd.rc | default(1)) == 0 and (live_support_control_plane_backup_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
     live_support_artifact_summary:
       enabled: "{{ collect_live_support_artifacts | bool }}"
       root: "{{ live_support_artifact_root }}"
@@ -669,6 +723,7 @@
         cluster_compare: "{{ live_support_collected_cluster_compare_path | default('') }}"
         managed_gates: "{{ live_support_collected_managed_gates_path | default('') }}"
         advisor_export: "{{ live_support_collected_advisor_export_path | default('') }}"
+        control_plane_backup_evidence: "{{ live_support_collected_control_plane_backup_evidence_path | default('') }}"
         insights_archive: "{{ live_support_collected_insights_archive_path | default('') }}"
         sosreport: "{{ live_support_collected_sosreport_paths | default([]) }}"
 
@@ -679,6 +734,7 @@
     cluster_compare_data: "{{ live_support_cluster_compare_data | default({}) }}"
     managed_gates_data: "{{ live_support_managed_gates_data | default({}) }}"
     advisor_export_data: "{{ live_support_advisor_export_data | default({}) }}"
+    control_plane_backup_evidence_data: "{{ live_support_control_plane_backup_evidence_data | default({}) }}"
     insights_archive_data: "{{ live_support_insights_archive_data | default({}) }}"
     sosreport_data: "{{ live_support_sosreport_data | default({}) }}"
     etcd_ocp_diag_data: "{{ live_support_etcd_ocp_diag_data | default({}) }}"
@@ -703,6 +759,7 @@
       cluster_compare_path: "{{ live_support_collected_cluster_compare_path | default('') }}"
       managed_gates_path: "{{ live_support_collected_managed_gates_path | default('') }}"
       advisor_export_path: "{{ live_support_collected_advisor_export_path | default('') }}"
+      control_plane_backup_evidence_path: "{{ live_support_collected_control_plane_backup_evidence_path | default('') }}"
       insights_archive_path: "{{ live_support_collected_insights_archive_path | default('') }}"
       sosreport_count: "{{ live_support_sosreport_data.summary.count | default(0) }}"
       artifact_root: "{{ live_support_artifact_root }}"
@@ -721,6 +778,7 @@
       node_diagnostics: "{{ 'present' if ((live_support_sosreport_data.summary.count | default(0) | int) > 0) else 'missing' }}"
       inspect: "{{ 'present' if ((live_support_inspect_data.summary.file_count | default(0) | int) > 0) else 'missing' }}"
       advisor_data: "{{ 'present' if (live_support_advisor_export_data.summary is defined) else 'unknown' }}"
+      control_plane_backup: "{{ 'present' if (live_support_control_plane_backup_evidence_data.summary is defined) else 'missing' }}"
       insights_archive: "{{ 'present' if (live_support_insights_archive_data.summary is defined and (live_support_insights_archive_data.summary.present | default(false) | bool)) else 'missing' }}"
       cluster_compare: "{{ 'present' if (live_support_cluster_compare_data.summary is defined) else 'missing' }}"
       managed_gates: "{{ 'present' if (live_support_managed_gates_data.summary is defined) else 'missing' }}"
@@ -733,6 +791,7 @@
         + ([{'area': 'reference compliance', 'detail': 'No cluster-compare output or baseline reference was collected during this scan.'}] if (live_support_cluster_compare_data.summary is not defined) else [])
         + ([{'area': 'managed-service gates', 'detail': 'No provider-managed gate export was collected during this scan.'}] if (live_support_managed_gates_data.summary is not defined) else [])
         + ([{'area': 'advisor posture', 'detail': 'No Advisor export was collected during this scan.'}] if (live_support_advisor_export_data.summary is not defined) else [])
+        + ([{'area': 'control-plane backup evidence', 'detail': 'No live etcd snapshot or static_kuberesources artifact inventory was collected during this scan.'}] if (live_support_control_plane_backup_evidence_data.summary is not defined and not (cluster_profile.is_hosted_control_plane | default(false) | bool)) else [])
         + ([{'area': 'insights archive', 'detail': 'No live Insights Operator archive was collected during this scan.'}] if (live_support_insights_archive_data.summary is not defined or not (live_support_insights_archive_data.summary.present | default(false) | bool)) else [])
       }}
   vars:
@@ -744,6 +803,7 @@
         + ([{'name': 'cluster-compare', 'type': 'report-file', 'mode': 'live', 'path': live_support_collected_cluster_compare_path, 'parser': 'parse_cluster_compare.py'}] if (live_support_collected_cluster_compare_path | default('') | length > 0) else [])
         + ([{'name': 'managed-gates', 'type': 'report-file', 'mode': 'live', 'path': live_support_collected_managed_gates_path, 'parser': 'parse_managed_gates.py'}] if (live_support_collected_managed_gates_path | default('') | length > 0) else [])
         + ([{'name': 'advisor-export', 'type': 'report-file', 'mode': 'live', 'path': live_support_collected_advisor_export_path, 'parser': 'parse_advisor_export.py'}] if (live_support_collected_advisor_export_path | default('') | length > 0) else [])
+        + ([{'name': 'control-plane-backup-evidence', 'type': 'report-file', 'mode': 'live', 'path': live_support_collected_control_plane_backup_evidence_path, 'parser': 'parse_control_plane_backup_evidence.py'}] if (live_support_collected_control_plane_backup_evidence_path | default('') | length > 0) else [])
         + ([{'name': 'insights-archive', 'type': 'archive-directory', 'mode': 'live', 'path': live_support_collected_insights_archive_path, 'parser': 'parse_insights_archive.py'}] if (live_support_collected_insights_archive_path | default('') | length > 0) else [])
         + (
           (live_support_sosreport_data.reports | default([]))
@@ -796,6 +856,7 @@
         cluster_compare: "{{ live_support_collected_cluster_compare_path | default('') }}"
         managed_gates: "{{ live_support_collected_managed_gates_path | default('') }}"
         advisor_export: "{{ live_support_collected_advisor_export_path | default('') }}"
+        control_plane_backup_evidence: "{{ live_support_collected_control_plane_backup_evidence_path | default('') }}"
         insights_archive: "{{ live_support_collected_insights_archive_path | default('') }}"
         sosreport: "{{ live_support_collected_sosreport_paths | default([]) }}"
       parsed:
@@ -806,6 +867,7 @@
         cluster_compare: "{{ live_support_cluster_compare_data | default({}) }}"
         managed_gates: "{{ live_support_managed_gates_data | default({}) }}"
         advisor_export: "{{ live_support_advisor_export_data | default({}) }}"
+        control_plane_backup_evidence: "{{ live_support_control_plane_backup_evidence_data | default({}) }}"
         insights_archive: "{{ live_support_insights_archive_data | default({}) }}"
         sosreport: "{{ live_support_sosreport_data | default({}) }}"
       resources: "{{ collected_support_resources | default({}) }}"
