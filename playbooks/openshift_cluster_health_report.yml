@@ -12,7 +12,7 @@
     report_basename: "cluster-report"
     report_generate_html: true
     report_generate_pdf: true
-    collection_parallelism: 8
+    collection_parallelism: 4
     collection_command_timeout_seconds: 300
     keep_collection_artifacts: false
     warning_event_limit: 20
@@ -20,7 +20,7 @@
     top_alert_group_limit: 15
     top_event_reason_limit: 15
     top_namespace_issue_limit: 15
-    top_pvc_issue_limit: 20
+    top_pvc_issue_limit: 25
     top_workload_issue_limit: 25
     top_security_issue_limit: 25
     top_certificate_issue_limit: 20
@@ -221,7 +221,7 @@
         evidence_required: [must-gather, oc-get]
         notes: "Require when Red Hat Ansible Automation Platform is expected on the cluster, with validation based on AnsibleAutomationPlatform, AutomationController, AutomationHub, EDA, or AAP-managed workloads rather than operator footprint alone."
         docs: "https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.5/html-single/installing_on_openshift_container_platform/index"
-      openshift_custom_metrics_keda:
+      openshift_custom_metrics_autoscaler:
         required: false
         criticality: medium
         expected_state: present
@@ -291,7 +291,7 @@
         expected_state: present
         owner: platform
         evidence_required: [must-gather, oc-get]
-        notes: "Require when MachineSets and the Machine API are used and worker autoscaling is expected for workload elasticity."
+        notes: "For standalone clusters, require when the cluster runs on a public-cloud platform or is otherwise confirmed to be IPI-based, Machine API-managed worker pools are in use, and worker autoscaling is expected for workload elasticity. For hosted control plane clusters, validate autoscaling through HostedCluster or NodePool autoscaling configuration instead of assuming a standalone ClusterAutoscaler object will exist. Do not assume this applies to self-managed UPI-style clusters."
         docs: "https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/machine_management/applying-autoscaling"
       machine_health_check_remediation:
         required: true
@@ -299,7 +299,7 @@
         expected_state: present
         owner: platform
         evidence_required: [must-gather, oc-get]
-        notes: "Worker auto-remediation is expected for most production clusters that use MachineSets and the Machine API, except where the customer intentionally does not use MachineHealthCheck remediation."
+        notes: "Worker auto-remediation is expected for most production clusters that use Machine API-managed worker pools, except where the customer intentionally does not use MachineHealthCheck remediation."
         docs: "https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/machine_management/index"
       image_registry_policy_governance:
         required: true
@@ -395,7 +395,7 @@
         expected_state: healthy
         owner: operations
         evidence_required: [must-gather, oc-get]
-        notes: "Shared clusters should have an intentional team onboarding path for projects or namespaces plus baseline tenant guardrails, including project request controls, team RBAC, NetworkPolicy coverage, namespace egress control coverage, ResourceQuota coverage, and LimitRange coverage or documented exceptions."
+        notes: "Shared clusters should have an intentional team onboarding path for projects or namespaces, and non-admin users should not be able to self-provision namespaces directly. Validate disabled self-provisioning plus baseline tenant guardrails, including project request controls, team RBAC, NetworkPolicy coverage, namespace egress control coverage, ResourceQuota coverage, and LimitRange coverage or documented exceptions."
         docs: "https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/building_applications/projects"
       service_mesh_control_plane:
         required: false
@@ -473,7 +473,7 @@
     collect_live_support_artifacts: true
     live_support_collection_profile: all
     live_support_artifact_output_dir: ""
-    live_support_artifact_parallelism: 3
+    live_support_artifact_parallelism: 2
     live_support_artifact_timeout_seconds: 1800
     collect_live_must_gather: false
     collect_live_inspect: false
@@ -542,9 +542,9 @@
       apiserver_current_read_inflight: 'sum(apiserver_current_inflight_requests{request_kind="read"})'
       apiserver_current_write_inflight: 'sum(apiserver_current_inflight_requests{request_kind="mutating"})'
       apiserver_storage_objects_total: 'sum(apiserver_storage_objects)'
-      node_cpu_utilization: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))'
-      node_memory_utilization: '100 * (1 - ((node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100) / 100)'
-      node_disk_utilization: 'max by (instance) (100 * (1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|nsfs|squashfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|nsfs|squashfs"})))'
+      node_cpu_utilization: '100 * (1 - avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m]) * on(instance) group_left(node) label_replace(node_uname_info, "node", "$1", "nodename", "(.*)")))'
+      node_memory_utilization: '100 * (1 - (sum by (node) (node_memory_MemAvailable_bytes * on(instance) group_left(node) label_replace(node_uname_info, "node", "$1", "nodename", "(.*)")) / sum by (node) (node_memory_MemTotal_bytes * on(instance) group_left(node) label_replace(node_uname_info, "node", "$1", "nodename", "(.*)"))))'
+      node_disk_utilization: 'max by (node) (100 * (1 - ((node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|nsfs|squashfs"} * on(instance) group_left(node) label_replace(node_uname_info, "node", "$1", "nodename", "(.*)")) / (node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|nsfs|squashfs"} * on(instance) group_left(node) label_replace(node_uname_info, "node", "$1", "nodename", "(.*)")))))'
       kubelet_pod_density: '100 * (sum by (node) (kubelet_running_pods) / sum by (node) (kube_node_status_allocatable{resource="pods"}))'
       top_pod_cpu_usage: 'topk(20, sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!="",pod!="",namespace!~"openshift-.*"}[5m])))'
       top_pod_memory_usage: 'topk(20, sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!="",namespace!~"openshift-.*"}))'

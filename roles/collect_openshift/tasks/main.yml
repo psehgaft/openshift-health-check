@@ -141,6 +141,10 @@
         argv: ["oc", "get", "appprojects.argoproj.io", "-A", "-o", "json", "--ignore-not-found"]
       - name: clusterautoscalers
         argv: ["oc", "get", "clusterautoscalers.autoscaling.openshift.io", "-o", "json", "--ignore-not-found"]
+      - name: hostedclusters
+        argv: ["oc", "get", "hostedclusters.hypershift.openshift.io", "-A", "-o", "json", "--ignore-not-found"]
+      - name: nodepools
+        argv: ["oc", "get", "nodepools.hypershift.openshift.io", "-A", "-o", "json", "--ignore-not-found"]
       - name: dynakubes
         argv: ["oc", "get", "dynakubes.dynatrace.com", "-A", "-o", "json", "--ignore-not-found"]
       - name: edgeconnects
@@ -280,6 +284,8 @@
       - gitops_appprojects
       - templates
       - clusterautoscalers
+      - hostedclusters
+      - nodepools
       - dynakubes
       - edgeconnects
       - datadogagents
@@ -352,6 +358,8 @@
       - gitops_applications
       - gitops_appprojects
       - clusterautoscalers
+      - hostedclusters
+      - nodepools
       - klusterlets
       - managedclusteraddons
       - clustersecretstores
@@ -384,7 +392,7 @@
     commands = json.loads(r'''{{ openshift_collection_commands | to_json }}''')
     timeout_seconds = int({{ collection_command_timeout_seconds | int }})
     max_workers = min(
-        max(1, int({{ collection_parallelism | int }})),
+        max(1, int({{ effective_collection_parallelism | default(collection_parallelism) | int }})),
         max(1, len(commands)),
     )
 
@@ -600,6 +608,8 @@
     gitops_applications: "{{ openshift_collected_commands.gitops_applications.stdout | from_json if ((openshift_collected_commands.gitops_applications.rc | default(1)) == 0 and (openshift_collected_commands.gitops_applications.stdout | default('') | trim | length > 0)) else {'items': []} }}"
     gitops_appprojects: "{{ openshift_collected_commands.gitops_appprojects.stdout | from_json if ((openshift_collected_commands.gitops_appprojects.rc | default(1)) == 0 and (openshift_collected_commands.gitops_appprojects.stdout | default('') | trim | length > 0)) else {'items': []} }}"
     clusterautoscalers: "{{ openshift_collected_commands.clusterautoscalers.stdout | from_json if ((openshift_collected_commands.clusterautoscalers.rc | default(1)) == 0 and (openshift_collected_commands.clusterautoscalers.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    hostedclusters: "{{ openshift_collected_commands.hostedclusters.stdout | from_json if ((openshift_collected_commands.hostedclusters.rc | default(1)) == 0 and (openshift_collected_commands.hostedclusters.stdout | default('') | trim | length > 0)) else {'items': []} }}"
+    nodepools: "{{ openshift_collected_commands.nodepools.stdout | from_json if ((openshift_collected_commands.nodepools.rc | default(1)) == 0 and (openshift_collected_commands.nodepools.stdout | default('') | trim | length > 0)) else {'items': []} }}"
     dynakubes: "{{ openshift_collected_commands.dynakubes.stdout | from_json if ((openshift_collected_commands.dynakubes.rc | default(1)) == 0 and (openshift_collected_commands.dynakubes.stdout | default('') | trim | length > 0)) else {'items': []} }}"
     edgeconnects: "{{ openshift_collected_commands.edgeconnects.stdout | from_json if ((openshift_collected_commands.edgeconnects.rc | default(1)) == 0 and (openshift_collected_commands.edgeconnects.stdout | default('') | trim | length > 0)) else {'items': []} }}"
     datadogagents: "{{ openshift_collected_commands.datadogagents.stdout | from_json if ((openshift_collected_commands.datadogagents.rc | default(1)) == 0 and (openshift_collected_commands.datadogagents.stdout | default('') | trim | length > 0)) else {'items': []} }}"
@@ -721,6 +731,8 @@
       gitops_applications: "{{ gitops_applications | default({'items': []}) }}"
       gitops_appprojects: "{{ gitops_appprojects | default({'items': []}) }}"
       clusterautoscalers: "{{ clusterautoscalers | default({'items': []}) }}"
+      hostedclusters: "{{ hostedclusters | default({'items': []}) }}"
+      nodepools: "{{ nodepools | default({'items': []}) }}"
       dynakubes: "{{ dynakubes | default({'items': []}) }}"
       edgeconnects: "{{ edgeconnects | default({'items': []}) }}"
       datadogagents: "{{ datadogagents | default({'items': []}) }}"

@@ -394,7 +394,7 @@ This section maps the main report signals to their reason for inclusion and the 
 | API and etcd metrics | control-plane responsiveness and stability | latency, 5xx, inflight requests, leader changes, and peer RTT are high-signal failure predictors |
 | Prometheus/Thanos query results | metric-backed accuracy for live health checks | official metric source used for alerting, API server, etcd, node utilization, pod density, pod usage, and optional latency signals |
 | Node readiness and pressure | platform continuity | `NotReady`, `MemoryPressure`, `DiskPressure`, and `PIDPressure` are treated as urgent platform signals |
-| Worker-pool and failure-domain spread | resilience during zone or node failure | the report warns when worker groups are single-zone, zone labels are missing, or MachineSets are uneven |
+| Worker-pool and failure-domain spread | resilience during zone or node failure | the report warns when worker groups are single-zone, zone labels are missing, or Machine API-managed worker pools are uneven |
 | Service, pod, and node IP capacity | network exhaustion risk | each node needs an IP, workloads need pod IPs, and services need service IPs; remaining IP space is surfaced when CIDRs are known |
 | Node growth headroom | scaling readiness | estimated from pod-network slot math plus known node IP availability; kept `unknown` if the cluster does not expose enough network allocation detail |
 | Storage posture | persistence and resilience | warns when no external storage provider is detected or when local or ephemeral storage appears to be the only option |
@@ -623,7 +623,8 @@ Supported PDF engines are checked automatically:
 Important runtime settings:
 
 - `collection_parallelism`
-  Number of cluster read commands to run at the same time. Default: `8`
+  Requested number of cluster read commands to run at the same time. Default: `4`
+  The runtime now auto-caps this for smaller machines based on local CPU and memory. On a 4 vCPU / 8 GiB VM, the effective cap is `3`.
 - `collection_command_timeout_seconds`
   Timeout for each collection command. Default: `300`
 - `keep_collection_artifacts`
@@ -851,7 +852,7 @@ Runs usually take longer when:
 - Prometheus is available and the optional metrics queries run
 - many custom resources exist and the CRD usage checks need to inspect them
 
-Runs can also take longer if you lower `collection_parallelism` or raise `collection_command_timeout_seconds`.
+Runs can also take longer if you lower `collection_parallelism`, if the runtime auto-caps parallelism on a smaller machine, or if you raise `collection_command_timeout_seconds`.
 
 ## Output
 

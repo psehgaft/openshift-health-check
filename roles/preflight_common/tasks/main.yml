@@ -1,4 +1,28 @@
 ---
+- name: Capture local sizing facts for parallelism limits
+  ansible.builtin.set_fact:
+    detected_vcpus: "{{ [1, (ansible_processor_vcpus | default(ansible_facts.processor_vcpus | default(1))) | int] | max }}"
+    detected_mem_mb: "{{ [1024, (ansible_memtotal_mb | default(ansible_facts.memtotal_mb | default(1024))) | int] | max }}"
+  changed_when: false
+
+- name: Derive safe local resource caps
+  ansible.builtin.set_fact:
+    safe_parallelism_cpu_cap: "{{ [1, detected_vcpus | int - 1] | max }}"
+    safe_parallelism_mem_cap: "{{ [1, (detected_mem_mb | int) // 2048] | max }}"
+  changed_when: false
+
+- name: Derive safe local parallelism limit
+  ansible.builtin.set_fact:
+    safe_parallelism_cap: "{{ [4, safe_parallelism_cpu_cap | int, safe_parallelism_mem_cap | int] | min }}"
+  changed_when: false
+
+- name: Apply effective parallelism limits
+  ansible.builtin.set_fact:
+    effective_collection_parallelism: "{{ [1, (collection_parallelism | default(4)) | int, safe_parallelism_cap | int] | min }}"
+    effective_analysis_parallelism: "{{ [1, (analysis_parallelism | default(collection_parallelism | default(4))) | int, safe_parallelism_cap | int] | min }}"
+    effective_live_support_artifact_parallelism: "{{ [1, (live_support_artifact_parallelism | default(2)) | int, [2, safe_parallelism_cap | int] | min] | min }}"
+  changed_when: false
+
 - name: Ensure report output directory exists
   ansible.builtin.file:
     path: "{{ report_output_dir }}"

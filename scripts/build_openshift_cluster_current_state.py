@@ -223,14 +223,18 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
         memory_used_quota = float(quota.get("memory_used_bytes", 0.0) or 0.0)
         cpu_request = float(requests.get("cpu_millicores", 0.0) or 0.0)
         memory_request = float(requests.get("memory_bytes", 0.0) or 0.0)
+        cpu_usage_observed = namespace in cpu_usage_by_ns
+        memory_usage_observed = namespace in memory_usage_by_ns
+        effective_cpu_millicores = cpu_usage if cpu_usage_observed else cpu_request
+        effective_memory_bytes = memory_usage if memory_usage_observed else memory_request
 
         cpu_available = max(cpu_quota - cpu_used_quota, 0.0) if cpu_quota > 0 else None
         memory_available = max(memory_quota - memory_used_quota, 0.0) if memory_quota > 0 else None
         cpu_denominator = cpu_quota if cpu_quota > 0 else (cluster_cpu_cores * 1000.0 if cluster_cpu_cores > 0 else 0.0)
         memory_denominator = memory_quota if memory_quota > 0 else cluster_memory_bytes
 
-        cpu_util = round((cpu_usage / cpu_denominator) * 100.0, 1) if cpu_denominator > 0 else None
-        memory_util = round((memory_usage / memory_denominator) * 100.0, 1) if memory_denominator > 0 else None
+        cpu_util = round((effective_cpu_millicores / cpu_denominator) * 100.0, 1) if cpu_denominator > 0 else None
+        memory_util = round((effective_memory_bytes / memory_denominator) * 100.0, 1) if memory_denominator > 0 else None
 
         rows.append(
             {
@@ -238,11 +242,25 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
                 "pod_count": int(requests.get("pods", 0) or 0),
                 "cpu_usage_millicores": round(cpu_usage, 1),
                 "cpu_requested_millicores": round(cpu_request, 1),
+                "cpu_effective_millicores": round(effective_cpu_millicores, 1),
+                "cpu_usage_source": "observed" if cpu_usage_observed else "requested",
+                "cpu_usage_display": (
+                    f"{round(effective_cpu_millicores, 1)}m"
+                    if cpu_usage_observed
+                    else f"{round(effective_cpu_millicores, 1)}m (requested)"
+                ),
                 "cpu_available_millicores": round(cpu_available, 1) if cpu_available is not None else None,
                 "cpu_available_display": f"{round(cpu_available, 1)}m" if cpu_available is not None else "not quota-limited",
                 "cpu_utilization_pct": cpu_util,
                 "memory_usage_mib": round(memory_usage / (1024 ** 2), 1),
                 "memory_requested_mib": round(memory_request / (1024 ** 2), 1),
+                "memory_effective_mib": round(effective_memory_bytes / (1024 ** 2), 1),
+                "memory_usage_source": "observed" if memory_usage_observed else "requested",
+                "memory_usage_display": (
+                    f"{round(effective_memory_bytes / (1024 ** 2), 1)}MiB"
+                    if memory_usage_observed
+                    else f"{round(effective_memory_bytes / (1024 ** 2), 1)}MiB (requested)"
+                ),
                 "memory_available_mib": round(memory_available / (1024 ** 2), 1) if memory_available is not None else None,
                 "memory_available_display": f"{round(memory_available / (1024 ** 2), 1)}MiB" if memory_available is not None else "not quota-limited",
                 "memory_utilization_pct": memory_util,
@@ -253,8 +271,8 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
         key=lambda item: (
             -(item.get("memory_utilization_pct") if item.get("memory_utilization_pct") is not None else -1),
             -(item.get("cpu_utilization_pct") if item.get("cpu_utilization_pct") is not None else -1),
-            -float(item.get("memory_usage_mib", 0.0) or 0.0),
-            -float(item.get("cpu_usage_millicores", 0.0) or 0.0),
+            -float(item.get("memory_effective_mib", 0.0) or 0.0),
+            -float(item.get("cpu_effective_millicores", 0.0) or 0.0),
             str(item.get("namespace", "")),
         )
     )
@@ -620,6 +638,18 @@ def main():
             str(item.get("node", "")),
         )
     )
+    average_pod_density_pct = avg(
+        [item.get("pod_density_pct") for item in node_resource_rows if item.get("pod_density_pct") not in (None, "")]
+    )
+    average_cpu_utilization_pct = avg(
+        [item.get("cpu_utilization_pct") for item in node_resource_rows if item.get("cpu_utilization_pct") not in (None, "")]
+    )
+    average_memory_utilization_pct = avg(
+        [item.get("memory_utilization_pct") for item in node_resource_rows if item.get("memory_utilization_pct") not in (None, "")]
+    )
+    average_disk_utilization_pct = avg(
+        [item.get("disk_utilization_pct") for item in node_resource_rows if item.get("disk_utilization_pct") not in (None, "")]
+    )
     namespace_resource_rows = build_namespace_resource_summary(data, total_cpu_cores, total_memory_bytes)
 
     result = {
@@ -629,6 +659,16 @@ def main():
         "cluster_version_failing": data.get("cv_failing"),
         "kubernetes_version": primary_kube_version,
         "deployment_type": data.get("openshift_deployment_type"),
+        "cluster_classification_label": data.get("openshift_cluster_classification_label"),
+        "cluster_classification_source": data.get("openshift_cluster_classification_source"),
+        "cluster_classification_confidence": data.get("openshift_cluster_classification_confidence"),
+        "service_model": data.get("openshift_service_model"),
+        "service_variant": data.get("openshift_service_variant"),
+        "install_model": data.get("openshift_install_model"),
+        "install_model_confidence": data.get("openshift_install_model_confidence"),
+        "control_plane_model": data.get("openshift_control_plane_model"),
+        "platform_category": data.get("openshift_platform_category"),
+        "public_cloud": bool(data.get("openshift_public_cloud")),
         "is_sno": bool(data.get("openshift_is_sno")),
         "is_hosted_control_plane": bool(data.get("openshift_is_hosted_control_plane")),
         "kubernetes_version_state": kubernetes_version_state,
@@ -673,10 +713,10 @@ def main():
             "average_memory_mib_per_node": int(round((total_memory_bytes / (1024 ** 2)) / len(data.get("nodes", [])))) if data.get("nodes") else 0,
             "average_ephemeral_storage_gib_per_node": round((total_disk_bytes / (1024 ** 3)) / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
             "average_pods_per_node": round(total_pods_scheduled / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
-            "average_pod_density_pct": avg(density_by_node.values()) if density_by_node else None,
-            "average_cpu_utilization_pct": avg(cpu_util_by_node.values()) if cpu_util_by_node else None,
-            "average_memory_utilization_pct": avg(mem_util_by_node.values()) if mem_util_by_node else None,
-            "average_disk_utilization_pct": avg(disk_util_by_node.values()) if disk_util_by_node else None,
+            "average_pod_density_pct": average_pod_density_pct,
+            "average_cpu_utilization_pct": average_cpu_utilization_pct,
+            "average_memory_utilization_pct": average_memory_utilization_pct,
+            "average_disk_utilization_pct": average_disk_utilization_pct,
         },
         "ip_capacity": {
             "services": data.get("service_ip_capacity_summary", {}) or {},

@@ -2,19 +2,13 @@
 
 This file explains the report in plain language and also serves as a practical health-check guide.
 
-It is written for two audiences:
 
-- leadership and delivery stakeholders such as CIOs, CTOs, program managers, and service owners
-- engineers, architects, consultants, and SREs who need a sensible walkthrough order for the health check
-
-The goal is simple:
+The goal is to:
 
 - explain the main health-check areas
 - explain why they matter to the business
 - provide a usable review sequence for technical teams
-- keep the language easy to understand
 
-This reflects the current state of the repo and its OpenShift report model.
 
 ## What The Report Is Trying To Answer
 
@@ -30,139 +24,150 @@ It is trying to answer five business questions:
 
 ## Main Health-Check Areas
 
-These sections are also the practical walkthrough sequence most teams should use during a health check.
+These sections are also the practical walkthrough sequence teams should use during a health check.
 
 ### Supportability
 
-This tells you whether the report is based on enough evidence to trust the rest of the conclusions.
+Why it matters:
+- Weak diagnostic evidence reduces confidence in every other conclusion and slows vendor, platform, and application support when incidents happen.
 
-Business meaning:
-- If support evidence is weak, every other conclusion has lower confidence.
-- A cluster that cannot be diagnosed quickly is a business risk even if it looks healthy today.
+What to look for:
+- verify must-gather, inspect, node diagnostics, and other expected evidence were collected
+- verify node, control-plane, and workload conclusions are backed by evidence, not fallback assumptions
+- flag missing node coverage, missing control-plane evidence, weak advisory evidence, or incomplete support bundles
+- confirm the report is not relying too heavily on inferred values where direct cluster evidence should exist
+- fix evidence gaps before relying on clean findings elsewhere in the report
 
-Typical concerns:
-- missing diagnostics
-- weak node-level evidence
-- missing support bundles
-- limited advisory or Insights evidence
+How to read a weak result:
+- fix evidence collection first, then re-evaluate the rest of the report
 
 ### Core Platform Health
 
-This is the fastest way to see if the cluster has an immediate production problem.
+Why it matters:
+- This is the fastest way to confirm whether the platform is currently safe for production traffic and normal business operations.
 
-Business meaning:
-- If core platform services are unhealthy, application stability is already at risk.
-
-Typical concerns:
-- degraded platform operators
-- API or etcd instability
-- node readiness problems
-- machine config problems
-- ingress or route failures
+What to look for:
+- check cluster operators for unavailable, degraded, or long-progressing states
+- check API and etcd health, latency, errors, and restart behavior
+- check node readiness, node pressure, and machine-config drift
+- check ingress and route health
+- check whether issues are localized or broad enough to affect multiple applications or the full cluster
+- use this section first to decide whether the cluster is fit for production traffic
 
 ### Lifecycle And Architecture
 
-This tells you whether the platform is on a safe and supportable long-term path.
+Why it matters:
+- A cluster can look healthy today and still carry high change risk, upgrade risk, or design risk that will surface later under growth, maintenance, or failure.
 
-Business meaning:
-- A cluster can appear healthy now but still be risky if it is outdated, poorly designed, or hard to upgrade.
+What to look for:
+- verify OpenShift version, support phase, and upgrade path
+- review upgrade blockers, warnings, deprecated APIs, and conditional update risks
+- verify cluster classification: service model, install model, control-plane model, and platform type
+- review worker-pool spread across failure domains and zones
+- verify machine-network boundaries if the report says they were not fully derived
+- confirm the architecture matches the customer’s intended operating model, not just what the platform currently happens to be running
 
-Typical concerns:
-- unsupported or aging versions
-- upgrade blockers
-- weak high-availability design
-- poor failure-domain spread
-- architecture not matching business expectations
+How to read a weak result:
+- treat weak results here as upcoming outage or upgrade risk, not just design debt
 
 ### Security And Compliance
 
-This explains whether the platform’s protection model is acceptable for production use.
+Why it matters:
+- Security and compliance gaps create exposure, audit friction, delayed approvals, and higher business risk during both incidents and change windows.
 
-Business meaning:
-- Security gaps can delay go-live, increase audit risk, or create exposure during incidents.
+What to look for:
+- verify identity-provider posture, privileged access, kubeadmin fallback, and tenant separation
+- verify certificates, trust bundles, proxies, and custom CAs where applicable
+- verify image governance, mirroring, disconnected sources, and external registry controls
+- verify encryption controls such as etcd encryption, IPsec, and FIPS where required
+- verify compliance evidence against the standards the customer actually requested
+- separate platform control gaps from missing customer-owned policy or process decisions
 
-Typical concerns:
-- weak identity setup
-- excessive privilege
-- certificate and trust problems
-- image governance problems
-- compliance gaps such as FIPS, CIS, PCI-DSS, NIST, FedRAMP, and related standards
+How to read a weak result:
+- separate platform hardening gaps from customer-policy decisions that need accept, remediate, or exempt treatment
 
 ### Observability
 
-This shows whether the organization can actually see problems early and respond quickly.
+Why it matters:
+- Weak observability increases detection time, extends outages, and makes the platform harder to operate confidently at scale.
 
-Business meaning:
-- A platform without usable monitoring, alerting, metrics, and logs usually has slower incident response and longer outages.
-
-Typical concerns:
-- weak monitoring
-- alerts not reaching the right destination
-- missing metrics
-- poor log collection
-- no reliable export of application, infrastructure, or audit logs
+What to look for:
+- verify core platform monitoring is healthy and storing usable data
+- verify alerts reach the real external destinations operations teams use
+- verify application, infrastructure, and audit logs are collected and forwarded where required
+- verify user workload monitoring, remote write, dashboards, and integrations where expected
+- verify metrics, alerts, and logs are usable for operations, not just technically present
+- flag partial setups where a component exists but usable delivery is not proven
 
 ### Backup And Recovery
 
-This tells you whether recovery is real or only assumed.
+Why it matters:
+- Backup and disaster-recovery posture matter only if recovery is credible, testable, and aligned with business recovery expectations.
 
-Business meaning:
-- If backup and restore are weak, even a short incident can become a prolonged outage.
-
-Typical concerns:
-- backup tooling exists but restore evidence is missing
-- missing schedules
-- missing successful backups
-- weak disaster recovery posture
-- limited control-plane recovery evidence
+What to look for:
+- verify backup tooling is configured with valid storage, active schedules, and successful recent runs
+- verify restore evidence, not just backup presence
+- verify control-plane recovery evidence where it applies
+- verify DR configuration, protected-cluster inventory, and failover readiness where expected
+- verify the difference between configured recovery, exercised recovery, and assumed recovery
+- separate advisory recovery posture from proven recovery posture
 
 ### Capacity And Node Health
 
-This shows whether the platform has enough headroom and whether nodes are under stress.
+Why it matters:
+- Capacity and node pressure usually show up as degraded performance, failed scaling, and noisy incidents before they become a visible outage.
 
-Business meaning:
-- Capacity pressure often becomes instability, poor performance, failed scaling, or blocked growth.
+What to look for:
+- review node readiness, pressure, pod density, and allocatable-versus-requested posture
+- review cluster-wide CPU and memory plus top nodes and namespaces by utilization
+- review service, pod, and node IP capacity
+- review whether the cluster can absorb failures, maintenance, and growth
+- review whether current utilization leaves enough margin for peak load, upgrades, and node loss
+- use this section to identify saturation early
 
-Typical concerns:
-- hot or pressured nodes
-- high pod density
-- memory or CPU saturation
-- quota pressure
-- poor diagnostic depth for node issues
+How to read a weak result:
+- a cluster can be green and still be out of headroom
 
 ### Workload Health
 
-This focuses on the applications and platform workloads running on the cluster.
+Why it matters:
+- Platform stability does not guarantee application resilience, service quality, or rollout safety.
 
-Business meaning:
-- The platform may look healthy while important workloads are still fragile or failing.
-
-Typical concerns:
-- failing pods
-- rollout problems
-- restart hotspots
-- probe issues
-- weak workload resource settings
+What to look for:
+- review rollout status for major workload controllers
+- review restart hotspots, failing pods, pending pods, and probe failures
+- review readiness, liveness, and resource settings
+- separate platform-wide failures from workload-specific failures
+- identify whether the issue is configuration quality, runtime instability, or dependency failure
+- identify workloads that are fragile even when the cluster is stable
 
 ### Operations Maturity
 
-This tells you how disciplined and repeatable day-to-day operations look.
+Why it matters:
+- Weak operating discipline increases change failure risk, slows recovery, and creates repeated issues that consume engineering and support capacity.
 
-Business meaning:
-- Weak operating practices usually lead to avoidable downtime, inconsistent changes, and slow recovery.
+What to look for:
+- verify whether cluster and application changes are driven through GitOps or other controlled workflows
+- verify whether tenant onboarding follows a governed path
+- verify whether non-admin users can self-provision namespaces when they should not
+- verify whether autoscaling, remediation, maintenance guardrails, and ownership patterns are intentional
+- verify whether the cluster can be operated consistently by the team, not just by one experienced individual
+- use this section to judge whether the platform is operationally repeatable
 
-Typical concerns:
-- weak GitOps or declarative operations
-- poor change discipline
-- weak onboarding controls
-- inconsistent platform management practices
+How to read a weak result:
+- this often explains repeated incidents even when core health looks acceptable
 
 ### Optional Platform Capabilities
 
-This section confirms whether advanced or customer-specific capabilities are actually present.
+Why it matters:
+- Optional capabilities matter when the cluster is expected to deliver a broader platform service model, not just baseline container hosting.
 
-Business meaning:
-- These are usually not the first production risk, but they matter if the customer expects them.
+What to look for:
+- verify optional products and integrations are actually deployed
+- verify them from workload, CRD, controller, or configuration evidence, not namespace-only footprint
+- separate presence from health
+- verify the capability is configured in a usable way, not just installed
+- confirm the cluster supports the intended service model: AI, virtualization, service mesh, serverless, custom autoscaling, security tooling, or external observability tooling
 
 Examples from the current repo:
 - OpenShift Virtualization
@@ -239,7 +244,8 @@ If you are a business or delivery stakeholder:
 If you are an engineer or architect:
 
 - use the sections above as the walkthrough order for the health check
-- use the “business meaning” text to explain why a finding matters
+- use the “Why it matters” text to explain why a finding matters
+- use the “What to look for” text as the practical review checklist for each posture
 - use the report itself for the detailed technical findings, evidence, and remediation items
 
 ## Related Files

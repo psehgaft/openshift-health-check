@@ -45,6 +45,8 @@
       "gitops_applications": (analysis_graph.gitops_applications | default({})).get('items', []),
       "gitops_appprojects": (analysis_graph.gitops_appprojects | default({})).get('items', []),
       "clusterautoscalers": (analysis_graph.clusterautoscalers | default({})).get('items', []),
+      "hostedclusters": (analysis_graph.hostedclusters | default({})).get('items', []),
+      "nodepools": (analysis_graph.nodepools | default({})).get('items', []),
       "dynakubes": (analysis_graph.dynakubes | default({})).get('items', []),
       "edgeconnects": (analysis_graph.edgeconnects | default({})).get('items', []),
       "datadogagents": (analysis_graph.datadogagents | default({})).get('items', []),
@@ -138,8 +140,12 @@
 
     platform = str((((data.get("cluster_profile") or {}).get("platform")) or "unknown")).strip()
     deployment_type = str((((data.get("cluster_profile") or {}).get("deployment_type")) or "openshift")).strip().lower()
-    managed_deployment_types = {"aro", "rosa", "rosa-hcp", "osd"}
-    cloud_managed = deployment_type in managed_deployment_types
+    cluster_classification_label = str((((data.get("cluster_profile") or {}).get("cluster_classification_label")) or deployment_type or "openshift")).strip().lower()
+    service_model = str((((data.get("cluster_profile") or {}).get("service_model")) or "unknown")).strip().lower()
+    install_model = str((((data.get("cluster_profile") or {}).get("install_model")) or "unknown")).strip().lower()
+    install_model_confidence = str((((data.get("cluster_profile") or {}).get("install_model_confidence")) or "low")).strip().lower()
+    public_cloud = bool(((data.get("cluster_profile") or {}).get("public_cloud")) or False)
+    cloud_managed = service_model == "managed"
     is_sno = bool(((data.get("cluster_profile") or {}).get("is_sno")) or False)
     is_hosted_control_plane = bool(((data.get("cluster_profile") or {}).get("is_hosted_control_plane")) or False)
 
@@ -354,6 +360,8 @@
     secretstores = data.get("secretstores") or []
     externalsecrets = data.get("externalsecrets") or []
     clusterautoscalers = data.get("clusterautoscalers") or []
+    hostedclusters = data.get("hostedclusters") or []
+    nodepools = data.get("nodepools") or []
     dynakubes = data.get("dynakubes") or []
     edgeconnects = data.get("edgeconnects") or []
     datadogagents = data.get("datadogagents") or []
@@ -880,12 +888,12 @@
         ],
         all_workload_blobs,
     )
-    openshift_custom_metrics_keda_context_present = bool(
+    openshift_custom_metrics_autoscaler_context_present = bool(
         keda_subscription_present
         or keda_namespace_present
         or keda_crd_present
     )
-    openshift_custom_metrics_keda_present = bool(
+    openshift_custom_metrics_autoscaler_present = bool(
         len(kedacontrollers) > 0
         or len(scaledobjects) > 0
         or len(scaledjobs) > 0
@@ -978,6 +986,9 @@
         == "false"
     )
     self_provisioning_restricted = bool(self_provisioners) and not self_provisioner_public_subject_present
+    namespace_self_provisioning_governed = bool(
+        self_provisioning_restricted and self_provisioner_autoupdate_false
+    )
     team_rbac_bindings = []
     for binding in rolebindings:
         namespace = str(((binding.get("metadata") or {}).get("namespace")) or "").strip()
@@ -1029,7 +1040,7 @@
     namespace_onboarding_controls_present = bool(
         project_request_template_present
         or onboarding_gitops_app_names
-        or (self_provisioning_restricted and project_request_message_configured)
+        or (namespace_self_provisioning_governed and project_request_message_configured)
     )
     drpolicy_cluster_membership = {
         str(((item.get("metadata") or {}).get("name")) or "").strip(): sorted({
@@ -1103,14 +1114,18 @@
         or obs.get("infrastructure_logs_collected")
         or obs.get("audit_logs_collected")
         or len(clusterlogforwarders) > 0
+        or bool(obs.get("vendor_managed_log_forwarding_present"))
     )
     cluster_log_forwarding_healthy = bool(
-        obs.get("application_logs_collected")
-        and obs.get("application_logs_exported_external")
-        and obs.get("infrastructure_logs_collected")
-        and obs.get("infrastructure_logs_exported_external")
-        and obs.get("audit_logs_collected")
-        and obs.get("audit_logs_exported_external")
+        (
+            obs.get("application_logs_collected")
+            and obs.get("application_logs_exported_external")
+            and obs.get("infrastructure_logs_collected")
+            and obs.get("infrastructure_logs_exported_external")
+            and obs.get("audit_logs_collected")
+            and obs.get("audit_logs_exported_external")
+        )
+        or bool(obs.get("vendor_managed_log_forwarding_present"))
     )
     runner_keywords = ["gitlab-runner", "github-runner", "actions-runner", "azure-pipelines-agent", "azp-agent", "jenkins-agent", "jenkins-inbound-agent", "tekton-task"]
     cicd_runner_present = any_keyword(runner_keywords, all_workload_blobs)
@@ -1402,8 +1417,21 @@
         return "OK" if present else ("WARN" if cap_required(key) else "INFO")
 
     cluster_shape = "single-node" if is_sno else ("hosted-control-plane" if is_hosted_control_plane else "multi-node")
-    provider_baseline = deployment_type if cloud_managed else "self-managed"
-    control_plane_mode = "hosted" if is_hosted_control_plane else ("single-replica" if is_sno else "classic")
+    provider_baseline = cluster_classification_label if cloud_managed else ("public-cloud" if public_cloud else "self-managed")
+    control_plane_mode = str((((data.get("cluster_profile") or {}).get("control_plane_model")) or ("hosted" if is_hosted_control_plane else ("single-node" if is_sno else "standalone")))).strip().lower()
+    hostedcluster_autoscaling_present = any(
+        str((((item.get("spec") or {}).get("autoscaling") or {}).get("scaling") or "")).strip() not in {"", "None", "none"}
+        for item in hostedclusters
+        if isinstance(item, dict)
+    )
+    nodepool_autoscaling_present = any(
+        isinstance(((item.get("spec") or {}).get("autoScaling")), dict)
+        and len(((item.get("spec") or {}).get("autoScaling") or {})) > 0
+        for item in nodepools
+        if isinstance(item, dict)
+    )
+    hcp_management_autoscaling_evidence = len(hostedclusters) > 0 or len(nodepools) > 0
+    hcp_autoscaling_present = hostedcluster_autoscaling_present or nodepool_autoscaling_present or (cloud_managed and len(clusterautoscalers) > 0)
     day2_baseline_profile = {
         "provider": provider_baseline,
         "cluster_shape": cluster_shape,
@@ -1419,8 +1447,8 @@
     pipelines_level = cap_level("openshift_pipeline_workflows", "informational" if is_sno else "recommended")
     cert_manager_level = cap_level("cert_manager_operator", "informational" if is_sno else "recommended")
     acs_level = cap_level("advanced_cluster_security", "recommended" if cloud_managed and not is_sno else "informational")
-    machine_remediation_level = cap_level("machine_health_check_remediation", "recommended" if (cloud_managed and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational")
-    autoscaler_level = cap_level("cluster_autoscaler_configuration", "recommended" if (cloud_managed and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational")
+    machine_remediation_level = cap_level("machine_health_check_remediation", "recommended" if (len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational")
+    autoscaler_level = cap_level("cluster_autoscaler_configuration", "recommended" if ((public_cloud or install_model == "ipi") and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational")
 
     def add_check(capability, status, detail, source, level="recommended", scored=True):
         normalized_level = normalize_level(level)
@@ -1481,7 +1509,7 @@
             "prod-day2-datadog-observability-missing": "datadog_observability",
             "prod-day2-appdynamics-observability-missing": "appdynamics_observability",
             "prod-day2-openshift-aap-missing": "openshift_aap",
-            "prod-day2-openshift-custom-metrics-keda-missing": "openshift_custom_metrics_keda",
+            "prod-day2-openshift-custom-metrics-autoscaler-missing": "openshift_custom_metrics_autoscaler",
             "prod-day2-platform-cluster-logging-missing": "cluster_log_forwarding",
             "prod-day2-platform-external-secrets-operator-missing": "external_secrets_operator",
             "prod-day2-platform-oadp-operator-missing": "application_backup_and_restore_readiness",
@@ -1680,7 +1708,23 @@
             source="Red Hat monitoring + IBM/Azure guidance",
         )
 
-    log_forwarding_present = len(obs.get("external_log_forwarding_outputs") or []) > 0 or len(clusterlogforwarders) > 0
+    vendor_log_forwarding_present = bool(obs.get("vendor_managed_log_forwarding_present"))
+    vendor_log_forwarding_names = [
+        str(item).strip()
+        for item in (obs.get("log_forwarding_vendor_names") or [])
+        if str(item).strip()
+    ]
+    vendor_metrics_forwarding_present = bool(obs.get("vendor_managed_metrics_forwarding_present"))
+    vendor_metrics_forwarding_names = [
+        str(item).strip()
+        for item in (obs.get("metrics_forwarding_vendor_names") or [])
+        if str(item).strip()
+    ]
+    log_forwarding_present = (
+        len(obs.get("external_log_forwarding_outputs") or []) > 0
+        or len(clusterlogforwarders) > 0
+        or vendor_log_forwarding_present
+    )
     add_check(
         "External log forwarding",
         cap_status_for_presence("cluster_log_forwarding", log_collection_present, cluster_log_forwarding_healthy),
@@ -1689,7 +1733,9 @@
             f"app={obs.get('application_logs_delivery_state') or 'not-collected'} "
             f"infra={obs.get('infrastructure_logs_delivery_state') or 'not-collected'} "
             f"audit={obs.get('audit_logs_delivery_state') or 'not-collected'} "
-            f"external_outputs={len(obs.get('external_log_forwarding_outputs') or [])}"
+            f"external_outputs={len(obs.get('external_log_forwarding_outputs') or [])} "
+            f"vendor_managed={vendor_log_forwarding_present} "
+            f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'none'}"
         ),
         "cluster logging and external forwarding guidance",
         level=cap_level("cluster_log_forwarding", telemetry_level),
@@ -1697,7 +1743,7 @@
     if not log_collection_present and cap_required("cluster_log_forwarding"):
         add_finding(
             "prod-day2-external-log-forwarding-missing",
-            "no ClusterLogForwarder collection or forwarding evidence was detected for application, infrastructure, or audit logs",
+            "no native ClusterLogForwarder or vendor-managed log forwarding evidence was detected for application, infrastructure, or audit logs",
             severity=cap_failure_severity("cluster_log_forwarding"),
             source="cluster logging and external forwarding guidance",
         )
@@ -1708,7 +1754,8 @@
                 f"log forwarding is incomplete: "
                 f"application={obs.get('application_logs_delivery_state') or 'not-collected'}, "
                 f"infrastructure={obs.get('infrastructure_logs_delivery_state') or 'not-collected'}, "
-                f"audit={obs.get('audit_logs_delivery_state') or 'not-collected'}"
+                f"audit={obs.get('audit_logs_delivery_state') or 'not-collected'}, "
+                f"vendorEvidence={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'none'}"
             ),
             severity=cap_failure_severity("cluster_log_forwarding"),
             source="cluster logging and external forwarding guidance",
@@ -1720,29 +1767,31 @@
     user_remote_write = int(obs.get("external_user_workload_metrics_remote_write_count") or 0)
     add_check(
         "Cluster metrics remote write",
-        cap_status_for_presence("cluster_metrics_remote_write", cluster_remote_write_total > 0, cluster_remote_write > 0),
+        cap_status_for_presence("cluster_metrics_remote_write", cluster_remote_write_total > 0 or vendor_managed_metrics_forwarding_present, cluster_remote_write > 0 or vendor_managed_metrics_forwarding_present),
         (
             f"cluster_state={obs.get('cluster_metrics_delivery_state') or 'not-configured'} "
             f"cluster_remote_write_total={cluster_remote_write_total} "
             f"cluster_remote_write_external={cluster_remote_write} "
             f"user_workload_state={obs.get('user_workload_metrics_delivery_state') or 'not-configured'} "
             f"user_workload_remote_write_total={user_remote_write_total} "
-            f"user_workload_remote_write_external={user_remote_write}"
+            f"user_workload_remote_write_external={user_remote_write} "
+            f"vendor_managed={vendor_managed_metrics_forwarding_present} "
+            f"vendors={','.join(vendor_metrics_forwarding_names) if vendor_metrics_forwarding_names else 'none'}"
         ),
         "Red Hat monitoring + vendor monitoring guidance",
         level=cap_level("cluster_metrics_remote_write", telemetry_level),
     )
-    if cap_required("cluster_metrics_remote_write") and cluster_remote_write_total == 0:
+    if cap_required("cluster_metrics_remote_write") and cluster_remote_write_total == 0 and not vendor_managed_metrics_forwarding_present:
         add_finding(
             "prod-day2-cluster-metrics-remote-write-missing",
-            "cluster-monitoring-config does not define any prometheusK8s.remoteWrite target for cluster metrics export",
+            "cluster-monitoring-config does not define any prometheusK8s.remoteWrite target and no vendor-managed metrics forwarding evidence was detected for cluster metrics export",
             severity=cap_failure_severity("cluster_metrics_remote_write"),
             source="Red Hat monitoring + vendor monitoring guidance",
         )
-    elif cap_required("cluster_metrics_remote_write") and cluster_remote_write == 0:
+    elif cap_required("cluster_metrics_remote_write") and cluster_remote_write == 0 and not vendor_managed_metrics_forwarding_present:
         add_finding(
             "prod-day2-cluster-metrics-remote-write-missing",
-            "prometheusK8s.remoteWrite is configured but all detected cluster metrics targets appear cluster-local only",
+            "prometheusK8s.remoteWrite is configured but all detected cluster metrics targets appear cluster-local only, and no vendor-managed metrics forwarding evidence was detected",
             severity=cap_failure_severity("cluster_metrics_remote_write"),
             source="Red Hat monitoring + vendor monitoring guidance",
         )
@@ -2118,13 +2167,20 @@
     if (mhc_expected or cap_required("machine_health_check_remediation")) and not mhc_present:
         add_finding(
             "prod-day2-machinehealthcheck-missing",
-            "no MachineHealthCheck resources were found for a cluster with MachineSets where worker auto-remediation is expected",
+            (
+                "no MachineHealthCheck resources were found for Machine API-managed worker pools "
+                "where worker auto-remediation is expected"
+            ),
             severity=cap_failure_severity("machine_health_check_remediation"),
             source="machine remediation posture for Machine API worker pools",
         )
 
-    autoscaler_expected = len(machinesets) > 0 and not is_sno and not is_hosted_control_plane
-    autoscaler_present = len(clusterautoscalers) > 0
+    autoscaler_expected = (
+        hcp_management_autoscaling_evidence
+        if is_hosted_control_plane
+        else ((public_cloud or install_model == "ipi") and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane)
+    )
+    autoscaler_present = hcp_autoscaling_present if is_hosted_control_plane else (len(clusterautoscalers) > 0)
     add_check(
         "Cluster autoscaler",
         cap_status_for_presence(
@@ -2132,14 +2188,27 @@
             autoscaler_present or not autoscaler_expected,
             autoscaler_present or not autoscaler_expected,
         ),
-        f"machinesets={len(machinesets)} expected={autoscaler_expected} clusterautoscalers={len(clusterautoscalers)}",
+        (
+            f"classification={cluster_classification_label or deployment_type or 'unknown'} "
+            f"serviceModel={service_model or 'unknown'} publicCloud={public_cloud} "
+            f"installModel={install_model or 'unknown'} installModelConfidence={install_model_confidence or 'unknown'} "
+            f"machinesets={len(machinesets)} hostedclusters={len(hostedclusters)} nodepools={len(nodepools)} "
+            f"hcpHostedClusterAutoscaling={hostedcluster_autoscaling_present} hcpNodePoolAutoscaling={nodepool_autoscaling_present} "
+            f"expected={autoscaler_expected} clusterautoscalers={len(clusterautoscalers)}"
+        ),
         "cluster autoscaler guidance for Machine API worker pools",
         level=autoscaler_level,
     )
     if (autoscaler_expected or cap_required("cluster_autoscaler_configuration")) and not autoscaler_present:
         add_finding(
             "prod-day2-cluster-autoscaler-missing",
-            "no ClusterAutoscaler resource was found for a cluster with MachineSets where worker autoscaling is expected",
+            (
+                "no hosted control plane autoscaling configuration was found in HostedCluster or NodePool resources"
+                if is_hosted_control_plane
+                else
+                "no ClusterAutoscaler resource was found for Machine API-managed worker pools "
+                "on a public-cloud or IPI-classified cluster where worker autoscaling is expected"
+            ),
             severity=cap_failure_severity("cluster_autoscaler_configuration"),
             source="cluster autoscaler guidance for Machine API worker pools",
         )
@@ -2460,11 +2529,14 @@
     namespaces_missing_resourcequota = sorted(user_namespace_names - namespaces_with_resourcequota)
     quota_governance_healthy = len(user_namespace_names) == 0 or len(namespaces_missing_resourcequota) == 0
     multi_tenant_namespace_governance_present = bool(
-        namespace_onboarding_controls_present
+        bool(self_provisioners)
+        or project_request_message_configured
+        or namespace_onboarding_controls_present
         or len(namespaces_with_all_namespace_governance_guardrails) > 0
     )
     multi_tenant_namespace_governance_healthy = bool(
-        namespace_onboarding_controls_present
+        namespace_self_provisioning_governed
+        and namespace_onboarding_controls_present
         and network_policy_baseline_healthy
         and egress_control_healthy
         and quota_governance_healthy
@@ -2759,11 +2831,11 @@
             "finding": "no Ansible Automation Platform custom resource or AAP-managed workload footprint was detected",
         },
         {
-            "key": "openshift_custom_metrics_keda",
+            "key": "openshift_custom_metrics_autoscaler",
             "capability": "OpenShift KEDA custom metrics footprint",
-            "level": cap_level("openshift_custom_metrics_keda", "informational"),
+            "level": cap_level("openshift_custom_metrics_autoscaler", "informational"),
             "source": "KEDA controller and custom autoscaling resource inventory",
-            "present": openshift_custom_metrics_keda_present,
+            "present": openshift_custom_metrics_autoscaler_present,
             "detail": (
                 f"subscription_present={keda_subscription_present} "
                 f"namespace_present={keda_namespace_present} "
@@ -2775,7 +2847,7 @@
                 f"clustertriggerauthentications={len(clustertriggerauthentications)} "
                 f"workload_present={keda_workload_present}"
             ),
-            "issue": "prod-day2-openshift-custom-metrics-keda-missing",
+            "issue": "prod-day2-openshift-custom-metrics-autoscaler-missing",
             "finding": "no KedaController, ScaledObject, ScaledJob, trigger authentication, or KEDA-managed workload footprint was detected",
         },
         {
@@ -2984,6 +3056,7 @@
                 f"template_present={project_request_template_present} "
                 f"template_guardrails={project_template_guardrail_count} "
                 f"self_provisioning_restricted={self_provisioning_restricted} "
+                f"self_provisioner_autoupdate_false={self_provisioner_autoupdate_false} "
                 f"project_request_message={project_request_message_configured} "
                 f"gitops_onboarding_apps={','.join(onboarding_gitops_app_names) or 'none'} "
                 f"team_rbac_namespaces={team_rbac_namespace_count} "
@@ -2999,8 +3072,10 @@
             "issue": "prod-day2-platform-namespace-governance-weak",
             "finding": (
                 "multi-tenant namespace governance is incomplete: "
-                "project onboarding controls or tenant baseline guardrails are missing "
-                f"(networkPolicyMissing={len(namespaces_missing_networkpolicy)}, "
+                "non-admin namespace self-provisioning is not fully governed or project onboarding controls or tenant baseline guardrails are missing "
+                f"(selfProvisioningRestricted={self_provisioning_restricted}, "
+                f"selfProvisionerAutoupdateFalse={self_provisioner_autoupdate_false}, "
+                f"networkPolicyMissing={len(namespaces_missing_networkpolicy)}, "
                 f"egressControlMissing={len(namespaces_missing_egress_controls)}, "
                 f"resourceQuotaMissing={len(namespaces_missing_resourcequota)}, "
                 f"limitRangeMissing={len(sorted(user_namespace_names - namespaces_with_limitrange))})"
@@ -3132,11 +3207,11 @@
             severity=cap_failure_severity("openshift_aap"),
             source="Ansible Automation Platform operator and custom resource inventory",
         )
-    if cap_required("openshift_custom_metrics_keda") and openshift_custom_metrics_keda_context_present and not openshift_custom_metrics_keda_present:
+    if cap_required("openshift_custom_metrics_autoscaler") and openshift_custom_metrics_autoscaler_context_present and not openshift_custom_metrics_autoscaler_present:
         add_finding(
-            "prod-day2-openshift-custom-metrics-keda-missing",
+            "prod-day2-openshift-custom-metrics-autoscaler-missing",
             "KEDA operator, namespace, or CRD footprint was detected, but no KedaController, ScaledObject, ScaledJob, trigger authentication, or KEDA-managed workload footprint was found",
-            severity=cap_failure_severity("openshift_custom_metrics_keda"),
+            severity=cap_failure_severity("openshift_custom_metrics_autoscaler"),
             source="KEDA controller and custom autoscaling resource inventory",
         )
     if cap_required("gpu_accelerated_workloads") and gpu_workloads_present and not gpu_workloads_healthy:
@@ -3254,6 +3329,10 @@
             "external_secret_count": len(externalsecrets),
             "clusterautoscaler_count": len(clusterautoscalers),
             "clusterautoscaler_expected": autoscaler_expected,
+            "hostedcluster_count": len(hostedclusters),
+            "nodepool_count": len(nodepools),
+            "hostedcluster_autoscaling_present": hostedcluster_autoscaling_present,
+            "nodepool_autoscaling_present": nodepool_autoscaling_present,
             "machinehealthcheck_count": len(machinehealthchecks),
             "machinehealthcheck_expected": mhc_expected,
             "acm_managed": acm_managed,
@@ -3379,6 +3458,10 @@
             'external_secret_count': 0,
             'clusterautoscaler_count': 0,
             'clusterautoscaler_expected': false,
+            'hostedcluster_count': 0,
+            'nodepool_count': 0,
+            'hostedcluster_autoscaling_present': false,
+            'nodepool_autoscaling_present': false,
             'machinehealthcheck_count': 0,
             'machinehealthcheck_expected': false,
             'acm_managed': false,

@@ -1,10 +1,10 @@
 ---
 - name: Define report paths
   ansible.builtin.set_fact:
-    report_cluster_type: "{{ cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift'))) }}"
+    report_cluster_type: "{{ cluster_profile.cluster_classification_label | default(cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift')))) }}"
     report_cluster_name_source: "{{ cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim) }}"
     report_cluster_name: "{{ ((cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim)) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
-    report_file_prefix: "{{ report_basename }}-{{ (cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift')))) }}-{{ ((cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim)) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
+    report_file_prefix: "{{ report_basename }}-{{ (cluster_profile.cluster_classification_label | default(cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift'))))) }}-{{ ((cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim)) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
 
 - name: Define report output files
   ansible.builtin.set_fact:
@@ -329,7 +329,7 @@
     suggested_next_steps: "{{ suggested_next_steps + [{
       'priority': 'next',
       'summary': 'Configure or repair MachineHealthCheck remediation.',
-      'detail': 'Ensure worker MachineSets are covered by MachineHealthCheck resources, remove paused remediation where inappropriate, and confirm selectors target the intended machine pools.'
+      'detail': 'Ensure Machine API-managed worker pools are covered by MachineHealthCheck resources, remove paused remediation where inappropriate, and confirm selectors target the intended worker pools.'
     }] }}"
   when: machine_healthcheck_findings | default([]) | length > 0
 

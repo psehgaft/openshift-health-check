@@ -14,16 +14,14 @@ PROXY_QUERY_PREFIX = "/api/v1/namespaces/openshift-monitoring/services/https:tha
 def query_via_route(route_host, bearer_token, query, timeout_seconds):
     if not route_host or not bearer_token or not query:
         return None
-    url = f"https://{route_host}/api/v1/query"
-    body = urllib.parse.urlencode({"query": query}).encode("utf-8")
+    encoded_query = urllib.parse.urlencode({"query": query})
+    url = f"https://{route_host}/api/v1/query?{encoded_query}"
     req = urllib.request.Request(
         url,
-        data=body,
         headers={
             "Authorization": f"Bearer {bearer_token}",
-            "Content-Type": "application/x-www-form-urlencoded",
         },
-        method="POST",
+        method="GET",
     )
     context = ssl._create_unverified_context()
     with urllib.request.urlopen(req, timeout=timeout_seconds, context=context) as response:
@@ -48,6 +46,47 @@ def query_via_proxy(query, timeout_seconds):
     return ((payload.get("data", {}) or {}).get("result", [])) or []
 
 
+def execute_query(name, query, preferred_transport, route_host, bearer_token, timeout_seconds):
+    route_exc = None
+    proxy_exc = None
+
+    if preferred_transport == "route":
+        try:
+            return query_via_route(route_host, bearer_token, query, timeout_seconds) or [], "route", "", ""
+        except Exception as exc:
+            route_exc = exc
+        try:
+            return query_via_proxy(query, timeout_seconds) or [], "oc-proxy", str(route_exc or ""), ""
+        except Exception as exc:
+            proxy_exc = exc
+    elif preferred_transport == "oc-proxy":
+        try:
+            return query_via_proxy(query, timeout_seconds) or [], "oc-proxy", "", ""
+        except Exception as exc:
+            proxy_exc = exc
+        try:
+            return query_via_route(route_host, bearer_token, query, timeout_seconds) or [], "route", "", str(proxy_exc or "")
+        except Exception as exc:
+            route_exc = exc
+    else:
+        try:
+            return query_via_route(route_host, bearer_token, query, timeout_seconds) or [], "route", "", ""
+        except Exception as exc:
+            route_exc = exc
+        try:
+            return query_via_proxy(query, timeout_seconds) or [], "oc-proxy", str(route_exc or ""), ""
+        except Exception as exc:
+            proxy_exc = exc
+
+    route_error = str(route_exc or "")
+    proxy_error = str(proxy_exc or "")
+    raise RuntimeError(
+        f"{name} query failed via route and proxy"
+        + (f"; route={route_error}" if route_error else "")
+        + (f"; proxy={proxy_error}" if proxy_error else "")
+    )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(json.dumps({"error": "usage: query_prometheus_signals.py <input-json-path>"}))
@@ -68,26 +107,29 @@ def main() -> int:
 
     route_working = False
     proxy_working = False
+    query_errors = {}
+    query_statuses = {}
 
     non_empty_queries = [item for item in queries if str(item.get("query") or "").strip()]
 
     if non_empty_queries:
         try:
-            probe = query_via_route(route_host, bearer_token, str(non_empty_queries[0].get("query") or ""), timeout_seconds)
-            route_working = True
-            transport = "route"
+            probe, used_transport, _, _ = execute_query(
+                str(non_empty_queries[0].get("name") or "probe"),
+                str(non_empty_queries[0].get("query") or ""),
+                "route",
+                route_host,
+                bearer_token,
+                timeout_seconds,
+            )
+            route_working = used_transport == "route"
+            proxy_working = used_transport == "oc-proxy"
+            transport = used_transport
             results[str(non_empty_queries[0].get("name") or "probe")] = probe
+            query_statuses[str(non_empty_queries[0].get("name") or "probe")] = "collected" if probe else "no-data"
         except Exception as exc:
             route_error = str(exc)
-
-        if not route_working:
-            try:
-                probe = query_via_proxy(str(non_empty_queries[0].get("query") or ""), timeout_seconds)
-                proxy_working = True
-                transport = "oc-proxy"
-                results[str(non_empty_queries[0].get("name") or "probe")] = probe
-            except Exception as exc:
-                proxy_error = str(exc)
+            proxy_error = str(exc)
 
     for item in queries:
         name = str(item.get("name") or "").strip()
@@ -96,18 +138,33 @@ def main() -> int:
             continue
         if not query:
             results[name] = []
+            query_statuses[name] = "not-configured"
             continue
         if name in results:
             continue
         try:
-            if transport == "route":
-                results[name] = query_via_route(route_host, bearer_token, query, timeout_seconds) or []
-            elif transport == "oc-proxy":
-                results[name] = query_via_proxy(query, timeout_seconds) or []
-            else:
-                results[name] = []
-        except Exception:
+            result, used_transport, route_query_error, proxy_query_error = execute_query(
+                name,
+                query,
+                transport,
+                route_host,
+                bearer_token,
+                timeout_seconds,
+            )
+            results[name] = result
+            query_statuses[name] = "collected" if result else "no-data"
+            if used_transport == "route":
+                route_working = True
+            elif used_transport == "oc-proxy":
+                proxy_working = True
+            if route_query_error:
+                route_error = route_query_error
+            if proxy_query_error:
+                proxy_error = proxy_query_error
+        except Exception as exc:
             results[name] = []
+            query_errors[name] = str(exc)
+            query_statuses[name] = "query-failed"
 
     print(json.dumps({
         "prom_available": transport in {"route", "oc-proxy"},
@@ -117,6 +174,8 @@ def main() -> int:
         "route_error": route_error,
         "proxy_error": proxy_error,
         "results": results,
+        "query_errors": query_errors,
+        "query_statuses": query_statuses,
     }))
     return 0
 

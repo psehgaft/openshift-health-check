@@ -20,6 +20,23 @@
       machine_networks_source: not-exposed-via-cluster-api
       identity_provider_count: "{{ graph.oauth_config.spec.identityProviders | default([]) | length }}"
       identity_provider_names: "{{ graph.oauth_config.spec.identityProviders | default([]) | map(attribute='name') | list }}"
+      platform_category: unknown
+      public_cloud: false
+      service_model: unknown
+      service_model_source: not-derived
+      service_model_confidence: low
+      service_variant: unknown
+      install_model: unknown
+      install_model_source: not-derived
+      install_model_confidence: low
+      control_plane_model: unknown
+      control_plane_model_source: not-derived
+      control_plane_model_confidence: low
+      machine_api_worker_pool_count: 0
+      machine_api_managed_worker_pools: false
+      cluster_classification_label: openshift
+      cluster_classification_source: default-openshift-fallback
+      cluster_classification_confidence: low
       deployment_type: openshift
       deployment_type_source: default-openshift-fallback
       deployment_type_confidence: low
@@ -116,9 +133,101 @@
   failed_when: false
 
 - name: Normalize authentication findings
+  vars:
+    auth_fallback_idps: "{{ analysis_graph.oauth_config.spec.identityProviders | default([]) }}"
+    auth_fallback_identity_provider_count: "{{ auth_fallback_idps | length }}"
+    auth_fallback_provider_names: "{{ auth_fallback_idps | map(attribute='name') | list }}"
+    auth_fallback_local_identity_provider_count: >-
+      {{
+        (auth_fallback_idps | selectattr('htpasswd', 'defined') | list | length)
+        + (auth_fallback_idps | selectattr('basicAuth', 'defined') | list | length)
+      }}
+    auth_fallback_external_identity_provider_count: >-
+      {{
+        (auth_fallback_identity_provider_count | int)
+        - (auth_fallback_local_identity_provider_count | int)
+      }}
+    auth_fallback_provider_types: >-
+      {%- set provider_types = [] -%}
+      {%- for item in auth_fallback_idps -%}
+      {%- if item.htpasswd is defined -%}
+      {%- set _ = provider_types.append('htpasswd') -%}
+      {%- elif item.basicAuth is defined -%}
+      {%- set _ = provider_types.append('basicAuth') -%}
+      {%- elif item.github is defined -%}
+      {%- set _ = provider_types.append('github') -%}
+      {%- elif item.gitlab is defined -%}
+      {%- set _ = provider_types.append('gitlab') -%}
+      {%- elif item.google is defined -%}
+      {%- set _ = provider_types.append('google') -%}
+      {%- elif item.ldap is defined -%}
+      {%- set _ = provider_types.append('ldap') -%}
+      {%- elif item.keystone is defined -%}
+      {%- set _ = provider_types.append('keystone') -%}
+      {%- elif item.openID is defined -%}
+      {%- set _ = provider_types.append('openID') -%}
+      {%- elif item.requestHeader is defined -%}
+      {%- set _ = provider_types.append('requestHeader') -%}
+      {%- else -%}
+      {%- set _ = provider_types.append(item.type | default('unknown')) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ provider_types }}
+    auth_fallback_kubeadmin_secret_present: >-
+      {{
+        (
+          (analysis_graph.secrets | default({'items': []})).get('items', [])
+          | selectattr('metadata.namespace', 'equalto', 'kube-system')
+          | selectattr('metadata.name', 'equalto', 'kubeadmin')
+          | list
+          | length
+        ) > 0
+      }}
+    auth_fallback_status: >-
+      {{
+        'warning'
+        if (auth_fallback_identity_provider_count | int) == 0 or (auth_fallback_external_identity_provider_count | int) == 0
+        else (
+          'review'
+          if auth_fallback_kubeadmin_secret_present
+          else 'healthy'
+        )
+      }}
+    auth_fallback_reason_summary: >-
+      {{
+        'no configured identity providers'
+        if (auth_fallback_identity_provider_count | int) == 0
+        else (
+          'only local identity providers are configured'
+          if (auth_fallback_external_identity_provider_count | int) == 0
+          else (
+            'external identity providers are configured, but kubeadmin fallback is still present'
+            if auth_fallback_kubeadmin_secret_present
+            else (
+              'single external identity provider configured'
+              if (auth_fallback_external_identity_provider_count | int) == 1 and (auth_fallback_identity_provider_count | int) == 1
+              else 'external identity providers are configured'
+            )
+          )
+        )
+      }}
+    auth_fallback_findings: >-
+      {{
+        [{'issue': 'missing-identity-provider', 'detail': 'oauth/cluster has no configured identityProviders' ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '')}]
+        if (auth_fallback_identity_provider_count | int) == 0
+        else (
+          [{'issue': 'local-only-identity-provider', 'detail': 'only local identity providers are configured: ' ~ ((auth_fallback_provider_types | unique | list | join(', ')) or 'unknown') ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '')}]
+          if (auth_fallback_external_identity_provider_count | int) == 0
+          else (
+            [{'issue': 'kubeadmin-secret-still-present', 'detail': 'kubeadmin secret is still present while identity providers are configured'}]
+            if auth_fallback_kubeadmin_secret_present
+            else []
+          )
+        )
+      }}
   ansible.builtin.set_fact:
-    auth_findings: "{{ ((auth_posture_cmd.stdout | from_json).auth_findings) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else [] }}"
-    auth_posture_summary: "{{ ((auth_posture_cmd.stdout | from_json).auth_posture_summary) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else {'status': 'unknown', 'identity_provider_count': (analysis_graph.oauth_config.spec.identityProviders | default([]) | length), 'provider_names': (analysis_graph.oauth_config.spec.identityProviders | default([]) | map(attribute='name') | list), 'provider_types': [], 'external_identity_provider_count': 0, 'local_identity_provider_count': 0, 'kubeadmin_secret_present': false, 'reason_summary': 'authentication posture could not be evaluated'} }}"
+    auth_findings: "{{ ((auth_posture_cmd.stdout | from_json).auth_findings) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else auth_fallback_findings }}"
+    auth_posture_summary: "{{ ((auth_posture_cmd.stdout | from_json).auth_posture_summary) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else {'status': auth_fallback_status, 'identity_provider_count': (auth_fallback_identity_provider_count | int), 'provider_names': auth_fallback_provider_names, 'provider_types': auth_fallback_provider_types, 'external_identity_provider_count': (auth_fallback_external_identity_provider_count | int), 'local_identity_provider_count': (auth_fallback_local_identity_provider_count | int), 'kubeadmin_secret_present': auth_fallback_kubeadmin_secret_present, 'reason_summary': auth_fallback_reason_summary} }}"
 
 - name: Capture cluster version history and updates
   ansible.builtin.set_fact:
@@ -288,7 +397,7 @@
       running: 0
       user_total: 0
       user_running: 0
-    node_cpu_request_millicores: {}
+    node_cpu_request_millicores: "{{ node_cpu_request_millicores | default({}) }}"
     openshift_control_plane_node_count: 0
     openshift_worker_node_count: 0
     openshift_infra_node_count: 0
@@ -350,107 +459,248 @@
     kubelet_version: "{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}"
   changed_when: false
 
-- name: Detect OpenShift deployment type
+- name: Classify OpenShift cluster shape and service model
+  vars:
+    cluster_config_v1_map: >-
+      {{
+        (
+          (analysis_graph.configmaps | default({})).get('items', [])
+          | selectattr('metadata.namespace', 'equalto', 'kube-system')
+          | selectattr('metadata.name', 'equalto', 'cluster-config-v1')
+          | list
+          | first
+        ) | default({})
+      }}
+    openshift_install_manifests_map: >-
+      {{
+        (
+          (analysis_graph.configmaps | default({})).get('items', [])
+          | selectattr('metadata.namespace', 'equalto', 'openshift-config')
+          | selectattr('metadata.name', 'equalto', 'openshift-install-manifests')
+          | list
+          | first
+        ) | default({})
+      }}
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+    import re
+
+    data = json.loads(r'''{{ {
+      "cluster_profile": cluster_profile | default({}),
+      "cluster_config_v1_data": (cluster_config_v1_map.data | default({})),
+      "openshift_install_manifests_data": (openshift_install_manifests_map.data | default({})),
+      "namespace_names": ((analysis_graph.namespaces | default({})).get('items', []) | map(attribute='metadata.name') | list),
+      "machineset_count": ((analysis_graph.machinesets | default({})).get('items', []) | length),
+      "node_count": ((analysis_graph.nodes | default({})).get('items', []) | length),
+      "control_plane_node_count": (openshift_control_plane_node_count | int),
+      "worker_node_count": (openshift_worker_node_count | int),
+      "infra_node_count": (openshift_infra_node_count | int)
+    } | to_json }}''')
+
+    cluster_profile = data.get("cluster_profile") or {}
+    platform = str(cluster_profile.get("platform") or "unknown").strip()
+    platform_lower = platform.lower()
+    control_plane_topology = str(cluster_profile.get("control_plane_topology") or "unknown").strip()
+    control_plane_topology_lower = control_plane_topology.lower()
+    infrastructure_topology = str(cluster_profile.get("infrastructure_topology") or "unknown").strip()
+    node_count = int(data.get("node_count") or 0)
+    control_plane_node_count = int(data.get("control_plane_node_count") or 0)
+    worker_node_count = int(data.get("worker_node_count") or 0)
+    infra_node_count = int(data.get("infra_node_count") or 0)
+    machine_api_worker_pool_count = int(data.get("machineset_count") or 0)
+    machine_api_managed_worker_pools = machine_api_worker_pool_count > 0
+    namespaces = {
+        str(item or "").strip()
+        for item in (data.get("namespace_names") or [])
+        if str(item or "").strip()
+    }
+
+    public_cloud_platforms = {"aws", "azure", "gcp", "ibmcloud", "alibabacloud", "alibaba", "powervs"}
+    virtualized_platforms = {"vsphere", "openstack", "ovirt", "nutanix", "kubevirt"}
+    bare_metal_platforms = {"baremetal", "libvirt"}
+    external_platforms = {"external", "none"}
+
+    if platform_lower in public_cloud_platforms:
+        platform_category = "public-cloud"
+    elif platform_lower in virtualized_platforms:
+        platform_category = "virtualized"
+    elif platform_lower in bare_metal_platforms:
+        platform_category = "bare-metal"
+    elif platform_lower in external_platforms:
+        platform_category = "external"
+    elif platform_lower in {"unknown", ""}:
+        platform_category = "unknown"
+    else:
+        platform_category = "other"
+
+    public_cloud = platform_lower in public_cloud_platforms
+
+    def configmap_text(data_map, name, namespace):
+        parts = [str(name or ""), str(namespace or "")]
+        for key, value in (data_map or {}).items():
+            parts.append(str(key))
+            parts.append(str(value))
+        return "\n".join(parts).lower()
+
+    cluster_config_text = configmap_text(data.get("cluster_config_v1_data") or {}, "cluster-config-v1", "kube-system")
+    install_manifests_text = configmap_text(data.get("openshift_install_manifests_data") or {}, "openshift-install-manifests", "openshift-config")
+    combined_text = "\n".join(
+        part for part in [cluster_config_text, install_manifests_text] if part
+    )
+
+    aro_markers = bool(re.search(r"(^|[^a-z])aro([^a-z]|$)", combined_text)) or ("openshift-aro" in namespaces)
+    rosa_markers = bool(re.search(r"(^|[^a-z])rosa([^a-z]|$)", combined_text))
+    osd_markers = bool(re.search(r"(^|[^a-z])osd([^a-z]|$)", combined_text))
+    managed_namespace_hits = sorted(
+        namespaces.intersection({
+            "openshift-ocm-agent-operator",
+            "openshift-managed-upgrade-operator",
+            "openshift-addon-operator",
+        })
+    )
+
+    is_sno = (
+        control_plane_topology == "SingleReplica"
+        or (node_count == 1 and control_plane_node_count == 1)
+    )
+    if control_plane_topology == "External":
+        control_plane_model = "hosted"
+        control_plane_model_source = "infrastructure.status.controlPlaneTopology"
+        control_plane_model_confidence = "high"
+        is_hosted_control_plane = True
+    elif platform_lower == "aws" and control_plane_node_count == 0 and worker_node_count > 0:
+        control_plane_model = "hosted"
+        control_plane_model_source = "worker-only-node-inference"
+        control_plane_model_confidence = "medium"
+        is_hosted_control_plane = True
+    elif is_sno:
+        control_plane_model = "single-node"
+        control_plane_model_source = "single-replica-topology-or-single-node"
+        control_plane_model_confidence = "high"
+        is_hosted_control_plane = False
+    else:
+        control_plane_model = "standalone"
+        control_plane_model_source = (
+            "infrastructure.status.controlPlaneTopology"
+            if control_plane_topology not in {"", "unknown"}
+            else "control-plane-node-inference"
+        )
+        control_plane_model_confidence = "high" if control_plane_topology not in {"", "unknown"} else "medium"
+        is_hosted_control_plane = False
+
+    service_model = "unknown"
+    service_model_source = "not-derived"
+    service_model_confidence = "low"
+    service_variant = "unknown"
+    if aro_markers:
+        service_model = "managed"
+        service_variant = "aro"
+        service_model_source = "cluster-config-or-install-manifests-aro-marker"
+        service_model_confidence = "high"
+    elif platform_lower == "aws" and is_hosted_control_plane and rosa_markers:
+        service_model = "managed"
+        service_variant = "rosa-hcp"
+        service_model_source = "hosted-control-plane-plus-rosa-marker"
+        service_model_confidence = "high"
+    elif platform_lower == "aws" and rosa_markers:
+        service_model = "managed"
+        service_variant = "rosa"
+        service_model_source = "cluster-config-or-install-manifests-rosa-marker"
+        service_model_confidence = "medium"
+    elif osd_markers:
+        service_model = "managed"
+        service_variant = "osd"
+        service_model_source = "cluster-config-or-install-manifests-osd-marker"
+        service_model_confidence = "medium"
+    elif len(managed_namespace_hits) >= 2:
+        service_model = "managed"
+        service_variant = "managed-openshift"
+        service_model_source = "managed-service-namespaces"
+        service_model_confidence = "medium"
+    elif platform_lower not in {"", "unknown"}:
+        service_model = "self-managed"
+        service_variant = "self-managed-openshift"
+        service_model_source = "no-managed-service-markers"
+        service_model_confidence = "medium"
+
+    if service_model == "managed":
+        install_model = "ipi"
+        install_model_source = "managed-service-classification"
+        install_model_confidence = "medium"
+    elif machine_api_managed_worker_pools and platform_category == "public-cloud":
+        install_model = "ipi"
+        install_model_source = "machine-api-worker-pools-on-public-cloud"
+        install_model_confidence = "medium"
+    elif machine_api_managed_worker_pools and platform_category in {"virtualized", "bare-metal"}:
+        install_model = "ipi"
+        install_model_source = "machine-api-worker-pool-inference"
+        install_model_confidence = "low"
+    else:
+        install_model = "unknown"
+        install_model_source = "not-reliably-derivable-from-cluster-apis"
+        install_model_confidence = "low"
+
+    if is_sno:
+        cluster_classification_label = "single-node-openshift"
+        cluster_classification_source = control_plane_model_source
+        cluster_classification_confidence = control_plane_model_confidence
+    elif service_variant not in {"", "unknown"}:
+        cluster_classification_label = service_variant
+        cluster_classification_source = service_model_source
+        cluster_classification_confidence = service_model_confidence
+    elif control_plane_model == "hosted":
+        cluster_classification_label = "hosted-control-plane-openshift"
+        cluster_classification_source = control_plane_model_source
+        cluster_classification_confidence = control_plane_model_confidence
+    elif service_model == "self-managed":
+        cluster_classification_label = "self-managed-openshift"
+        cluster_classification_source = service_model_source
+        cluster_classification_confidence = service_model_confidence
+    else:
+        cluster_classification_label = "openshift"
+        cluster_classification_source = "default-openshift-fallback"
+        cluster_classification_confidence = "low"
+
+    print(json.dumps({
+        "platform_category": platform_category,
+        "public_cloud": public_cloud,
+        "service_model": service_model,
+        "service_model_source": service_model_source,
+        "service_model_confidence": service_model_confidence,
+        "service_variant": service_variant,
+        "install_model": install_model,
+        "install_model_source": install_model_source,
+        "install_model_confidence": install_model_confidence,
+        "control_plane_model": control_plane_model,
+        "control_plane_model_source": control_plane_model_source,
+        "control_plane_model_confidence": control_plane_model_confidence,
+        "cluster_classification_label": cluster_classification_label,
+        "cluster_classification_source": cluster_classification_source,
+        "cluster_classification_confidence": cluster_classification_confidence,
+        "deployment_type": cluster_classification_label,
+        "deployment_type_source": cluster_classification_source,
+        "deployment_type_confidence": cluster_classification_confidence,
+        "is_sno": is_sno,
+        "is_hosted_control_plane": is_hosted_control_plane,
+        "machine_api_worker_pool_count": machine_api_worker_pool_count,
+        "machine_api_managed_worker_pools": machine_api_managed_worker_pools,
+        "control_plane_node_count": control_plane_node_count,
+        "worker_node_count": worker_node_count,
+        "infra_node_count": infra_node_count,
+    }))
+    PY
+  register: openshift_cluster_classification_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize OpenShift cluster classification
   ansible.builtin.set_fact:
-    openshift_deployment_type: >-
-      {{
-        'openshift-sno'
-        if (
-          (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
-          or (
-            ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
-            and (openshift_control_plane_node_count | int) == 1
-          )
-        )
-        else (
-          'rosa-hcp'
-          if (
-            (cluster_profile.platform | default('unknown') | lower) == 'aws'
-            and (openshift_control_plane_node_count | int) == 0
-            and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
-          )
-          else (
-            'aro'
-            if ((cluster_profile.platform | default('unknown') | lower) == 'azure')
-            else (
-              'rosa'
-              if (
-                (cluster_profile.platform | default('unknown') | lower) == 'aws'
-                and (openshift_control_plane_node_count | int) > 0
-              )
-              else 'openshift'
-            )
-          )
-        )
-      }}
-    openshift_is_sno: >-
-      {{
-        (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
-        or (
-          ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
-          and (openshift_control_plane_node_count | int) == 1
-        )
-      }}
-    openshift_is_hosted_control_plane: >-
-      {{
-        (cluster_profile.platform | default('unknown') | lower) == 'aws'
-        and (openshift_control_plane_node_count | int) == 0
-        and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
-      }}
-    openshift_deployment_type_source: >-
-      {{
-        'single-replica-topology-or-single-node'
-        if (
-          (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
-          or (
-            ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
-            and (openshift_control_plane_node_count | int) == 1
-          )
-        )
-        else (
-          'aws-worker-only-hosted-control-plane-inference'
-          if (
-            (cluster_profile.platform | default('unknown') | lower) == 'aws'
-            and (openshift_control_plane_node_count | int) == 0
-            and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
-          )
-          else (
-            'azure-platform-inference'
-            if ((cluster_profile.platform | default('unknown') | lower) == 'azure')
-            else (
-              'aws-platform-inference'
-              if (
-                (cluster_profile.platform | default('unknown') | lower) == 'aws'
-                and (openshift_control_plane_node_count | int) > 0
-              )
-              else 'default-openshift-fallback'
-            )
-          )
-        )
-      }}
-    openshift_deployment_type_confidence: >-
-      {{
-        'high'
-        if (
-          (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica'
-          or (
-            ((analysis_graph.nodes | default({})).get('items', []) | length) == 1
-            and (openshift_control_plane_node_count | int) == 1
-          )
-        )
-        else (
-          'medium'
-          if (
-            (cluster_profile.platform | default('unknown') | lower) in ['aws', 'azure']
-            and ((analysis_graph.nodes | default({})).get('items', []) | length) > 0
-          )
-          else 'low'
-        )
-      }}
+    openshift_cluster_classification: "{{ (openshift_cluster_classification_cmd.stdout | from_json) if (openshift_cluster_classification_cmd.rc == 0 and (openshift_cluster_classification_cmd.stdout | default('') | length > 0)) else {'platform_category': 'unknown', 'public_cloud': false, 'service_model': 'unknown', 'service_model_source': 'not-derived', 'service_model_confidence': 'low', 'service_variant': 'unknown', 'install_model': 'unknown', 'install_model_source': 'not-derived', 'install_model_confidence': 'low', 'control_plane_model': 'unknown', 'control_plane_model_source': 'not-derived', 'control_plane_model_confidence': 'low', 'cluster_classification_label': 'openshift', 'cluster_classification_source': 'default-openshift-fallback', 'cluster_classification_confidence': 'low', 'deployment_type': 'openshift', 'deployment_type_source': 'default-openshift-fallback', 'deployment_type_confidence': 'low', 'is_sno': false, 'is_hosted_control_plane': false, 'machine_api_worker_pool_count': 0, 'machine_api_managed_worker_pools': false, 'control_plane_node_count': (openshift_control_plane_node_count | int), 'worker_node_count': (openshift_worker_node_count | int), 'infra_node_count': (openshift_infra_node_count | int)} }}"
 
 - name: Extend cluster profile with deployment type
   ansible.builtin.set_fact:
-    cluster_profile: "{{ cluster_profile | combine({'deployment_type': openshift_deployment_type, 'deployment_type_source': openshift_deployment_type_source, 'deployment_type_confidence': openshift_deployment_type_confidence, 'is_sno': (openshift_is_sno | bool), 'is_hosted_control_plane': (openshift_is_hosted_control_plane | bool), 'control_plane_node_count': (openshift_control_plane_node_count | int), 'worker_node_count': (openshift_worker_node_count | int), 'infra_node_count': (openshift_infra_node_count | int)}, recursive=True) }}"
+    cluster_profile: "{{ cluster_profile | combine({'platform_category': (openshift_cluster_classification.platform_category | default('unknown')), 'public_cloud': (openshift_cluster_classification.public_cloud | default(false) | bool), 'service_model': (openshift_cluster_classification.service_model | default('unknown')), 'service_model_source': (openshift_cluster_classification.service_model_source | default('not-derived')), 'service_model_confidence': (openshift_cluster_classification.service_model_confidence | default('low')), 'service_variant': (openshift_cluster_classification.service_variant | default('unknown')), 'install_model': (openshift_cluster_classification.install_model | default('unknown')), 'install_model_source': (openshift_cluster_classification.install_model_source | default('not-derived')), 'install_model_confidence': (openshift_cluster_classification.install_model_confidence | default('low')), 'control_plane_model': (openshift_cluster_classification.control_plane_model | default('unknown')), 'control_plane_model_source': (openshift_cluster_classification.control_plane_model_source | default('not-derived')), 'control_plane_model_confidence': (openshift_cluster_classification.control_plane_model_confidence | default('low')), 'cluster_classification_label': (openshift_cluster_classification.cluster_classification_label | default('openshift')), 'cluster_classification_source': (openshift_cluster_classification.cluster_classification_source | default('default-openshift-fallback')), 'cluster_classification_confidence': (openshift_cluster_classification.cluster_classification_confidence | default('low')), 'deployment_type': (openshift_cluster_classification.deployment_type | default('openshift')), 'deployment_type_source': (openshift_cluster_classification.deployment_type_source | default('default-openshift-fallback')), 'deployment_type_confidence': (openshift_cluster_classification.deployment_type_confidence | default('low')), 'is_sno': (openshift_cluster_classification.is_sno | default(false) | bool), 'is_hosted_control_plane': (openshift_cluster_classification.is_hosted_control_plane | default(false) | bool), 'machine_api_worker_pool_count': (openshift_cluster_classification.machine_api_worker_pool_count | default(0) | int), 'machine_api_managed_worker_pools': (openshift_cluster_classification.machine_api_managed_worker_pools | default(false) | bool), 'control_plane_node_count': (openshift_cluster_classification.control_plane_node_count | default(openshift_control_plane_node_count | int) | int), 'worker_node_count': (openshift_cluster_classification.worker_node_count | default(openshift_worker_node_count | int) | int), 'infra_node_count': (openshift_cluster_classification.infra_node_count | default(openshift_infra_node_count | int) | int)}, recursive=True) }}"
 
 - name: Initialize MCP facts
   ansible.builtin.set_fact:
@@ -474,6 +724,77 @@
   loop: "{{ (analysis_graph.namespaces | default({})).get('items', []) }}"
   vars:
     phase: "{{ item.status.phase | default('Unknown') }}"
+  changed_when: false
+
+- name: Build namespace ownership and chargeback metadata findings
+  ansible.builtin.set_fact:
+    namespace_metadata_governance_findings: "{{ (namespace_metadata_governance_findings | default([])) + metadata_review_entry }}"
+  loop: "{{ (analysis_graph.namespaces | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.name | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    owner_label_keys:
+      - team
+      - owner
+      - owner.team
+      - team-name
+      - team_name
+      - app.kubernetes.io/team
+      - app.kubernetes.io/owner
+      - ops.team
+      - ops.owner
+      - contact
+      - owner.email
+    cost_label_keys:
+      - cost-center
+      - cost_center
+      - costcenter
+      - billing-code
+      - billing_code
+      - chargeback
+      - chargeback-code
+      - chargeback_code
+      - business-unit
+      - business_unit
+      - department
+    present_owner_labels: >-
+      {%- set values = [] -%}
+      {%- for key in owner_label_keys -%}
+      {%- set raw = labels.get(key, '') | string | trim -%}
+      {%- if raw | length > 0 -%}
+      {%- set _ = values.append(key ~ '=' ~ raw) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ values }}
+    present_cost_labels: >-
+      {%- set values = [] -%}
+      {%- for key in cost_label_keys -%}
+      {%- set raw = labels.get(key, '') | string | trim -%}
+      {%- if raw | length > 0 -%}
+      {%- set _ = values.append(key ~ '=' ~ raw) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ values }}
+    missing_metadata_categories: >-
+      {{
+        ([] +
+        (['team ownership metadata'] if (present_owner_labels | length) == 0 else []) +
+        (['cost chargeback metadata'] if (present_cost_labels | length) == 0 else []))
+      }}
+    metadata_review_entry: >-
+      {{
+        [{
+          'namespace': ns_name,
+          'missing_metadata': missing_metadata_categories,
+          'present_owner_labels': present_owner_labels,
+          'present_cost_labels': present_cost_labels,
+          'detail': missing_metadata_categories | join('; '),
+          'expected_owner_label_keys': owner_label_keys,
+          'expected_cost_label_keys': cost_label_keys
+        }]
+        if ((is_user_namespace | bool) and (missing_metadata_categories | length > 0)) else []
+      }}
   changed_when: false
 
 - name: Initialize node capacity summary

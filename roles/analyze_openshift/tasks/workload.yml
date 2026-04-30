@@ -107,33 +107,48 @@
       }}
   changed_when: false
 
-- name: Build deploymentconfig ownership label review findings
+- name: Build pod team ownership label review findings
   ansible.builtin.set_fact:
     workload_label_governance_findings: "{{ (workload_label_governance_findings | default([])) + label_review_entry }}"
-  loop: "{{ (analysis_graph.deploymentconfigs | default({})).get('items', []) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     labels: "{{ item.metadata.labels | default({}) }}"
-    missing_parts: >-
-      {{
-        ([] +
-        (['app.kubernetes.io/name'] if (labels.get('app.kubernetes.io/name', '') | length) == 0 else []) +
-        (['app.kubernetes.io/instance'] if (labels.get('app.kubernetes.io/instance', '') | length) == 0 else []) +
-        (['app.kubernetes.io/component'] if (labels.get('app.kubernetes.io/component', '') | length) == 0 else []) +
-        (['app.kubernetes.io/part-of'] if (labels.get('app.kubernetes.io/part-of', '') | length) == 0 else []) +
-        (['app.kubernetes.io/managed-by'] if (labels.get('app.kubernetes.io/managed-by', '') | length) == 0 else []) +
-        (['app.openshift.io/runtime'] if (labels.get('app.openshift.io/runtime', '') | length) == 0 else []))
-      }}
+    pod_phase: "{{ item.status.phase | default('Unknown') }}"
+    workload_owner_label_keys:
+      - team
+      - owner
+      - owner.team
+      - team-name
+      - team_name
+      - app.kubernetes.io/team
+      - app.kubernetes.io/owner
+      - ops.team
+      - ops.owner
+    present_owner_label_keys: >-
+      {%- set keys = [] -%}
+      {%- for key in workload_owner_label_keys -%}
+      {%- if (labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set _ = keys.append(key) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ keys }}
     label_review_entry: >-
       {{
         [{
-          'kind': 'DeploymentConfig',
+          'kind': 'Pod',
           'namespace': ns_name,
           'name': item.metadata.name | default('unknown'),
-          'detail': missing_parts | join('; ')
+          'detail': 'missing team ownership tag',
+          'suggested_label_keys': workload_owner_label_keys,
+          'present_label_keys': present_owner_label_keys
         }]
-        if ((is_user_namespace | bool) and (missing_parts | length > 0)) else []
+        if (
+          (is_user_namespace | bool)
+          and (pod_phase not in ['Succeeded', 'Completed'])
+          and ((present_owner_label_keys | length) == 0)
+        ) else []
       }}
   changed_when: false
 

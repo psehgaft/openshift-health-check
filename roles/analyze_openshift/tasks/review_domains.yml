@@ -764,7 +764,7 @@
     if machine_sets and not mhcs:
         findings.append({
             "issue": "machinehealthcheck-missing",
-            "detail": "MachineSets were found but no MachineHealthCheck resource was collected"
+            "detail": "Machine API-managed worker pools were found but no MachineHealthCheck resource was collected"
         })
 
     for item in mhcs:
@@ -819,12 +819,15 @@
     import json
 
     sccs = json.loads(r'''{{ (analysis_graph.securitycontextconstraints | default({})).get('items', []) | to_json }}''')
+    pods = json.loads(r'''{{ (analysis_graph.pods | default({})).get('items', []) | to_json }}''')
     summary = []
     findings = []
+    pod_findings = []
 
     def is_platform_namespace(ns):
         return ns.startswith("openshift-") or ns.startswith("kube-") or ns in {"default", "openshift"}
 
+    risky_sccs = {}
     for scc in sccs:
         meta = scc.get("metadata", {}) or {}
         users = (scc.get("users") or [])
@@ -868,6 +871,8 @@
             "group_count": len(groups),
             "risk_summary": ", ".join(risk_flags) if risk_flags else "restricted"
         })
+        if risk_flags:
+            risky_sccs[name] = ", ".join(risk_flags)
         if not risk_flags:
             continue
         for subject in users:
@@ -910,9 +915,31 @@
                     "risk_summary": ", ".join(risk_flags),
                 })
 
+    for pod in pods:
+        meta = pod.get("metadata", {}) or {}
+        ns = str(meta.get("namespace") or "")
+        if is_platform_namespace(ns):
+            continue
+        annotations = meta.get("annotations", {}) or {}
+        scc_name = (
+            annotations.get("openshift.io/scc")
+            or annotations.get("security.openshift.io/scc.podSecurityLabelSync")
+            or ""
+        )
+        if scc_name not in risky_sccs:
+            continue
+        pod_findings.append({
+            "namespace": ns,
+            "pod": str(meta.get("name") or "unknown"),
+            "service_account": str(((pod.get("spec") or {}).get("serviceAccountName")) or "default"),
+            "scc": scc_name,
+            "risk_summary": risky_sccs[scc_name],
+        })
+
     print(json.dumps({
         "scc_posture_summary": sorted(summary, key=lambda item: item["name"]),
         "scc_grant_findings": sorted(findings, key=lambda item: (item["scc"], item["subject_kind"], item["subject"])),
+        "scc_pod_findings": sorted(pod_findings, key=lambda item: (item["scc"], item["namespace"], item["pod"])),
     }))
     PY
   register: scc_posture_summary_cmd
@@ -923,3 +950,4 @@
   ansible.builtin.set_fact:
     scc_posture_summary: "{{ (scc_posture_summary_cmd.stdout | from_json).scc_posture_summary if (scc_posture_summary_cmd.rc == 0 and (scc_posture_summary_cmd.stdout | default('') | length > 0)) else [] }}"
     scc_grant_findings: "{{ (scc_posture_summary_cmd.stdout | from_json).scc_grant_findings if (scc_posture_summary_cmd.rc == 0 and (scc_posture_summary_cmd.stdout | default('') | length > 0)) else [] }}"
+    scc_pod_findings: "{{ (scc_posture_summary_cmd.stdout | from_json).scc_pod_findings if (scc_posture_summary_cmd.rc == 0 and (scc_posture_summary_cmd.stdout | default('') | length > 0)) else [] }}"
