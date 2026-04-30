@@ -50,6 +50,15 @@
       "datadogagents": (analysis_graph.datadogagents | default({})).get('items', []),
       "clusteragents": (analysis_graph.clusteragents | default({})).get('items', []),
       "infravizs": (analysis_graph.infravizs | default({})).get('items', []),
+      "ansibleautomationplatforms": (analysis_graph.ansibleautomationplatforms | default({})).get('items', []),
+      "automationcontrollers": (analysis_graph.automationcontrollers | default({})).get('items', []),
+      "automationhubs": (analysis_graph.automationhubs | default({})).get('items', []),
+      "edas": (analysis_graph.edas | default({})).get('items', []),
+      "kedacontrollers": (analysis_graph.kedacontrollers | default({})).get('items', []),
+      "scaledobjects": (analysis_graph.scaledobjects | default({})).get('items', []),
+      "scaledjobs": (analysis_graph.scaledjobs | default({})).get('items', []),
+      "triggerauthentications": (analysis_graph.triggerauthentications | default({})).get('items', []),
+      "clustertriggerauthentications": (analysis_graph.clustertriggerauthentications | default({})).get('items', []),
       "costmanagementmetricsconfigs": (analysis_graph.costmanagementmetricsconfigs | default({})).get('items', []),
       "klusterlets": (analysis_graph.klusterlets | default({})).get('items', []),
       "managedclusteraddons": (analysis_graph.managedclusteraddons | default({})).get('items', []),
@@ -350,6 +359,15 @@
     datadogagents = data.get("datadogagents") or []
     clusteragents = data.get("clusteragents") or []
     infravizs = data.get("infravizs") or []
+    ansibleautomationplatforms = data.get("ansibleautomationplatforms") or []
+    automationcontrollers = data.get("automationcontrollers") or []
+    automationhubs = data.get("automationhubs") or []
+    edas = data.get("edas") or []
+    kedacontrollers = data.get("kedacontrollers") or []
+    scaledobjects = data.get("scaledobjects") or []
+    scaledjobs = data.get("scaledjobs") or []
+    triggerauthentications = data.get("triggerauthentications") or []
+    clustertriggerauthentications = data.get("clustertriggerauthentications") or []
     costmanagementmetricsconfigs = data.get("costmanagementmetricsconfigs") or []
     klusterlets = data.get("klusterlets") or []
     managedclusteraddons = data.get("managedclusteraddons") or []
@@ -787,6 +805,93 @@
         len(clusteragents) > 0
         or len(infravizs) > 0
         or appdynamics_workload_present
+    )
+    aap_subscription_present = any(
+        package in subscription_packages
+        for package in {
+            "ansible-automation-platform-operator",
+            "ansible-automation-platform",
+        }
+    )
+    aap_namespace_present = any(
+        name in namespace_names
+        for name in {
+            "ansible-automation-platform",
+            "aap",
+        }
+    )
+    aap_crd_present = crd_has(
+        "aap.ansible.com",
+        "automationcontroller.ansible.com",
+        "automationhub.ansible.com",
+        "eda.ansible.com",
+    )
+    aap_workload_present = any_keyword(
+        [
+            "automation-controller",
+            "automation-hub",
+            "automation-eda",
+            "ansible-automation-platform-gateway",
+            "eda-api",
+            "eda-scheduler",
+            "receptor",
+        ],
+        all_workload_blobs,
+    )
+    openshift_aap_context_present = bool(
+        aap_subscription_present
+        or aap_namespace_present
+        or aap_crd_present
+    )
+    openshift_aap_present = bool(
+        len(ansibleautomationplatforms) > 0
+        or len(automationcontrollers) > 0
+        or len(automationhubs) > 0
+        or len(edas) > 0
+        or aap_workload_present
+    )
+    keda_subscription_present = any(
+        package in subscription_packages
+        for package in {
+            "custom-metrics-autoscaler-operator",
+            "keda",
+        }
+    )
+    keda_namespace_present = any(
+        name in namespace_names
+        for name in {
+            "openshift-keda",
+            "keda",
+        }
+    )
+    keda_crd_present = crd_has(
+        "kedacontrollers.keda.sh",
+        "scaledobjects.keda.sh",
+        "scaledjobs.keda.sh",
+        "triggerauthentications.keda.sh",
+        "clustertriggerauthentications.keda.sh",
+    )
+    keda_workload_present = any_keyword(
+        [
+            "keda-operator",
+            "keda-operator-metrics-apiserver",
+            "keda-admission-webhooks",
+            "custom-metrics-autoscaler-operator",
+        ],
+        all_workload_blobs,
+    )
+    openshift_custom_metrics_keda_context_present = bool(
+        keda_subscription_present
+        or keda_namespace_present
+        or keda_crd_present
+    )
+    openshift_custom_metrics_keda_present = bool(
+        len(kedacontrollers) > 0
+        or len(scaledobjects) > 0
+        or len(scaledjobs) > 0
+        or len(triggerauthentications) > 0
+        or len(clustertriggerauthentications) > 0
+        or keda_workload_present
     )
     acs_operator_subscription_present = "container-security-operator" in subscription_packages
     acs_namespace_present = "stackrox" in namespace_names or "rhacs-operator" in namespace_names
@@ -1375,6 +1480,8 @@
             "prod-day2-loki-stack-logging-missing": "loki_stack_logging",
             "prod-day2-datadog-observability-missing": "datadog_observability",
             "prod-day2-appdynamics-observability-missing": "appdynamics_observability",
+            "prod-day2-openshift-aap-missing": "openshift_aap",
+            "prod-day2-openshift-custom-metrics-keda-missing": "openshift_custom_metrics_keda",
             "prod-day2-platform-cluster-logging-missing": "cluster_log_forwarding",
             "prod-day2-platform-external-secrets-operator-missing": "external_secrets_operator",
             "prod-day2-platform-oadp-operator-missing": "application_backup_and_restore_readiness",
@@ -2633,6 +2740,45 @@
             "finding": "no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected",
         },
         {
+            "key": "openshift_aap",
+            "capability": "OpenShift AAP footprint",
+            "level": cap_level("openshift_aap", "informational"),
+            "source": "Ansible Automation Platform operator and custom resource inventory",
+            "present": openshift_aap_present,
+            "detail": (
+                f"subscription_present={aap_subscription_present} "
+                f"namespace_present={aap_namespace_present} "
+                f"crd_present={aap_crd_present} "
+                f"aap_crs={len(ansibleautomationplatforms)} "
+                f"automationcontrollers={len(automationcontrollers)} "
+                f"automationhubs={len(automationhubs)} "
+                f"edas={len(edas)} "
+                f"workload_present={aap_workload_present}"
+            ),
+            "issue": "prod-day2-openshift-aap-missing",
+            "finding": "no Ansible Automation Platform custom resource or AAP-managed workload footprint was detected",
+        },
+        {
+            "key": "openshift_custom_metrics_keda",
+            "capability": "OpenShift KEDA custom metrics footprint",
+            "level": cap_level("openshift_custom_metrics_keda", "informational"),
+            "source": "KEDA controller and custom autoscaling resource inventory",
+            "present": openshift_custom_metrics_keda_present,
+            "detail": (
+                f"subscription_present={keda_subscription_present} "
+                f"namespace_present={keda_namespace_present} "
+                f"crd_present={keda_crd_present} "
+                f"kedacontrollers={len(kedacontrollers)} "
+                f"scaledobjects={len(scaledobjects)} "
+                f"scaledjobs={len(scaledjobs)} "
+                f"triggerauthentications={len(triggerauthentications)} "
+                f"clustertriggerauthentications={len(clustertriggerauthentications)} "
+                f"workload_present={keda_workload_present}"
+            ),
+            "issue": "prod-day2-openshift-custom-metrics-keda-missing",
+            "finding": "no KedaController, ScaledObject, ScaledJob, trigger authentication, or KEDA-managed workload footprint was detected",
+        },
+        {
             "key": "openshift_data_foundation",
             "capability": "OpenShift Data Foundation footprint",
             "level": cap_level("openshift_data_foundation", "informational"),
@@ -2978,6 +3124,20 @@
             "AppDynamics operator, namespace, or CRD footprint was detected, but no ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was found",
             severity=cap_failure_severity("appdynamics_observability"),
             source="AppDynamics cluster agent inventory",
+        )
+    if cap_required("openshift_aap") and openshift_aap_context_present and not openshift_aap_present:
+        add_finding(
+            "prod-day2-openshift-aap-missing",
+            "AAP operator, namespace, or CRD footprint was detected, but no AnsibleAutomationPlatform, AutomationController, AutomationHub, EDA, or AAP-managed workload footprint was found",
+            severity=cap_failure_severity("openshift_aap"),
+            source="Ansible Automation Platform operator and custom resource inventory",
+        )
+    if cap_required("openshift_custom_metrics_keda") and openshift_custom_metrics_keda_context_present and not openshift_custom_metrics_keda_present:
+        add_finding(
+            "prod-day2-openshift-custom-metrics-keda-missing",
+            "KEDA operator, namespace, or CRD footprint was detected, but no KedaController, ScaledObject, ScaledJob, trigger authentication, or KEDA-managed workload footprint was found",
+            severity=cap_failure_severity("openshift_custom_metrics_keda"),
+            source="KEDA controller and custom autoscaling resource inventory",
         )
     if cap_required("gpu_accelerated_workloads") and gpu_workloads_present and not gpu_workloads_healthy:
         add_finding(

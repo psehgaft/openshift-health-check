@@ -1,327 +1,249 @@
-# OpenShift Health Check Posture Priorities
+# OpenShift Health Check Priorities
 
-This file lays out the main health-check areas in the order they should usually be reviewed. It follows [health-check-inputs.md](./health-check-inputs.md) and the way this repo now builds the report.
+This file explains the report in plain language and also serves as a practical health-check guide.
 
-Use it as a practical review guide when you want to walk through the cluster one posture at a time.
+It is written for two audiences:
 
-If you are new to the repo, start with [README.md](README.md) for setup and basic usage, then read [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md) for the bigger picture. Come back to this file when you are ready to read the OpenShift report section by section.
+- leadership and delivery stakeholders such as CIOs, CTOs, program managers, and service owners
+- engineers, architects, consultants, and SREs who need a sensible walkthrough order for the health check
 
-## Suggested Review Sequence
+The goal is simple:
 
-1. Supportability
-   - evidence completeness and quality
-   - `must-gather`, `inspect`, `sosreport`, Insights archive coverage
-   - Advisor / Insights posture
-   - managed-gate posture where relevant
-   - baseline / reference comparison posture
-   - ability to gather node, control-plane, and platform evidence when needed
-2. Core Platform Health
-   - cluster operators
-   - etcd health and latency
-   - API health
-   - node readiness and pressure
-   - machine config pool health
-   - ingress / route health
-   - registry health
-3. Platform Architecture And Lifecycle
-   - supported version and how up to date it is
-   - upgrade readiness and conditional risks
-   - HA / topology posture
-   - cluster shape and role separation
-   - architecture suitability for intended business use
-4. Networking Architecture
-   - ingress / load balancer posture
-   - DNS / FQDN integration
-   - route and ingress conflicts
-   - proxy / egress posture
-   - network policy coverage
-5. Security And Compliance
-   - identity providers
-   - SCC / privileged access posture
-   - secrets handling
-   - certificate and trust posture
-   - image policy posture
-   - namespace hygiene
-   - Compliance Operator posture, standards posture: `FIPS`, `FedRAMP`, `HIPAA`, `PCI-DSS`, `SOC`, `SOX`, `NIST`, `CIS`
-6. Observability
-   - monitoring health
-   - alert health and delivery
-   - warning events
-   - metrics availability and remote write
-   - logging posture, `application`, `infrastructure`, `audit` log collection and export posture
-   - Insights / telemetry posture
-7. Backup And Disaster Recovery
-   - OADP / Velero footprint
-   - backup storage locations
-   - schedules
-   - successful backup evidence
-   - restore evidence
-   - machine remediation posture
-   - DR readiness indicators
-8. Node Health And Capacity Planning
-   - CPU, memory, storage, pod density
-   - quota and limit posture
-   - requests / limits hygiene
-   - scale posture
-   - current utilization vs expected growth
-   - node diagnostics quality
-9. Workload Health And Deployment Hygiene
-   - rollout health
-   - unhealthy pods
-   - High restart pods
-   - readiness / liveness probes
-   - service and endpoint health
-   - workload resource posture
-10. Operations And Lifecycle Maturity
-    - declarative operations
-    - GitOps usage
-    - patching and upgrade discipline
-    - operational repeatability
-    - onboarding and operating model maturity
-11. Container Platform Adoption And Release Engineering
-    - CI / CD and pipeline posture
-    - BuildConfig trigger posture
-    - release workflow maturity
-    - developer / application onboarding patterns
-    - platform capability adoption
-12. Workload Capability Extensions
-    - `Virtualization`
-    - `AI`
-    - model serving / notebook / runtime footprint
-    - extension health when installed
-13. Day 2 Production Readiness
-    - lifecycle and upgrade readiness
-    - observability maturity
-    - backup and recovery maturity
-    - security and compliance posture
-    - operations maturity
-    - workload capability readiness
-    - production operating model maturity
+- explain the main health-check areas
+- explain why they matter to the business
+- provide a usable review sequence for technical teams
+- keep the language easy to understand
 
-## Priority Order
+This reflects the current state of the repo and its OpenShift report model.
 
-### P1. Supportability
+## What The Report Is Trying To Answer
 
-Recommendations: Start here. Before trusting the rest of the report, make sure the evidence is good enough. Look for missing or weak `must-gather`, `inspect`, `sosreport`, Insights archive, Advisor, or reference-comparison evidence. If node diagnostics are only partial, keep this posture in review instead of treating it as fully supported.
+The report is not just checking whether the cluster is "up".
 
-Why first:
-- If the cluster cannot be supported or troubleshot effectively, every other conclusion is lower-confidence.
+It is trying to answer five business questions:
 
-Primary review scope:
-- evidence completeness and quality
-- `must-gather`, `inspect`, `sosreport`, Insights archive coverage
-- Advisor / Insights posture
-- managed-gate posture where relevant
-- baseline / reference comparison posture
-- ability to gather node, control-plane, and platform evidence when needed
+1. Can this platform be supported when something goes wrong?
+2. Is the platform stable enough for production use?
+3. Is the platform secure and compliant enough for the organization’s needs?
+4. Can teams operate, monitor, scale, and recover it reliably?
+5. Are optional platform capabilities actually deployed where the customer expects them?
 
-### P2. Core Platform Health
+## Main Health-Check Areas
 
-Recommendations: Use this section to find urgent runtime problems first. Focus on degraded or unavailable control-plane components, not-ready nodes, API trouble, ingress trouble, and etcd instability. Be careful with simple `Progressing` states unless they also hurt availability or clearly degrade the cluster.
+These sections are also the practical walkthrough sequence most teams should use during a health check.
 
-Why second:
-- Immediate operator, control-plane, node, or routing failures are the most urgent runtime risk.
+### Supportability
 
-Primary review scope:
-- cluster operators
-- etcd health and latency
-- API health
-- node readiness and pressure
-- machine config pool health
-- ingress / route health
-- registry health
+This tells you whether the report is based on enough evidence to trust the rest of the conclusions.
 
-### P3. Platform Architecture And Lifecycle
+Business meaning:
+- If support evidence is weak, every other conclusion has lower confidence.
+- A cluster that cannot be diagnosed quickly is a business risk even if it looks healthy today.
 
-Recommendations: Use this section to answer two questions: is the cluster on a supported path, and is the architecture solid enough for production use? Pay close attention to support status, upgrade blockers, conditional update risks, failure-domain spread, and weak topology signals. Treat low-confidence classification as an evidence gap, not as an architecture problem by itself.
+Typical concerns:
+- missing diagnostics
+- weak node-level evidence
+- missing support bundles
+- limited advisory or Insights evidence
 
-Why third:
-- Unsupported versions, weak topology, or poor lifecycle posture create systemic risk even when the cluster looks healthy today.
+### Core Platform Health
 
-Primary review scope:
-- supported version and how up to date it is
-- upgrade readiness and conditional risks
-- HA / topology posture
-- cluster shape and role separation
-- architecture suitability for intended business use
+This is the fastest way to see if the cluster has an immediate production problem.
 
-### P4. Networking Architecture
+Business meaning:
+- If core platform services are unhealthy, application stability is already at risk.
 
-Recommendations: Use this section to review the actual access design, not just object errors. Focus on route and ingress conflicts, exposed namespaces, proxy settings, egress posture, and whether traffic paths look safe and intentional. Keep baseline `NetworkPolicy` gaps as supporting context unless they affect exposed workloads.
+Typical concerns:
+- degraded platform operators
+- API or etcd instability
+- node readiness problems
+- machine config problems
+- ingress or route failures
 
-Why fourth:
-- Network and access design problems often present as broad service instability, partial outages, or future scale blockers.
+### Lifecycle And Architecture
 
-Primary review scope:
-- ingress / load balancer posture
-- DNS / FQDN integration
-- route and ingress conflicts
-- proxy / egress posture
-- network policy coverage
+This tells you whether the platform is on a safe and supportable long-term path.
 
-### P5. Security And Compliance
+Business meaning:
+- A cluster can appear healthy now but still be risky if it is outdated, poorly designed, or hard to upgrade.
 
-Recommendations: Use this section to review the real security and compliance picture. Focus on identity setup, privileged access, certificate health, active compliance standards, and failed compliance checks. Treat namespace guardrails as baseline governance context, not as the strongest security signal.
+Typical concerns:
+- unsupported or aging versions
+- upgrade blockers
+- weak high-availability design
+- poor failure-domain spread
+- architecture not matching business expectations
 
-Why fifth:
-- Security and compliance gaps can be production blockers and may also indicate broader operational immaturity.
+### Security And Compliance
 
-Primary review scope:
-- identity providers
-- SCC / privileged access posture
-- secrets handling
-- certificate and trust posture
-- image policy posture
-- namespace hygiene
-- Compliance Operator posture
-- standards posture:
-  - `FIPS`
-  - `FedRAMP`
-  - `HIPAA`
-  - `PCI-DSS`
-  - `SOC`
-  - `SOX`
-  - `NIST`
-  - `CIS`
+This explains whether the platform’s protection model is acceptable for production use.
 
-For compliance standards, review:
-- configured or not
-- actively enabled or not
-- scan health
-- failed checks
-- for `FIPS`, runtime state only when explicit node evidence exists
+Business meaning:
+- Security gaps can delay go-live, increase audit risk, or create exposure during incidents.
 
-### P6. Observability
+Typical concerns:
+- weak identity setup
+- excessive privilege
+- certificate and trust problems
+- image governance problems
+- compliance gaps such as FIPS, CIS, PCI-DSS, NIST, FedRAMP, and related standards
 
-Recommendations: Use this section to check whether monitoring, alerting, metrics, and logs are ready to support operations. Confirm what is configured, what can be verified, and what is only partly visible from cluster data. Treat missing external delivery as a gap only when that delivery is actually expected.
+### Observability
 
-Why sixth:
-- Weak monitoring, logging, and alerting increase mean time to detect and resolve incidents.
+This shows whether the organization can actually see problems early and respond quickly.
 
-Primary review scope:
-- monitoring health
-- alert health and delivery
-- warning events
-- metrics availability and remote write
-- logging posture
-- confirmation that `application`, `infrastructure`, and `audit` logs are collected
-- confirmation those logs are exported where expected
-- Insights / telemetry posture
+Business meaning:
+- A platform without usable monitoring, alerting, metrics, and logs usually has slower incident response and longer outages.
 
-### P7. Backup And Disaster Recovery
+Typical concerns:
+- weak monitoring
+- alerts not reaching the right destination
+- missing metrics
+- poor log collection
+- no reliable export of application, infrastructure, or audit logs
 
-Recommendations: Use this section to decide whether recovery looks real, not just whether backup objects exist. Clean successful backup and restore evidence matters more than simple object counts. If restore testing is missing, treat that as weaker confidence in recovery, not the same as having no backup capability at all.
+### Backup And Recovery
 
-Why seventh:
-- Clusters without credible recovery posture can tolerate only shallow incidents.
+This tells you whether recovery is real or only assumed.
 
-Primary review scope:
-- OADP / Velero footprint
-- backup storage locations
-- schedules
-- successful backup evidence
-- restore evidence
-- machine remediation posture
-- DR readiness indicators
+Business meaning:
+- If backup and restore are weak, even a short incident can become a prolonged outage.
 
-### P8. Node Health And Capacity Planning
+Typical concerns:
+- backup tooling exists but restore evidence is missing
+- missing schedules
+- missing successful backups
+- weak disaster recovery posture
+- limited control-plane recovery evidence
 
-Recommendations: Use this section to check node condition, capacity pressure, density, and growth risk. Focus on not-ready nodes, pressure signals, hot nodes, quota pressure, and density. Keep storage posture and diagnostics confidence visible, but do not let them outweigh real runtime health unless they clearly affect workloads.
+### Capacity And Node Health
 
-Why eighth:
-- Capacity, density, and node-level drift tend to show up as instability, poor performance, or blocked growth.
+This shows whether the platform has enough headroom and whether nodes are under stress.
 
-Primary review scope:
-- CPU, memory, storage, pod density
-- quota and limit posture
-- requests / limits hygiene
-- scale posture
-- current utilization vs expected growth
-- node diagnostics quality
+Business meaning:
+- Capacity pressure often becomes instability, poor performance, failed scaling, or blocked growth.
 
-### P9. Workload Health And Deployment Hygiene
+Typical concerns:
+- hot or pressured nodes
+- high pod density
+- memory or CPU saturation
+- quota pressure
+- poor diagnostic depth for node issues
 
-Recommendations: Use this section to separate real workload trouble from softer hygiene debt. Start with unhealthy pods, failed rollouts, restart hotspots, and probe problems. Keep things like overprovisioning or endpoint cleanup as lower-priority context unless they are clearly affecting service health.
+### Workload Health
 
-Why ninth:
-- Platform health can look acceptable while workloads are still fragile, unhealthy, or badly configured.
+This focuses on the applications and platform workloads running on the cluster.
 
-Primary review scope:
-- rollout health
-- unhealthy pods
+Business meaning:
+- The platform may look healthy while important workloads are still fragile or failing.
+
+Typical concerns:
+- failing pods
+- rollout problems
 - restart hotspots
-- readiness / liveness probes
-- service and endpoint health
-- workload resource posture
+- probe issues
+- weak workload resource settings
 
-### P10. Operations And Lifecycle Maturity
+### Operations Maturity
 
-Recommendations: Use this section to check how the cluster is run day to day. Focus on identity setup, backup execution, machine remediation where needed, and whether the operating model looks repeatable. GitOps can help, but it is not a hard requirement for every cluster.
+This tells you how disciplined and repeatable day-to-day operations look.
 
-Why tenth:
-- This affects repeatability, maintainability, and how safely the platform evolves over time.
+Business meaning:
+- Weak operating practices usually lead to avoidable downtime, inconsistent changes, and slow recovery.
 
-Primary review scope:
-- declarative operations
-- GitOps usage
-- patching and upgrade discipline
-- operational repeatability
-- onboarding and operating model maturity
+Typical concerns:
+- weak GitOps or declarative operations
+- poor change discipline
+- weak onboarding controls
+- inconsistent platform management practices
 
-### P11. Container Platform Adoption And Release Engineering
+### Optional Platform Capabilities
 
-Recommendations: Use this section to review how teams build and deliver on the platform. Separate real delivery problems, like failed `PipelineRun`s or `BuildConfig`s that need review, from simple tool inventory.
+This section confirms whether advanced or customer-specific capabilities are actually present.
 
-Why eleventh:
-- Adoption and release engineering maturity affects platform value and delivery quality, but is usually less urgent than platform risk.
+Business meaning:
+- These are usually not the first production risk, but they matter if the customer expects them.
 
-Primary review scope:
-- CI / CD and pipeline posture
-- BuildConfig trigger posture
-- release workflow maturity
-- developer / application onboarding patterns
-- platform capability adoption
+Examples from the current repo:
+- OpenShift Virtualization
+- OpenShift AI
+- OpenShift AAP
+- KEDA-based custom metrics autoscaling
+- service mesh
+- serverless
+- Windows workloads
+- GPU workloads
+- sandboxed containers
+- vendor observability or security tools such as Dynatrace, Datadog, Splunk, AppDynamics, Aqua, Prisma, and Qualys
 
-### P12. Workload Capability Extensions
+## Simple Priority Model
 
-Recommendations: This section is mainly about workload extensions such as `Virtualization` and `AI`. Other platform features can show up as context, but they should not drive the posture. If these extensions are not installed, treat that as context, not as a problem. If they are installed, their health matters more than simple presence counts.
+For non-technical readers, the report can be thought of in three layers.
 
-Why twelfth:
-- Optional platform capabilities matter, but only after the base platform is supportable, healthy, and governable.
+### Layer 1: Immediate Business Risk
 
-Primary review scope:
-- `Virtualization`
-  - primarily under workload health
-  - also reflects Day 2 maturity
-- `AI`
-  - platform capability adoption and workload posture
-  - model serving / notebook / runtime footprint
+These sections should get attention first:
 
-### P13. Day 2 Production Readiness
+- Supportability
+- Core Platform Health
+- Lifecycle And Architecture
+- Security And Compliance
 
-Recommendations: This is the final roll-up section. Use it to answer one question: is this cluster ready for real Day 2 production work? It should pull together lifecycle, upgrades, observability, recovery, security, operations maturity, workload extensions, and evidence confidence. Keep it short and put the biggest blockers first.
+If any of these are weak, the cluster may not be safe to operate at scale.
 
-Why last:
-- This should be synthesis, not repetition. It rolls up what the earlier sections say about production maturity.
+### Layer 2: Operational Reliability
 
-Primary review scope:
-- GitOps
-- external secrets
-- autoscaling
-- compliance adoption
-- backup adoption
-- monitoring and logging maturity
-- Insights posture
-- production operating model maturity
+These sections show whether the platform can be run safely day to day:
 
-## Review Rule
+- Observability
+- Backup And Recovery
+- Capacity And Node Health
+- Workload Health
 
-When reviewing each posture:
-- prefer explicit collected evidence over inference
-- mark uncertain items as `unknown` instead of guessing
-- separate:
-  - `configured`
-  - `active`
-  - `healthy`
-  - `supported`
-- do not treat product presence alone as proof of good posture
+If these are weak, the platform may stay online but will be harder to operate and recover.
+
+### Layer 3: Capability Maturity
+
+These sections show how complete the platform is compared with customer expectations:
+
+- Operations Maturity
+- Optional Platform Capabilities
+
+These matter most when the customer expects a broader platform service model, not just a working cluster.
+
+## What Changed Compared With Older Versions
+
+The repo has grown.
+
+The report now covers a much wider set of optional capabilities and product integrations than older versions of this file implied.
+
+That includes:
+
+- more observability integrations
+- more security software detection
+- more OpenShift platform extensions
+- stronger backup and disaster recovery checks
+- more evidence-quality and supportability logic
+
+Because of that, the older long technical list was harder to follow and no longer the best guide for non-technical readers.
+
+## How To Use This File
+
+If you are a business or delivery stakeholder:
+
+- use the sections to understand where the largest business risks usually sit
+- focus first on whether there is immediate production risk
+- then focus on whether operations and recovery are credible
+- then review whether the platform includes the capabilities the customer expects
+
+If you are an engineer or architect:
+
+- use the sections above as the walkthrough order for the health check
+- use the “business meaning” text to explain why a finding matters
+- use the report itself for the detailed technical findings, evidence, and remediation items
+
+## Related Files
+
+- [README.md](README.md)
+- [health-check-inputs.md](./health-check-inputs.md)
+- [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md)
