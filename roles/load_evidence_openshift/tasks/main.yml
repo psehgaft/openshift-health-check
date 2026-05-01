@@ -8,15 +8,49 @@
         + (['inspect', inspect_path] if (inspect_path | default('') | trim | length > 0) else [])
       }}
 
+- name: Resolve collected-resource extractor cache path
+  ansible.builtin.set_fact:
+    collected_resource_cache_key: >-
+      {{
+        (
+          (collected_resource_extractor_args | join('||'))
+          ~ '||'
+          ~ ((playbook_dir ~ '/../scripts/extract_offline_resources.py') | realpath)
+        ) | hash('sha1')
+      }}
+    collected_resource_cache_path: "{{ '/tmp/ohc-collected-resource-cache-' ~ collected_resource_cache_key ~ '.json' }}"
+
+- name: Stat collected-resource extractor cache
+  ansible.builtin.stat:
+    path: "{{ collected_resource_cache_path }}"
+  register: collected_resource_cache_stat
+
 - name: Extract selected OpenShift resources from collected evidence
   ansible.builtin.command:
     argv: "{{ ['python3', playbook_dir ~ '/../scripts/extract_offline_resources.py'] + collected_resource_extractor_args }}"
   register: collected_resource_extract_cmd
   changed_when: false
+  when: not (collected_resource_cache_stat.stat.exists | default(false))
+
+- name: Persist collected-resource extractor cache
+  ansible.builtin.copy:
+    dest: "{{ collected_resource_cache_path }}"
+    mode: "0600"
+    content: "{{ collected_resource_extract_cmd.stdout }}"
+  when:
+    - not (collected_resource_cache_stat.stat.exists | default(false))
+    - collected_resource_extract_cmd is defined
+    - (collected_resource_extract_cmd.rc | default(1)) == 0
+    - (collected_resource_extract_cmd.stdout | default('') | trim | length > 0)
+
+- name: Load collected-resource graph from cache
+  ansible.builtin.slurp:
+    path: "{{ collected_resource_cache_path }}"
+  register: collected_resource_cache_slurp
 
 - name: Normalize extracted OpenShift resource facts
   ansible.builtin.set_fact:
-    collected_resource_graph: "{{ collected_resource_extract_cmd.stdout | from_json }}"
+    collected_resource_graph: "{{ (collected_resource_cache_slurp.content | b64decode) | from_json }}"
 
 - name: Build OpenShift supportability scaffold facts
   ansible.builtin.set_fact:

@@ -46,6 +46,18 @@
     evidence_summary: "{{ (evidence_summary | default({'source_count': 0, 'source_labels': []})) | combine({'case_bundle_path': case_bundle_path}, recursive=True) }}"
   when: case_bundle_path | default('') | trim | length > 0
 
+- name: Normalize sosreport paths input
+  ansible.builtin.set_fact:
+    sosreport_paths: >-
+      {{
+        (
+          ((sosreport_paths | default('[]')) | from_yaml)
+          if (sosreport_paths is string)
+          else (sosreport_paths | default([]))
+        )
+      }}
+  when: sosreport_paths is defined
+
 - name: Validate evidence mode
   ansible.builtin.assert:
     that:

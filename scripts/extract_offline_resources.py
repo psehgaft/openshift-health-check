@@ -157,6 +157,31 @@ RESOURCE_KEYS = {
     "secrets": ("Secret", None, None),
 }
 
+KIND_INDEX = {}
+for resource_key, (expected_kind, expected_name, expected_namespace) in RESOURCE_KEYS.items():
+    KIND_INDEX.setdefault(expected_kind, []).append((resource_key, expected_name, expected_namespace))
+
+RESOURCE_STEM_ALIASES = {
+    "network_config": "networks",
+    "apiserver_config": "apiservers",
+    "openshift_apiserver": "openshiftapiservers",
+    "kube_apiserver": "kubeapiservers",
+    "authentication_operator": "authentications",
+    "proxy_config": "proxies",
+    "ingress_config": "ingresses",
+    "dns_config": "dnses",
+    "oauth_config": "oauths",
+    "project_config": "projects",
+    "image_config": "images",
+    "image_registry_config": "configs",
+    "gitops_applications": "applications",
+    "gitops_appprojects": "appprojects",
+}
+ALLOWED_RESOURCE_STEMS = {
+    RESOURCE_STEM_ALIASES.get(key, key).lower()
+    for key in RESOURCE_KEYS
+}
+
 SOURCE_PRIORITY = {
     "must-gather": 0,
     "inspect": 1,
@@ -164,6 +189,16 @@ SOURCE_PRIORITY = {
     "oc-get": 2,
     "insights": 3,
     "insights-archive": 3,
+}
+
+SKIP_RESOURCE_STEMS = {
+    "clusterserviceversions",
+    "leases",
+    "replicasets",
+    "horizontalpodautoscalers",
+    "cronjobs",
+    "jobs",
+    "endpointslices",
 }
 
 
@@ -263,6 +298,44 @@ def parse_args(argv):
     return pairs
 
 
+def source_scan_roots(source_name: str, root: Path):
+    if str(source_name).strip().lower() != "must-gather":
+        return [root]
+    candidates = []
+    for path in root.rglob("*"):
+        if not path.is_dir():
+            continue
+        if path.name in {"cluster-scoped-resources", "namespaces"}:
+            candidates.append(path)
+    return candidates or [root]
+
+
+def should_parse_path(path: Path, scan_root: Path) -> bool:
+    if path.suffix.lower() not in {".json", ".yaml", ".yml"}:
+        return False
+    rel_parts = path.relative_to(scan_root).parts
+    stem = path.stem.lower()
+    if stem in SKIP_RESOURCE_STEMS:
+        return False
+    if "namespaces" in rel_parts:
+        ns_index = rel_parts.index("namespaces")
+        # Keep namespace aggregate resource list files and skip deeper per-object YAML,
+        # such as pods/<name>/<name>.yaml, because the list files already carry the objects.
+        if len(rel_parts) > ns_index + 4:
+            return False
+        if stem not in ALLOWED_RESOURCE_STEMS:
+            return False
+    elif "cluster-scoped-resources" in rel_parts:
+        cs_index = rel_parts.index("cluster-scoped-resources")
+        if len(rel_parts) > cs_index + 3:
+            parent_resource = rel_parts[-2].lower()
+            if parent_resource not in ALLOWED_RESOURCE_STEMS:
+                return False
+        elif stem not in ALLOWED_RESOURCE_STEMS:
+            return False
+    return True
+
+
 def main() -> int:
     source_pairs = parse_args(sys.argv)
     if source_pairs is None:
@@ -274,11 +347,11 @@ def main() -> int:
 
     for source_name, root in source_pairs:
         source_file_counts[source_name] = 0
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in {".json", ".yaml", ".yml"}:
-                continue
+        candidate_paths = []
+        for scan_root in source_scan_roots(source_name, root):
+            for pattern in ("*.json", "*.yaml", "*.yml"):
+                candidate_paths.extend(path for path in scan_root.rglob(pattern) if should_parse_path(path, scan_root))
+        for path in sorted({path for path in candidate_paths}):
             source_file_counts[source_name] += 1
             for raw_doc in iter_docs(path):
                 if not isinstance(raw_doc, dict):
@@ -289,9 +362,7 @@ def main() -> int:
                 namespace = meta.get("namespace")
                 doc = annotate(raw_doc, source_name, path, root)
 
-                for key, (expected_kind, expected_name, expected_namespace) in RESOURCE_KEYS.items():
-                    if kind != expected_kind:
-                        continue
+                for key, expected_name, expected_namespace in KIND_INDEX.get(kind, []):
                     if expected_name is not None and name != expected_name:
                         continue
                     if expected_namespace is not None and namespace != expected_namespace:

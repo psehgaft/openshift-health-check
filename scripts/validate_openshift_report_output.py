@@ -45,6 +45,10 @@ FORBIDDEN_MARKDOWN_PATTERNS = [
     (r"\| Signal \| Value \| \s*\| --- \| --- \|", "finding tables must not collapse onto one line"),
 ]
 
+RUNTIME_SIGNAL_OUTPUT_MARKERS = [
+    "Runtime signal basis",
+]
+
 FORBIDDEN_JSON_PATTERNS = [
     (r"\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN)\b", "JSON payload must not contain misspelled or uppercase unknown labels"),
     (r"\baro-gitops\b", "JSON payload must not mention aro-gitops"),
@@ -114,6 +118,10 @@ def validate_markdown(path: Path) -> None:
 
     if "## Report Context" in markdown:
         validate_cluster_posture_sections(markdown)
+
+    for marker in RUNTIME_SIGNAL_OUTPUT_MARKERS:
+        if marker not in markdown:
+            fail(f"{path}: missing runtime signal provenance marker {marker!r}")
 
 
 def validate_json(path: Path) -> None:

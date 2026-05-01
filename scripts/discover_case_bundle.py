@@ -39,15 +39,18 @@ def main() -> int:
         return 2
 
     payload = {
-        "must_gather_path": first_match(root, lambda p: p.name.startswith("must-gather.local"), want_dir=True),
+        "must_gather_path": first_match(root, lambda p: p.name.startswith("must-gather.local") or p.name == "must-gather", want_dir=True),
         "cluster_compare_path": first_match(root, lambda p: "cluster-compare" in p.name and p.suffix.lower() in {".json", ".yaml", ".yml", ".txt"}, want_dir=False),
-        "managed_gates_path": first_match(root, lambda p: "gates" in p.name and p.suffix.lower() in {".json", ".yaml", ".yml", ".txt"}, want_dir=False),
+        "managed_gates_path": first_match(root, lambda p: "managed-gates" in str(p).lower().replace("_", "-") and p.suffix.lower() in {".json", ".yaml", ".yml", ".txt"}, want_dir=False),
         "inspect_path": first_match(root, lambda p: p.is_dir() and p.name.startswith("inspect"), want_dir=True),
         "advisor_export_path": first_match(root, lambda p: "advisor" in p.name and p.suffix.lower() == ".json", want_dir=False),
         "sosreport_paths": all_matches(
             root,
-            lambda p: p.name.startswith("sosreport") and "sosreport/" not in str(p.relative_to(root)).replace("\\", "/"),
-            want_dir=None,
+            lambda p: (
+                p.name.startswith("sosreport")
+                or "oc-debug-node-sosreport" in str(p.parent).lower().replace("\\", "/")
+            ),
+            want_dir=True,
         ),
     }
     print(json.dumps(payload))

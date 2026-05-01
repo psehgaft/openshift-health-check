@@ -92,6 +92,18 @@ def metric_value_float(item, multiplier=1.0):
         return None
 
 
+def runtime_signal_entry(data, name):
+    return ((data.get("runtime_signal_resolution_map") or {}).get(name)) or {}
+
+
+def signal_kind(entry, observed_label="utilization", derived_label="requested-pressure"):
+    if (entry or {}).get("status") == "observed":
+        return observed_label
+    if (entry or {}).get("status") == "derived":
+        return derived_label
+    return "unavailable"
+
+
 def choose_primary_role(roles):
     if "master" in roles:
         return "master"
@@ -171,6 +183,8 @@ def quota_value(quota, section_name, keys, parser):
 
 
 def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_bytes):
+    pod_cpu_signal = runtime_signal_entry(data, "pod_cpu_usage_all")
+    pod_memory_signal = runtime_signal_entry(data, "pod_memory_usage_all")
     cpu_usage_by_ns = defaultdict(float)
     for item in data.get("pod_cpu_usage_all_results", []) or []:
         namespace = (item.get("metric", {}) or {}).get("namespace") or ""
@@ -244,6 +258,16 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
                 "cpu_requested_millicores": round(cpu_request, 1),
                 "cpu_effective_millicores": round(effective_cpu_millicores, 1),
                 "cpu_usage_source": "observed" if cpu_usage_observed else "requested",
+                "cpu_signal_status": "observed" if cpu_usage_observed else "derived",
+                "cpu_signal_kind": (
+                    "usage" if cpu_usage_observed else "requested-pressure"
+                ),
+                "cpu_signal_method": (
+                    (pod_cpu_signal.get("method") or "prometheus-query")
+                    if cpu_usage_observed
+                    else "request-derived-namespace-sum"
+                ),
+                "cpu_is_approximation": not cpu_usage_observed,
                 "cpu_usage_display": (
                     f"{round(effective_cpu_millicores, 1)}m"
                     if cpu_usage_observed
@@ -256,6 +280,16 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
                 "memory_requested_mib": round(memory_request / (1024 ** 2), 1),
                 "memory_effective_mib": round(effective_memory_bytes / (1024 ** 2), 1),
                 "memory_usage_source": "observed" if memory_usage_observed else "requested",
+                "memory_signal_status": "observed" if memory_usage_observed else "derived",
+                "memory_signal_kind": (
+                    "usage" if memory_usage_observed else "requested-pressure"
+                ),
+                "memory_signal_method": (
+                    (pod_memory_signal.get("method") or "prometheus-query")
+                    if memory_usage_observed
+                    else "request-derived-namespace-sum"
+                ),
+                "memory_is_approximation": not memory_usage_observed,
                 "memory_usage_display": (
                     f"{round(effective_memory_bytes / (1024 ** 2), 1)}MiB"
                     if memory_usage_observed
@@ -347,6 +381,11 @@ def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity):
 def main():
     with open(sys.argv[1], "r", encoding="utf-8") as fh:
         data = json.load(fh)
+
+    node_cpu_signal = runtime_signal_entry(data, "node_cpu_utilization")
+    node_memory_signal = runtime_signal_entry(data, "node_memory_utilization")
+    node_disk_signal = runtime_signal_entry(data, "node_disk_utilization")
+    pod_density_signal = runtime_signal_entry(data, "kubelet_pod_density")
 
     cpu_util_by_node = {}
     for item in data.get("node_cpu_utilization_results", []):
@@ -488,6 +527,8 @@ def main():
             cpu_available_millicores = max((cpu_cores * 1000.0) * (1.0 - (cpu_util_pct / 100.0)), 0.0)
         if memory_util_pct is not None:
             memory_available_mib = max((memory_bytes / (1024 ** 2)) * (1.0 - (memory_util_pct / 100.0)), 0.0)
+        disk_util_pct = disk_util_by_node.get(node_name)
+        pod_density_pct = density_by_node.get(node_name)
         node_resource_rows.append(
             {
                 "node": node_name,
@@ -495,10 +536,32 @@ def main():
                 "cpu_allocatable_millicores": int(round(cpu_cores * 1000.0)),
                 "cpu_available_millicores": round(cpu_available_millicores, 1) if cpu_available_millicores is not None else None,
                 "cpu_utilization_pct": round(cpu_util_pct, 1) if cpu_util_pct is not None else None,
+                "cpu_signal_status": node_cpu_signal.get("status", "not-collected"),
+                "cpu_signal_source": node_cpu_signal.get("source", "unavailable"),
+                "cpu_signal_method": node_cpu_signal.get("method", "not-collected"),
+                "cpu_signal_kind": signal_kind(node_cpu_signal),
+                "cpu_is_approximation": bool(node_cpu_signal.get("is_approximation", False)),
                 "memory_allocatable_mib": int(round(memory_bytes / (1024 ** 2))),
                 "memory_available_mib": round(memory_available_mib, 1) if memory_available_mib is not None else None,
                 "memory_utilization_pct": round(memory_util_pct, 1) if memory_util_pct is not None else None,
+                "memory_signal_status": node_memory_signal.get("status", "not-collected"),
+                "memory_signal_source": node_memory_signal.get("source", "unavailable"),
+                "memory_signal_method": node_memory_signal.get("method", "not-collected"),
+                "memory_signal_kind": signal_kind(node_memory_signal),
+                "memory_is_approximation": bool(node_memory_signal.get("is_approximation", False)),
+                "disk_utilization_pct": round(disk_util_pct, 1) if disk_util_pct is not None else None,
+                "disk_signal_status": node_disk_signal.get("status", "not-collected"),
+                "disk_signal_source": node_disk_signal.get("source", "unavailable"),
+                "disk_signal_method": node_disk_signal.get("method", "not-collected"),
+                "disk_signal_kind": signal_kind(node_disk_signal),
+                "disk_is_approximation": bool(node_disk_signal.get("is_approximation", False)),
                 "pod_count": int((data.get("node_pod_counts") or {}).get(node_name, 0) or 0),
+                "pod_density_pct": round(pod_density_pct, 1) if pod_density_pct is not None else None,
+                "pod_density_signal_status": pod_density_signal.get("status", "not-collected"),
+                "pod_density_signal_source": pod_density_signal.get("source", "unavailable"),
+                "pod_density_signal_method": pod_density_signal.get("method", "not-collected"),
+                "pod_density_signal_kind": signal_kind(pod_density_signal, observed_label="density", derived_label="density"),
+                "pod_density_is_approximation": bool(pod_density_signal.get("is_approximation", False)),
             }
         )
 
@@ -714,9 +777,29 @@ def main():
             "average_ephemeral_storage_gib_per_node": round((total_disk_bytes / (1024 ** 3)) / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
             "average_pods_per_node": round(total_pods_scheduled / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
             "average_pod_density_pct": average_pod_density_pct,
+            "average_pod_density_signal_status": pod_density_signal.get("status", "not-collected"),
+            "average_pod_density_signal_source": pod_density_signal.get("source", "unavailable"),
+            "average_pod_density_signal_method": pod_density_signal.get("method", "not-collected"),
+            "average_pod_density_signal_kind": signal_kind(pod_density_signal, observed_label="density", derived_label="density"),
+            "average_pod_density_is_approximation": bool(pod_density_signal.get("is_approximation", False)),
             "average_cpu_utilization_pct": average_cpu_utilization_pct,
+            "average_cpu_signal_status": node_cpu_signal.get("status", "not-collected"),
+            "average_cpu_signal_source": node_cpu_signal.get("source", "unavailable"),
+            "average_cpu_signal_method": node_cpu_signal.get("method", "not-collected"),
+            "average_cpu_signal_kind": signal_kind(node_cpu_signal),
+            "average_cpu_is_approximation": bool(node_cpu_signal.get("is_approximation", False)),
             "average_memory_utilization_pct": average_memory_utilization_pct,
+            "average_memory_signal_status": node_memory_signal.get("status", "not-collected"),
+            "average_memory_signal_source": node_memory_signal.get("source", "unavailable"),
+            "average_memory_signal_method": node_memory_signal.get("method", "not-collected"),
+            "average_memory_signal_kind": signal_kind(node_memory_signal),
+            "average_memory_is_approximation": bool(node_memory_signal.get("is_approximation", False)),
             "average_disk_utilization_pct": average_disk_utilization_pct,
+            "average_disk_signal_status": node_disk_signal.get("status", "not-collected"),
+            "average_disk_signal_source": node_disk_signal.get("source", "unavailable"),
+            "average_disk_signal_method": node_disk_signal.get("method", "not-collected"),
+            "average_disk_signal_kind": signal_kind(node_disk_signal),
+            "average_disk_is_approximation": bool(node_disk_signal.get("is_approximation", False)),
         },
         "ip_capacity": {
             "services": data.get("service_ip_capacity_summary", {}) or {},

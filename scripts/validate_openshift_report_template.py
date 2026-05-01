@@ -42,6 +42,14 @@ FORBIDDEN_PATTERNS = [
     (r"Collection notes:\s*\|", "collection notes must not collapse into an inline table"),
 ]
 
+REQUIRED_RUNTIME_SIGNAL_MARKERS = [
+    ("{% macro runtime_signal_basis(entry) -%}", "runtime signal provenance macro must exist"),
+    ("{% macro pct_with_basis(value, kind, is_approximation) -%}", "runtime percentage rendering macro must exist"),
+    ("CPU Requested Pressure", "template must support request-derived CPU labeling"),
+    ("Memory Requested Pressure", "template must support request-derived memory labeling"),
+    ("Runtime signal basis", "capacity snapshot must render runtime signal provenance"),
+]
+
 
 def fail(message: str) -> None:
     print(f"template validation failed: {message}", file=sys.stderr)
@@ -89,6 +97,10 @@ def main() -> int:
 
     for pattern, message in FORBIDDEN_PATTERNS:
         if re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE):
+            fail(message)
+
+    for marker, message in REQUIRED_RUNTIME_SIGNAL_MARKERS:
+        if marker not in text:
             fail(message)
 
     print(f"{path}: report template validation ok")

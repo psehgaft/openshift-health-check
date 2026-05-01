@@ -36,6 +36,35 @@ not-collected
 {%- endif -%}
 {%- endmacro %}
 
+{% macro runtime_signal_basis(entry) -%}
+{%- set status = (entry | default({})).get('status', 'not-collected') -%}
+{%- set method = (entry | default({})).get('method', 'not-collected') -%}
+{%- set expected_live = (entry | default({})).get('capability_profile_expected_live', false) -%}
+{%- if status == 'observed' -%}
+observed live via `{{ method }}`
+{%- elif status == 'derived' -%}
+derived from cluster objects via `{{ method }}`
+{%- if expected_live %}; live metric evidence is expected by the capability profile{% endif -%}
+{%- elif status == 'query-failed' -%}
+live query failed
+{%- elif status == 'no-data' -%}
+live metric returned no data
+{%- elif status == 'not-configured' -%}
+metric not configured
+{%- else -%}
+metric not collected
+{%- endif -%}
+{%- endmacro %}
+
+{% macro pct_with_basis(value, kind, is_approximation) -%}
+{%- if value in [None, ''] -%}
+not-assessed
+{%- else -%}
+{{ value }}%
+{%- if kind == 'requested-pressure' or is_approximation -%} (request-derived){%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+
 {% macro posture_score(status) -%}
 {%- set key = (status | default('unknown') | string | trim | upper) -%}
 {%- if key in ['UNKONWN', 'UNKNWON', 'UNKNONW'] -%}
@@ -1348,7 +1377,10 @@ not-scored
 {% endif %}
 
 {% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
-#### CPU Utilization
+{% set top_pod_cpu_signal = (runtime_signal_resolution_map | default({})).get('top_pod_cpu_usage', {}) %}
+#### {% if top_pod_cpu_signal.get('status') == 'derived' %}CPU Requested Pressure{% else %}CPU Utilization{% endif %}
+
+`{{ runtime_signal_basis(top_pod_cpu_signal) }}`
 
 | Namespace | Pod | CPU m |
 | --- | --- | --- |
@@ -1358,7 +1390,10 @@ not-scored
 {% endif %}
 
 {% if top_pod_memory_usage_summary | default([]) | length > 0 %}
-#### Memory Utilization
+{% set top_pod_memory_signal = (runtime_signal_resolution_map | default({})).get('top_pod_memory_usage', {}) %}
+#### {% if top_pod_memory_signal.get('status') == 'derived' %}Memory Requested Pressure{% else %}Memory Utilization{% endif %}
+
+`{{ runtime_signal_basis(top_pod_memory_signal) }}`
 
 | Namespace | Pod | Memory MiB |
 | --- | --- | --- |
@@ -1664,6 +1699,15 @@ Cluster update history was not returned.
 
 #### Capacity And Average Utilization
 
+{% set avg_pod_density_kind = cluster_current_state.resources.average_pod_density_signal_kind | default('density') %}
+{% set avg_pod_density_approx = cluster_current_state.resources.average_pod_density_is_approximation | default(false) %}
+{% set avg_cpu_kind = cluster_current_state.resources.average_cpu_signal_kind | default('utilization') %}
+{% set avg_cpu_approx = cluster_current_state.resources.average_cpu_is_approximation | default(false) %}
+{% set avg_memory_kind = cluster_current_state.resources.average_memory_signal_kind | default('utilization') %}
+{% set avg_memory_approx = cluster_current_state.resources.average_memory_is_approximation | default(false) %}
+{% set avg_disk_kind = cluster_current_state.resources.average_disk_signal_kind | default('utilization') %}
+{% set avg_disk_approx = cluster_current_state.resources.average_disk_is_approximation | default(false) %}
+
 | Signal | Value |
 | --- | --- |
 | Total allocatable CPU | `{{ 'not-derived' if (cluster_current_state.resources.total_cpu_millicores | default('unknown')) == 'unknown' else (cluster_current_state.resources.total_cpu_millicores | default('unknown')) }}` m |
@@ -1673,10 +1717,16 @@ Cluster update history was not returned.
 | Average memory per node | `{{ 'not-derived' if (cluster_current_state.resources.average_memory_mib_per_node | default('unknown')) == 'unknown' else (cluster_current_state.resources.average_memory_mib_per_node | default('unknown')) }}` MiB |
 | Average ephemeral storage per node | `{{ 'not-derived' if (cluster_current_state.resources.average_ephemeral_storage_gib_per_node | default('unknown')) == 'unknown' else (cluster_current_state.resources.average_ephemeral_storage_gib_per_node | default('unknown')) }}` GiB |
 | Average pods per node | `{{ 'not-derived' if (cluster_current_state.resources.average_pods_per_node | default('unknown')) == 'unknown' else (cluster_current_state.resources.average_pods_per_node | default('unknown')) }}` |
-| Average pod density | `{% if cluster_current_state.resources.average_pod_density_pct not in [None, ''] %}{{ cluster_current_state.resources.average_pod_density_pct }}%{% else %}not-assessed{% endif %}` |
-| Average CPU utilization | `{% if cluster_current_state.resources.average_cpu_utilization_pct not in [None, ''] %}{{ cluster_current_state.resources.average_cpu_utilization_pct }}%{% else %}not-assessed{% endif %}` |
-| Average memory utilization | `{% if cluster_current_state.resources.average_memory_utilization_pct not in [None, ''] %}{{ cluster_current_state.resources.average_memory_utilization_pct }}%{% else %}not-assessed{% endif %}` |
-| Average disk utilization | `{% if cluster_current_state.resources.average_disk_utilization_pct not in [None, ''] %}{{ cluster_current_state.resources.average_disk_utilization_pct }}%{% else %}not-assessed{% endif %}` |
+| Average pod density | `{{ pct_with_basis(cluster_current_state.resources.average_pod_density_pct, avg_pod_density_kind, avg_pod_density_approx) }}` |
+| {% if avg_cpu_kind == 'requested-pressure' %}Average CPU requested pressure{% else %}Average CPU utilization{% endif %} | `{{ pct_with_basis(cluster_current_state.resources.average_cpu_utilization_pct, avg_cpu_kind, avg_cpu_approx) }}` |
+| {% if avg_memory_kind == 'requested-pressure' %}Average memory requested pressure{% else %}Average memory utilization{% endif %} | `{{ pct_with_basis(cluster_current_state.resources.average_memory_utilization_pct, avg_memory_kind, avg_memory_approx) }}` |
+| {% if avg_disk_kind == 'requested-pressure' %}Average ephemeral storage requested pressure{% else %}Average disk utilization{% endif %} | `{{ pct_with_basis(cluster_current_state.resources.average_disk_utilization_pct, avg_disk_kind, avg_disk_approx) }}` |
+
+{% set node_cpu_signal = (runtime_signal_resolution_map | default({})).get('node_cpu_utilization', {}) %}
+{% set node_memory_signal = (runtime_signal_resolution_map | default({})).get('node_memory_utilization', {}) %}
+{% set node_disk_signal = (runtime_signal_resolution_map | default({})).get('node_disk_utilization', {}) %}
+{% set pod_density_signal = (runtime_signal_resolution_map | default({})).get('kubelet_pod_density', {}) %}
+| Runtime signal basis | `cpu={{ runtime_signal_basis(node_cpu_signal) }}, memory={{ runtime_signal_basis(node_memory_signal) }}, disk={{ runtime_signal_basis(node_disk_signal) }}, podDensity={{ runtime_signal_basis(pod_density_signal) }}` |
 
 #### Service And Pod IP Capacity
 
@@ -2162,6 +2212,7 @@ Cluster update history was not returned.
 {% set control_plane_query_statuses = prom_query_status_map | default({}) %}
 {% set control_plane_query_errors = prom_query_error_map | default({}) %}
 {% set control_plane_offline_evidence = control_plane_evidence_summary | default({}) %}
+{% set obs_signal_map = observability_signal_resolution_map | default({}) %}
 {% if (not prom_available) and not (control_plane_offline_signals_present | default(false)) %}
 | Metrics Signal | Detail |
 | --- | --- |
@@ -2212,6 +2263,7 @@ Cluster update history was not returned.
 | Control plane to worker latency | `{% if cp_to_worker_state == 'collected' %}{{ controlplane_to_worker_network_latency_ms }} ms{% else %}{{ prom_metric_value(cp_to_worker_state, controlplane_to_worker_network_latency_ms) }}{% endif %}` | {{ status_badge((cp_to_worker_state | upper) if cp_to_worker_state != 'collected' else ('WARN' if (controlplane_to_worker_network_latency_ms | float) > controlplane_to_worker_latency_warn_ms else 'OK')) }} |
 | Worker to worker latency | `{% if worker_to_worker_state == 'collected' %}{{ worker_to_worker_network_latency_ms }} ms{% else %}{{ prom_metric_value(worker_to_worker_state, worker_to_worker_network_latency_ms) }}{% endif %}` | {{ status_badge((worker_to_worker_state | upper) if worker_to_worker_state != 'collected' else ('WARN' if (worker_to_worker_network_latency_ms | float) > worker_to_worker_latency_warn_ms else 'OK')) }} |
 | Firing alerts | `{{ firing_alerts | length }}` | {{ status_badge('WARN' if firing_alerts | length > 0 else 'OK') }} |
+| Signal basis | `alerts={{ runtime_signal_basis(obs_signal_map.get('firing_alerts', {})) }}, apiStorage={{ runtime_signal_basis(obs_signal_map.get('apiserver_storage_objects', {})) }}, apiLatency={{ runtime_signal_basis(obs_signal_map.get('apiserver_latency', {})) }}, etcdMembership={{ runtime_signal_basis(obs_signal_map.get('etcd_members_reporting_leader', {})) }}, cpToWorker={{ runtime_signal_basis(obs_signal_map.get('controlplane_to_worker_network_latency', {})) }}` | {{ status_badge('INFO') }} |
 
 {% if control_plane_query_errors | length > 0 %}
 | Metrics Signal | Detail |
