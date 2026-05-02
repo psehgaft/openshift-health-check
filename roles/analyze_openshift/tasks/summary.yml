@@ -2,6 +2,8 @@
 - name: Build aggregate lists
   vars:
     restart_limit: "{{ top_restart_pod_limit | default(10) | int }}"
+    restart_table_limit: "{{ top_restart_pod_table_limit | default(100) | int }}"
+    restart_table_threshold: "{{ top_restart_pod_table_threshold | default(3) | int }}"
     pvc_issue_limit: "{{ top_pvc_issue_limit | default(10) | int }}"
     event_reason_limit: "{{ top_event_reason_limit | default(10) | int }}"
     alert_group_limit: "{{ top_alert_group_limit | default(10) | int }}"
@@ -14,8 +16,8 @@
     scored_workload_practice_findings: "{{ workload_practice_findings | default([]) | rejectattr('issue', 'equalto', 'missing-pod-disruption-budget') | list }}"
     default_storageclasses: "{{ storageclass_summary | default([]) | selectattr('is_default', 'equalto', true) | list }}"
     top_pod_restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:(restart_limit | int)] }}"
-    high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list) }}"
-    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'ge', (pod_restart_warning_threshold | default(5) | int)) | sort(attribute='restarts', reverse=true) | list)[:(restart_limit | int)]) }}"
+    high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'gt', (restart_table_threshold | int)) | sort(attribute='restarts', reverse=true) | list) }}"
+    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'gt', (restart_table_threshold | int)) | sort(attribute='restarts', reverse=true) | list)[:(restart_table_limit | int)]) }}"
     top_pvc_issues: "{{ (pvc_issues | default([]))[:(pvc_issue_limit | int)] }}"
     top_pv_issues: "{{ (pv_issues | default([]))[:(pvc_issue_limit | int)] }}"
     top_event_reasons: "{{ (warning_event_reason_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | list)[:(event_reason_limit | int)] }}"

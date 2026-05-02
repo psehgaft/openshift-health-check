@@ -1452,7 +1452,41 @@
 
     def add_check(capability, status, detail, source, level="recommended", scored=True):
         normalized_level = normalize_level(level)
+        capability_key_map = {
+            "GitOps controller and application inventory": "declarative_gitops_operations",
+            "External secrets integration": "external_secrets_operator",
+            "User workload monitoring enabled": "user_workload_metrics_monitoring",
+            "Grafana dashboard inventory": "grafana_metrics_dashboards",
+            "Persistent cluster monitoring storage": "persistent_monitoring_storage",
+            "External log forwarding": "cluster_log_forwarding",
+            "Cluster metrics remote write": "cluster_metrics_remote_write",
+            "External alert delivery": "external_alert_delivery",
+            "Application backup and restore baseline": "application_backup_and_restore_readiness",
+            "Control plane backup and recovery baseline": "control_plane_backup_and_recovery_readiness",
+            "Secondary-site disaster recovery": "secondary_site_disaster_recovery",
+            "Compliance requirements validation": "compliance_requirements_validation",
+            "Central identity provider integration": "oauth_external_identity_provider",
+            "Red Hat Insights connectivity": "advanced_cluster_management",
+            "Worker machine remediation": "machine_health_check_remediation",
+            "Cluster autoscaler": "cluster_autoscaler_configuration",
+            "Registry governance baseline": "image_registry_policy_governance",
+            "Cluster image mirror configuration": "cluster_image_mirror_configuration",
+            "Disconnected installation image sources": "disconnected_cluster_image_sources",
+            "IPsec encryption enabled": "ovn_ipsec_encryption",
+            "etcd encryption enabled": "etcd_encryption",
+            "Data-at-rest encryption posture": "platform_encryption_at_rest",
+            "Cluster proxy configuration": "cluster_proxy_configuration",
+            "Custom trust bundle configuration": "custom_ca_trust_bundle",
+            "Application external private registry usage": "workloads_using_external_private_registries",
+            "Cluster-hosted CI/CD runners": "cluster_hosted_cicd_runners",
+            "Workload vulnerability scanner agents": "workload_vulnerability_scanning",
+            "Namespace network policy baseline": "namespace_network_policy_baseline",
+            "Namespace egress controls": "namespace_egress_controls",
+            "ACM managed-cluster registration": "advanced_cluster_management",
+        }
+        capability_key = capability_key_map.get(capability, "")
         checks.append({
+            "capability_key": capability_key,
             "capability": capability,
             "status": status,
             "detail": detail,
@@ -3294,10 +3328,70 @@
             source="managed-cluster registration inventory",
         )
 
+    severity_rank = {"critical": 4, "warning": 3, "warn": 3, "info": 2, "ok": 1, "unknown": 0}
+    capability_sections = []
+    for cap_key, cap_value in capability_profile.items():
+        if not isinstance(cap_value, dict):
+            continue
+        cap_checks = [item for item in checks if item.get("capability_key") == cap_key]
+        cap_findings = [item for item in findings if item.get("capability") == cap_key]
+        finding_severities = [str(item.get("severity") or "info").lower() for item in cap_findings]
+        check_statuses = [str(item.get("status") or "unknown").upper() for item in cap_checks]
+        if any(item == "critical" for item in finding_severities):
+            overall_status = "CRITICAL"
+        elif any(item in {"warning", "warn"} for item in finding_severities):
+            overall_status = "WARNING"
+        elif "WARN" in check_statuses:
+            overall_status = "WARNING"
+        elif "OK" in check_statuses:
+            overall_status = "OK"
+        elif any(item == "info" for item in finding_severities) or "INFO" in check_statuses:
+            overall_status = "INFO"
+        else:
+            overall_status = "UNKNOWN"
+        recommended_action = (
+            cap_findings[0].get("recommended_action")
+            if cap_findings
+            else (
+                "No remediation is currently required for this capability posture."
+                if overall_status == "OK"
+                else ("Collect or review the expected evidence for this capability and remediate any gaps." if overall_status in {"WARNING", "CRITICAL", "UNKNOWN"} else "Review this capability as informational context.")
+            )
+        )
+        capability_sections.append({
+            "key": cap_key,
+            "title": cap_key.replace("_", " ").strip(),
+            "required": bool(cap_value.get("required", False)),
+            "criticality": str(cap_value.get("criticality") or "medium").strip().lower(),
+            "expected_state": str(cap_value.get("expected_state") or "present").strip().lower(),
+            "owner": str(cap_value.get("owner") or "platform").strip() or "platform",
+            "evidence_required": [str(item).strip() for item in (cap_value.get("evidence_required") or []) if str(item).strip()],
+            "notes": str(cap_value.get("notes") or "").strip(),
+            "docs": str(cap_value.get("docs") or "").strip(),
+            "status": overall_status,
+            "check_count": len(cap_checks),
+            "finding_count": len(cap_findings),
+            "checks": cap_checks,
+            "findings": cap_findings,
+            "recommended_action": recommended_action,
+            "top_detail": (
+                cap_findings[0].get("detail")
+                if cap_findings
+                else (cap_checks[0].get("detail") if cap_checks else "No collected check detail was mapped for this capability.")
+            ),
+        })
+
+    capability_sections.sort(key=lambda item: (
+        -int(item.get("required", False)),
+        -severity_rank.get(str(item.get("status") or "unknown").lower(), 0),
+        str(item.get("key") or ""),
+    ))
+
     print(json.dumps({
         "day2_posture_checks": checks,
         "day2_posture_findings": findings,
         "scored_day2_posture_findings": [item for item in findings if item.get("severity") != "info"],
+        "capability_sections": capability_sections,
         "day2_posture_summary": {
             "checks_total": len(checks),
             "checks_warn": len([c for c in checks if c["status"] == "WARN"]),
@@ -3428,6 +3522,7 @@
           'day2_posture_checks': [],
           'day2_posture_findings': [],
           'scored_day2_posture_findings': [],
+          'capability_sections': [],
           'day2_posture_summary': {
             'checks_total': 0,
             'checks_warn': 0,
@@ -3548,4 +3643,5 @@
     day2_posture_checks: "{{ day2_posture_payload.day2_posture_checks | default([]) }}"
     day2_posture_findings: "{{ day2_posture_payload.day2_posture_findings | default([]) }}"
     scored_day2_posture_findings: "{{ day2_posture_payload.scored_day2_posture_findings | default([]) }}"
+    day2_capability_sections: "{{ day2_posture_payload.capability_sections | default([]) }}"
     day2_posture_summary: "{{ day2_posture_payload.day2_posture_summary | default({}) }}"

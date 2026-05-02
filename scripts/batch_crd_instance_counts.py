@@ -62,7 +62,7 @@ def main() -> int:
 
     kube_cli = data.get("kube_cli", "oc")
     timeout_seconds = int(data.get("timeout_seconds", 60))
-    max_workers = max(1, int(data.get("parallelism", 8)))
+    max_workers = max(1, int(data.get("parallelism", 2)))
     items = data.get("crds", [])
 
     results = []

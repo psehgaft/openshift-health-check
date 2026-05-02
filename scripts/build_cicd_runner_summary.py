@@ -11,47 +11,6 @@ from pathlib import Path
 from typing import Any
 
 
-PROVIDER_PATTERNS = {
-    "gitlab-runner": [
-        "gitlab-runner",
-        "gitlab.com/runner",
-        "ci_server_url",
-    ],
-    "jenkins-agent": [
-        "jenkins-agent",
-        "jenkins/slave",
-        "jenkins/inbound-agent",
-        "jenkins_agent_name",
-        "jenkins_secret",
-        "jnlp",
-    ],
-    "github-actions-runner": [
-        "actions-runner",
-        "gha-runner",
-        "githubactionsrunner",
-        "actions.github.com",
-        "runner-scale-set",
-        "runnerdeployment",
-        "runnerreplicaset",
-        "ephemeralrunner",
-        "ephemeralrunnerset",
-    ],
-    "azure-devops-agent": [
-        "azure-pipelines-agent",
-        "azure-devops-agent",
-        "azdo-agent",
-        "vsts-agent",
-        "azp_url",
-        "azp_token",
-        "azp_pool",
-    ],
-    "generic-runner": [
-        "ci-runner",
-        "cicd-runner",
-        "build-runner",
-    ],
-}
-
 SYSTEM_NAMESPACE_RE = re.compile(r"^(kube-|openshift-|default$)")
 
 
@@ -76,21 +35,122 @@ def metadata_text(resource: dict[str, Any]) -> str:
     return " ".join(str(part) for part in parts if part).lower()
 
 
-def pod_text(pod: dict[str, Any]) -> str:
+def lower_list(values: list[str]) -> list[str]:
+    return [str(value or "").strip().lower() for value in values if str(value or "").strip()]
+
+
+def pod_detection_context(pod: dict[str, Any]) -> dict[str, Any]:
+    metadata = pod.get("metadata", {}) or {}
     spec = pod.get("spec", {}) or {}
     containers = (spec.get("containers", []) or []) + (spec.get("initContainers", []) or [])
-    parts = [metadata_text(pod), spec.get("serviceAccountName", "")]
-    for container in containers:
-        parts.extend([container.get("name", ""), container.get("image", "")])
-        for env in container.get("env", []) or []:
-            parts.append(env.get("name", ""))
-    return " ".join(str(part) for part in parts if part).lower()
+    labels = metadata.get("labels", {}) or {}
+    annotations = metadata.get("annotations", {}) or {}
+    container_names = lower_list([container.get("name", "") for container in containers])
+    container_images = lower_list([container.get("image", "") for container in containers])
+    env_names = lower_list(
+        [
+            env.get("name", "")
+            for container in containers
+            for env in (container.get("env", []) or [])
+        ]
+    )
+    object_names = lower_list(
+        [
+            metadata.get("name", ""),
+            metadata.get("namespace", ""),
+            spec.get("serviceAccountName", ""),
+        ]
+    )
+    label_keys = lower_list(list(labels.keys()))
+    label_values = lower_list(list(labels.values()))
+    annotation_keys = lower_list(list(annotations.keys()))
+    annotation_values = lower_list(list(annotations.values()))
+    combined = " ".join(
+        object_names
+        + container_names
+        + container_images
+        + env_names
+        + label_keys
+        + label_values
+        + annotation_keys
+        + annotation_values
+    )
+    return {
+        "container_names": container_names,
+        "container_images": container_images,
+        "env_names": env_names,
+        "object_names": object_names,
+        "label_keys": label_keys,
+        "label_values": label_values,
+        "annotation_keys": annotation_keys,
+        "annotation_values": annotation_values,
+        "combined": combined,
+    }
 
 
-def classify_provider(text: str) -> str:
-    for provider, patterns in PROVIDER_PATTERNS.items():
-        if any(pattern in text for pattern in patterns):
-            return provider
+def any_contains(values: list[str], needles: list[str]) -> bool:
+    return any(needle in value for value in values for needle in needles)
+
+
+def detect_pod_provider(pod: dict[str, Any]) -> str:
+    ctx = pod_detection_context(pod)
+
+    if (
+        any_contains(ctx["container_names"], ["gitlab-runner"])
+        or any_contains(ctx["container_images"], ["gitlab-runner"])
+        or any_contains(ctx["env_names"], ["ci_server_url", "runner_token", "registration_token"])
+        or any_contains(ctx["label_keys"], ["gitlab.com/runner"])
+    ):
+        return "gitlab-runner"
+
+    if (
+        (
+            any_contains(ctx["container_names"], ["inbound-agent", "jenkins-agent", "slave"])
+            or any_contains(ctx["container_images"], ["jenkins/inbound-agent", "jenkins/slave"])
+        )
+        and any_contains(ctx["env_names"], ["jenkins_agent_name", "jenkins_secret", "jenkins_name", "jnlp_secret"])
+    ):
+        return "jenkins-agent"
+
+    if (
+        any_contains(ctx["container_names"], ["actions-runner", "runner", "runner-listener"])
+        and (
+            any_contains(ctx["container_images"], ["actions-runner", "gha-runner-scale-set", "gha-runner-scale-set-listener"])
+            or any_contains(ctx["label_keys"], ["actions.github.com/scale-set-name", "actions.github.com/organization", "actions.github.com/repository"])
+        )
+    ):
+        return "github-actions-runner"
+
+    if (
+        any_contains(ctx["container_names"], ["azure-pipelines-agent", "azure-devops-agent", "vsts-agent", "azdo-agent"])
+        or (
+            any_contains(ctx["container_images"], ["azure-pipelines-agent", "azure-devops-agent", "vsts-agent", "azdo-agent"])
+            and any_contains(ctx["env_names"], ["azp_url", "azp_token", "azp_pool"])
+        )
+    ):
+        return "azure-devops-agent"
+
+    if (
+        any_contains(ctx["container_names"], ["ci-runner", "cicd-runner", "build-runner"])
+        and any_contains(ctx["env_names"], ["runner_token", "runner_name", "ci_server_url", "registration_token", "azp_url"])
+    ):
+        return "generic-runner"
+
+    return ""
+
+
+def detect_controller_provider(resource: dict[str, Any]) -> str:
+    text = metadata_text(resource)
+    if "gitlab-runner" in text:
+        return "gitlab-runner"
+    if any(token in text for token in ["githubactionsrunner", "runnerdeployment", "runnerreplicaset", "ephemeralrunner", "ephemeralrunnerset", "runner-scale-set"]):
+        return "github-actions-runner"
+    if any(token in text for token in ["azure-pipelines-agent", "azure-devops-agent", "azdo-agent", "vsts-agent"]):
+        return "azure-devops-agent"
+    if any(token in text for token in ["jenkins-agent", "jenkins/inbound-agent", "jenkins/slave"]):
+        return "jenkins-agent"
+    if any(token in text for token in ["ci-runner", "cicd-runner", "build-runner"]):
+        return "generic-runner"
     return ""
 
 
@@ -174,7 +234,7 @@ def detect_controller_resources(graph: dict[str, Any]) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for key in ("deployments", "statefulsets", "daemonsets", "replicasets"):
         for resource in items(graph, key):
-            provider = classify_provider(metadata_text(resource))
+            provider = detect_controller_provider(resource)
             if provider:
                 counts[provider] += 1
     return dict(sorted(counts.items()))
@@ -188,8 +248,7 @@ def main() -> int:
     graph = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     runner_pods = []
     for pod in items(graph, "pods"):
-        text = pod_text(pod)
-        provider = classify_provider(text)
+        provider = detect_pod_provider(pod)
         if not provider:
             continue
         namespace = ((pod.get("metadata", {}) or {}).get("namespace") or "")

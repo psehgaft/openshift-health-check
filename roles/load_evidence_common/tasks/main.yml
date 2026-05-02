@@ -30,6 +30,7 @@
     managed_gates_path: "{{ resolved_managed_gates_path }}"
     inspect_path: "{{ resolved_inspect_path }}"
     advisor_export_path: "{{ resolved_advisor_export_path }}"
+    insights_archive_path: "{{ resolved_insights_archive_path }}"
     sosreport_paths: "{{ resolved_sosreport_paths }}"
   vars:
     bundle_data: "{{ case_bundle_discovery.stdout | from_json }}"
@@ -38,6 +39,7 @@
     resolved_managed_gates_path: "{{ managed_gates_path if (managed_gates_path | default('') | trim | length > 0) else (bundle_data.managed_gates_path | default('')) }}"
     resolved_inspect_path: "{{ inspect_path if (inspect_path | default('') | trim | length > 0) else (bundle_data.inspect_path | default('')) }}"
     resolved_advisor_export_path: "{{ advisor_export_path if (advisor_export_path | default('') | trim | length > 0) else (bundle_data.advisor_export_path | default('')) }}"
+    resolved_insights_archive_path: "{{ insights_archive_path if (insights_archive_path | default('') | trim | length > 0) else (bundle_data.insights_archive_path | default('')) }}"
     resolved_sosreport_paths: "{{ sosreport_paths if (sosreport_paths | default([]) | length > 0) else (bundle_data.sosreport_paths | default([])) }}"
   when: case_bundle_path | default('') | trim | length > 0
 
@@ -107,6 +109,12 @@
   register: advisor_export_path_stat
   when: advisor_export_path | default('') | trim | length > 0
 
+- name: Stat optional insights archive path
+  ansible.builtin.stat:
+    path: "{{ insights_archive_path }}"
+  register: insights_archive_path_stat
+  when: insights_archive_path | default('') | trim | length > 0
+
 - name: Fail when must-gather path is missing
   ansible.builtin.assert:
     that:
@@ -153,6 +161,14 @@
       - advisor_export_path_stat.stat.isreg
     fail_msg: "advisor_export_path does not exist or is not a file."
   when: advisor_export_path | default('') | trim | length > 0
+
+- name: Fail when insights archive path is missing
+  ansible.builtin.assert:
+    that:
+      - insights_archive_path_stat.stat.exists
+      - insights_archive_path_stat.stat.isdir
+    fail_msg: "insights_archive_path does not exist or is not a directory."
+  when: insights_archive_path | default('') | trim | length > 0
 
 - name: Parse must-gather evidence summary
   ansible.builtin.command:
@@ -346,6 +362,30 @@
       parser: parse_advisor_export.py
   when: advisor_export_path | default('') | trim | length > 0
 
+- name: Parse optional insights archive evidence
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_insights_archive.py"
+      - "{{ insights_archive_path }}"
+  register: insights_archive_parse_cmd
+  changed_when: false
+  when: insights_archive_path | default('') | trim | length > 0
+
+- name: Merge optional insights archive evidence
+  ansible.builtin.set_fact:
+    insights_archive_data: "{{ insights_archive_parse_cmd.stdout | from_json }}"
+    evidence_sources: "{{ evidence_sources + [insights_archive_source] }}"
+    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(1) | int) + 1), 'source_labels': ((evidence_summary.source_labels | default([])) + ['insights-archive']), 'insights_archive_path': insights_archive_path}, recursive=True) }}"
+  vars:
+    insights_archive_source:
+      name: insights-archive
+      type: archive-directory
+      mode: offline
+      path: "{{ insights_archive_path }}"
+      parser: parse_insights_archive.py
+  when: insights_archive_path | default('') | trim | length > 0
+
 - name: Build evidence coverage facts
   ansible.builtin.set_fact:
     evidence_coverage:
@@ -363,12 +403,13 @@
         }}
       cluster_events: "{{ 'present' if (((must_gather_inventory | default({})).summary.event_file_count | default(0) | int) > 0) else ('partial' if (((inspect_data | default({})).summary.resource_markers.events | default(0) | int) > 0) else 'missing') }}"
       service_logs: "{{ 'partial' if (((must_gather_inventory | default({})).summary.log_file_count | default(0) | int) > 0) else ('partial' if (((inspect_data | default({})).summary.text_file_count | default(0) | int) > 0) else 'missing') }}"
-      node_diagnostics: "{{ 'present' if (sosreport_paths | default([]) | length) > 0 else 'missing' }}"
-      inspect: "{{ 'present' if (inspect_path | default('') | trim | length) > 0 else 'missing' }}"
-      advisor_data: "{{ 'present' if (advisor_export_path | default('') | trim | length) > 0 else 'missing' }}"
+      node_diagnostics: "{{ 'present' if (((sosreport_data | default({})).summary.count | default(0) | int) > 0) else 'missing' }}"
+      inspect: "{{ 'present' if (((inspect_data | default({})).summary.file_count | default(0) | int) > 0) else 'missing' }}"
+      advisor_data: "{{ 'present' if ((advisor_export_data | default({})).summary is defined) else 'missing' }}"
       control_plane_backup: missing
-      cluster_compare: "{{ 'present' if (cluster_compare_path | default('') | trim | length > 0) else 'missing' }}"
-      managed_gates: "{{ 'present' if (managed_gates_path | default('') | trim | length > 0) else 'missing' }}"
+      cluster_compare: "{{ 'present' if ((cluster_compare_data | default({})).summary is defined) else 'missing' }}"
+      managed_gates: "{{ 'present' if ((managed_gates_data | default({})).summary is defined) else 'missing' }}"
+      insights_archive: "{{ 'present' if (((insights_archive_data | default({})).summary.present | default(false) | bool)) else 'missing' }}"
 
 - name: Build evidence limitations
   ansible.builtin.set_fact:
@@ -381,6 +422,7 @@
         + ([{'area': 'reference compliance', 'detail': 'No cluster-compare output or baseline reference was provided.'}] if (evidence_coverage.cluster_compare == 'missing') else [])
         + ([{'area': 'managed-service gates', 'detail': 'No provider-managed gate export such as rosa list gates output was provided.'}] if (evidence_coverage.managed_gates == 'missing') else [])
         + ([{'area': 'advisor posture', 'detail': 'No Insights Advisor export or offline Advisor evidence was provided.'}] if (evidence_coverage.advisor_data == 'missing') else [])
+        + ([{'area': 'insights archive', 'detail': 'No Insights archive directory was provided for collected-state support evidence.'}] if (evidence_coverage.insights_archive == 'missing') else [])
       }}
 
 - name: Build evidence hygiene scanner arguments
@@ -397,6 +439,7 @@
             + (['--root', 'cluster-compare', cluster_compare_path] if (cluster_compare_path | default('') | trim | length > 0) else [])
             + (['--root', 'managed-gates', managed_gates_path] if (managed_gates_path | default('') | trim | length > 0) else [])
             + (['--root', 'advisor-export', advisor_export_path] if (advisor_export_path | default('') | trim | length > 0) else [])
+            + (['--root', 'insights-archive', insights_archive_path] if (insights_archive_path | default('') | trim | length > 0) else [])
           )
         )
       }}

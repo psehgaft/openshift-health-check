@@ -1,0 +1,69 @@
+---
+- name: Ensure run checkpoint directory exists
+  ansible.builtin.file:
+    path: "{{ report_resume_state_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Define run checkpoint paths
+  ansible.builtin.set_fact:
+    run_checkpoint_snapshot_path: "{{ report_resume_state_dir }}/{{ report_mode_resolved }}-{{ run_checkpoint_stage }}.json"
+  when: run_checkpoint_write_snapshot | default(true) | bool
+
+- name: Build filtered checkpoint context
+  ansible.builtin.set_fact:
+    run_checkpoint_context_filtered: >-
+      {{
+        (
+          vars
+          | dict2items
+          | rejectattr('key', 'match', '^(hostvars|groups|group_names|inventory_|play_hosts|playbook_dir|role_path|ansible_play_|omit|run_checkpoint_|report_resume_)')
+          | items2dict
+        )
+      }}
+  when: run_checkpoint_write_snapshot | default(true) | bool
+
+- name: Write run checkpoint snapshot
+  ansible.builtin.copy:
+    dest: "{{ run_checkpoint_snapshot_path }}"
+    mode: "0644"
+    content: "{{ run_checkpoint_context_filtered | to_nice_json }}"
+  when: run_checkpoint_write_snapshot | default(true) | bool
+
+- name: Update in-memory checkpoint pointers
+  ansible.builtin.set_fact:
+    report_resume_last_snapshot_path: "{{ run_checkpoint_snapshot_path if (run_checkpoint_write_snapshot | default(true) | bool) else (report_resume_last_snapshot_path | default('')) }}"
+    report_resume_last_completed_stage: "{{ run_checkpoint_stage if (run_checkpoint_status | default('completed')) == 'completed' else (report_resume_last_completed_stage | default('')) }}"
+    report_resume_last_resume_next_stage: "{{ run_checkpoint_resume_next_stage if (run_checkpoint_status | default('completed')) == 'completed' else (report_resume_last_resume_next_stage | default('')) }}"
+
+- name: Write run checkpoint manifest
+  ansible.builtin.copy:
+    dest: "{{ report_resume_manifest_path }}"
+    mode: "0644"
+    content: >-
+      {{
+        {
+          'status': (run_checkpoint_status | default('completed')),
+          'platform_family': (platform_family | default('unknown')),
+          'report_mode': (report_mode_resolved | default('unknown')),
+          'failed_stage': (run_checkpoint_stage if (run_checkpoint_status | default('completed')) == 'failed' else ''),
+          'last_completed_stage': (report_resume_last_completed_stage | default('')),
+          'resume_next_stage': (report_resume_last_resume_next_stage | default('')),
+          'snapshot_path': (report_resume_last_snapshot_path | default('')),
+          'updated_at': (ansible_date_time.iso8601 | default('')),
+          'report_run_mode': (report_run_mode | default('fresh'))
+        }
+        | to_nice_json
+      }}
+
+- name: Show checkpoint status
+  vars:
+    checkpoint_resume_playbook_name: "{{ 'openshift_cluster_health_report.yml' if (platform_family | default('kubernetes')) == 'openshift' else 'k8s_cluster_health_report.yml' }}"
+  ansible.builtin.debug:
+    msg:
+      - "Checkpoint status: {{ run_checkpoint_status | default('completed') }}"
+      - "Checkpoint stage: {{ run_checkpoint_stage }}"
+      - "Resume next stage: {{ run_checkpoint_resume_next_stage | default('none') or 'none' }}"
+      - "Checkpoint manifest: {{ report_resume_manifest_path }}"
+      - "Checkpoint snapshot: {{ report_resume_last_snapshot_path | default(run_checkpoint_snapshot_path | default('not-written')) }}"
+      - "Resume command: ansible-playbook {{ playbook_dir }}/{{ checkpoint_resume_playbook_name }} -e report_run_mode=resume_last_failure"

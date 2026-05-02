@@ -96,6 +96,15 @@ def runtime_signal_entry(data, name):
     return ((data.get("runtime_signal_resolution_map") or {}).get(name)) or {}
 
 
+def runtime_signal_rows(data, result_key, signal_name):
+    rows = data.get(result_key, []) or []
+    if rows:
+        return rows
+    entry = runtime_signal_entry(data, signal_name)
+    value = entry.get("value", []) if isinstance(entry, dict) else []
+    return value if isinstance(value, list) else []
+
+
 def signal_kind(entry, observed_label="utilization", derived_label="requested-pressure"):
     if (entry or {}).get("status") == "observed":
         return observed_label
@@ -186,7 +195,7 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
     pod_cpu_signal = runtime_signal_entry(data, "pod_cpu_usage_all")
     pod_memory_signal = runtime_signal_entry(data, "pod_memory_usage_all")
     cpu_usage_by_ns = defaultdict(float)
-    for item in data.get("pod_cpu_usage_all_results", []) or []:
+    for item in runtime_signal_rows(data, "pod_cpu_usage_all_results", "pod_cpu_usage_all"):
         namespace = (item.get("metric", {}) or {}).get("namespace") or ""
         if not namespace:
             continue
@@ -195,7 +204,7 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
             cpu_usage_by_ns[namespace] += value
 
     memory_usage_by_ns = defaultdict(float)
-    for item in data.get("pod_memory_usage_all_results", []) or []:
+    for item in runtime_signal_rows(data, "pod_memory_usage_all_results", "pod_memory_usage_all"):
         namespace = (item.get("metric", {}) or {}).get("namespace") or ""
         if not namespace:
             continue
@@ -388,7 +397,7 @@ def main():
     pod_density_signal = runtime_signal_entry(data, "kubelet_pod_density")
 
     cpu_util_by_node = {}
-    for item in data.get("node_cpu_utilization_results", []):
+    for item in runtime_signal_rows(data, "node_cpu_utilization_results", "node_cpu_utilization"):
         node = normalize_instance_name(
             item.get("metric", {}).get("node")
             or item.get("metric", {}).get("kubernetes_node")
@@ -401,7 +410,7 @@ def main():
             pass
 
     mem_util_by_node = {}
-    for item in data.get("node_memory_utilization_results", []):
+    for item in runtime_signal_rows(data, "node_memory_utilization_results", "node_memory_utilization"):
         node = normalize_instance_name(
             item.get("metric", {}).get("node")
             or item.get("metric", {}).get("kubernetes_node")
@@ -414,7 +423,7 @@ def main():
             pass
 
     disk_util_by_node = {}
-    for item in data.get("node_disk_utilization_results", []):
+    for item in runtime_signal_rows(data, "node_disk_utilization_results", "node_disk_utilization"):
         node = normalize_instance_name(
             item.get("metric", {}).get("node")
             or item.get("metric", {}).get("kubernetes_node")
@@ -427,7 +436,7 @@ def main():
             pass
 
     density_by_node = {}
-    for item in data.get("kubelet_pod_density_results", []):
+    for item in runtime_signal_rows(data, "kubelet_pod_density_results", "kubelet_pod_density"):
         node = normalize_instance_name(item.get("metric", {}).get("node") or item.get("metric", {}).get("instance"))
         value = item.get("value", [None, None])[1]
         try:

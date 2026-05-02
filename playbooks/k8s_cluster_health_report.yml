@@ -11,7 +11,10 @@
     report_basename: "k8s-cluster-health"
     report_generate_html: true
     report_generate_pdf: true
+    report_run_mode: fresh
     collection_parallelism: 4
+    local_resource_budget_cpu_pct: 50
+    local_resource_budget_mem_pct: 50
     collection_command_timeout_seconds: 300
     keep_collection_artifacts: false
     warning_event_limit: 20
@@ -270,33 +273,197 @@
   tasks:
     - name: Run Kubernetes cluster health report scaffold
       block:
-        - name: Run common preflight
-          ansible.builtin.include_role:
-            name: preflight_common
+        - name: Define Kubernetes run checkpoint paths
+          ansible.builtin.set_fact:
+            report_resume_state_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}"
+            report_resume_manifest_path: "{{ report_output_dir }}/.run-state/{{ platform_family }}/latest.json"
 
-        - name: Run Kubernetes preflight
-          ansible.builtin.include_role:
-            name: preflight_kubernetes
+        - name: Reset prior Kubernetes run checkpoint state for fresh run
+          ansible.builtin.file:
+            path: "{{ report_resume_state_dir }}"
+            state: absent
+          when: report_run_mode | default('fresh') == 'fresh'
 
-        - name: Run common collection scaffold
-          ansible.builtin.include_role:
-            name: collect_common
+        - name: Validate Kubernetes run mode
+          ansible.builtin.assert:
+            that:
+              - (report_run_mode | default('fresh')) in ['fresh', 'resume_last_failure']
+            fail_msg: "Set report_run_mode to fresh or resume_last_failure."
 
-        - name: Run Kubernetes collection extension
-          ansible.builtin.include_role:
-            name: collect_kubernetes
+        - name: Check for resumable Kubernetes manifest
+          ansible.builtin.stat:
+            path: "{{ report_resume_manifest_path }}"
+          register: report_resume_manifest_stat
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
 
-        - name: Run common analysis
-          ansible.builtin.include_role:
-            name: analyze_common
+        - name: Fail when Kubernetes resume manifest is missing
+          ansible.builtin.assert:
+            that:
+              - report_resume_manifest_stat.stat.exists
+            fail_msg: "No resumable checkpoint manifest was found. Use report_run_mode=fresh first."
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
 
-        - name: Run Kubernetes analysis extension
-          ansible.builtin.include_role:
-            name: analyze_kubernetes
+        - name: Load Kubernetes resume manifest
+          ansible.builtin.slurp:
+            path: "{{ report_resume_manifest_path }}"
+          register: report_resume_manifest_raw
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
 
-        - name: Run common reporting scaffold
-          ansible.builtin.include_role:
-            name: report_common
+        - name: Decode Kubernetes resume manifest
+          ansible.builtin.set_fact:
+            report_resume_manifest: "{{ (report_resume_manifest_raw.content | b64decode | from_json) if (report_resume_manifest_raw is defined and (report_resume_manifest_raw.content | default('') | length > 0)) else {} }}"
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+        - name: Validate Kubernetes resume manifest content
+          ansible.builtin.assert:
+            that:
+              - (report_resume_manifest.status | default('')) == 'failed'
+              - (report_resume_manifest.snapshot_path | default('') | length) > 0
+              - (report_resume_manifest.resume_next_stage | default('') | length) > 0
+            fail_msg: "The last saved Kubernetes checkpoint is not resumable. Use report_run_mode=fresh."
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+        - name: Load Kubernetes resume checkpoint snapshot
+          ansible.builtin.include_vars:
+            file: "{{ report_resume_manifest.snapshot_path }}"
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+        - name: Restore Kubernetes checkpoint pointers from manifest
+          ansible.builtin.set_fact:
+            report_resume_last_snapshot_path: "{{ report_resume_manifest.snapshot_path | default('') }}"
+            report_resume_last_completed_stage: "{{ report_resume_manifest.last_completed_stage | default('') }}"
+            report_resume_last_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+        - name: Run fresh Kubernetes workflow
+          when: report_run_mode | default('fresh') == 'fresh'
+          block:
+            - name: Run common preflight
+              ansible.builtin.include_role:
+                name: preflight_common
+
+            - name: Run Kubernetes preflight
+              ansible.builtin.include_role:
+                name: preflight_kubernetes
+
+            - name: Run common collection scaffold
+              ansible.builtin.include_role:
+                name: collect_common
+
+            - name: Run Kubernetes collection extension
+              ansible.builtin.include_role:
+                name: collect_kubernetes
+
+            - name: Save Kubernetes collection checkpoint
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: collection
+                run_checkpoint_resume_next_stage: analysis
+                run_checkpoint_status: completed
+                run_checkpoint_write_snapshot: true
+
+            - name: Run common analysis
+              ansible.builtin.include_role:
+                name: analyze_common
+
+            - name: Run Kubernetes analysis extension
+              ansible.builtin.include_role:
+                name: analyze_kubernetes
+
+            - name: Save Kubernetes analysis checkpoint
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: analysis
+                run_checkpoint_resume_next_stage: report
+                run_checkpoint_status: completed
+                run_checkpoint_write_snapshot: true
+
+            - name: Run common reporting scaffold
+              ansible.builtin.include_role:
+                name: report_common
+
+            - name: Mark Kubernetes run checkpoint as completed
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: render
+                run_checkpoint_resume_next_stage: ""
+                run_checkpoint_status: completed
+                run_checkpoint_write_snapshot: false
+          rescue:
+            - name: Record failed fresh Kubernetes run checkpoint
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: "{{ report_resume_last_resume_next_stage | default('collection') }}"
+                run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+                run_checkpoint_status: failed
+                run_checkpoint_write_snapshot: false
+            - name: Re-raise fresh Kubernetes workflow failure
+              ansible.builtin.fail:
+                msg: "Kubernetes workflow failed. Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint."
+
+        - name: Resume Kubernetes workflow from checkpoint
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+          block:
+            - name: Resume Kubernetes analysis and report stages
+              when: (report_resume_manifest.resume_next_stage | default('')) == 'analysis'
+              block:
+                - name: Run common analysis
+                  ansible.builtin.include_role:
+                    name: analyze_common
+
+                - name: Run Kubernetes analysis extension
+                  ansible.builtin.include_role:
+                    name: analyze_kubernetes
+
+                - name: Save resumed Kubernetes analysis checkpoint
+                  ansible.builtin.include_role:
+                    name: report_common
+                    tasks_from: save_run_checkpoint.yml
+                  vars:
+                    run_checkpoint_stage: analysis
+                    run_checkpoint_resume_next_stage: report
+                    run_checkpoint_status: completed
+                    run_checkpoint_write_snapshot: true
+
+                - name: Run common reporting scaffold
+                  ansible.builtin.include_role:
+                    name: report_common
+
+            - name: Resume Kubernetes report stage only
+              when: (report_resume_manifest.resume_next_stage | default('')) == 'report'
+              ansible.builtin.include_role:
+                name: report_common
+
+            - name: Mark resumed Kubernetes run checkpoint as completed
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: render
+                run_checkpoint_resume_next_stage: ""
+                run_checkpoint_status: completed
+                run_checkpoint_write_snapshot: false
+          rescue:
+            - name: Record failed resumed Kubernetes run checkpoint
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage | default('report') }}"
+                run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+                run_checkpoint_status: failed
+                run_checkpoint_write_snapshot: false
+            - name: Re-raise resumed Kubernetes workflow failure
+              ansible.builtin.fail:
+                msg: "Resumed Kubernetes workflow failed again. Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart."
 
       always:
         - name: Ensure temporary collection artifacts are removed

@@ -67,7 +67,7 @@ def main() -> int:
         data = json.load(handle)
 
     timeout_seconds = int(data.get("timeout_seconds", 20))
-    max_workers = max(1, int(data.get("parallelism", 8)))
+    max_workers = max(1, int(data.get("parallelism", 2)))
     items = data.get("secrets", [])
 
     results = []

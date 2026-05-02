@@ -734,6 +734,7 @@
     ns_name: "{{ item.metadata.name | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
     owner_label_keys:
       - team
       - owner
@@ -758,6 +759,127 @@
       - business-unit
       - business_unit
       - department
+    related_workload_objects: >-
+      {{
+        ((analysis_graph.deployments | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.statefulsets | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.daemonsets | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.deploymentconfigs | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.pods | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+      }}
+    related_serviceaccounts: >-
+      {{
+        (analysis_graph.serviceaccounts | default({})).get('items', [])
+        | selectattr('metadata.namespace', 'equalto', ns_name)
+        | list
+      }}
+    related_gitops_applications: >-
+      {%- set apps = [] -%}
+      {%- for app in (analysis_graph.gitops_applications | default({})).get('items', []) -%}
+      {%- set target_ns = app.spec.destination.namespace | default('') -%}
+      {%- if target_ns == ns_name -%}
+      {%- set _ = apps.append(app) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ apps }}
+    ownership_source_objects: "{{ related_workload_objects + related_serviceaccounts + related_gitops_applications }}"
+    owner_value_hint: >-
+      {%- set value = '' -%}
+      {%- for key in owner_label_keys -%}
+      {%- if value | length == 0 and (labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for obj in ownership_source_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- for key in owner_label_keys -%}
+      {%- if value | length == 0 and (obj_labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ value if value | length > 0 else ns_name }}
+    owner_email_hint: >-
+      {%- set value = labels.get('owner.email', annotations.get('owner.email', '')) | string | trim -%}
+      {%- for obj in ownership_source_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- if value | length == 0 and (obj_labels.get('owner.email', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get('owner.email', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get('owner.email', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get('owner.email', '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ value if value | length > 0 else 'team-' ~ ns_name ~ '@example.com' }}
+    owner_contact_hint: >-
+      {%- set value = labels.get('contact', annotations.get('contact', '')) | string | trim -%}
+      {%- for obj in ownership_source_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- if value | length == 0 and (obj_labels.get('contact', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get('contact', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get('contact', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get('contact', '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ value if value | length > 0 else '#team-' ~ (ns_name | regex_replace('[^a-zA-Z0-9-]+', '-')) }}
+    cost_value_hint: >-
+      {%- set value = '' -%}
+      {%- for key in cost_label_keys -%}
+      {%- if value | length == 0 and (labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for obj in ownership_source_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- for key in cost_label_keys -%}
+      {%- if value | length == 0 and (obj_labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ value if value | length > 0 else 'cc-' ~ (ns_name | upper | regex_replace('[^A-Z0-9]+', '-')) }}
+    business_unit_hint: >-
+      {%- set value = labels.get('business-unit', labels.get('business_unit', labels.get('department', annotations.get('business-unit', annotations.get('business_unit', annotations.get('department', '')))))) | string | trim -%}
+      {%- for obj in ownership_source_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- if value | length == 0 and (obj_labels.get('business-unit', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get('business-unit', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_labels.get('business_unit', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get('business_unit', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_labels.get('department', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get('department', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get('business-unit', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get('business-unit', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get('business_unit', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get('business_unit', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get('department', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get('department', '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ value if value | length > 0 else (ns_name | regex_replace('^([^-]+).*', '\\1') | upper) }}
     present_owner_labels: >-
       {%- set values = [] -%}
       {%- for key in owner_label_keys -%}
@@ -789,6 +911,15 @@
           'missing_metadata': missing_metadata_categories,
           'present_owner_labels': present_owner_labels,
           'present_cost_labels': present_cost_labels,
+          'recommended_owner_values': [
+            'team=' ~ owner_value_hint,
+            'owner.email=' ~ owner_email_hint,
+            'contact=' ~ owner_contact_hint
+          ],
+          'recommended_cost_values': [
+            'cost-center=' ~ cost_value_hint,
+            'business-unit=' ~ business_unit_hint
+          ],
           'detail': missing_metadata_categories | join('; '),
           'expected_owner_label_keys': owner_label_keys,
           'expected_cost_label_keys': cost_label_keys

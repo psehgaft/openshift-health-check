@@ -9,6 +9,11 @@
         provider_family: "{{ provider_family | default('generic') }}"
         evidence_mode: "{{ evidence_mode_resolved | default('must_gather') }}"
         cluster_type: "{{ platform_family | default('openshift') }}"
+        checkpoint:
+          manifest_path: "{{ report_resume_manifest_path | default('') }}"
+          last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"
+          resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+          run_mode: "{{ report_run_mode | default('fresh') }}"
       cluster_profile: "{{ cluster_profile | default({}) }}"
       cluster_current_state: {}
       health_summary: "{{ assessment_health_summary | default({}) }}"
@@ -94,9 +99,9 @@
                   'category': 'oc-native',
                   'applicable': true,
                   'status': evidence_coverage.insights_archive | default('missing'),
-                  'detail': 'No live Insights Operator archive is available in collected-state mode unless supplied in the bundle.',
+                  'detail': 'Collected from a supplied Insights archive directory.' if (insights_archive_path | default('') | trim | length > 0) else 'No live Insights Operator archive is available in collected-state mode unless supplied in the bundle.',
                   'requested': false,
-                  'collected': false
+                  'collected': (insights_archive_path | default('') | trim | length > 0)
                 },
                 'sosreport': {
                   'category': 'node-level',
@@ -146,6 +151,7 @@
         inspect: "{{ inspect_data | default({}) }}"
         sosreport: "{{ sosreport_data | default({}) }}"
         advisor_export: "{{ advisor_export_data | default({}) }}"
+        insights_archive: "{{ insights_archive_data | default({}) }}"
         managed_gates: "{{ managed_gates_data | default({}) }}"
   when: report_mode_resolved | default('live') == 'collected'
 
@@ -165,6 +171,11 @@
         platform_family: "{{ platform_family | default('openshift') }}"
         provider_family: "{{ provider_family | default('generic') }}"
         evidence_mode: "live"
+        checkpoint:
+          manifest_path: "{{ report_resume_manifest_path | default('') }}"
+          last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"
+          resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+          run_mode: "{{ report_run_mode | default('fresh') }}"
       cluster_profile: "{{ cluster_profile | default({}) }}"
       cluster_current_state: "{{ cluster_current_state | default({}) }}"
       health_summary: "{{ health_summary | default({}) }}"

@@ -8,7 +8,7 @@
         + (['inspect', inspect_path] if (inspect_path | default('') | trim | length > 0) else [])
       }}
 
-- name: Resolve collected-resource extractor cache path
+- name: Resolve collected-resource extractor cache key
   ansible.builtin.set_fact:
     collected_resource_cache_key: >-
       {{
@@ -16,8 +16,13 @@
           (collected_resource_extractor_args | join('||'))
           ~ '||'
           ~ ((playbook_dir ~ '/../scripts/extract_offline_resources.py') | realpath)
+          ~ '||'
+          ~ (lookup('file', playbook_dir ~ '/../scripts/extract_offline_resources.py') | hash('sha1'))
         ) | hash('sha1')
       }}
+
+- name: Resolve collected-resource extractor cache path
+  ansible.builtin.set_fact:
     collected_resource_cache_path: "{{ '/tmp/ohc-collected-resource-cache-' ~ collected_resource_cache_key ~ '.json' }}"
 
 - name: Stat collected-resource extractor cache

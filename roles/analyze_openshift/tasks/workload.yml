@@ -115,7 +115,18 @@
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    pod_name: "{{ item.metadata.name | default('unknown') }}"
     pod_phase: "{{ item.status.phase | default('Unknown') }}"
+    namespace_obj: >-
+      {{
+        ((analysis_graph.namespaces | default({})).get('items', [])
+        | selectattr('metadata.name', 'equalto', ns_name)
+        | list
+        | first) | default({})
+      }}
+    namespace_labels: "{{ (namespace_obj.metadata.labels | default({})) if (namespace_obj | length > 0) else {} }}"
+    namespace_annotations: "{{ (namespace_obj.metadata.annotations | default({})) if (namespace_obj | length > 0) else {} }}"
     workload_owner_label_keys:
       - team
       - owner
@@ -126,6 +137,110 @@
       - app.kubernetes.io/owner
       - ops.team
       - ops.owner
+    cost_label_keys:
+      - cost-center
+      - cost_center
+      - costcenter
+      - billing-code
+      - billing_code
+      - chargeback
+      - chargeback-code
+      - chargeback_code
+      - business-unit
+      - business_unit
+      - department
+    related_workload_objects: >-
+      {{
+        ((analysis_graph.deployments | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.statefulsets | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.daemonsets | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.deploymentconfigs | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.serviceaccounts | default({})).get('items', []) | selectattr('metadata.namespace', 'equalto', ns_name) | list)
+        + ((analysis_graph.gitops_applications | default({})).get('items', [])
+          | selectattr('spec.destination.namespace', 'defined')
+          | selectattr('spec.destination.namespace', 'equalto', ns_name)
+          | list)
+      }}
+    namespace_owner_value: >-
+      {%- set value = '' -%}
+      {%- for key in workload_owner_label_keys -%}
+      {%- if value | length == 0 and (namespace_labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = namespace_labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (namespace_annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = namespace_annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for obj in related_workload_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- for key in workload_owner_label_keys -%}
+      {%- if value | length == 0 and (obj_labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ value if value | length > 0 else ns_name }}
+    namespace_owner_email: >-
+      {%- set value = namespace_labels.get('owner.email', namespace_annotations.get('owner.email', '')) | string | trim -%}
+      {%- for obj in related_workload_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- if value | length == 0 and (obj_labels.get('owner.email', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get('owner.email', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get('owner.email', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get('owner.email', '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ value }}
+    namespace_owner_contact: >-
+      {%- set value = namespace_labels.get('contact', namespace_annotations.get('contact', '')) | string | trim -%}
+      {%- for obj in related_workload_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- if value | length == 0 and (obj_labels.get('contact', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get('contact', '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get('contact', '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get('contact', '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ value }}
+    namespace_cost_value: >-
+      {%- set value = '' -%}
+      {%- for key in cost_label_keys -%}
+      {%- if value | length == 0 and (namespace_labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = namespace_labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (namespace_annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = namespace_annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for obj in related_workload_objects -%}
+      {%- set obj_labels = obj.metadata.labels | default({}) -%}
+      {%- set obj_annotations = obj.metadata.annotations | default({}) -%}
+      {%- for key in cost_label_keys -%}
+      {%- if value | length == 0 and (obj_labels.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_labels.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- if value | length == 0 and (obj_annotations.get(key, '') | string | trim | length) > 0 -%}
+      {%- set value = obj_annotations.get(key, '') | string | trim -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ value }}
+    workload_name_hint: "{{ labels.get('app.kubernetes.io/name', labels.get('app', pod_name)) | string | trim }}"
+    workload_owner_label_recommendations:
+      - "team={{ namespace_owner_value }}"
+      - "app.kubernetes.io/owner={{ namespace_owner_value }}"
+      - "cost-center={{ namespace_cost_value if namespace_cost_value | length > 0 else '<set-cost-center-for-' ~ ns_name ~ '>' }}"
+    workload_owner_annotation_recommendations:
+      - "owner.email={{ namespace_owner_email if namespace_owner_email | length > 0 else '<set-email-for-' ~ namespace_owner_value ~ '>' }}"
+      - "owner.contact={{ namespace_owner_contact if namespace_owner_contact | length > 0 else '<set-contact-for-' ~ workload_name_hint ~ '>' }}"
     present_owner_label_keys: >-
       {%- set keys = [] -%}
       {%- for key in workload_owner_label_keys -%}
@@ -139,9 +254,9 @@
         [{
           'kind': 'Pod',
           'namespace': ns_name,
-          'name': item.metadata.name | default('unknown'),
-          'detail': 'missing team ownership tag',
-          'suggested_label_keys': workload_owner_label_keys,
+          'name': pod_name,
+          'recommended_label_values': workload_owner_label_recommendations,
+          'recommended_annotation_values': workload_owner_annotation_recommendations,
           'present_label_keys': present_owner_label_keys
         }]
         if (

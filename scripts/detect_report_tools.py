@@ -23,7 +23,7 @@ def main() -> int:
     ]
 
     results = {}
-    with ThreadPoolExecutor(max_workers=min(len(tools), 8)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(tools), 4)) as pool:
         futures = [pool.submit(detect, tool) for tool in tools]
         for future in as_completed(futures):
             item = future.result()

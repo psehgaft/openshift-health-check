@@ -44,6 +44,16 @@ def main() -> int:
         "managed_gates_path": first_match(root, lambda p: "managed-gates" in str(p).lower().replace("_", "-") and p.suffix.lower() in {".json", ".yaml", ".yml", ".txt"}, want_dir=False),
         "inspect_path": first_match(root, lambda p: p.is_dir() and p.name.startswith("inspect"), want_dir=True),
         "advisor_export_path": first_match(root, lambda p: "advisor" in p.name and p.suffix.lower() == ".json", want_dir=False),
+        "insights_archive_path": first_match(
+            root,
+            lambda p: p.is_dir() and (
+                p.name == "insights-archive"
+                or p.name.startswith("insights-archive")
+                or p.name == "insights_archive"
+                or p.name.startswith("insights_archive")
+            ),
+            want_dir=True,
+        ),
         "sosreport_paths": all_matches(
             root,
             lambda p: (

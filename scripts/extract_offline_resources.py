@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -302,11 +303,13 @@ def source_scan_roots(source_name: str, root: Path):
     if str(source_name).strip().lower() != "must-gather":
         return [root]
     candidates = []
-    for path in root.rglob("*"):
-        if not path.is_dir():
+    for top_level in root.iterdir():
+        if not top_level.is_dir():
             continue
-        if path.name in {"cluster-scoped-resources", "namespaces"}:
-            candidates.append(path)
+        for child_name in ("cluster-scoped-resources", "namespaces"):
+            child = top_level / child_name
+            if child.is_dir():
+                candidates.append(child)
     return candidates or [root]
 
 
@@ -336,6 +339,31 @@ def should_parse_path(path: Path, scan_root: Path) -> bool:
     return True
 
 
+def iter_candidate_paths(scan_root: Path):
+    scan_root_name = scan_root.name
+    for dirpath, dirnames, filenames in os.walk(scan_root, topdown=True):
+        current = Path(dirpath)
+        try:
+            rel_parts = current.relative_to(scan_root).parts
+        except ValueError:
+            continue
+        depth = len(rel_parts)
+
+        if scan_root_name == "namespaces":
+            if depth >= 3:
+                dirnames[:] = []
+            elif depth == 2:
+                dirnames[:] = []
+        elif scan_root_name == "cluster-scoped-resources":
+            if depth >= 2:
+                dirnames[:] = []
+
+        for filename in filenames:
+            path = current / filename
+            if should_parse_path(path, scan_root):
+                yield path
+
+
 def main() -> int:
     source_pairs = parse_args(sys.argv)
     if source_pairs is None:
@@ -347,11 +375,10 @@ def main() -> int:
 
     for source_name, root in source_pairs:
         source_file_counts[source_name] = 0
-        candidate_paths = []
+        candidate_paths = set()
         for scan_root in source_scan_roots(source_name, root):
-            for pattern in ("*.json", "*.yaml", "*.yml"):
-                candidate_paths.extend(path for path in scan_root.rglob(pattern) if should_parse_path(path, scan_root))
-        for path in sorted({path for path in candidate_paths}):
+            candidate_paths.update(iter_candidate_paths(scan_root))
+        for path in sorted(candidate_paths):
             source_file_counts[source_name] += 1
             for raw_doc in iter_docs(path):
                 if not isinstance(raw_doc, dict):

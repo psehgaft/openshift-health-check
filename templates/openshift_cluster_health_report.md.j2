@@ -113,11 +113,18 @@ not-scored
 {%- endif -%}
 {%- endmacro %}
 
+{% macro recommended_action_with_docs(action, severity, keys) -%}
+{%- set sev = severity | default('unknown') | string | trim | upper -%}
+{{ action }}{%- if sev not in ['INFO', 'OK', 'UNKNOWN', 'NOT-ASSESSED'] -%}{{ docs_links(keys) }}{%- endif -%}
+{%- endmacro %}
+
 {% set graph = analysis_graph | default({}) %}
 {% set live_support = live_support_data | default({}) %}
 {% set live_support_artifacts = live_support.artifacts | default({}) %}
 {% set live_support_paths = live_support.paths | default({}) %}
 {% set live_support_parsed = live_support.parsed | default({}) %}
+{% set audit_domains = (audit_report | default({})).get('domains', {}) %}
+{% set audit_observability = audit_domains.get('observability', {}) %}
 {% set report_collection_failures_list = report_collection_failures | default([]) %}
 {% set report_collection_skipped_list = report_collection_skipped_optional_commands | default([]) %}
 {% set report_collection_success_pct = report_collection_success_rate_pct | default(0) %}
@@ -164,6 +171,10 @@ not-scored
 | Context | `{{ oc_context_cmd.stdout | default('unknown') | trim }}` |
 | API server | `{{ oc_server_cmd.stdout | default('unknown') | trim }}` |
 | User | `{{ oc_user_cmd.stdout | default('unknown') | trim }}` |
+| Run mode | `{{ report_run_mode | default('fresh') }}` |
+| Checkpoint stage | `{{ report_resume_last_completed_stage | default('none') or 'none' }}` |
+| Resume next stage | `{{ report_resume_last_resume_next_stage | default('none') or 'none' }}` |
+| Checkpoint manifest | `{{ report_resume_manifest_path | default('not-configured') }}` |
 
 #### Scoring Legend
 
@@ -263,6 +274,108 @@ not-scored
 {% endfor %}
 {% endif %}
 
+### Control Plane Signals
+
+#### API Readiness
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| API `/readyz` | `{{ apiserver_readyz_status | default('unavailable') }}` | {{ status_badge('OK' if apiserver_readyz_status | default('unavailable') == 'ok' else ('WARN' if apiserver_readyz_status | default('unavailable') == 'failed' else 'UNKNOWN')) }} |
+| API `/readyz` failed checks | `{{ apiserver_readyz_failed_checks | default(0) }}` | {{ status_badge('WARN' if (apiserver_readyz_failed_checks | default(0) | int) > 0 else 'OK') }} |
+
+{% set control_plane_query_statuses = prom_query_status_map | default({}) %}
+{% set control_plane_query_errors = prom_query_error_map | default({}) %}
+{% set control_plane_offline_evidence = control_plane_evidence_summary | default({}) %}
+{% set obs_signal_map = observability_signal_resolution_map | default({}) %}
+{% if (not prom_available) and not (control_plane_offline_signals_present | default(false)) %}
+| Metrics Signal | Detail |
+| --- | --- |
+| `Prometheus-backed control-plane metrics` | Metrics were not attempted because the `thanos-querier` route or bearer token could not be obtained. The API `/readyz` check above is the only active control-plane check shown in this run. |
+{% else %}
+{% set apiserver_storage_state = control_plane_query_statuses.get('apiserver_storage_objects', 'not-collected') %}
+{% set apiserver_read_rate_state = control_plane_query_statuses.get('apiserver_read_rate', 'not-collected') %}
+{% set apiserver_write_rate_state = control_plane_query_statuses.get('apiserver_write_rate', 'not-collected') %}
+{% set apiserver_read_inflight_state = control_plane_query_statuses.get('apiserver_read_inflight', 'not-collected') %}
+{% set apiserver_write_inflight_state = control_plane_query_statuses.get('apiserver_write_inflight', 'not-collected') %}
+{% set apiserver_5xx_state = control_plane_query_statuses.get('apiserver_5xx_rate', 'not-collected') %}
+{% set apiserver_latency_state = control_plane_query_statuses.get('apiserver_latency', 'not-collected') %}
+{% set etcd_members_state = control_plane_query_statuses.get('etcd_members_reporting_leader', 'not-collected') %}
+{% set etcd_leader_count_state = control_plane_query_statuses.get('etcd_leader_count', 'not-collected') %}
+{% set etcd_wal_state = control_plane_query_statuses.get('etcd_wal_fsync', 'not-collected') %}
+{% set etcd_backend_state = control_plane_query_statuses.get('etcd_backend_commit', 'not-collected') %}
+{% set etcd_leader_changes_state = control_plane_query_statuses.get('etcd_leader_changes', 'not-collected') %}
+{% set etcd_peer_rtt_state = control_plane_query_statuses.get('etcd_peer_rtt', 'not-collected') %}
+{% set cp_to_worker_state = control_plane_query_statuses.get('controlplane_to_worker_network_latency', 'not-configured') %}
+{% set worker_to_worker_state = control_plane_query_statuses.get('worker_to_worker_network_latency', 'not-configured') %}
+
+{% if not prom_available and (control_plane_offline_signals_present | default(false)) %}
+| Metrics Signal | Detail |
+| --- | --- |
+| `Offline control-plane evidence` | Prometheus metrics were unavailable in this run, so object count and etcd status were derived from offline evidence such as must-gather `etcd_info` and kube-apiserver static-pod artifacts where present. Request-rate and latency rows stay `not-collected` unless a metric source was actually available. |
+{% endif %}
+
+| Latency Signal | Detail |
+| --- | --- |
+| `Inter-node latency` | Control plane to control plane latency uses etcd peer RTT as the closest built-in control-plane network signal. Control plane to worker and worker to worker latency require cluster-exposed Prometheus latency metrics and show `not-configured`, `no-data`, or `query-failed` when those signals are absent or unusable. |
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| API server stored objects | `{{ prom_metric_value(apiserver_storage_state, apiserver_storage_objects_total) }}` | {{ status_badge('INFO' if apiserver_storage_state == 'collected' else apiserver_storage_state | upper) }} |
+| API server read request rate | `{{ prom_metric_value(apiserver_read_rate_state, apiserver_request_read_rate) }}{% if apiserver_read_rate_state == 'collected' %} req/s{% endif %}` | {{ status_badge('INFO' if apiserver_read_rate_state == 'collected' else apiserver_read_rate_state | upper) }} |
+| API server write request rate | `{{ prom_metric_value(apiserver_write_rate_state, apiserver_request_write_rate) }}{% if apiserver_write_rate_state == 'collected' %} req/s{% endif %}` | {{ status_badge('INFO' if apiserver_write_rate_state == 'collected' else apiserver_write_rate_state | upper) }} |
+| API server inflight reads | `{{ prom_metric_value(apiserver_read_inflight_state, apiserver_current_read_inflight) }}` | {{ status_badge('INFO' if apiserver_read_inflight_state == 'collected' else apiserver_read_inflight_state | upper) }} |
+| API server inflight writes | `{{ prom_metric_value(apiserver_write_inflight_state, apiserver_current_write_inflight) }}` | {{ status_badge('INFO' if apiserver_write_inflight_state == 'collected' else apiserver_write_inflight_state | upper) }} |
+| API server 5xx rate | `{% if apiserver_5xx_state == 'collected' %}{{ apiserver_request_5xx_rate }} req/s{% else %}{{ prom_metric_value(apiserver_5xx_state, apiserver_request_5xx_rate) }}{% endif %}` | {{ status_badge((apiserver_5xx_state | upper) if apiserver_5xx_state != 'collected' else ('WARN' if (apiserver_request_5xx_rate | float) > 0 else 'OK')) }} |
+| API server p99 latency | `{% if apiserver_latency_state == 'collected' %}{{ ((apiserver_request_p99_seconds | float) * 1000) | round(1) }} ms{% else %}{{ prom_metric_value(apiserver_latency_state, apiserver_request_p99_seconds) }}{% endif %}` | {{ status_badge((apiserver_latency_state | upper) if apiserver_latency_state != 'collected' else ('WARN' if (apiserver_request_p99_seconds | float) > apiserver_latency_p99_warn_seconds else 'OK')) }} |
+| etcd members reporting leader | `{{ prom_metric_value(etcd_members_state, etcd_members_reporting_leader) }}` | {{ status_badge((etcd_members_state | upper) if etcd_members_state != 'collected' else ('WARN' if (etcd_members_reporting_leader | float) < 1 else 'OK')) }} |
+| etcd leaders observed | `{{ prom_metric_value(etcd_leader_count_state, etcd_leader_count) }}` | {{ status_badge((etcd_leader_count_state | upper) if etcd_leader_count_state != 'collected' else ('WARN' if (etcd_leader_count | float) != 1 else 'OK')) }} |
+| etcd WAL fsync p99 | `{% if etcd_wal_state == 'collected' %}{{ etcd_wal_fsync_p99_ms }} ms{% else %}{{ prom_metric_value(etcd_wal_state, etcd_wal_fsync_p99_ms) }}{% endif %}` | {{ status_badge((etcd_wal_state | upper) if etcd_wal_state != 'collected' else ('WARN' if (etcd_wal_fsync_p99_ms | float) > etcd_wal_fsync_p99_warn_ms else 'OK')) }} |
+| etcd backend commit p99 | `{% if etcd_backend_state == 'collected' %}{{ etcd_backend_commit_p99_ms }} ms{% else %}{{ prom_metric_value(etcd_backend_state, etcd_backend_commit_p99_ms) }}{% endif %}` | {{ status_badge('INFO' if etcd_backend_state == 'collected' else etcd_backend_state | upper) }} |
+| etcd leader changes (5m) | `{{ prom_metric_value(etcd_leader_changes_state, etcd_leader_changes_5m) }}` | {{ status_badge((etcd_leader_changes_state | upper) if etcd_leader_changes_state != 'collected' else ('WARN' if (etcd_leader_changes_5m | float) > 0 else 'OK')) }} |
+| etcd peer RTT p99 | `{% if etcd_peer_rtt_state == 'collected' %}{{ etcd_peer_rtt_p99_ms }} ms{% else %}{{ prom_metric_value(etcd_peer_rtt_state, etcd_peer_rtt_p99_ms) }}{% endif %}` | {{ status_badge((etcd_peer_rtt_state | upper) if etcd_peer_rtt_state != 'collected' else ('WARN' if (etcd_peer_rtt_p99_ms | float) > etcd_peer_rtt_p99_warn_ms else 'OK')) }} |
+| Control plane to control plane latency | `{% if etcd_peer_rtt_state == 'collected' %}{{ controlplane_to_controlplane_network_latency_ms }} ms{% else %}{{ prom_metric_value(etcd_peer_rtt_state, controlplane_to_controlplane_network_latency_ms) }}{% endif %}` | {{ status_badge((etcd_peer_rtt_state | upper) if etcd_peer_rtt_state != 'collected' else ('WARN' if (controlplane_to_controlplane_network_latency_ms | float) > etcd_peer_rtt_p99_warn_ms else 'OK')) }} |
+| Control plane to worker latency | `{% if cp_to_worker_state == 'collected' %}{{ controlplane_to_worker_network_latency_ms }} ms{% else %}{{ prom_metric_value(cp_to_worker_state, controlplane_to_worker_network_latency_ms) }}{% endif %}` | {{ status_badge((cp_to_worker_state | upper) if cp_to_worker_state != 'collected' else ('WARN' if (controlplane_to_worker_network_latency_ms | float) > controlplane_to_worker_latency_warn_ms else 'OK')) }} |
+| Worker to worker latency | `{% if worker_to_worker_state == 'collected' %}{{ worker_to_worker_network_latency_ms }} ms{% else %}{{ prom_metric_value(worker_to_worker_state, worker_to_worker_network_latency_ms) }}{% endif %}` | {{ status_badge((worker_to_worker_state | upper) if worker_to_worker_state != 'collected' else ('WARN' if (worker_to_worker_network_latency_ms | float) > worker_to_worker_latency_warn_ms else 'OK')) }} |
+| Firing alerts | `{{ firing_alerts | length }}` | {{ status_badge('WARN' if firing_alerts | length > 0 else 'OK') }} |
+| Signal basis | alerts={{ runtime_signal_basis(obs_signal_map.get('firing_alerts', {})) }}, apiStorage={{ runtime_signal_basis(obs_signal_map.get('apiserver_storage_objects', {})) }}, apiLatency={{ runtime_signal_basis(obs_signal_map.get('apiserver_latency', {})) }}, etcdMembership={{ runtime_signal_basis(obs_signal_map.get('etcd_members_reporting_leader', {})) }}, cpToWorker={{ runtime_signal_basis(obs_signal_map.get('controlplane_to_worker_network_latency', {})) }} | {{ status_badge('INFO') }} |
+
+{% if control_plane_query_errors | length > 0 %}
+| Metrics Signal | Detail |
+| --- | --- |
+| `Prometheus query issues` | `{% for item in control_plane_query_errors | dict2items | sort(attribute='key') %}{{ item.key }}={{ item.value | replace('|', '\\|') }}{% if not loop.last %}; {% endif %}{% endfor %}` |
+{% endif %}
+
+{% if (firing_alerts_by_severity | default({}) | length) > 0 %}
+#### Firing Alert Severity Summary
+
+| Severity | Count |
+| --- | --- |
+{% for item in (firing_alerts_by_severity | dict2items | sort(attribute='key')) %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_alert_groups | default([]) | length > 0 %}
+#### Top Firing Alert Names
+
+| Alert | Count |
+| --- | --- |
+{% for item in top_alert_groups %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_alert_namespaces | default([]) | length > 0 %}
+#### Firing Alerts By Namespace
+
+| Namespace | Alert Count |
+| --- | --- |
+{% for item in top_alert_namespaces %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% endif %}
+{% endif %}
+
 ## Evidence And Supportability
 
 {% set supportability = audit_report.supportability.summary | default({}) %}
@@ -290,9 +403,9 @@ not-scored
 
 | Finding | Severity | Current State | Business Impact | Technical Evidence | Recommended Action |
 | --- | --- | --- | --- | --- | --- |
-| `Supportability verdict` | `{% if supportability_verdict in ['unsupported-risk', 'critical'] %}CRITICAL{% elif supportability_needs_review %}WARNING{% elif supportability_verdict in ['supported', 'healthy'] %}OK{% else %}UNKNOWN{% endif %}` | `overall={{ supportability_verdict }}, health={{ supportability_health }}, support={{ supportability.supportability_verdict | default('not-derived') }}, reference={{ supportability.reference_compliance_verdict | default('not-derived') }}` | `Unsupported or review-required posture increases operational and escalation risk.` | `nodeDiagnostics={{ supportability.node_diagnostics_verdict | default('not-derived') }}, confidence={{ supportability_confidence }}` | `{% if supportability_needs_review %}Resolve the named unsupported, review-required, or incomplete supportability conditions before using lower-priority sections for final sign-off.{% else %}No supportability remediation is required for this posture.{% endif %}` |
-| `Remote health and advisory posture` | `{% if (audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('unknown')) == 'degraded' or (audit_report.domains.observability.connected_cluster_advisor_summary.high_count | default(0) | int) > 0 or (audit_report.domains.observability.connected_cluster_advisor_summary.critical_count | default(0) | int) > 0 %}WARNING{% elif (audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('unknown')) in ['connected', 'healthy'] %}OK{% else %}INFO{% endif %}` | `remoteHealth={{ audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('not-derived') }}, advisorCritical={{ audit_report.domains.observability.connected_cluster_advisor_summary.critical_count | default(0) }}, advisorHigh={{ audit_report.domains.observability.connected_cluster_advisor_summary.high_count | default(0) }}` | `Disconnected, degraded, or high-severity advisory state can indicate unresolved product risks.` | `insightsAvailable={{ audit_report.domains.observability.connected_cluster_posture.insights_operator_available | default('not-derived') }}, telemeterPods={{ audit_report.domains.observability.connected_cluster_posture.telemeter_pod_count | default(0) }}` | `{% if (audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('unknown')) == 'degraded' or (audit_report.domains.observability.connected_cluster_advisor_summary.high_count | default(0) | int) > 0 or (audit_report.domains.observability.connected_cluster_advisor_summary.critical_count | default(0) | int) > 0 %}Resolve degraded remote health and high-severity advisor findings before treating support posture as clean.{% else %}No remote-health or high-severity advisory remediation is required for this posture.{% endif %}` |
-| `Node diagnostic state` | `{% if (supportability.node_diagnostics_verdict | default('not-derived')) in ['insufficient-evidence', 'not-derived', 'unknown'] %}WARNING{% else %}OK{% endif %}` | `{{ supportability.node_diagnostics_verdict | default('not-derived') }}` | `Weak node diagnostics can prevent root-cause analysis for host OS, kubelet, CRI-O, podman, disk, or network symptoms.` | `nodeDiagnosticVerdict={{ supportability.node_diagnostics_verdict | default('not-derived') }}, confidence={{ supportability_confidence }}` | `{% if (supportability.node_diagnostics_verdict | default('not-derived')) in ['insufficient-evidence', 'not-derived', 'unknown'] %}Capture targeted node diagnostics only for nodes with symptoms that require host-level investigation.{% else %}No node-diagnostic remediation is required for this posture unless a node-specific symptom appears.{% endif %}` |
+| `Supportability verdict` | `{% if supportability_verdict in ['unsupported-risk', 'critical'] %}CRITICAL{% elif supportability_needs_review %}WARNING{% elif supportability_verdict in ['supported', 'healthy'] %}OK{% else %}UNKNOWN{% endif %}` | `overall={{ supportability_verdict }}, health={{ supportability_health }}, support={{ supportability.supportability_verdict | default('not-derived') }}, reference={{ supportability.reference_compliance_verdict | default('not-derived') }}` | `Unsupported or review-required posture increases operational and escalation risk.` | `nodeDiagnostics={{ supportability.node_diagnostics_verdict | default('not-derived') }}, confidence={{ supportability_confidence }}` | `{% if supportability_needs_review %}{{ recommended_action_with_docs('Resolve the named unsupported, review-required, or incomplete supportability conditions before using lower-priority sections for final sign-off.', 'WARNING', ['supportability', 'collection']) }}{% else %}{{ recommended_action_with_docs('No supportability remediation is required for this posture.', 'OK', ['supportability', 'collection']) }}{% endif %}` |
+| `Remote health and advisory posture` | `{% if (audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('unknown')) == 'degraded' or (audit_report.domains.observability.connected_cluster_advisor_summary.high_count | default(0) | int) > 0 or (audit_report.domains.observability.connected_cluster_advisor_summary.critical_count | default(0) | int) > 0 %}WARNING{% elif (audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('unknown')) in ['connected', 'healthy'] %}OK{% else %}INFO{% endif %}` | `remoteHealth={{ audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('not-derived') }}, advisorCritical={{ audit_report.domains.observability.connected_cluster_advisor_summary.critical_count | default(0) }}, advisorHigh={{ audit_report.domains.observability.connected_cluster_advisor_summary.high_count | default(0) }}` | `Disconnected, degraded, or high-severity advisory state can indicate unresolved product risks.` | `insightsAvailable={{ audit_report.domains.observability.connected_cluster_posture.insights_operator_available | default('not-derived') }}, telemeterPods={{ audit_report.domains.observability.connected_cluster_posture.telemeter_pod_count | default(0) }}` | `{% if (audit_report.domains.observability.connected_cluster_posture.remote_health_posture | default('unknown')) == 'degraded' or (audit_report.domains.observability.connected_cluster_advisor_summary.high_count | default(0) | int) > 0 or (audit_report.domains.observability.connected_cluster_advisor_summary.critical_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Resolve degraded remote health and high-severity advisor findings before treating support posture as clean.', 'WARNING', ['supportability', 'observability']) }}{% else %}{{ recommended_action_with_docs('No remote-health or high-severity advisory remediation is required for this posture.', 'OK', ['supportability', 'observability']) }}{% endif %}` |
+| `Node diagnostic state` | `{% if (supportability.node_diagnostics_verdict | default('not-derived')) in ['insufficient-evidence', 'not-derived', 'unknown'] %}WARNING{% else %}OK{% endif %}` | `{{ supportability.node_diagnostics_verdict | default('not-derived') }}` | `Weak node diagnostics can prevent root-cause analysis for host OS, kubelet, CRI-O, podman, disk, or network symptoms.` | `nodeDiagnosticVerdict={{ supportability.node_diagnostics_verdict | default('not-derived') }}, confidence={{ supportability_confidence }}` | `{% if (supportability.node_diagnostics_verdict | default('not-derived')) in ['insufficient-evidence', 'not-derived', 'unknown'] %}{{ recommended_action_with_docs('Capture targeted node diagnostics only for nodes with symptoms that require host-level investigation.', 'WARNING', ['supportability', 'nodes', 'collection']) }}{% else %}{{ recommended_action_with_docs('No node-diagnostic remediation is required for this posture unless a node-specific symptom appears.', 'OK', ['supportability', 'nodes', 'collection']) }}{% endif %}` |
 
 ## Platform Health
 
@@ -326,10 +439,10 @@ not-scored
 
 | Finding | Severity | Current State | Business Impact | Technical Evidence | Recommended Action |
 | --- | --- | --- | --- | --- | --- |
-| `Operator availability` | `{% if platform_operator_blockers > 0 %}CRITICAL{% elif (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `degraded={{ platform_health_summary.operators_degraded | default(0) }}, unavailable={{ platform_health_summary.operators_unavailable | default(0) }}, highImpactProgressing={{ platform_health_summary.operators_progressing_high_impact | default(0) }}` | `ClusterOperator instability can affect control-plane and platform-service availability.` | `operatorsTotal={{ platform_health_summary.operators_total | default(0) }}, status={{ platform_status }}` | `{% if platform_operator_blockers > 0 %}Restore degraded or unavailable operators before lower-priority remediation.{% elif (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 %}Wait for high-impact progressing operators to settle before upgrade or workload changes.{% else %}No operator availability remediation is required for this posture.{% endif %}` |
-| `Node and MCP runtime` | `{% if (platform_health_summary.nodes_not_ready | default(0) | int) > 0 or (platform_health_summary.mcps_degraded | default(0) | int) > 0 %}CRITICAL{% elif (platform_health_summary.node_pressure_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `notReady={{ platform_health_summary.nodes_not_ready | default(0) }}, pressure={{ platform_health_summary.node_pressure_count | default(0) }}, degradedMCPs={{ platform_health_summary.mcps_degraded | default(0) }}` | `Node readiness or machine-config degradation reduces stable platform capacity.` | `nodesTotal={{ platform_health_summary.nodes_total | default(0) }}, nodePressure={{ platform_health_summary.node_pressure_count | default(0) }}` | `{% if platform_node_blockers > 0 %}Recover NotReady nodes, clear node pressure, and repair degraded MachineConfigPools before workload expansion.{% else %}No node or MCP runtime remediation is required from this posture.{% endif %}` |
-| `API and etcd runtime` | `{% if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 %}CRITICAL{% elif (platform_health_summary.apiserver_runtime_degraded | default(0) | int) > 0 or (platform_health_summary.etcd_runtime_degraded | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `readyzFailed={{ platform_health_summary.apiserver_readyz_failed | default(0) }}, apiRuntime={{ platform_health_summary.apiserver_runtime_degraded | default(0) }}, etcdLeader={{ platform_health_summary.etcd_leader_unhealthy | default(0) }}, etcdRuntime={{ platform_health_summary.etcd_runtime_degraded | default(0) }}` | `API or etcd instability can affect every cluster operation and workload control loop.` | `readyzFailed={{ platform_health_summary.apiserver_readyz_failed | default(0) }}, apiRuntime={{ platform_health_summary.apiserver_runtime_degraded | default(0) }}, etcdLeaderUnhealthy={{ platform_health_summary.etcd_leader_unhealthy | default(0) }}, etcdRuntimeDegraded={{ platform_health_summary.etcd_runtime_degraded | default(0) }}` | `{% if platform_control_plane_blockers > 0 %}Fix API readiness failures and etcd leader or latency instability before upgrade, workload, or Day 2 changes.{% else %}No API or etcd runtime remediation is required for this posture.{% endif %}` |
-| `Ingress and APIService access` | `{% if platform_access_blockers > 0 %}CRITICAL{% else %}OK{% endif %}` | `routes={{ platform_health_summary.route_issues | default(0) }}, ingress={{ platform_health_summary.ingress_issues | default(0) }}, ingressControllers={{ platform_health_summary.ingresscontroller_issues | default(0) }}, apiServices={{ platform_health_summary.apiservice_issues | default(0) }}` | `Broken ingress, route, or aggregated API paths can cause broad application or platform-service outages.` | `routeHostConflicts={{ platform_health_summary.route_host_conflicts | default(0) }}, ingressHostConflicts={{ platform_health_summary.ingress_host_conflicts | default(0) }}` | `{% if platform_access_blockers > 0 %}Repair ingress-controller conditions, route or ingress admission issues, host conflicts, and unavailable APIService backing services or CA bundles.{% else %}No ingress or APIService runtime remediation is required for this posture.{% endif %}` |
+| `Operator availability` | `{% if platform_operator_blockers > 0 %}CRITICAL{% elif (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `degraded={{ platform_health_summary.operators_degraded | default(0) }}, unavailable={{ platform_health_summary.operators_unavailable | default(0) }}, highImpactProgressing={{ platform_health_summary.operators_progressing_high_impact | default(0) }}` | `ClusterOperator instability can affect control-plane and platform-service availability.` | `operatorsTotal={{ platform_health_summary.operators_total | default(0) }}, status={{ platform_status }}` | `{% if platform_operator_blockers > 0 %}{{ recommended_action_with_docs('Restore degraded or unavailable operators before lower-priority remediation.', 'CRITICAL', ['core']) }}{% elif (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 %}{{ recommended_action_with_docs('Wait for high-impact progressing operators to settle before upgrade or workload changes.', 'WARNING', ['core']) }}{% else %}{{ recommended_action_with_docs('No operator availability remediation is required for this posture.', 'OK', ['core']) }}{% endif %}` |
+| `Node and MCP runtime` | `{% if (platform_health_summary.nodes_not_ready | default(0) | int) > 0 or (platform_health_summary.mcps_degraded | default(0) | int) > 0 %}CRITICAL{% elif (platform_health_summary.node_pressure_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `notReady={{ platform_health_summary.nodes_not_ready | default(0) }}, pressure={{ platform_health_summary.node_pressure_count | default(0) }}, degradedMCPs={{ platform_health_summary.mcps_degraded | default(0) }}` | `Node readiness or machine-config degradation reduces stable platform capacity.` | `nodesTotal={{ platform_health_summary.nodes_total | default(0) }}, nodePressure={{ platform_health_summary.node_pressure_count | default(0) }}` | `{% if platform_node_blockers > 0 %}{{ recommended_action_with_docs('Recover NotReady nodes, clear node pressure, and repair degraded MachineConfigPools before workload expansion.', 'CRITICAL' if (platform_health_summary.nodes_not_ready | default(0) | int) > 0 or (platform_health_summary.mcps_degraded | default(0) | int) > 0 else 'WARNING', ['nodes', 'core']) }}{% else %}{{ recommended_action_with_docs('No node or MCP runtime remediation is required from this posture.', 'OK', ['nodes', 'core']) }}{% endif %}` |
+| `API and etcd runtime` | `{% if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 %}CRITICAL{% elif (platform_health_summary.apiserver_runtime_degraded | default(0) | int) > 0 or (platform_health_summary.etcd_runtime_degraded | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `readyzFailed={{ platform_health_summary.apiserver_readyz_failed | default(0) }}, apiRuntime={{ platform_health_summary.apiserver_runtime_degraded | default(0) }}, etcdLeader={{ platform_health_summary.etcd_leader_unhealthy | default(0) }}, etcdRuntime={{ platform_health_summary.etcd_runtime_degraded | default(0) }}` | `API or etcd instability can affect every cluster operation and workload control loop.` | `readyzFailed={{ platform_health_summary.apiserver_readyz_failed | default(0) }}, apiRuntime={{ platform_health_summary.apiserver_runtime_degraded | default(0) }}, etcdLeaderUnhealthy={{ platform_health_summary.etcd_leader_unhealthy | default(0) }}, etcdRuntimeDegraded={{ platform_health_summary.etcd_runtime_degraded | default(0) }}` | `{% if platform_control_plane_blockers > 0 %}{{ recommended_action_with_docs('Fix API readiness failures and etcd leader or latency instability before upgrade, workload, or Day 2 changes.', 'CRITICAL' if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 else 'WARNING', ['core', 'observability']) }}{% else %}{{ recommended_action_with_docs('No API or etcd runtime remediation is required for this posture.', 'OK', ['core', 'observability']) }}{% endif %}` |
+| `Ingress and APIService access` | `{% if platform_access_blockers > 0 %}CRITICAL{% else %}OK{% endif %}` | `routes={{ platform_health_summary.route_issues | default(0) }}, ingress={{ platform_health_summary.ingress_issues | default(0) }}, ingressControllers={{ platform_health_summary.ingresscontroller_issues | default(0) }}, apiServices={{ platform_health_summary.apiservice_issues | default(0) }}` | `Broken ingress, route, or aggregated API paths can cause broad application or platform-service outages.` | `routeHostConflicts={{ platform_health_summary.route_host_conflicts | default(0) }}, ingressHostConflicts={{ platform_health_summary.ingress_host_conflicts | default(0) }}` | `{% if platform_access_blockers > 0 %}{{ recommended_action_with_docs('Repair ingress-controller conditions, route or ingress admission issues, host conflicts, and unavailable APIService backing services or CA bundles.', 'CRITICAL', ['network', 'core']) }}{% else %}{{ recommended_action_with_docs('No ingress or APIService runtime remediation is required for this posture.', 'OK', ['network', 'core']) }}{% endif %}` |
 
 #### APIService Availability
 {% if top_apiservice_issues | default([]) | length > 0 %}
@@ -362,7 +475,7 @@ not-scored
 
 {% set node_health_capacity_summary = audit_report.domains.node_health_and_capacity.summary | default({}) %}
 {% set node_diagnostics = audit_report.domains.node_health_and_capacity.diagnostics_summary | default({}) %}
-{% set node_metric_source_status = audit_report.domains.observability.prometheus_query.status | default((prometheus_evidence_summary | default({})).status | default('not-collected')) %}
+{% set node_metric_source_status = audit_observability.get('prometheus_query', {}).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected')) %}
 {% set node_has_actionable_capacity_findings = (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 or (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 or (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 or (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 %}
 {% set node_has_diagnostics_gap = (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] %}
 {% set node_metric_evidence_missing = node_metric_source_status != 'collected' %}
@@ -394,10 +507,10 @@ not-scored
 
 | Finding | Severity | Current State | Business Impact | Technical Evidence | Recommended Action |
 | --- | --- | --- | --- | --- | --- |
-| `Node readiness` | `{% if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 %}CRITICAL{% elif (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `notReady={{ node_health_capacity_summary.not_ready_node_count | default(0) }}, pressure={{ node_health_capacity_summary.node_pressure_count | default(0) }}` | `NotReady or pressured nodes reduce schedulable capacity and can indicate platform instability.` | `notReady={{ node_health_capacity_summary.not_ready_node_count | default(0) }}, pressure={{ node_health_capacity_summary.node_pressure_count | default(0) }}` | `{% if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 %}Restore or replace NotReady nodes before lower-priority cleanup.{% elif (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 %}Investigate node pressure source and relieve CPU, memory, disk, PID, or kubelet constraints.{% else %}No node-readiness remediation is required for this posture.{% endif %}` |
-| `Capacity pressure` | `{% if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 %}CRITICAL{% elif (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 or (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `podDensity={{ node_health_capacity_summary.high_pod_density_node_count | default(0) }}, cpu={{ node_health_capacity_summary.high_cpu_node_count | default(0) }}, memory={{ node_health_capacity_summary.high_memory_node_count | default(0) }}, disk={{ node_health_capacity_summary.high_disk_node_count | default(0) }}` | `Capacity hotspots can affect workload placement, performance, and scaling headroom.` | `criticalDensity={{ node_health_capacity_summary.critical_pod_density_node_count | default(0) }}, quotaPressure={{ node_health_capacity_summary.quota_pressure_finding_count | default(0) }}` | `{% if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 or (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 %}Review hot nodes, pod density, quotas, and workload requests before scaling or onboarding more workloads.{% else %}No capacity-pressure remediation is required for this posture.{% endif %}` |
-| `Utilization hotspots` | `{% if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `highCpu={{ node_health_capacity_summary.high_cpu_node_count | default(0) }}, highMemory={{ node_health_capacity_summary.high_memory_node_count | default(0) }}, highDisk={{ node_health_capacity_summary.high_disk_node_count | default(0) }}` | `Sustained node CPU, memory, or disk hotspots can reduce workload stability and scaling headroom.` | `hotspotNodes={{ (node_health_capacity_summary.high_cpu_node_count | default(0) | int) + (node_health_capacity_summary.high_memory_node_count | default(0) | int) + (node_health_capacity_summary.high_disk_node_count | default(0) | int) }}` | `{% if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 %}Investigate hot nodes, rebalance workloads, tune requests and limits, or add capacity before onboarding more workloads.{% else %}No utilization-hotspot remediation is required for this posture.{% endif %}` |
-| `Node diagnostic state` | `{% if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['supported', 'basic-supported'] %}OK{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] %}WARNING{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['node-level-not-requested', 'node-level-no-targets'] %}INFO{% else %}UNKNOWN{% endif %}` | `{{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}` | `Weak diagnostics reduce confidence during node-level troubleshooting.` | `diagnosticVerdict={{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}` | `{% if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] %}Capture targeted node diagnostics for nodes with symptoms before making host-level root-cause claims.{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) == 'basic-supported' %}No additional node-level diagnostics are required unless host logs or OS diagnostics are needed.{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) == 'node-level-no-targets' %}No symptom-based node target was derived; investigate node-level data only if a specific node symptom appears.{% else %}No node-diagnostic remediation is required for this posture.{% endif %}` |
+| `Node readiness` | `{% if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 %}CRITICAL{% elif (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `notReady={{ node_health_capacity_summary.not_ready_node_count | default(0) }}, pressure={{ node_health_capacity_summary.node_pressure_count | default(0) }}` | `NotReady or pressured nodes reduce schedulable capacity and can indicate platform instability.` | `notReady={{ node_health_capacity_summary.not_ready_node_count | default(0) }}, pressure={{ node_health_capacity_summary.node_pressure_count | default(0) }}` | `{% if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Restore or replace NotReady nodes before lower-priority cleanup.', 'CRITICAL', ['nodes']) }}{% elif (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Investigate node pressure source and relieve CPU, memory, disk, PID, or kubelet constraints.', 'WARNING', ['nodes', 'capacity']) }}{% else %}{{ recommended_action_with_docs('No node-readiness remediation is required for this posture.', 'OK', ['nodes']) }}{% endif %}` |
+| `Capacity pressure` | `{% if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 %}CRITICAL{% elif (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 or (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `podDensity={{ node_health_capacity_summary.high_pod_density_node_count | default(0) }}, cpu={{ node_health_capacity_summary.high_cpu_node_count | default(0) }}, memory={{ node_health_capacity_summary.high_memory_node_count | default(0) }}, disk={{ node_health_capacity_summary.high_disk_node_count | default(0) }}` | `Capacity hotspots can affect workload placement, performance, and scaling headroom.` | `criticalDensity={{ node_health_capacity_summary.critical_pod_density_node_count | default(0) }}, quotaPressure={{ node_health_capacity_summary.quota_pressure_finding_count | default(0) }}` | `{% if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 or (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Review hot nodes, pod density, quotas, and workload requests before scaling or onboarding more workloads.', 'CRITICAL' if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 else 'WARNING', ['nodes', 'capacity']) }}{% else %}{{ recommended_action_with_docs('No capacity-pressure remediation is required for this posture.', 'OK', ['nodes', 'capacity']) }}{% endif %}` |
+| `Utilization hotspots` | `{% if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `highCpu={{ node_health_capacity_summary.high_cpu_node_count | default(0) }}, highMemory={{ node_health_capacity_summary.high_memory_node_count | default(0) }}, highDisk={{ node_health_capacity_summary.high_disk_node_count | default(0) }}` | `Sustained node CPU, memory, or disk hotspots can reduce workload stability and scaling headroom.` | `hotspotNodes={{ (node_health_capacity_summary.high_cpu_node_count | default(0) | int) + (node_health_capacity_summary.high_memory_node_count | default(0) | int) + (node_health_capacity_summary.high_disk_node_count | default(0) | int) }}` | `{% if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Investigate hot nodes, rebalance workloads, tune requests and limits, or add capacity before onboarding more workloads.', 'WARNING', ['nodes', 'capacity']) }}{% else %}{{ recommended_action_with_docs('No utilization-hotspot remediation is required for this posture.', 'OK', ['nodes', 'capacity']) }}{% endif %}` |
+| `Node diagnostic state` | `{% if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['supported', 'basic-supported'] %}OK{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] %}WARNING{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['node-level-not-requested', 'node-level-no-targets'] %}INFO{% else %}UNKNOWN{% endif %}` | `{{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}` | `Weak diagnostics reduce confidence during node-level troubleshooting.` | `diagnosticVerdict={{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}` | `{% if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] %}{{ recommended_action_with_docs('Capture targeted node diagnostics for nodes with symptoms before making host-level root-cause claims.', 'WARNING', ['nodes', 'collection']) }}{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) == 'basic-supported' %}{{ recommended_action_with_docs('No additional node-level diagnostics are required unless host logs or OS diagnostics are needed.', 'OK', ['nodes', 'collection']) }}{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) == 'node-level-no-targets' %}{{ recommended_action_with_docs('No symptom-based node target was derived; investigate node-level data only if a specific node symptom appears.', 'INFO', ['nodes', 'collection']) }}{% else %}{{ recommended_action_with_docs('No node-diagnostic remediation is required for this posture.', 'UNKNOWN', ['nodes', 'collection']) }}{% endif %}` |
 
 {% if nodes_items | length == 0 %}
 | Signal | Value |
@@ -408,7 +521,9 @@ not-scored
 | Node | Roles | Ready | Pressures | Kubelet | OS Image |
 | --- | --- | --- | --- | --- | --- |
 {% for item in (nodes_items | sort(attribute='metadata.name')) %}
-| `{{ item.metadata.name }}` | `{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | join(', ') or 'worker' }}` | {{ status_badge('OK' if ((item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | `{{ item.status.conditions | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | join(', ') or 'None' }}` | `{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}` | `{{ item.status.nodeInfo.osImage | default('unknown') }}` |
+{% set item_status = item.status | default({}) %}
+{% set item_node_info = item_status.nodeInfo | default({}) %}
+| `{{ item.metadata.name }}` | `{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | join(', ') or 'worker' }}` | {{ status_badge('OK' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | `{{ item_status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | join(', ') or 'None' }}` | `{{ item_node_info.kubeletVersion | default('unknown') }}` | `{{ item_node_info.osImage | default('unknown') }}` |
 {% endfor %}
 {% endif %}
 
@@ -423,7 +538,8 @@ not-scored
 | MCP | Updated | Updating | Degraded | Machine Count | Ready Count | Updated Count |
 | --- | --- | --- | --- | --- | --- | --- |
 {% for item in (machineconfigpools_items | sort(attribute='metadata.name')) %}
-| `{{ item.metadata.name }}` | {{ status_badge('OK' if ((item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if ((item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | `{{ item.status.machineCount | default('n/a') }}` | `{{ item.status.readyMachineCount | default('n/a') }}` | `{{ item.status.updatedMachineCount | default('n/a') }}` |
+{% set item_status = item.status | default({}) %}
+| `{{ item.metadata.name }}` | {{ status_badge('OK' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'True' else ('UNKNOWN' if ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) == 'Unknown' else 'OK')) }} | `{{ item_status.machineCount | default('n/a') }}` | `{{ item_status.readyMachineCount | default('n/a') }}` | `{{ item_status.updatedMachineCount | default('n/a') }}` |
 {% endfor %}
 {% endif %}
 
@@ -519,11 +635,11 @@ not-scored
 
 | Finding | Severity | Current State | Business Impact | Technical Evidence | Recommended Action |
 | --- | --- | --- | --- | --- | --- |
-| `Workload backup tooling` | `{% if backup_recovery_summary.backup_tooling_detected | default(false) %}OK{% else %}CRITICAL{% endif %}` | `toolingDetected={{ backup_recovery_summary.backup_tooling_detected | default(false) }}, dpa={{ backup_recovery_summary.dataprotectionapplication_count | default(0) }}` | `Without OADP workload backup tooling, namespace and PV recovery is not demonstrated by the report.` | `backupPostureFindings={{ backup_recovery_summary.backup_posture_findings | default(0) }}` | `{% if backup_recovery_summary.backup_tooling_detected | default(false) %}No workload backup tooling remediation is required for this posture.{% else %}Install or enable OADP, validate that DataProtectionApplication and backup resources are present, then rerun the report.{% endif %}` |
-| `Workload backup and restore evidence` | `{% if (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 %}CRITICAL{% elif (backup_recovery_summary.clean_completed_restore_count | default(0) | int) == 0 or (backup_recovery_summary.paused_backup_schedule_count | default(0) | int) > 0 or (backup_recovery_summary.completed_backup_with_issues_count | default(0) | int) > 0 or (backup_recovery_summary.completed_restore_with_issues_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `locations={{ backup_recovery_summary.available_backup_storage_location_count | default(0) }}, schedules={{ backup_recovery_summary.backup_schedule_count | default(0) }}, cleanBackups={{ backup_recovery_summary.clean_successful_backup_count | default(0) }}, cleanRestores={{ backup_recovery_summary.clean_completed_restore_count | default(0) }}` | `Unproven workload recovery paths can turn namespace or stateful-application incidents into prolonged outages.` | `pausedSchedules={{ backup_recovery_summary.paused_backup_schedule_count | default(0) }}, backupIssues={{ backup_recovery_summary.completed_backup_with_issues_count | default(0) }}, restoreIssues={{ backup_recovery_summary.completed_restore_with_issues_count | default(0) }}` | `{% if (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 or (backup_recovery_summary.clean_completed_restore_count | default(0) | int) == 0 or (backup_recovery_summary.paused_backup_schedule_count | default(0) | int) > 0 %}Validate usable BackupStorageLocations, active schedules, clean successful backups, and clean restore tests for workload recovery.{% else %}No workload backup or restore remediation is required for this posture.{% endif %}` |
-| `Control plane backup and recovery evidence` | `{% if not (backup_recovery_summary.control_plane_recovery_applicable | default(true)) %}INFO{% elif not (backup_recovery_summary.control_plane_runtime_healthy | default(false)) %}WARNING{% elif backup_recovery_summary.control_plane_snapshot_evidence_collected | default(false) %}OK{% else %}INFO{% endif %}` | `applicable={{ backup_recovery_summary.control_plane_recovery_applicable | default(true) }}, runtimeHealthy={{ backup_recovery_summary.control_plane_runtime_healthy | default(false) }}, liveSnapshotEvidence={{ backup_recovery_summary.control_plane_snapshot_evidence_collected | default(false) }}` | `Control-plane recovery depends on valid etcd snapshot procedures and matching static pod resource archives.` | `{% if backup_recovery_summary.control_plane_recovery_applicable | default(true) %}selfManagedControlPlane=true{% else %}hostedControlPlane=true{% endif %}` | `{% if not (backup_recovery_summary.control_plane_recovery_applicable | default(true)) %}Validate etcd snapshot and restore readiness from the hosted control plane management cluster evidence set.{% elif not (backup_recovery_summary.control_plane_runtime_healthy | default(false)) %}Restore API and etcd runtime health before validating control-plane backup and restore readiness.{% elif backup_recovery_summary.control_plane_snapshot_evidence_collected | default(false) %}No control-plane backup remediation is required for this posture.{% else %}Capture and retain evidence of recurring `cluster-backup.sh` snapshots plus matching `static_kuberesources` archives from control plane nodes, and document a recent restore drill.{% endif %}` |
-| `Storage provider posture` | `{% if backup_recovery_summary.external_storage_provider_detected | default(false) %}OK{% elif backup_recovery_summary.local_or_ephemeral_only_risk | default(false) %}WARNING{% else %}INFO{% endif %}` | `externalSC={{ backup_recovery_summary.external_storageclass_count | default(0) }}, localSC={{ backup_recovery_summary.local_storageclass_count | default(0) }}` | `Storage design affects workload resilience, recovery, and scheduling flexibility.` | `externalPVs={{ backup_recovery_summary.external_pv_count | default(0) }}, localPVs={{ backup_recovery_summary.local_pv_count | default(0) }}` | `{% if backup_recovery_summary.local_or_ephemeral_only_risk | default(false) %}Confirm that local or ephemeral persistent storage is intentional, documented, and covered by the recovery plan.{% else %}Keep storage-provider assumptions documented with the recovery design.{% endif %}` |
-| `Machine remediation` | `{% if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ backup_recovery_summary.machine_healthcheck_findings | default(0) }} findings` | `Missing or paused MachineHealthChecks reduce automated worker recovery during node failure.` | `machineHealthChecks={{ machinehealthcheck_summary | default([]) | length }}, findings={{ backup_recovery_summary.machine_healthcheck_findings | default(0) }}` | `{% if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 %}Repair MachineHealthCheck coverage, paused state, or selectors for worker pools where automated remediation is expected.{% else %}No machine-remediation remediation is required for this posture.{% endif %}` |
+| `Workload backup tooling` | `{% if backup_recovery_summary.backup_tooling_detected | default(false) %}OK{% else %}CRITICAL{% endif %}` | `toolingDetected={{ backup_recovery_summary.backup_tooling_detected | default(false) }}, dpa={{ backup_recovery_summary.dataprotectionapplication_count | default(0) }}` | `Without OADP workload backup tooling, namespace and PV recovery is not demonstrated by the report.` | `backupPostureFindings={{ backup_recovery_summary.backup_posture_findings | default(0) }}` | `{% if backup_recovery_summary.backup_tooling_detected | default(false) %}{{ recommended_action_with_docs('No workload backup tooling remediation is required for this posture.', 'OK', ['backup']) }}{% else %}{{ recommended_action_with_docs('Install or enable OADP, validate that DataProtectionApplication and backup resources are present, then rerun the report.', 'CRITICAL', ['backup']) }}{% endif %}` |
+| `Workload backup and restore evidence` | `{% if (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 %}CRITICAL{% elif (backup_recovery_summary.clean_completed_restore_count | default(0) | int) == 0 or (backup_recovery_summary.paused_backup_schedule_count | default(0) | int) > 0 or (backup_recovery_summary.completed_backup_with_issues_count | default(0) | int) > 0 or (backup_recovery_summary.completed_restore_with_issues_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `locations={{ backup_recovery_summary.available_backup_storage_location_count | default(0) }}, schedules={{ backup_recovery_summary.backup_schedule_count | default(0) }}, cleanBackups={{ backup_recovery_summary.clean_successful_backup_count | default(0) }}, cleanRestores={{ backup_recovery_summary.clean_completed_restore_count | default(0) }}` | `Unproven workload recovery paths can turn namespace or stateful-application incidents into prolonged outages.` | `pausedSchedules={{ backup_recovery_summary.paused_backup_schedule_count | default(0) }}, backupIssues={{ backup_recovery_summary.completed_backup_with_issues_count | default(0) }}, restoreIssues={{ backup_recovery_summary.completed_restore_with_issues_count | default(0) }}` | `{% if (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 or (backup_recovery_summary.clean_completed_restore_count | default(0) | int) == 0 or (backup_recovery_summary.paused_backup_schedule_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Validate usable BackupStorageLocations, active schedules, clean successful backups, and clean restore tests for workload recovery.', 'CRITICAL' if (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 else 'WARNING', ['backup']) }}{% else %}{{ recommended_action_with_docs('No workload backup or restore remediation is required for this posture.', 'OK', ['backup']) }}{% endif %}` |
+| `Control plane backup and recovery evidence` | `{% if not (backup_recovery_summary.control_plane_recovery_applicable | default(true)) %}INFO{% elif not (backup_recovery_summary.control_plane_runtime_healthy | default(false)) %}WARNING{% elif backup_recovery_summary.control_plane_snapshot_evidence_collected | default(false) %}OK{% else %}INFO{% endif %}` | `applicable={{ backup_recovery_summary.control_plane_recovery_applicable | default(true) }}, runtimeHealthy={{ backup_recovery_summary.control_plane_runtime_healthy | default(false) }}, liveSnapshotEvidence={{ backup_recovery_summary.control_plane_snapshot_evidence_collected | default(false) }}` | `Control-plane recovery depends on valid etcd snapshot procedures and matching static pod resource archives.` | `{% if backup_recovery_summary.control_plane_recovery_applicable | default(true) %}selfManagedControlPlane=true{% else %}hostedControlPlane=true{% endif %}` | `{% if not (backup_recovery_summary.control_plane_recovery_applicable | default(true)) %}{{ recommended_action_with_docs('Validate etcd snapshot and restore readiness from the hosted control plane management cluster evidence set.', 'INFO', ['backup']) }}{% elif not (backup_recovery_summary.control_plane_runtime_healthy | default(false)) %}{{ recommended_action_with_docs('Restore API and etcd runtime health before validating control-plane backup and restore readiness.', 'WARNING', ['backup', 'core']) }}{% elif backup_recovery_summary.control_plane_snapshot_evidence_collected | default(false) %}{{ recommended_action_with_docs('No control-plane backup remediation is required for this posture.', 'OK', ['backup']) }}{% else %}{{ recommended_action_with_docs('Capture and retain evidence of recurring `cluster-backup.sh` snapshots plus matching `static_kuberesources` archives from control plane nodes, and document a recent restore drill.', 'INFO', ['backup']) }}{% endif %}` |
+| `Storage provider posture` | `{% if backup_recovery_summary.external_storage_provider_detected | default(false) %}OK{% elif backup_recovery_summary.local_or_ephemeral_only_risk | default(false) %}WARNING{% else %}INFO{% endif %}` | `externalSC={{ backup_recovery_summary.external_storageclass_count | default(0) }}, localSC={{ backup_recovery_summary.local_storageclass_count | default(0) }}` | `Storage design affects workload resilience, recovery, and scheduling flexibility.` | `externalPVs={{ backup_recovery_summary.external_pv_count | default(0) }}, localPVs={{ backup_recovery_summary.local_pv_count | default(0) }}` | `{% if backup_recovery_summary.local_or_ephemeral_only_risk | default(false) %}{{ recommended_action_with_docs('Confirm that local or ephemeral persistent storage is intentional, documented, and covered by the recovery plan.', 'WARNING', ['backup']) }}{% else %}{{ recommended_action_with_docs('Keep storage-provider assumptions documented with the recovery design.', 'OK' if backup_recovery_summary.external_storage_provider_detected | default(false) else 'INFO', ['backup']) }}{% endif %}` |
+| `Machine remediation` | `{% if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ backup_recovery_summary.machine_healthcheck_findings | default(0) }} findings` | `Missing or paused MachineHealthChecks reduce automated worker recovery during node failure.` | `machineHealthChecks={{ machinehealthcheck_summary | default([]) | length }}, findings={{ backup_recovery_summary.machine_healthcheck_findings | default(0) }}` | `{% if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 %}{{ recommended_action_with_docs('Repair MachineHealthCheck coverage, paused state, or selectors for worker pools where automated remediation is expected.', 'WARNING', ['backup', 'nodes']) }}{% else %}{{ recommended_action_with_docs('No machine-remediation remediation is required for this posture.', 'OK', ['backup', 'nodes']) }}{% endif %}` |
 
 {% if dataprotectionapplication_summary | default([]) | length > 0 %}
 #### Data Protection Applications
@@ -665,7 +781,7 @@ not-scored
 {% endif %}
 
 {% if pvc_issues | default([]) | length > 0 %}
-#### PVC Issue Samples
+#### Top 25 PVCs with Issues
 
 | Namespace | PVC | Phase | StorageClass | Volume |
 | --- | --- | --- | --- | --- |
@@ -714,12 +830,12 @@ not-scored
 
 | Finding | Severity | Current State | Business Impact | Technical Evidence | Recommended Action |
 | --- | --- | --- | --- | --- | --- |
-| `Route and ingress health` | `{% if (network_architecture_summary.route_issue_count | default(0) | int) > 0 or (network_architecture_summary.ingress_issue_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `routes={{ network_architecture_summary.route_issue_count | default(0) }}, ingresses={{ network_architecture_summary.ingress_issue_count | default(0) }}` | `Application access issues can cause user-visible outages even when workloads are running.` | `routeObjects={{ routes_items | length }}, ingressObjects={{ ingresses_items | length }}` | `Review unhealthy routes, ingresses, certificates, and backend service wiring.` |
-| `Ingress controller health` | `{% if (network_architecture_summary.default_ingresscontroller_issue_count | default(0) | int) > 0 %}WARNING{% elif (network_architecture_summary.nondefault_ingresscontroller_issue_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `default={{ network_architecture_summary.default_ingresscontroller_issue_count | default(0) }}, nonDefault={{ network_architecture_summary.nondefault_ingresscontroller_issue_count | default(0) }}` | `Ingress controller issues can affect route admission, load balancer availability, and application entry points.` | `ingressControllerIssues={{ network_architecture_summary.ingresscontroller_issue_count | default(0) }}` | `{% if (network_architecture_summary.default_ingresscontroller_issue_count | default(0) | int) > 0 %}Restore the default ingress controller before treating application access as healthy.{% elif (network_architecture_summary.nondefault_ingresscontroller_issue_count | default(0) | int) > 0 %}Review non-default ingress controller ownership and intended exposure scope with the application or platform owner.{% else %}No ingress-controller remediation is required for this posture.{% endif %}` |
-| `Host conflicts` | `{% if (network_architecture_summary.route_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingress_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.cross_host_conflict_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `route={{ network_architecture_summary.route_host_conflict_count | default(0) }}, ingress={{ network_architecture_summary.ingress_host_conflict_count | default(0) }}, cross={{ network_architecture_summary.cross_host_conflict_count | default(0) }}` | `Duplicate or conflicting hosts can route traffic unpredictably.` | `routeConflicts={{ route_host_conflicts | default([]) | length }}, ingressConflicts={{ ingress_host_conflicts | default([]) | length }}, crossConflicts={{ route_ingress_host_conflicts | default([]) | length }}` | `{% if (network_architecture_summary.route_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingress_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.cross_host_conflict_count | default(0) | int) > 0 %}Resolve duplicate host ownership across Route and Ingress objects.{% else %}No host-conflict remediation is required for this posture.{% endif %}` |
-| `Service endpoint health` | `{% if (network_architecture_summary.service_endpoint_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ network_architecture_summary.service_endpoint_gap_count | default(0) }} Services without ready endpoints` | `Services with no ready endpoints break application traffic even when routes and ingresses exist.` | `servicesWithoutEndpoints={{ services_without_endpoints | default([]) | length }}` | `{% if (network_architecture_summary.service_endpoint_gap_count | default(0) | int) > 0 %}Repair Service selectors, backing pods, readiness probes, or remove stale Services.{% else %}No service endpoint remediation is required for this posture.{% endif %}` |
-| `Proxy and egress posture` | `{% if (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 %}WARNING{% elif network_architecture_summary.cluster_proxy_configured | default(false) %}INFO{% else %}OK{% endif %}` | `configured={{ network_architecture_summary.cluster_proxy_configured | default(false) }}, trustedCA={{ network_architecture_summary.trusted_ca_configured | default(false) }}, missingNoProxy={{ network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | join(', ') or 'none' }}` | `Incorrect proxy exclusions can break internal API, service, or cluster-domain traffic.` | `noProxyEntries={{ network_architecture_summary.no_proxy_entry_count | default(0) }}` | `{% if (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 %}Add the missing internal cluster entries to proxy noProxy after validating customer proxy standards.{% elif network_architecture_summary.cluster_proxy_configured | default(false) %}Maintain proxy trusted CA and noProxy review during network changes.{% else %}No cluster proxy remediation is required for this posture.{% endif %}` |
-| `Exposed namespace isolation` | `{% if network_has_policy_context %}INFO{% else %}OK{% endif %}` | `withoutNetworkPolicy={{ network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | length }}, missingIngress={{ network_architecture_summary.exposed_namespaces_missing_ingress_policies | default([]) | length }}, missingEgress={{ network_architecture_summary.exposed_namespaces_missing_egress_policies | default([]) | length }}` | `Exposed workloads may have weaker tenant isolation if the customer standard requires namespace-level NetworkPolicy.` | `namespaces={{ network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | join(', ') or 'none' }}` | `Validate isolation requirements and apply baseline ingress or egress policies where required.` |
+| `Route and ingress health` | `{% if (network_architecture_summary.route_issue_count | default(0) | int) > 0 or (network_architecture_summary.ingress_issue_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `routes={{ network_architecture_summary.route_issue_count | default(0) }}, ingresses={{ network_architecture_summary.ingress_issue_count | default(0) }}` | `Application access issues can cause user-visible outages even when workloads are running.` | `routeObjects={{ routes_items | length }}, ingressObjects={{ ingresses_items | length }}` | `{{ recommended_action_with_docs('Review unhealthy routes, ingresses, certificates, and backend service wiring.', 'WARNING' if (network_architecture_summary.route_issue_count | default(0) | int) > 0 or (network_architecture_summary.ingress_issue_count | default(0) | int) > 0 else 'OK', ['network']) }}` |
+| `Ingress controller health` | `{% if (network_architecture_summary.default_ingresscontroller_issue_count | default(0) | int) > 0 %}WARNING{% elif (network_architecture_summary.nondefault_ingresscontroller_issue_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `default={{ network_architecture_summary.default_ingresscontroller_issue_count | default(0) }}, nonDefault={{ network_architecture_summary.nondefault_ingresscontroller_issue_count | default(0) }}` | `Ingress controller issues can affect route admission, load balancer availability, and application entry points.` | `ingressControllerIssues={{ network_architecture_summary.ingresscontroller_issue_count | default(0) }}` | `{% if (network_architecture_summary.default_ingresscontroller_issue_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Restore the default ingress controller before treating application access as healthy.', 'WARNING', ['network']) }}{% elif (network_architecture_summary.nondefault_ingresscontroller_issue_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Review non-default ingress controller ownership and intended exposure scope with the application or platform owner.', 'INFO', ['network']) }}{% else %}{{ recommended_action_with_docs('No ingress-controller remediation is required for this posture.', 'OK', ['network']) }}{% endif %}` |
+| `Host conflicts` | `{% if (network_architecture_summary.route_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingress_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.cross_host_conflict_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `route={{ network_architecture_summary.route_host_conflict_count | default(0) }}, ingress={{ network_architecture_summary.ingress_host_conflict_count | default(0) }}, cross={{ network_architecture_summary.cross_host_conflict_count | default(0) }}` | `Duplicate or conflicting hosts can route traffic unpredictably.` | `routeConflicts={{ route_host_conflicts | default([]) | length }}, ingressConflicts={{ ingress_host_conflicts | default([]) | length }}, crossConflicts={{ route_ingress_host_conflicts | default([]) | length }}` | `{% if (network_architecture_summary.route_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingress_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.cross_host_conflict_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Resolve duplicate host ownership across Route and Ingress objects.', 'WARNING', ['network']) }}{% else %}{{ recommended_action_with_docs('No host-conflict remediation is required for this posture.', 'OK', ['network']) }}{% endif %}` |
+| `Service endpoint health` | `{% if (network_architecture_summary.service_endpoint_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ network_architecture_summary.service_endpoint_gap_count | default(0) }} Services without ready endpoints` | `Services with no ready endpoints break application traffic even when routes and ingresses exist.` | `servicesWithoutEndpoints={{ services_without_endpoints | default([]) | length }}` | `{% if (network_architecture_summary.service_endpoint_gap_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Repair Service selectors, backing pods, readiness probes, or remove stale Services.', 'WARNING', ['network']) }}{% else %}{{ recommended_action_with_docs('No service endpoint remediation is required for this posture.', 'OK', ['network']) }}{% endif %}` |
+| `Proxy and egress posture` | `{% if (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 %}WARNING{% elif network_architecture_summary.cluster_proxy_configured | default(false) %}INFO{% else %}OK{% endif %}` | `configured={{ network_architecture_summary.cluster_proxy_configured | default(false) }}, trustedCA={{ network_architecture_summary.trusted_ca_configured | default(false) }}, missingNoProxy={{ network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | join(', ') or 'none' }}` | `Incorrect proxy exclusions can break internal API, service, or cluster-domain traffic.` | `noProxyEntries={{ network_architecture_summary.no_proxy_entry_count | default(0) }}` | `{% if (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 %}{{ recommended_action_with_docs('Add the missing internal cluster entries to proxy noProxy after validating customer proxy standards.', 'WARNING', ['network']) }}{% elif network_architecture_summary.cluster_proxy_configured | default(false) %}{{ recommended_action_with_docs('Maintain proxy trusted CA and noProxy review during network changes.', 'INFO', ['network']) }}{% else %}{{ recommended_action_with_docs('No cluster proxy remediation is required for this posture.', 'OK', ['network']) }}{% endif %}` |
+| `Exposed namespace isolation` | `{% if network_has_policy_context %}INFO{% else %}OK{% endif %}` | `withoutNetworkPolicy={{ network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | length }}, missingIngress={{ network_architecture_summary.exposed_namespaces_missing_ingress_policies | default([]) | length }}, missingEgress={{ network_architecture_summary.exposed_namespaces_missing_egress_policies | default([]) | length }}` | `Exposed workloads may have weaker tenant isolation if the customer standard requires namespace-level NetworkPolicy.` | `namespaces={{ network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | join(', ') or 'none' }}` | `{{ recommended_action_with_docs('Validate isolation requirements and apply baseline ingress or egress policies where required.', 'INFO' if network_has_policy_context else 'OK', ['network', 'security']) }}` |
 
 {% if route_issues | default([]) | length == 0 and ingress_issues | default([]) | length == 0 and route_host_conflicts | default([]) | length == 0 and ingress_host_conflicts | default([]) | length == 0 and route_ingress_host_conflicts | default([]) | length == 0 and services_without_endpoints | default([]) | length == 0 %}
 | Check | Result | Detail |
@@ -795,8 +911,8 @@ not-scored
 
 {% set observability_summary = audit_report.domains.observability.summary | default({}) %}
 {% set observability_metric_evidence_gap = (observability_summary.metric_evidence_gap_count | default(0) | int) > 0 %}
-{% set observability_prom_status = observability_summary.prometheus_query_status | default(audit_report.domains.observability.prometheus_query.status | default((prometheus_evidence_summary | default({})).status | default('not-collected'))) %}
-{% set observability_prom_transport = observability_summary.prometheus_query_transport | default(audit_report.domains.observability.prometheus_query.transport | default((prometheus_evidence_summary | default({})).transport | default('unavailable'))) %}
+{% set observability_prom_status = observability_summary.prometheus_query_status | default(audit_observability.get('prometheus_query', {}).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected'))) %}
+{% set observability_prom_transport = observability_summary.prometheus_query_transport | default(audit_observability.get('prometheus_query', {}).get('transport', (prometheus_evidence_summary | default({})).get('transport', 'unavailable'))) %}
 {% set observability_has_findings = not (observability_summary.monitoring_operator_healthy | default(false)) or (observability_summary.firing_alert_count | default(0) | int) > 0 or (observability_summary.log_gap_count | default(0) | int) > 0 or (observability_summary.metrics_gap_count | default(0) | int) > 0 or (observability_summary.alerting_gap_count | default(0) | int) > 0 or observability_metric_evidence_gap or (observability_summary.warning_event_count | default(0) | int) >= (observability_warning_event_threshold | default(10) | int) or (observability_summary.insights_archive_findings | default(0) | int) > 0 %}
 
 ### Health Score
@@ -829,19 +945,19 @@ not-scored
 
 | Finding | Severity | Current State | Business Impact | Technical Evidence | Recommended Action |
 | --- | --- | --- | --- | --- | --- |
-| `Monitoring health` | `{% if not (observability_summary.monitoring_operator_healthy | default(false)) or (observability_summary.firing_critical_alert_count | default(0) | int) > 0 %}CRITICAL{% elif (observability_summary.firing_noncritical_alert_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `monitoring healthy={{ observability_summary.monitoring_operator_healthy | default(false) }}, critical alerts={{ observability_summary.firing_critical_alert_count | default(0) }}, noncritical alerts={{ observability_summary.firing_noncritical_alert_count | default(0) }}` | `Monitoring instability can hide or delay incident detection.` | `monitoringOperatorHealthy={{ observability_summary.monitoring_operator_healthy | default(false) }}, alerts={{ observability_summary.firing_alert_count | default(0) }}` | `{% if not (observability_summary.monitoring_operator_healthy | default(false)) or (observability_summary.firing_alert_count | default(0) | int) > 0 %}Stabilize the monitoring operator and address active alert load.{% else %}No monitoring-health remediation is required for this posture.{% endif %}` |
-| `Log forwarding` | `{% if (observability_summary.log_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `app={{ observability_summary.application_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}, infra={{ observability_summary.infrastructure_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}, audit={{ observability_summary.audit_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}` | `Missing log collection or export reduces investigation and audit capability.` | `log gaps={{ observability_summary.log_gap_count | default(0) }}, outputs={{ observability_summary.external_log_output_count | default(0) }}, vendorManaged={{ observability_summary.vendor_managed_log_forwarding_present | default(false) }}, vendors={{ observability_summary.log_forwarding_vendor_names | default([]) | join(',') or 'none' }}, verification={{ observability_summary.logs_delivery_verification_status | default('not-configured') }}` | `{% if (observability_summary.log_gap_count | default(0) | int) > 0 %}Fix the affected log forwarding path by completing either native `ClusterLogForwarder` pipelines and external outputs or the equivalent vendor-managed forwarding configuration, then verify export for application, infrastructure, and audit logs.{% else %}No log-forwarding remediation is required for this posture.{% endif %}` |
-| `Metrics forwarding` | `{% if (observability_summary.metrics_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `cluster={{ observability_summary.cluster_metrics_delivery_state | default('not-configured') }}, userWorkload={{ observability_summary.user_workload_metrics_delivery_state | default('not-configured') }}` | `Missing metrics egress can limit central visibility and reporting when external metric delivery is expected.` | `metrics gaps={{ observability_summary.metrics_gap_count | default(0) }}, vendorManaged={{ observability_summary.vendor_managed_metrics_forwarding_present | default(false) }}, vendors={{ observability_summary.metrics_forwarding_vendor_names | default([]) | join(',') or 'none' }}, verification={{ observability_summary.metrics_delivery_verification_status | default('not-configured') }}` | `{% if (observability_summary.metrics_gap_count | default(0) | int) > 0 %}Fix the required metrics export path by completing either Prometheus remote-write configuration or the equivalent vendor-managed metrics forwarding configuration, then verify delivery to the intended external destination.{% else %}No metrics-forwarding remediation is required for this posture.{% endif %}` |
-| `Alert delivery` | `{% if (observability_summary.alerting_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `state={{ observability_summary.alert_delivery_state | default('not-configured') }}, externalReceivers={{ observability_summary.external_alert_receiver_count | default(0) }}` | `Alerts may not reach responders reliably when external receivers or routes are missing.` | `alerting gaps={{ observability_summary.alerting_gap_count | default(0) }}, sources={{ observability_summary.alert_delivery_source_count | default(0) }}, verification={{ observability_summary.alert_delivery_verification_status | default('not-configured') }}` | `{% if (observability_summary.alerting_gap_count | default(0) | int) > 0 %}Fix AlertmanagerConfig receiver definitions, route receiver references, and external receiver verification for the affected alert path.{% else %}No alert-delivery remediation is required for this posture.{% endif %}` |
-| `Monitoring signal coverage` | `{% if observability_metric_evidence_gap %}WARNING{% elif (observability_summary.firing_alert_count | default(0) | int) > 0 or (observability_summary.warning_event_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `alerts={{ observability_summary.firing_alert_count | default(0) }}, warningEvents={{ observability_summary.warning_event_count | default(0) }}, metricResults={{ observability_summary.prometheus_non_empty_query_count | default(audit_report.domains.observability.prometheus_query.non_empty_result_count | default((prometheus_evidence_summary | default({})).non_empty_result_count | default(0))) }}` | `Weak monitoring signals can hide active cluster or workload problems.` | `criticalAlerts={{ observability_summary.firing_critical_alert_count | default(0) }}, noncriticalAlerts={{ observability_summary.firing_noncritical_alert_count | default(0) }}, warningEvents={{ observability_summary.warning_event_count | default(0) }}` | `{% if observability_metric_evidence_gap %}Restore monitoring visibility before relying on alert, utilization, API, etcd, node, pod, or density conclusions.{% elif (observability_summary.firing_alert_count | default(0) | int) > 0 or (observability_summary.warning_event_count | default(0) | int) > 0 %}Review active alerts and recurring warning events for remediation candidates.{% else %}No monitoring-signal remediation is required for this posture.{% endif %}` |
-| `Warning event load` | `{% if (observability_summary.warning_event_count | default(0) | int) >= (observability_warning_event_threshold | default(10) | int) %}WARNING{% elif (observability_summary.warning_event_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `{{ observability_summary.warning_event_count | default(0) }} warning events` | `High warning volume may indicate drift or recurring instability.` | `warning events={{ observability_summary.warning_event_count | default(0) }}, threshold={{ observability_warning_event_threshold | default(10) }}` | `{% if (observability_summary.warning_event_count | default(0) | int) > 0 %}Review the dominant warning reasons and recurring objects.{% else %}No warning-event remediation is required for this posture.{% endif %}` |
-| `Insights archive health` | `{% if (observability_summary.insights_archive_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ observability_summary.insights_archive_findings | default(0) }} findings` | `Insights gather failures can reduce supportability and hide advisor context.` | `insightsArchiveFindings={{ observability_summary.insights_archive_findings | default(0) }}` | `{% if (observability_summary.insights_archive_findings | default(0) | int) > 0 %}Review Insights archive gather errors, failed gathers, and panics, then re-collect after remediation.{% else %}No Insights archive remediation is required for this posture.{% endif %}` |
+| `Monitoring health` | `{% if not (observability_summary.monitoring_operator_healthy | default(false)) or (observability_summary.firing_critical_alert_count | default(0) | int) > 0 %}CRITICAL{% elif (observability_summary.firing_noncritical_alert_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `monitoring healthy={{ observability_summary.monitoring_operator_healthy | default(false) }}, critical alerts={{ observability_summary.firing_critical_alert_count | default(0) }}, noncritical alerts={{ observability_summary.firing_noncritical_alert_count | default(0) }}` | `Monitoring instability can hide or delay incident detection.` | `monitoringOperatorHealthy={{ observability_summary.monitoring_operator_healthy | default(false) }}, alerts={{ observability_summary.firing_alert_count | default(0) }}` | `{% if not (observability_summary.monitoring_operator_healthy | default(false)) or (observability_summary.firing_alert_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Stabilize the monitoring operator and address active alert load.', 'CRITICAL' if not (observability_summary.monitoring_operator_healthy | default(false)) or (observability_summary.firing_critical_alert_count | default(0) | int) > 0 else 'WARNING', ['observability']) }}{% else %}{{ recommended_action_with_docs('No monitoring-health remediation is required for this posture.', 'OK', ['observability']) }}{% endif %}` |
+| `Log forwarding` | `{% if (observability_summary.log_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `app={{ observability_summary.application_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}, infra={{ observability_summary.infrastructure_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}, audit={{ observability_summary.audit_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}` | `Missing log collection or export reduces investigation and audit capability.` | `log gaps={{ observability_summary.log_gap_count | default(0) }}, outputs={{ observability_summary.external_log_output_count | default(0) }}, vendorManaged={{ observability_summary.vendor_managed_log_forwarding_present | default(false) }}, vendors={{ observability_summary.log_forwarding_vendor_names | default([]) | join(',') or 'none' }}, verification={{ observability_summary.logs_delivery_verification_status | default('not-configured') }}` | `{% if (observability_summary.log_gap_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Fix the affected log forwarding path by completing either native `ClusterLogForwarder` pipelines and external outputs or the equivalent vendor-managed forwarding configuration, then verify export for application, infrastructure, and audit logs.', 'WARNING', ['observability']) }}{% else %}{{ recommended_action_with_docs('No log-forwarding remediation is required for this posture.', 'OK', ['observability']) }}{% endif %}` |
+| `Metrics forwarding` | `{% if (observability_summary.metrics_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `cluster={{ observability_summary.cluster_metrics_delivery_state | default('not-configured') }}, userWorkload={{ observability_summary.user_workload_metrics_delivery_state | default('not-configured') }}` | `Missing metrics egress can limit central visibility and reporting when external metric delivery is expected.` | `metrics gaps={{ observability_summary.metrics_gap_count | default(0) }}, vendorManaged={{ observability_summary.vendor_managed_metrics_forwarding_present | default(false) }}, vendors={{ observability_summary.metrics_forwarding_vendor_names | default([]) | join(',') or 'none' }}, verification={{ observability_summary.metrics_delivery_verification_status | default('not-configured') }}` | `{% if (observability_summary.metrics_gap_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Fix the required metrics export path by completing either Prometheus remote-write configuration or the equivalent vendor-managed metrics forwarding configuration, then verify delivery to the intended external destination.', 'WARNING', ['observability']) }}{% else %}{{ recommended_action_with_docs('No metrics-forwarding remediation is required for this posture.', 'OK', ['observability']) }}{% endif %}` |
+| `Alert delivery` | `{% if (observability_summary.alerting_gap_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `state={{ observability_summary.alert_delivery_state | default('not-configured') }}, externalReceivers={{ observability_summary.external_alert_receiver_count | default(0) }}` | `Alerts may not reach responders reliably when external receivers or routes are missing.` | `alerting gaps={{ observability_summary.alerting_gap_count | default(0) }}, sources={{ observability_summary.alert_delivery_source_count | default(0) }}, verification={{ observability_summary.alert_delivery_verification_status | default('not-configured') }}` | `{% if (observability_summary.alerting_gap_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Fix AlertmanagerConfig receiver definitions, route receiver references, and external receiver verification for the affected alert path.', 'WARNING', ['observability']) }}{% else %}{{ recommended_action_with_docs('No alert-delivery remediation is required for this posture.', 'OK', ['observability']) }}{% endif %}` |
+| `Monitoring signal coverage` | `{% if observability_metric_evidence_gap %}WARNING{% elif (observability_summary.firing_alert_count | default(0) | int) > 0 or (observability_summary.warning_event_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `alerts={{ observability_summary.firing_alert_count | default(0) }}, warningEvents={{ observability_summary.warning_event_count | default(0) }}, metricResults={{ observability_summary.prometheus_non_empty_query_count | default(audit_observability.get('prometheus_query', {}).get('non_empty_result_count', (prometheus_evidence_summary | default({})).get('non_empty_result_count', 0))) }}` | `Weak monitoring signals can hide active cluster or workload problems.` | `criticalAlerts={{ observability_summary.firing_critical_alert_count | default(0) }}, noncriticalAlerts={{ observability_summary.firing_noncritical_alert_count | default(0) }}, warningEvents={{ observability_summary.warning_event_count | default(0) }}` | `{% if observability_metric_evidence_gap %}{{ recommended_action_with_docs('Restore monitoring visibility before relying on alert, utilization, API, etcd, node, pod, or density conclusions.', 'WARNING', ['observability']) }}{% elif (observability_summary.firing_alert_count | default(0) | int) > 0 or (observability_summary.warning_event_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Review active alerts and recurring warning events for remediation candidates.', 'INFO', ['observability']) }}{% else %}{{ recommended_action_with_docs('No monitoring-signal remediation is required for this posture.', 'OK', ['observability']) }}{% endif %}` |
+| `Warning event load` | `{% if (observability_summary.warning_event_count | default(0) | int) >= (observability_warning_event_threshold | default(10) | int) %}WARNING{% elif (observability_summary.warning_event_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `{{ observability_summary.warning_event_count | default(0) }} warning events` | `High warning volume may indicate drift or recurring instability.` | `warning events={{ observability_summary.warning_event_count | default(0) }}, threshold={{ observability_warning_event_threshold | default(10) }}` | `{% if (observability_summary.warning_event_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Review the dominant warning reasons and recurring objects.', 'WARNING' if (observability_summary.warning_event_count | default(0) | int) >= (observability_warning_event_threshold | default(10) | int) else 'INFO', ['observability']) }}{% else %}{{ recommended_action_with_docs('No warning-event remediation is required for this posture.', 'OK', ['observability']) }}{% endif %}` |
+| `Insights archive health` | `{% if (observability_summary.insights_archive_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ observability_summary.insights_archive_findings | default(0) }} findings` | `Insights gather failures can reduce supportability and hide advisor context.` | `insightsArchiveFindings={{ observability_summary.insights_archive_findings | default(0) }}` | `{% if (observability_summary.insights_archive_findings | default(0) | int) > 0 %}{{ recommended_action_with_docs('Review Insights archive gather errors, failed gathers, and panics, then re-collect after remediation.', 'WARNING', ['observability', 'supportability']) }}{% else %}{{ recommended_action_with_docs('No Insights archive remediation is required for this posture.', 'OK', ['observability', 'supportability']) }}{% endif %}` |
 
 #### Telemetry Coverage
 
 | Area | Coverage | Evidence |
 | --- | --- | --- |
-| `Monitoring stack` | `available={{ observability_forwarding_summary.monitoring_operator_available | default('Unknown') }}, degraded={{ observability_forwarding_summary.monitoring_operator_degraded | default('Unknown') }}` | `thanosRouteFound={{ observability_forwarding_summary.thanos_querier_route_found | default(false) }}, promTransport={{ audit_report.domains.observability.prometheus_query.transport | default((prometheus_evidence_summary | default({})).transport | default('unavailable')) }}, metricQueries={{ audit_report.domains.observability.prometheus_query.non_empty_result_count | default((prometheus_evidence_summary | default({})).non_empty_result_count | default(0)) }}/{{ audit_report.domains.observability.prometheus_query.query_count | default((prometheus_evidence_summary | default({})).query_count | default(0)) }}` |
+| `Monitoring stack` | `available={{ observability_forwarding_summary.monitoring_operator_available | default('Unknown') }}, degraded={{ observability_forwarding_summary.monitoring_operator_degraded | default('Unknown') }}` | `thanosRouteFound={{ observability_forwarding_summary.thanos_querier_route_found | default(false) }}, promTransport={{ audit_observability.get('prometheus_query', {}).get('transport', (prometheus_evidence_summary | default({})).get('transport', 'unavailable')) }}, metricQueries={{ audit_observability.get('prometheus_query', {}).get('non_empty_result_count', (prometheus_evidence_summary | default({})).get('non_empty_result_count', 0)) }}/{{ audit_observability.get('prometheus_query', {}).get('query_count', (prometheus_evidence_summary | default({})).get('query_count', 0)) }}` |
 | `Log forwarding` | `app={{ observability_forwarding_summary.application_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}, infra={{ observability_forwarding_summary.infrastructure_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}, audit={{ observability_forwarding_summary.audit_logs_delivery_state | default('not-enabled') | replace('not-collected', 'not-enabled') }}` | `outputs={{ observability_forwarding_summary.log_forwarding_outputs | default([]) | length }}, externalOutputs={{ observability_forwarding_summary.external_log_forwarding_outputs | default([]) | length }}, vendorManaged={{ observability_forwarding_summary.vendor_managed_log_forwarding_present | default(false) }}, vendors={{ observability_forwarding_summary.log_forwarding_vendor_names | default([]) | join(',') or 'none' }}, verification={{ observability_forwarding_summary.logs_delivery_verification_status | default('not-configured') }}` |
 | `Alert delivery` | `state={{ observability_forwarding_summary.alert_delivery_state | default('not-configured') }}, externalReceivers={{ observability_forwarding_summary.external_alert_receiver_count | default(0) }}` | `sources={{ observability_forwarding_summary.alert_delivery_source_count | default(0) }}, routed={{ observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false) }}, verification={{ observability_forwarding_summary.alert_delivery_verification_status | default('not-configured') }}` |
 | `Metrics forwarding` | `cluster={{ observability_forwarding_summary.cluster_metrics_delivery_state | default('not-configured') }}, userWorkload={{ observability_forwarding_summary.user_workload_metrics_delivery_state | default('not-configured') }}` | `clusterRemoteWrite={{ observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) }}, userRemoteWrite={{ observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) }}, vendorManaged={{ observability_forwarding_summary.vendor_managed_metrics_forwarding_present | default(false) }}, vendors={{ observability_forwarding_summary.metrics_forwarding_vendor_names | default([]) | join(',') or 'none' }}, verification={{ observability_forwarding_summary.metrics_delivery_verification_status | default('not-configured') }}` |
@@ -995,10 +1111,10 @@ not-scored
 {% if top_namespace_metadata_governance_gaps | default([]) | length > 0 %}
 #### Namespace Ownership And Chargeback Metadata
 
-| Namespace | Missing Metadata | Present Ownership Tags | Present Cost Tags |
-| --- | --- | --- | --- |
+| Namespace | Missing Metadata | Present Ownership Tags | Present Cost Tags | Recommended Ownership Metadata | Recommended Chargeback Metadata |
+| --- | --- | --- | --- | --- | --- |
 {% for item in top_namespace_metadata_governance_gaps %}
-| `{{ item.namespace }}` | `{{ item.missing_metadata | default([]) | join(', ') }}` | `{{ item.present_owner_labels | default([]) | join(', ') or 'none' }}` | `{{ item.present_cost_labels | default([]) | join(', ') or 'none' }}` |
+| `{{ item.namespace }}` | `{{ item.missing_metadata | default([]) | join(', ') }}` | `{{ item.present_owner_labels | default([]) | join(', ') or 'none' }}` | `{{ item.present_cost_labels | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_owner_values | default([]) | join(', ') }}` | `{{ item.recommended_cost_values | default([]) | join(', ') }}` |
 {% endfor %}
 {% endif %}
 
@@ -1238,7 +1354,7 @@ not-scored
 ## Workload Health
 
 {% set workload_summary = audit_report.domains.workload_health.summary | default({}) %}
-{% set workload_metric_source_status = audit_report.domains.observability.prometheus_query.status | default((prometheus_evidence_summary | default({})).status | default('not-collected')) %}
+{% set workload_metric_source_status = audit_observability.get('prometheus_query', {}).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected')) %}
 {% set workload_soft_hygiene_count = (workload_summary.high_replica_workload_count | default(0) | int) + (workload_summary.orphan_pod_count | default(0) | int) + (workload_summary.workload_label_governance_count | default(0) | int) + (workload_summary.workload_resource_finding_count | default(0) | int) %}
 {% set workload_runtime_issue_count = (workload_summary.unhealthy_user_pod_count | default(0) | int) + (workload_summary.workload_health_issue_count | default(0) | int) %}
 {% set workload_has_remediation = (workload_runtime_issue_count | int) > 0 or (workload_summary.high_restart_pod_count | default(0) | int) > 0 or (workload_summary.workload_probe_finding_count | default(0) | int) > 0 or (workload_soft_hygiene_count | int) > 0 %}
@@ -1277,7 +1393,7 @@ not-scored
 | `Rightsizing context` | `{% if (workload_summary.overprovisioned_pod_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `{{ workload_summary.overprovisioned_pod_count | default(0) }} overprovisioned pods` | `Overprovisioning can waste capacity, but it is follow-on optimization unless capacity pressure exists.` | `overprovisionedPods={{ workload_summary.overprovisioned_pod_count | default(0) }}, usageStatus={{ workload_metric_source_status }}` | `{% if (workload_summary.overprovisioned_pod_count | default(0) | int) > 0 %}Right-size pods after health blockers are resolved, using usage values when available and application owner validation before changing requests or limits.{% else %}No rightsizing action is required for this posture.{% endif %}` |
 
 {% if top_unhealthy_user_pods | default([]) | length > 0 %}
-#### Unhealthy Pod
+#### Unhealthy Pods
 
 | Namespace | Pod | Phase | Ready |
 | --- | --- | --- | --- |
@@ -1297,7 +1413,9 @@ not-scored
 {% endif %}
 
 {% if top_high_restart_pods | default([]) | length > 0 %}
-#### Restart
+#### Top Restarting Pods (>3 Restarts)
+
+Showing up to the top 100 pods with more than 3 restarts.
 
 | Namespace | Pod | Phase | Restarts |
 | --- | --- | --- | --- |
@@ -1317,7 +1435,7 @@ not-scored
 {% endif %}
 
 {% if top_orphan_pods | default([]) | length > 0 %}
-#### Orphan Pod
+#### Orphan Pods
 
 | Namespace | Pod | Phase |
 | --- | --- | --- |
@@ -1329,10 +1447,10 @@ not-scored
 {% if top_workload_label_governance_findings | default([]) | length > 0 %}
 #### Label Governance
 
-| Kind | Namespace | Name | Issue | Expected Team Ownership Tags |
+| Kind | Namespace | Name | Recommended Labels | Recommended Annotations |
 | --- | --- | --- | --- | --- |
 {% for item in top_workload_label_governance_findings %}
-| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.detail }}` | `{{ item.suggested_label_keys | default([]) | join(', ') }}` |
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.recommended_label_values | default([]) | join(', ') }}` | `{{ item.recommended_annotation_values | default([]) | join(', ') }}` |
 {% endfor %}
 {% endif %}
 
@@ -1378,27 +1496,31 @@ not-scored
 
 {% if top_pod_cpu_usage_summary | default([]) | length > 0 %}
 {% set top_pod_cpu_signal = (runtime_signal_resolution_map | default({})).get('top_pod_cpu_usage', {}) %}
-#### {% if top_pod_cpu_signal.get('status') == 'derived' %}CPU Requested Pressure{% else %}CPU Utilization{% endif %}
+#### {% if top_pod_cpu_signal.get('status') == 'derived' %}Top 100 Pods By Requested CPU Pressure{% else %}Top 100 Pods By CPU Utilization{% endif %}
 
-`{{ runtime_signal_basis(top_pod_cpu_signal) }}`
+Showing up to the top 100 pods from the available CPU signal.
 
-| Namespace | Pod | CPU m |
+{{ runtime_signal_basis(top_pod_cpu_signal) }}
+
+| Namespace | Pod | {% if top_pod_cpu_signal.get('status') == 'derived' %}Requested CPU m{% else %}CPU Usage m{% endif %} |
 | --- | --- | --- |
-{% for item in top_pod_cpu_usage_summary[:15] %}
-| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) * 1000) | round(1) }}` |
+{% for item in top_pod_cpu_usage_summary[:100] %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) * 1000) | round(1) }}`{% if top_pod_cpu_signal.get('status') == 'derived' %} `requested`{% endif %} |
 {% endfor %}
 {% endif %}
 
 {% if top_pod_memory_usage_summary | default([]) | length > 0 %}
 {% set top_pod_memory_signal = (runtime_signal_resolution_map | default({})).get('top_pod_memory_usage', {}) %}
-#### {% if top_pod_memory_signal.get('status') == 'derived' %}Memory Requested Pressure{% else %}Memory Utilization{% endif %}
+#### {% if top_pod_memory_signal.get('status') == 'derived' %}Top 100 Pods By Requested Memory Pressure{% else %}Top 100 Pods By Memory Utilization{% endif %}
 
-`{{ runtime_signal_basis(top_pod_memory_signal) }}`
+Showing up to the top 100 pods from the available memory signal.
 
-| Namespace | Pod | Memory MiB |
+{{ runtime_signal_basis(top_pod_memory_signal) }}
+
+| Namespace | Pod | {% if top_pod_memory_signal.get('status') == 'derived' %}Requested Memory MiB{% else %}Memory Usage MiB{% endif %} |
 | --- | --- | --- |
-{% for item in top_pod_memory_usage_summary[:15] %}
-| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}` |
+{% for item in top_pod_memory_usage_summary[:100] %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}`{% if top_pod_memory_signal.get('status') == 'derived' %} `requested`{% endif %} |
 {% endfor %}
 {% endif %}
 
@@ -1726,7 +1848,7 @@ Cluster update history was not returned.
 {% set node_memory_signal = (runtime_signal_resolution_map | default({})).get('node_memory_utilization', {}) %}
 {% set node_disk_signal = (runtime_signal_resolution_map | default({})).get('node_disk_utilization', {}) %}
 {% set pod_density_signal = (runtime_signal_resolution_map | default({})).get('kubelet_pod_density', {}) %}
-| Runtime signal basis | `cpu={{ runtime_signal_basis(node_cpu_signal) }}, memory={{ runtime_signal_basis(node_memory_signal) }}, disk={{ runtime_signal_basis(node_disk_signal) }}, podDensity={{ runtime_signal_basis(pod_density_signal) }}` |
+| Runtime signal basis | cpu={{ runtime_signal_basis(node_cpu_signal) }}, memory={{ runtime_signal_basis(node_memory_signal) }}, disk={{ runtime_signal_basis(node_disk_signal) }}, podDensity={{ runtime_signal_basis(pod_density_signal) }} |
 
 #### Service And Pod IP Capacity
 
@@ -1932,14 +2054,6 @@ Cluster update history was not returned.
 | BuildConfigs | `{{ release_engineering_summary.buildconfig_count | default(0) }}` | {{ status_badge('INFO' if (release_engineering_summary.buildconfig_count | default(0) | int) > 0 else 'OK') }} |
 | Builds | `{{ release_engineering_summary.build_count | default(0) }}` | {{ status_badge('INFO' if (release_engineering_summary.build_count | default(0) | int) > 0 else 'OK') }} |
 | ImageStreams | `{{ release_engineering_summary.imagestream_count | default(0) }}` | {{ status_badge('INFO' if (release_engineering_summary.imagestream_count | default(0) | int) > 0 else 'OK') }} |
-{% if cicd_runner_present %}
-| Cluster-hosted CI/CD runner pods | `{{ cicd_runner_summary.runner_pod_count | default(0) }}` | {{ status_badge('INFO' if (cicd_runner_summary.runner_pod_count | default(0) | int) > 0 else 'OK') }} |
-| Runner pods running and ready | `{{ cicd_runner_summary.running_ready_pod_count | default(0) }}` | {{ status_badge('OK' if (cicd_runner_summary.runner_pod_count | default(0) | int) == 0 or (cicd_runner_summary.running_ready_pod_count | default(0) | int) == (cicd_runner_summary.runner_pod_count | default(0) | int) else 'WARN') }} |
-| Runner pods unhealthy or restarting | `{{ cicd_runner_summary.unhealthy_pod_count | default(0) }}` | {{ status_badge('WARN' if (cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 else 'OK') }} |
-| Runner pods unschedulable | `{{ cicd_runner_summary.unschedulable_pod_count | default(0) }}` | {{ status_badge('WARN' if (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 else 'OK') }} |
-| Privileged runner pods | `{{ cicd_runner_summary.privileged_pod_count | default(0) }}` | {{ status_badge('WARN' if (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0 else 'OK') }} |
-| Runner-native metrics coverage | `{{ cicd_runner_summary.metrics_coverage | default('not-derived') }}` | {{ status_badge('INFO') }} |
-{% endif %}
 
 ### Recommendations
 
@@ -1997,8 +2111,30 @@ Cluster update history was not returned.
 {% endfor %}
 {% endif %}
 
+### Cluster-Hosted CI/CD Runner Pods
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Runner footprint present | `{{ cicd_runner_present }}` | {{ status_badge('INFO' if cicd_runner_present else 'OK') }} |
+| Cluster-hosted CI/CD runner pods | `{{ cicd_runner_summary.runner_pod_count | default(0) }}` | {{ status_badge('INFO' if (cicd_runner_summary.runner_pod_count | default(0) | int) > 0 else 'OK') }} |
+| Runner controller footprint | `{{ cicd_runner_summary.controller_counts | default({}) }}` | {{ status_badge('INFO' if (cicd_runner_summary.controller_counts | default({}) | length) > 0 else 'OK') }} |
+| Runner pods running and ready | `{{ cicd_runner_summary.running_ready_pod_count | default(0) }}` | {{ status_badge('OK' if (cicd_runner_summary.runner_pod_count | default(0) | int) == 0 or (cicd_runner_summary.running_ready_pod_count | default(0) | int) == (cicd_runner_summary.runner_pod_count | default(0) | int) else 'WARN') }} |
+| Runner pods unhealthy or restarting | `{{ cicd_runner_summary.unhealthy_pod_count | default(0) }}` | {{ status_badge('WARN' if (cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 else 'OK') }} |
+| Runner pods unschedulable | `{{ cicd_runner_summary.unschedulable_pod_count | default(0) }}` | {{ status_badge('WARN' if (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 else 'OK') }} |
+| Privileged runner pods | `{{ cicd_runner_summary.privileged_pod_count | default(0) }}` | {{ status_badge('WARN' if (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0 else 'OK') }} |
+| Runner-native metrics coverage | `{{ cicd_runner_summary.metrics_coverage | default('not-derived') }}` | {{ status_badge('INFO') }} |
+
+**Findings Summary**
+- {% if (cicd_runner_summary.runner_pod_count | default(0) | int) > 0 %}Detected `{{ cicd_runner_summary.runner_pod_count | default(0) }}` cluster-hosted runner pods across providers `{{ cicd_runner_summary.provider_counts | default({}) }}`.{% elif (cicd_runner_summary.controller_counts | default({}) | length) > 0 %}Controller-only runner evidence was found without active runner pods: `{{ cicd_runner_summary.controller_counts | default({}) }}`. This is treated as delivery-platform context, not active runner execution capacity.{% else %}No cluster-hosted CI/CD runner pod footprint was detected in the collected pod inventory.{% endif %}
+
+| Finding | Severity | Current State | Business Impact | Technical Evidence | Recommended Action |
+| --- | --- | --- | --- | --- | --- |
+{% for item in cicd_runner_findings %}
+| `{{ item.finding }}` | `{{ item.severity }}` | `{{ item.current_state | replace('|', '\\|') }}` | `{{ item.business_impact | replace('|', '\\|') }}` | `{{ item.technical_evidence | string | replace('|', '\\|') }}` | `{{ item.recommended_action | replace('|', '\\|') }}` |
+{% endfor %}
+
 {% if cicd_runner_summary.top_runner_pods | default([]) | length > 0 %}
-#### Cluster-Hosted CI/CD Runner Pods
+#### Active Runner Pods
 
 | Namespace | Pod | Provider | Phase | Ready | Restarts | Node |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -2077,6 +2213,7 @@ Cluster update history was not returned.
 {% set day2_security_status = day2_readiness_summary.security_compliance_status | default('not-derived') %}
 {% set day2_operations_status = day2_readiness_summary.operations_maturity_status | default('not-derived') %}
 {% set day2_extensions_status = day2_readiness_summary.workload_capability_extensions_status | default('not-derived') %}
+{% set day2_capability_sections = audit_report.domains.production_day2_readiness.capability_sections | default([]) %}
 {% set day2_critical_blocker_present = day2_upgrade_status == 'BLOCKED' or day2_observability_status == 'CRITICAL' or day2_backup_status == 'CRITICAL' or day2_security_status == 'CRITICAL' %}
 {% set day2_warning_blocker_present = day2_lifecycle_status not in ['supported', 'unknown', 'not-derived'] or day2_upgrade_status == 'WARNING' or day2_observability_status == 'WARNING' or day2_backup_status == 'WARNING' or day2_security_status == 'WARNING' or day2_operations_status == 'WARNING' or day2_extensions_status == 'WARNING' %}
 
@@ -2096,13 +2233,51 @@ Cluster update history was not returned.
 **Findings Summary**
 - {% if day2_top_blockers | length > 0 %}The cluster should not be treated as fully Day 2 production-ready until these blockers are resolved: `{{ day2_top_blockers | join('; ') }}`. The readiness roll-up shows `{{ day2_readiness_summary.reason_summary | default('one or more readiness domains require review') }}`.{% elif day2_status == 'HEALTHY' %}No Day 2 production-readiness blockers were summarized by the owning postures. Readiness confidence is `{{ day2_evidence_confidence }}` and the owning postures did not report blocking lifecycle, upgrade, recovery, security, operations, or extension gaps.{% else %}The Day 2 production-readiness decision is incomplete because the roll-up status is `{{ day2_status }}` and no blocker list was produced. Resolve the incomplete readiness inputs in the owning posture sections before using this section as the production-readiness decision.{% endif %}
 
-{% if day2_posture_findings | default([]) | length > 0 %}
-### Capability Gap Detail
+{% if day2_capability_sections | length > 0 %}
+### Individual Capability Sections
 
-| Capability | Severity | Finding | Recommended Action |
+{% for section in day2_capability_sections %}
+#### {{ section.title | default(section.key | replace('_', ' ')) | title }}
+
+| Signal | Value | Status |
+| --- | --- | --- |
+| Capability key | `{{ section.key }}` | {{ status_badge(section.status | default('UNKNOWN')) }} |
+| Required | `{{ section.required | default(false) }}` | {{ status_badge('WARN' if (section.required | default(false)) and (section.status | default('UNKNOWN')) in ['WARNING', 'CRITICAL', 'UNKNOWN'] else ('OK' if section.status | default('UNKNOWN') == 'OK' else 'INFO')) }} |
+| Expected state | `{{ section.expected_state | default('present') }}` | {{ status_badge('INFO') }} |
+| Owner | `{{ section.owner | default('platform') }}` | {{ status_badge('INFO') }} |
+| Criticality | `{{ section.criticality | default('medium') }}` | {{ status_badge('INFO') }} |
+| Evidence required | `{{ section.evidence_required | default([]) | join(', ') or 'none-declared' }}` | {{ status_badge('INFO') }} |
+| Checks mapped | `{{ section.check_count | default(0) }}` | {{ status_badge('INFO' if (section.check_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Findings mapped | `{{ section.finding_count | default(0) }}` | {{ status_badge('WARN' if (section.finding_count | default(0) | int) > 0 else 'OK') }} |
+| Current detail | `{{ section.top_detail | default('No collected check detail was mapped for this capability.') | replace('|', '\\|') }}` | {{ status_badge(section.status | default('UNKNOWN')) }} |
+| Recommended action | `{{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
+
+{% if section.notes | default('') %}
+Profile notes: {{ section.notes | replace('|', '\\|') }}
+{% endif %}
+{% if section.docs | default('') %}
+Reference: {{ section.docs }}
+{% endif %}
+
+{% if section.checks | default([]) | length > 0 %}
+Checks
+
+| Check | Status | Level | Source | Detail |
+| --- | --- | --- | --- | --- |
+{% for item in section.checks | default([]) %}
+| `{{ item.capability | default(section.key) }}` | `{{ item.status | default('UNKNOWN') }}` | `{{ item.level | default('recommended') }}` | `{{ item.source | default('collected-evidence') }}` | {{ item.detail | default('No detail provided.') | replace('|', '\\|') }} |
+{% endfor %}
+{% endif %}
+
+{% if section.findings | default([]) | length > 0 %}
+Findings
+
+| Severity | Evidence | Detail | Recommended Action |
 | --- | --- | --- | --- |
-{% for item in day2_posture_findings | default([]) %}
-| `{{ item.capability | default(item.source | default('capability')) }}` | `{{ item.severity | default('warning') }}` | {{ item.detail | default(item.issue) | replace('|', '\\|') }} | {{ item.recommended_action | default(item.detail | default('Review and remediate this capability gap.')) | replace('|', '\\|') }} |
+{% for item in section.findings | default([]) %}
+| `{{ item.severity | default('warning') }}` | `{{ item.source | default('capability') }}` | {{ item.detail | default(item.issue) | replace('|', '\\|') }} | {{ item.recommended_action | default(item.detail | default('Review and remediate this capability gap.')) | replace('|', '\\|') }} |
+{% endfor %}
+{% endif %}
 {% endfor %}
 {% endif %}
 
@@ -2122,8 +2297,6 @@ Cluster update history was not returned.
   or (report_collection_failures_list | length > 0)
   or (pv_issues | default([]) | length > 0)
   or (pvc_issues | default([]) | length > 0)
-  or (expiring_certificates_warning | default([]) | length > 0)
-  or (expiring_certificates_critical | default([]) | length > 0)
 %}
 
 ### Health Score
@@ -2133,12 +2306,11 @@ Cluster update history was not returned.
 | Supporting evidence present | `{{ has_supporting_evidence }}` | {{ status_badge('INFO' if has_supporting_evidence else 'OK') }} |
 | Namespace evidence samples | `{{ top_namespace_issue_summary | default([]) | length }}` | {{ status_badge('INFO' if (top_namespace_issue_summary | default([]) | length) > 0 else 'OK') }} |
 | Storage issue samples | `{{ (top_pv_issues | default([]) | length) + (top_pvc_issues | default([]) | length) }}` | {{ status_badge('INFO' if ((top_pv_issues | default([]) | length) + (top_pvc_issues | default([]) | length)) > 0 else 'OK') }} |
-| Expiring certificate samples | `{{ (expiring_certificates_critical | default([]) | length) + (expiring_certificates_warning | default([]) | length) }}` | {{ status_badge('WARN' if ((expiring_certificates_critical | default([]) | length) + (expiring_certificates_warning | default([]) | length)) > 0 else 'OK') }} |
 
 ### Recommendations
 
 **Findings Summary**
-- this appendix contains lower-level evidence samples that support the main domain conclusions when namespace state, storage issues, certificate expiry, or collection failures need extra detail.
+- this appendix contains lower-level evidence samples that support the main domain conclusions when namespace state, storage issues, or collection failures need extra detail.
 
 ### Findings
 {% if not has_supporting_evidence %}
@@ -2159,10 +2331,11 @@ Cluster update history was not returned.
 {% endif %}
 {% endif %}
 
-{% endif %}
-
 {% if pvc_issues | default([]) | length > 0 %}
-#### Top 25 PVCc with Issues
+#### Top 25 PVCs with Issues
+
+Showing up to the top 25 PVCs with detected issues.
+
 | PVC | Phase | StorageClass |
 | --- | --- | --- |
 {% for pvc in top_pvc_issues %}
@@ -2183,121 +2356,5 @@ Cluster update history was not returned.
 {% if (pv_issues | length) > (top_pv_issues | length) %}
 | `additional PV issues omitted` | `{{ (pv_issues | length) - (top_pv_issues | length) }}` | `n/a` | `n/a` |
 {% endif %}
-{% endif %}
-
-{% if expiring_certificates_critical | default([]) | length > 0 or expiring_certificates_warning | default([]) | length > 0 %}
-#### Expiring Certificates
-
-| Secret | Severity | Expires At | Days Remaining |
-| --- | --- | --- | --- |
-{% for cert in (expiring_certificates_critical | default([]))[:top_certificate_issue_limit] %}
-| `{{ cert.namespace }}/{{ cert.name }}` | `critical` | `{{ cert.not_after }}` | `{{ cert.days_remaining }}` |
-{% endfor %}
-{% for cert in (expiring_certificates_warning | default([]))[:top_certificate_issue_limit] %}
-{% if (cert.days_remaining | float) > (certificate_expiry_critical_days | float) %}
-| `{{ cert.namespace }}/{{ cert.name }}` | `warning` | `{{ cert.not_after }}` | `{{ cert.days_remaining }}` |
-{% endif %}
-{% endfor %}
-{% endif %}
-
-#### Control Plane Signals
-
-#### API Readiness
-
-| Signal | Value | Status |
-| --- | --- | --- |
-| API `/readyz` | `{{ apiserver_readyz_status | default('unavailable') }}` | {{ status_badge('OK' if apiserver_readyz_status | default('unavailable') == 'ok' else ('WARN' if apiserver_readyz_status | default('unavailable') == 'failed' else 'UNKNOWN')) }} |
-| API `/readyz` failed checks | `{{ apiserver_readyz_failed_checks | default(0) }}` | {{ status_badge('WARN' if (apiserver_readyz_failed_checks | default(0) | int) > 0 else 'OK') }} |
-
-{% set control_plane_query_statuses = prom_query_status_map | default({}) %}
-{% set control_plane_query_errors = prom_query_error_map | default({}) %}
-{% set control_plane_offline_evidence = control_plane_evidence_summary | default({}) %}
-{% set obs_signal_map = observability_signal_resolution_map | default({}) %}
-{% if (not prom_available) and not (control_plane_offline_signals_present | default(false)) %}
-| Metrics Signal | Detail |
-| --- | --- |
-| `Prometheus-backed control-plane metrics` | Metrics were not attempted because the `thanos-querier` route or bearer token could not be obtained. The API `/readyz` check above is the only active control-plane check shown in this run. |
-{% else %}
-{% set apiserver_storage_state = control_plane_query_statuses.get('apiserver_storage_objects', 'not-collected') %}
-{% set apiserver_read_rate_state = control_plane_query_statuses.get('apiserver_read_rate', 'not-collected') %}
-{% set apiserver_write_rate_state = control_plane_query_statuses.get('apiserver_write_rate', 'not-collected') %}
-{% set apiserver_read_inflight_state = control_plane_query_statuses.get('apiserver_read_inflight', 'not-collected') %}
-{% set apiserver_write_inflight_state = control_plane_query_statuses.get('apiserver_write_inflight', 'not-collected') %}
-{% set apiserver_5xx_state = control_plane_query_statuses.get('apiserver_5xx_rate', 'not-collected') %}
-{% set apiserver_latency_state = control_plane_query_statuses.get('apiserver_latency', 'not-collected') %}
-{% set etcd_members_state = control_plane_query_statuses.get('etcd_members_reporting_leader', 'not-collected') %}
-{% set etcd_leader_count_state = control_plane_query_statuses.get('etcd_leader_count', 'not-collected') %}
-{% set etcd_wal_state = control_plane_query_statuses.get('etcd_wal_fsync', 'not-collected') %}
-{% set etcd_backend_state = control_plane_query_statuses.get('etcd_backend_commit', 'not-collected') %}
-{% set etcd_leader_changes_state = control_plane_query_statuses.get('etcd_leader_changes', 'not-collected') %}
-{% set etcd_peer_rtt_state = control_plane_query_statuses.get('etcd_peer_rtt', 'not-collected') %}
-{% set cp_to_worker_state = control_plane_query_statuses.get('controlplane_to_worker_network_latency', 'not-configured') %}
-{% set worker_to_worker_state = control_plane_query_statuses.get('worker_to_worker_network_latency', 'not-configured') %}
-
-{% if not prom_available and (control_plane_offline_signals_present | default(false)) %}
-| Metrics Signal | Detail |
-| --- | --- |
-| `Offline control-plane evidence` | Prometheus metrics were unavailable in this run, so object count and etcd status were derived from offline evidence such as must-gather `etcd_info` and kube-apiserver static-pod artifacts where present. Request-rate and latency rows stay `not-collected` unless a metric source was actually available. |
-{% endif %}
-
-| Latency Signal | Detail |
-| --- | --- |
-| `Inter-node latency` | Control plane to control plane latency uses etcd peer RTT as the closest built-in control-plane network signal. Control plane to worker and worker to worker latency require cluster-exposed Prometheus latency metrics and show `not-configured`, `no-data`, or `query-failed` when those signals are absent or unusable. |
-
-| Signal | Value | Status |
-| --- | --- | --- |
-| API server stored objects | `{{ prom_metric_value(apiserver_storage_state, apiserver_storage_objects_total) }}` | {{ status_badge('INFO' if apiserver_storage_state == 'collected' else apiserver_storage_state | upper) }} |
-| API server read request rate | `{{ prom_metric_value(apiserver_read_rate_state, apiserver_request_read_rate) }}{% if apiserver_read_rate_state == 'collected' %} req/s{% endif %}` | {{ status_badge('INFO' if apiserver_read_rate_state == 'collected' else apiserver_read_rate_state | upper) }} |
-| API server write request rate | `{{ prom_metric_value(apiserver_write_rate_state, apiserver_request_write_rate) }}{% if apiserver_write_rate_state == 'collected' %} req/s{% endif %}` | {{ status_badge('INFO' if apiserver_write_rate_state == 'collected' else apiserver_write_rate_state | upper) }} |
-| API server inflight reads | `{{ prom_metric_value(apiserver_read_inflight_state, apiserver_current_read_inflight) }}` | {{ status_badge('INFO' if apiserver_read_inflight_state == 'collected' else apiserver_read_inflight_state | upper) }} |
-| API server inflight writes | `{{ prom_metric_value(apiserver_write_inflight_state, apiserver_current_write_inflight) }}` | {{ status_badge('INFO' if apiserver_write_inflight_state == 'collected' else apiserver_write_inflight_state | upper) }} |
-| API server 5xx rate | `{% if apiserver_5xx_state == 'collected' %}{{ apiserver_request_5xx_rate }} req/s{% else %}{{ prom_metric_value(apiserver_5xx_state, apiserver_request_5xx_rate) }}{% endif %}` | {{ status_badge((apiserver_5xx_state | upper) if apiserver_5xx_state != 'collected' else ('WARN' if (apiserver_request_5xx_rate | float) > 0 else 'OK')) }} |
-| API server p99 latency | `{% if apiserver_latency_state == 'collected' %}{{ ((apiserver_request_p99_seconds | float) * 1000) | round(1) }} ms{% else %}{{ prom_metric_value(apiserver_latency_state, apiserver_request_p99_seconds) }}{% endif %}` | {{ status_badge((apiserver_latency_state | upper) if apiserver_latency_state != 'collected' else ('WARN' if (apiserver_request_p99_seconds | float) > apiserver_latency_p99_warn_seconds else 'OK')) }} |
-| etcd members reporting leader | `{{ prom_metric_value(etcd_members_state, etcd_members_reporting_leader) }}` | {{ status_badge((etcd_members_state | upper) if etcd_members_state != 'collected' else ('WARN' if (etcd_members_reporting_leader | float) < 1 else 'OK')) }} |
-| etcd leaders observed | `{{ prom_metric_value(etcd_leader_count_state, etcd_leader_count) }}` | {{ status_badge((etcd_leader_count_state | upper) if etcd_leader_count_state != 'collected' else ('WARN' if (etcd_leader_count | float) != 1 else 'OK')) }} |
-| etcd WAL fsync p99 | `{% if etcd_wal_state == 'collected' %}{{ etcd_wal_fsync_p99_ms }} ms{% else %}{{ prom_metric_value(etcd_wal_state, etcd_wal_fsync_p99_ms) }}{% endif %}` | {{ status_badge((etcd_wal_state | upper) if etcd_wal_state != 'collected' else ('WARN' if (etcd_wal_fsync_p99_ms | float) > etcd_wal_fsync_p99_warn_ms else 'OK')) }} |
-| etcd backend commit p99 | `{% if etcd_backend_state == 'collected' %}{{ etcd_backend_commit_p99_ms }} ms{% else %}{{ prom_metric_value(etcd_backend_state, etcd_backend_commit_p99_ms) }}{% endif %}` | {{ status_badge('INFO' if etcd_backend_state == 'collected' else etcd_backend_state | upper) }} |
-| etcd leader changes (5m) | `{{ prom_metric_value(etcd_leader_changes_state, etcd_leader_changes_5m) }}` | {{ status_badge((etcd_leader_changes_state | upper) if etcd_leader_changes_state != 'collected' else ('WARN' if (etcd_leader_changes_5m | float) > 0 else 'OK')) }} |
-| etcd peer RTT p99 | `{% if etcd_peer_rtt_state == 'collected' %}{{ etcd_peer_rtt_p99_ms }} ms{% else %}{{ prom_metric_value(etcd_peer_rtt_state, etcd_peer_rtt_p99_ms) }}{% endif %}` | {{ status_badge((etcd_peer_rtt_state | upper) if etcd_peer_rtt_state != 'collected' else ('WARN' if (etcd_peer_rtt_p99_ms | float) > etcd_peer_rtt_p99_warn_ms else 'OK')) }} |
-| Control plane to control plane latency | `{% if etcd_peer_rtt_state == 'collected' %}{{ controlplane_to_controlplane_network_latency_ms }} ms{% else %}{{ prom_metric_value(etcd_peer_rtt_state, controlplane_to_controlplane_network_latency_ms) }}{% endif %}` | {{ status_badge((etcd_peer_rtt_state | upper) if etcd_peer_rtt_state != 'collected' else ('WARN' if (controlplane_to_controlplane_network_latency_ms | float) > etcd_peer_rtt_p99_warn_ms else 'OK')) }} |
-| Control plane to worker latency | `{% if cp_to_worker_state == 'collected' %}{{ controlplane_to_worker_network_latency_ms }} ms{% else %}{{ prom_metric_value(cp_to_worker_state, controlplane_to_worker_network_latency_ms) }}{% endif %}` | {{ status_badge((cp_to_worker_state | upper) if cp_to_worker_state != 'collected' else ('WARN' if (controlplane_to_worker_network_latency_ms | float) > controlplane_to_worker_latency_warn_ms else 'OK')) }} |
-| Worker to worker latency | `{% if worker_to_worker_state == 'collected' %}{{ worker_to_worker_network_latency_ms }} ms{% else %}{{ prom_metric_value(worker_to_worker_state, worker_to_worker_network_latency_ms) }}{% endif %}` | {{ status_badge((worker_to_worker_state | upper) if worker_to_worker_state != 'collected' else ('WARN' if (worker_to_worker_network_latency_ms | float) > worker_to_worker_latency_warn_ms else 'OK')) }} |
-| Firing alerts | `{{ firing_alerts | length }}` | {{ status_badge('WARN' if firing_alerts | length > 0 else 'OK') }} |
-| Signal basis | `alerts={{ runtime_signal_basis(obs_signal_map.get('firing_alerts', {})) }}, apiStorage={{ runtime_signal_basis(obs_signal_map.get('apiserver_storage_objects', {})) }}, apiLatency={{ runtime_signal_basis(obs_signal_map.get('apiserver_latency', {})) }}, etcdMembership={{ runtime_signal_basis(obs_signal_map.get('etcd_members_reporting_leader', {})) }}, cpToWorker={{ runtime_signal_basis(obs_signal_map.get('controlplane_to_worker_network_latency', {})) }}` | {{ status_badge('INFO') }} |
-
-{% if control_plane_query_errors | length > 0 %}
-| Metrics Signal | Detail |
-| --- | --- |
-| `Prometheus query issues` | `{% for item in control_plane_query_errors | dict2items | sort(attribute='key') %}{{ item.key }}={{ item.value | replace('|', '\\|') }}{% if not loop.last %}; {% endif %}{% endfor %}` |
-{% endif %}
-
-{% if (firing_alerts_by_severity | default({}) | length) > 0 %}
-#### Firing Alert Severity Summary
-
-| Severity | Count |
-| --- | --- |
-{% for item in (firing_alerts_by_severity | dict2items | sort(attribute='key')) %}
-| `{{ item.key }}` | `{{ item.value }}` |
-{% endfor %}
-{% endif %}
-
-{% if top_alert_groups | default([]) | length > 0 %}
-#### Top Firing Alert Names
-
-| Alert | Count |
-| --- | --- |
-{% for item in top_alert_groups %}
-| `{{ item.key }}` | `{{ item.value }}` |
-{% endfor %}
-{% endif %}
-
-{% if top_alert_namespaces | default([]) | length > 0 %}
-#### Firing Alerts By Namespace
-
-| Namespace | Count |
-| --- | --- |
-{% for item in top_alert_namespaces %}
-| `{{ item.key }}` | `{{ item.value }}` |
-{% endfor %}
 {% endif %}
 {% endif %}

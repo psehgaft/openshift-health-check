@@ -506,6 +506,7 @@ For OpenShift variants:
 
 - standard OpenShift, ARO, ROSA, ROSA HCP, and SNO should use [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
 - the tool labels the deployment type in the report when the cluster signals are clear
+- staged checkpoint resume with `report_run_mode=resume_last_failure` is supported on the OpenShift playbook and the shared Kubernetes playbook, including its provider wrappers
 
 Simple profile matrix:
 
@@ -522,6 +523,18 @@ Development wrapper defaults:
 - lower collection timeout
 - smaller top-N sections
 - faster report shape for day-to-day lab use
+
+Resume-mode note:
+
+- `report_run_mode=resume_last_failure` applies to:
+  - `openshift_cluster_health_report.yml`
+  - `k8s_cluster_health_report.yml`
+  - `aks_cluster_health_report.yml`
+  - `eks_cluster_health_report.yml`
+  - `gke_cluster_health_report.yml`
+  - `rancher_cluster_health_report.yml`
+  - `minikube_cluster_health_report.yml`
+  - `development_k8s_cluster_health_report.yml`
 
 ## Prerequisites
 
@@ -624,11 +637,16 @@ Important runtime settings:
 
 - `collection_parallelism`
   Requested number of cluster read commands to run at the same time. Default: `4`
-  The runtime now auto-caps this for smaller machines based on local CPU and memory. On a 4 vCPU / 8 GiB VM, the effective cap is `3`.
+  The runtime now auto-caps this for smaller machines based on local CPU and memory. The default budget targets are `50%` of local CPU and `50%` of local memory. On a 4 vCPU / 8 GiB VM, the effective cap is `2`.
 - `collection_command_timeout_seconds`
   Timeout for each collection command. Default: `300`
 - `keep_collection_artifacts`
   If `true`, keep the temporary raw collection file for debugging. Default: `false`
+- `report_run_mode`
+  Control whether the OpenShift playbook starts from scratch or resumes the last failed staged run. Default: `fresh`
+  Supported values:
+  - `fresh`
+  - `resume_last_failure`
 - `require_cluster_log_forwarder`
   If `true`, missing `ClusterLogForwarder` is reported as a finding. Default: `false`
 - `require_external_metrics_remote_write`
@@ -738,6 +756,8 @@ These parameters work across the playbooks:
   Keep the temporary raw collection file for debugging
 - `report_mode`
   `auto`, `live`, or `collected`
+- `report_run_mode`
+  `fresh` or `resume_last_failure`
 - `must_gather_path`
   Path to an extracted `must-gather.local*` directory
 - `inspect_path`
@@ -765,9 +785,61 @@ Example:
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_output_dir=./reports \
   -e report_basename=prod-cluster-health \
+  -e report_run_mode=fresh \
   -e report_generate_html=false \
   -e report_generate_pdf=false
 ```
+
+### Fresh Run Or Resume Last Failure
+
+The OpenShift playbook and the shared Kubernetes playbook support staged checkpoints so you do not need to recollect everything after a late-stage failure such as a report-render bug. Kubernetes provider wrappers inherit the same behavior because they import the shared Kubernetes playbook.
+
+Use a clean run when you want to discard prior checkpoint state:
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_run_mode=fresh
+ansible-playbook playbooks/k8s_cluster_health_report.yml -e report_run_mode=fresh
+```
+
+Use resume mode after you fix the failure and want to continue from the last saved checkpoint:
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_run_mode=resume_last_failure
+ansible-playbook playbooks/aks_cluster_health_report.yml -e report_run_mode=resume_last_failure
+```
+
+Current resume behavior:
+
+- OpenShift live mode checkpoints after `collection` and after `analysis`
+- OpenShift collected mode checkpoints after `analysis`
+- Kubernetes mode checkpoints after `collection` and after `analysis`
+- resume can continue from `analysis` or `report`, depending on where the prior run failed
+
+Checkpoint files are written under:
+
+```text
+reports/.run-state/openshift/
+reports/.run-state/kubernetes/
+```
+
+The latest manifest is stored as:
+
+```text
+reports/.run-state/openshift/live-latest.json
+reports/.run-state/openshift/collected-latest.json
+reports/.run-state/kubernetes/latest.json
+```
+
+Use `fresh` when:
+
+- you changed cluster inputs and want a clean recollection
+- you do not trust the prior checkpoint
+- the earlier run failed before the first checkpoint was written
+
+Use `resume_last_failure` when:
+
+- collection already finished and a later analysis or render bug failed the run
+- you fixed the bug and want to avoid recollecting for hours
 
 ### Report Size And Tuning Parameters
 
@@ -854,6 +926,8 @@ Runs usually take longer when:
 
 Runs can also take longer if you lower `collection_parallelism`, if the runtime auto-caps parallelism on a smaller machine, or if you raise `collection_command_timeout_seconds`.
 
+For example, with the default `50%` CPU and memory budget, a 4 vCPU / 8 GiB machine will usually run the main collection and analysis stages with an effective worker cap of `2`, even if you request a higher `collection_parallelism`.
+
 ## Output
 
 By default, the tool writes:
@@ -919,6 +993,15 @@ In the generic Kubernetes path, the same idea is applied with a reduced set of f
 - workloads and storage
 
 The `my-cluster` part comes from the cluster infrastructure name. If that is not available, the tool falls back to the current `oc` context name.
+
+If a long OpenShift run fails late in `analysis` or `render`, prefer:
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_run_mode=resume_last_failure
+```
+
+Use a fresh run instead when cluster inputs changed or when the earlier run failed before the first checkpoint was written.
 
 The report also includes a `Data Collection` section. Check that section early if a report looks too clean. It shows:
 

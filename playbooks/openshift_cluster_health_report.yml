@@ -12,7 +12,10 @@
     report_basename: "cluster-report"
     report_generate_html: true
     report_generate_pdf: true
+    report_run_mode: fresh
     collection_parallelism: 4
+    local_resource_budget_cpu_pct: 50
+    local_resource_budget_mem_pct: 50
     collection_command_timeout_seconds: 300
     keep_collection_artifacts: false
     warning_event_limit: 20
@@ -510,6 +513,7 @@
       - "/opt/backups/etcd"
     sosreport_paths: []
     advisor_export_path: ""
+    insights_archive_path: ""
     write_redaction_manifest: false
     redaction_manifest_path: ""
     write_redacted_bundle: false
@@ -578,8 +582,73 @@
           - report_mode_resolved in ['live', 'collected']
         fail_msg: "Set report_mode to auto, live, collected, or offline."
 
+    - name: Define run checkpoint paths
+      ansible.builtin.set_fact:
+        report_resume_state_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}"
+        report_resume_manifest_path: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-latest.json"
+
+    - name: Reset prior run checkpoint state for fresh run
+      ansible.builtin.file:
+        path: "{{ report_resume_state_dir }}"
+        state: absent
+      when: report_run_mode | default('fresh') == 'fresh'
+
+    - name: Validate supported run mode
+      ansible.builtin.assert:
+        that:
+          - (report_run_mode | default('fresh')) in ['fresh', 'resume_last_failure']
+        fail_msg: "Set report_run_mode to fresh or resume_last_failure."
+
+    - name: Check for resumable manifest
+      ansible.builtin.stat:
+        path: "{{ report_resume_manifest_path }}"
+      register: report_resume_manifest_stat
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Fail when resume manifest is missing
+      ansible.builtin.assert:
+        that:
+          - report_resume_manifest_stat.stat.exists
+        fail_msg: "No resumable checkpoint manifest was found. Use report_run_mode=fresh first."
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Load resume manifest
+      ansible.builtin.slurp:
+        path: "{{ report_resume_manifest_path }}"
+      register: report_resume_manifest_raw
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Decode resume manifest
+      ansible.builtin.set_fact:
+        report_resume_manifest: "{{ (report_resume_manifest_raw.content | b64decode | from_json) if (report_resume_manifest_raw is defined and (report_resume_manifest_raw.content | default('') | length > 0)) else {} }}"
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Validate resume manifest content
+      ansible.builtin.assert:
+        that:
+          - (report_resume_manifest.status | default('')) == 'failed'
+          - (report_resume_manifest.report_mode | default('')) == report_mode_resolved
+          - (report_resume_manifest.snapshot_path | default('') | length) > 0
+          - (report_resume_manifest.resume_next_stage | default('') | length) > 0
+        fail_msg: "The last saved checkpoint is not resumable for this report mode. Use report_run_mode=fresh."
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Load resume checkpoint snapshot
+      ansible.builtin.include_vars:
+        file: "{{ report_resume_manifest.snapshot_path }}"
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Restore checkpoint pointers from manifest
+      ansible.builtin.set_fact:
+        report_resume_last_snapshot_path: "{{ report_resume_manifest.snapshot_path | default('') }}"
+        report_resume_last_completed_stage: "{{ report_resume_manifest.last_completed_stage | default('') }}"
+        report_resume_last_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
     - name: Run live OpenShift health workflow
-      when: report_mode_resolved == 'live'
+      when:
+        - report_mode_resolved == 'live'
+        - report_run_mode | default('fresh') == 'fresh'
       block:
         - name: Run preflight checks
           ansible.builtin.include_role:
@@ -621,6 +690,16 @@
           ansible.builtin.include_role:
             name: collect_live_support_evidence
 
+        - name: Save live collection checkpoint
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: collection
+            run_checkpoint_resume_next_stage: analysis
+            run_checkpoint_status: completed
+            run_checkpoint_write_snapshot: true
+
         - name: Run common analysis
           ansible.builtin.include_role:
             name: analyze_common
@@ -629,9 +708,41 @@
           ansible.builtin.include_role:
             name: analyze_openshift
 
+        - name: Save live analysis checkpoint
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: analysis
+            run_checkpoint_resume_next_stage: report
+            run_checkpoint_status: completed
+            run_checkpoint_write_snapshot: true
+
         - name: Build live OpenShift report
           ansible.builtin.include_role:
             name: report_openshift
+        - name: Mark live run checkpoint as completed
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: render
+            run_checkpoint_resume_next_stage: ""
+            run_checkpoint_status: completed
+            run_checkpoint_write_snapshot: false
+      rescue:
+        - name: Record failed live run checkpoint
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: "{{ report_resume_last_resume_next_stage | default('collection') }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+            run_checkpoint_status: failed
+            run_checkpoint_write_snapshot: false
+        - name: Re-raise live workflow failure
+          ansible.builtin.fail:
+            msg: "Live OpenShift workflow failed. Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint."
       always:
         - name: Ensure temporary collection artifacts are removed
           ansible.builtin.file:
@@ -644,8 +755,63 @@
             - collection_run_metadata.results_path | default('') | length > 0
           failed_when: false
 
+    - name: Resume live OpenShift health workflow from checkpoint
+      when:
+        - report_mode_resolved == 'live'
+        - report_run_mode | default('fresh') == 'resume_last_failure'
+      block:
+        - name: Resume live analysis and report stages
+          when: (report_resume_manifest.resume_next_stage | default('')) == 'analysis'
+          block:
+            - name: Run common analysis
+              ansible.builtin.include_role:
+                name: analyze_common
+            - name: Analyze OpenShift-specific data
+              ansible.builtin.include_role:
+                name: analyze_openshift
+            - name: Save resumed live analysis checkpoint
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: analysis
+                run_checkpoint_resume_next_stage: report
+                run_checkpoint_status: completed
+                run_checkpoint_write_snapshot: true
+            - name: Build live OpenShift report
+              ansible.builtin.include_role:
+                name: report_openshift
+        - name: Resume live report stage only
+          when: (report_resume_manifest.resume_next_stage | default('')) == 'report'
+          ansible.builtin.include_role:
+            name: report_openshift
+        - name: Mark resumed live run checkpoint as completed
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: render
+            run_checkpoint_resume_next_stage: ""
+            run_checkpoint_status: completed
+            run_checkpoint_write_snapshot: false
+      rescue:
+        - name: Record failed resumed live run checkpoint
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage | default('report') }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+            run_checkpoint_status: failed
+            run_checkpoint_write_snapshot: false
+        - name: Re-raise resumed live workflow failure
+          ansible.builtin.fail:
+            msg: "Resumed live OpenShift workflow failed again. Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart."
+
     - name: Run collected-state OpenShift evidence workflow
-      when: report_mode_resolved == 'collected'
+      when:
+        - report_mode_resolved == 'collected'
+        - report_run_mode | default('fresh') == 'fresh'
       block:
         - name: Load common evidence
           ansible.builtin.include_role:
@@ -678,7 +844,102 @@
             name: analyze_openshift
             tasks_from: finalize_collected_supportability.yml
 
+        - name: Save collected analysis checkpoint
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: analysis
+            run_checkpoint_resume_next_stage: report
+            run_checkpoint_status: completed
+            run_checkpoint_write_snapshot: true
+
         - name: Build collected-state OpenShift report
           ansible.builtin.include_role:
             name: report_openshift
             tasks_from: render_collected_state_report.yml
+        - name: Mark collected run checkpoint as completed
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: render
+            run_checkpoint_resume_next_stage: ""
+            run_checkpoint_status: completed
+            run_checkpoint_write_snapshot: false
+      rescue:
+        - name: Record failed collected run checkpoint
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: "{{ report_resume_last_resume_next_stage | default('analysis') }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+            run_checkpoint_status: failed
+            run_checkpoint_write_snapshot: false
+        - name: Re-raise collected workflow failure
+          ansible.builtin.fail:
+            msg: "Collected-state OpenShift workflow failed. Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint."
+
+    - name: Resume collected-state OpenShift workflow from checkpoint
+      when:
+        - report_mode_resolved == 'collected'
+        - report_run_mode | default('fresh') == 'resume_last_failure'
+      block:
+        - name: Resume collected analysis and report stages
+          when: (report_resume_manifest.resume_next_stage | default('')) == 'analysis'
+          block:
+            - name: Run common analysis against collected-state inputs
+              ansible.builtin.include_role:
+                name: analyze_common
+            - name: Run unified OpenShift analysis against collected-state inputs
+              ansible.builtin.include_role:
+                name: analyze_openshift
+            - name: Build collected-state OpenShift health synthesis
+              ansible.builtin.include_role:
+                name: analyze_openshift
+                tasks_from: collected_state_health.yml
+            - name: Finalize collected-state supportability rollup
+              ansible.builtin.include_role:
+                name: analyze_openshift
+                tasks_from: finalize_collected_supportability.yml
+            - name: Save resumed collected analysis checkpoint
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: save_run_checkpoint.yml
+              vars:
+                run_checkpoint_stage: analysis
+                run_checkpoint_resume_next_stage: report
+                run_checkpoint_status: completed
+                run_checkpoint_write_snapshot: true
+            - name: Build collected-state OpenShift report
+              ansible.builtin.include_role:
+                name: report_openshift
+                tasks_from: render_collected_state_report.yml
+        - name: Resume collected report stage only
+          when: (report_resume_manifest.resume_next_stage | default('')) == 'report'
+          ansible.builtin.include_role:
+            name: report_openshift
+            tasks_from: render_collected_state_report.yml
+        - name: Mark resumed collected run checkpoint as completed
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: render
+            run_checkpoint_resume_next_stage: ""
+            run_checkpoint_status: completed
+            run_checkpoint_write_snapshot: false
+      rescue:
+        - name: Record failed resumed collected run checkpoint
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: save_run_checkpoint.yml
+          vars:
+            run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage | default('report') }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+            run_checkpoint_status: failed
+            run_checkpoint_write_snapshot: false
+        - name: Re-raise resumed collected workflow failure
+          ansible.builtin.fail:
+            msg: "Resumed collected-state OpenShift workflow failed again. Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart."
