@@ -309,9 +309,32 @@
           register: report_resume_manifest_raw
           when: report_run_mode | default('fresh') == 'resume_last_failure'
 
+        - name: Parse Kubernetes resume manifest JSON
+          ansible.builtin.command:
+            argv:
+              - python3
+              - "{{ playbook_dir }}/../scripts/load_json_payload.py"
+              - --stdin
+            stdin: "{{ report_resume_manifest_raw.content | b64decode }}"
+          register: report_resume_manifest_parse_cmd
+          changed_when: false
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+
         - name: Decode Kubernetes resume manifest
           ansible.builtin.set_fact:
-            report_resume_manifest: "{{ (report_resume_manifest_raw.content | b64decode | from_json) if (report_resume_manifest_raw is defined and (report_resume_manifest_raw.content | default('') | length > 0)) else {} }}"
+            report_resume_manifest_parse: "{{ (report_resume_manifest_parse_cmd.stdout | from_json) if (report_resume_manifest_parse_cmd is defined and (report_resume_manifest_parse_cmd.stdout | default('') | length > 0)) else {'ok': false, 'data': {}, 'error': 'resume manifest parser returned no output'} }}"
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+        - name: Set Kubernetes resume manifest data
+          ansible.builtin.set_fact:
+            report_resume_manifest: "{{ report_resume_manifest_parse.data if (report_resume_manifest_parse.ok | default(false)) else {} }}"
+          when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+        - name: Validate Kubernetes resume manifest JSON
+          ansible.builtin.assert:
+            that:
+              - report_resume_manifest_parse.ok | default(false)
+            fail_msg: "The resume manifest exists but is not valid JSON. {{ report_resume_manifest_parse.error | default('Unknown parse error.') }}"
           when: report_run_mode | default('fresh') == 'resume_last_failure'
 
         - name: Validate Kubernetes resume manifest content

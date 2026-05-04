@@ -53,9 +53,29 @@
     path: "{{ collected_resource_cache_path }}"
   register: collected_resource_cache_slurp
 
+- name: Parse collected-resource graph JSON
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
+      - --stdin
+    stdin: "{{ collected_resource_cache_slurp.content | b64decode }}"
+  register: collected_resource_cache_parse_cmd
+  changed_when: false
+
 - name: Normalize extracted OpenShift resource facts
+  vars:
+    collected_resource_cache_payload: "{{ (collected_resource_cache_parse_cmd.stdout | from_json) if (collected_resource_cache_parse_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'resource cache parser returned no output'} }}"
   ansible.builtin.set_fact:
-    collected_resource_graph: "{{ (collected_resource_cache_slurp.content | b64decode) | from_json }}"
+    collected_resource_graph: "{{ collected_resource_cache_payload.data if (collected_resource_cache_payload.ok | default(false)) else {} }}"
+
+- name: Validate collected-resource graph JSON
+  vars:
+    collected_resource_cache_payload: "{{ (collected_resource_cache_parse_cmd.stdout | from_json) if (collected_resource_cache_parse_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'resource cache parser returned no output'} }}"
+  ansible.builtin.assert:
+    that:
+      - collected_resource_cache_payload.ok | default(false)
+    fail_msg: "Cached OpenShift resource graph is not valid JSON. {{ collected_resource_cache_payload.error | default('Unknown parse error.') }}"
 
 - name: Build OpenShift supportability scaffold facts
   ansible.builtin.set_fact:
