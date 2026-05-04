@@ -98,6 +98,34 @@ The CI report is organized by priority:
 - operational sections after that
 - evidence and limitations last
 
+## Validate Changes
+
+After changing playbooks, roles, templates, inputs, or scripts, run the repo validator before pushing:
+
+```bash
+scripts/validate_repo.sh
+```
+
+This validation covers:
+
+- YAML parsing for tracked files under `playbooks/`, `roles/`, `inputs/`, and `manifests/`
+- `ansible-playbook --syntax-check` for all playbooks
+- Python compilation for tracked `*.py`
+- shell syntax for tracked `scripts/*.sh` and `tests/*.sh`
+- OpenShift report template validation
+- capability profile validation for OpenShift and Kubernetes variants
+
+If you want Git to enforce this locally before every push, add a pre-push hook:
+
+```bash
+cat > .git/hooks/pre-push <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(git rev-parse --show-toplevel)/scripts/validate_repo.sh"
+EOF
+chmod +x .git/hooks/pre-push
+```
+
 ## What This Tool Does
 
 In simple terms, the tool is trying to answer two questions:
