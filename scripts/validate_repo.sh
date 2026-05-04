@@ -3,10 +3,26 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_DIR="${ROOT_DIR}/.logs"
+TIMESTAMP="$(date '+%Y%m%dT%H%M%S')"
+CLUSTER_TYPE_LABEL="${1:-repo}"
+SANITIZED_CLUSTER_TYPE_LABEL="$(printf '%s' "${CLUSTER_TYPE_LABEL}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
+LOG_FILE="${LOG_DIR}/${SANITIZED_CLUSTER_TYPE_LABEL}-run-${TIMESTAMP}.log"
+
+mkdir -p "${LOG_DIR}"
+
+if [[ "${VALIDATE_REPO_TEE_ACTIVE:-0}" != "1" ]]; then
+  export VALIDATE_REPO_TEE_ACTIVE=1
+  "${BASH_SOURCE[0]}" "${CLUSTER_TYPE_LABEL}" 2>&1 | tee "${LOG_FILE}"
+  exit "${PIPESTATUS[0]}"
+fi
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$1"
 }
+
+log "Writing validation output to ${LOG_FILE}"
+export OHC_FORCE_TASK_PROGRESS=1
 
 log "Validating YAML syntax across repository"
 python3 - "${ROOT_DIR}" <<'PY'

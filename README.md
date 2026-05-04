@@ -81,6 +81,16 @@ The same OpenShift playbook also supports collected-state reprocessing. If you s
 
 You can also force that path explicitly with `-e report_mode=collected`.
 
+To keep a run log in the repo, create `.logs/` if needed and pipe the run through `tee`:
+
+```bash
+mkdir -p .logs
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  2>&1 | tee ".logs/openshift-run-$(date '+%Y%m%dT%H%M%S').log"
+```
+
+Use the same pattern for other playbooks, changing the filename prefix to match the cluster type, for example `k8s-run-...log`, `aks-run-...log`, or `gke-run-...log`.
+
 For CI, use the stable wrapper so the run always emits one normalized report artifact regardless of cluster type:
 
 ```bash
@@ -106,6 +116,12 @@ After changing playbooks, roles, templates, inputs, or scripts, run the repo val
 scripts/validate_repo.sh
 ```
 
+To label the log file with a specific cluster type, pass it as the first argument:
+
+```bash
+scripts/validate_repo.sh openshift
+```
+
 This validation covers:
 
 - YAML parsing for tracked files under `playbooks/`, `roles/`, `inputs/`, and `manifests/`
@@ -114,6 +130,8 @@ This validation covers:
 - shell syntax for tracked `scripts/*.sh` and `tests/*.sh`
 - OpenShift report template validation
 - capability profile validation for OpenShift and Kubernetes variants
+
+Each run also writes a copy of stdout and stderr to `.logs/<cluster-type>-run-<timestamp>.log`. The `.logs/` directory is created automatically if it does not already exist. If you do not pass a cluster type label, the log file uses `repo`.
 
 If you want Git to enforce this locally before every push, add a pre-push hook:
 

@@ -30,7 +30,8 @@ class CallbackModule(DefaultCallbackModule):
 
     def __init__(self) -> None:
         super().__init__()
-        self._progress_enabled = bool(getattr(sys.stdout, "isatty", lambda: False)())
+        disable_progress = str(os.getenv("OHC_DISABLE_TASK_PROGRESS", "")).strip().lower() in {"1", "true", "yes", "on"}
+        self._progress_enabled = not disable_progress
         self._progress_total = 0
         self._progress_completed = 0
         self._known_task_keys: set[str] = set()
