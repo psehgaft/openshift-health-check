@@ -85,8 +85,7 @@ To keep a run log in the repo, create `.logs/` if needed and pipe the run throug
 
 ```bash
 mkdir -p .logs
-ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  2>&1 | tee ".logs/openshift-run-$(date '+%Y%m%dT%H%M%S').log"
+ansible-playbook playbooks/openshift_cluster_health_report.yml 2>&1 | tee ".logs/openshift-run-$(date '+%Y%m%dT%H%M%S').log"
 ```
 
 Use the same pattern for other playbooks, changing the filename prefix to match the cluster type, for example `k8s-run-...log`, `aks-run-...log`, or `gke-run-...log`.
@@ -94,8 +93,7 @@ Use the same pattern for other playbooks, changing the filename prefix to match 
 For CI, use the stable wrapper so the run always emits one normalized report artifact regardless of cluster type:
 
 ```bash
-scripts/run_ci_report.sh playbooks/openshift_cluster_health_report.yml \
-  -e live_support_collection_profile=all
+scripts/run_ci_report.sh playbooks/openshift_cluster_health_report.yml -e live_support_collection_profile=all
 ```
 
 This writes:
@@ -391,29 +389,21 @@ OpenShift uses `openshift_report_capability_profile` because its report can use 
 Use the matching example as-is, or copy and adjust the values for a customer environment:
 
 ```bash
-ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  -e @inputs/openshift-capability-profile.yml
+ansible-playbook playbooks/openshift_cluster_health_report.yml -e @inputs/openshift-capability-profile.yml
 
-ansible-playbook playbooks/k8s_cluster_health_report.yml \
-  -e @inputs/kubernetes-capability-profile.yml
+ansible-playbook playbooks/k8s_cluster_health_report.yml -e @inputs/kubernetes-capability-profile.yml
 
-ansible-playbook playbooks/aks_cluster_health_report.yml \
-  -e @inputs/aks-capability-profile.yml
+ansible-playbook playbooks/aks_cluster_health_report.yml -e @inputs/aks-capability-profile.yml
 
-ansible-playbook playbooks/eks_cluster_health_report.yml \
-  -e @inputs/eks-capability-profile.yml
+ansible-playbook playbooks/eks_cluster_health_report.yml -e @inputs/eks-capability-profile.yml
 
-ansible-playbook playbooks/gke_cluster_health_report.yml \
-  -e @inputs/gke-capability-profile.yml
+ansible-playbook playbooks/gke_cluster_health_report.yml -e @inputs/gke-capability-profile.yml
 
-ansible-playbook playbooks/rancher_cluster_health_report.yml \
-  -e @inputs/rancher-capability-profile.yml
+ansible-playbook playbooks/rancher_cluster_health_report.yml -e @inputs/rancher-capability-profile.yml
 
-ansible-playbook playbooks/development_k8s_cluster_health_report.yml \
-  -e @inputs/development-k8s-capability-profile.yml
+ansible-playbook playbooks/development_k8s_cluster_health_report.yml -e @inputs/development-k8s-capability-profile.yml
 
-ansible-playbook playbooks/minikube_cluster_health_report.yml \
-  -e @inputs/minikube-capability-profile.yml
+ansible-playbook playbooks/minikube_cluster_health_report.yml -e @inputs/minikube-capability-profile.yml
 ```
 
 ```yaml
