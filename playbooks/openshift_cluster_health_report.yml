@@ -472,6 +472,14 @@
         evidence_required: [must-gather, inspect, oc-get]
         notes: "Require when the customer expects secondary-site, Metro-DR, Regional-DR, or stretch-cluster recovery for OpenShift workloads, including two-cluster policy topology, protected applications, and replication evidence."
         docs: "https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.21/html/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads"
+      acm_multicluster_disaster_recovery:
+        required: false
+        criticality: critical
+        expected_state: healthy
+        owner: operations
+        evidence_required: [must-gather, inspect, oc-get]
+        notes: "Require when OpenShift multicluster disaster recovery is expected to be orchestrated through ACM-managed cluster registration plus DRPolicy, DRCluster, DRPlacementControl, and replication evidence. This validates workload and multicluster DR posture, not self-managed control-plane etcd snapshot recovery."
+        docs: "https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/latest/html/business_continuity/business-cont-overview"
     evidence_mode: auto
     collect_live_support_artifacts: true
     live_support_collection_profile: all
@@ -554,7 +562,17 @@
       top_pod_memory_usage: 'topk(20, sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!="",namespace!~"openshift-.*"}))'
       pod_cpu_usage_all: 'sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!="",pod!="",namespace!~"openshift-.*"}[5m]))'
       pod_memory_usage_all: 'sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!="",namespace!~"openshift-.*"})'
+    openshift_report_capability_profile_source_path: "{{ playbook_dir }}/../inputs/openshift-capability-profile.yml"
   tasks:
+    - name: Load canonical OpenShift capability profile defaults
+      ansible.builtin.include_vars:
+        file: "{{ openshift_report_capability_profile_source_path }}"
+        name: canonical_openshift_capability_profile
+
+    - name: Apply canonical OpenShift capability profile defaults
+      ansible.builtin.set_fact:
+        openshift_report_capability_profile: "{{ canonical_openshift_capability_profile.openshift_report_capability_profile }}"
+
     - name: Resolve unified OpenShift report mode
       ansible.builtin.set_fact:
         report_mode_resolved: >-
@@ -626,7 +644,7 @@
     - name: Validate resume manifest content
       ansible.builtin.assert:
         that:
-          - (report_resume_manifest.status | default('')) == 'failed'
+          - (report_resume_manifest.status | default('')) in ['failed', 'completed']
           - (report_resume_manifest.report_mode | default('')) == report_mode_resolved
           - (report_resume_manifest.snapshot_path | default('') | length) > 0
           - (report_resume_manifest.resume_next_stage | default('') | length) > 0
@@ -736,8 +754,8 @@
             name: report_common
             tasks_from: save_run_checkpoint.yml
           vars:
-            run_checkpoint_stage: "{{ report_resume_last_resume_next_stage | default('collection') }}"
-            run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+            run_checkpoint_stage: "{{ report_resume_last_resume_next_stage or 'collection' }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage or 'collection' }}"
             run_checkpoint_status: failed
             run_checkpoint_write_snapshot: false
         - name: Re-raise live workflow failure
@@ -800,8 +818,8 @@
             name: report_common
             tasks_from: save_run_checkpoint.yml
           vars:
-            run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage | default('report') }}"
-            run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+            run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
             run_checkpoint_status: failed
             run_checkpoint_write_snapshot: false
         - name: Re-raise resumed live workflow failure
@@ -873,8 +891,8 @@
             name: report_common
             tasks_from: save_run_checkpoint.yml
           vars:
-            run_checkpoint_stage: "{{ report_resume_last_resume_next_stage | default('analysis') }}"
-            run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+            run_checkpoint_stage: "{{ report_resume_last_resume_next_stage or 'analysis' }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage or 'analysis' }}"
             run_checkpoint_status: failed
             run_checkpoint_write_snapshot: false
         - name: Re-raise collected workflow failure
@@ -936,8 +954,8 @@
             name: report_common
             tasks_from: save_run_checkpoint.yml
           vars:
-            run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage | default('report') }}"
-            run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+            run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
+            run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
             run_checkpoint_status: failed
             run_checkpoint_write_snapshot: false
         - name: Re-raise resumed collected workflow failure

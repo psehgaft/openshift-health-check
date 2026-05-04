@@ -70,6 +70,26 @@ This split keeps the later sections easier to understand:
 
 Each posture section should start with a short recommendation and summary before the detailed tables.
 
+More importantly, every major posture section should answer the same five questions:
+
+1. What is the gap?
+2. Why does it matter?
+3. What should be done?
+4. Who likely owns the action?
+5. How can the team tell it is fixed?
+
+That is the section contract for this repo. The report should behave like a practical remediation guide, not just a status dump.
+
+In the current template, that contract is reflected through the recurring section structure:
+
+- a short leadership-oriented summary
+- evidence-backed findings
+- an action plan
+- a suggested owner
+- a clear completion signal such as `Done When`
+
+If a new section does not help a reader answer those five questions, it is incomplete even if the raw evidence is technically correct.
+
 If you want the short version of that review flow, use [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md).
 
 ## Supported Cluster Types
@@ -713,6 +733,8 @@ It is useful for:
 - giving teams a simple summary number
 
 It is not useful if treated as the whole truth.
+
+Capability sections follow the same rule. If capability assessment does not complete with collected evidence, the report should preserve the section shape for ownership and expected evidence, but it must declare those entries `not-assessed` rather than claiming the capability was evaluated.
 
 The score only works well when read together with:
 

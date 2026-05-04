@@ -105,6 +105,14 @@ In simple terms, the tool is trying to answer two questions:
 1. Is the cluster healthy right now?
 2. Is there anything risky, weak, or badly configured that should be fixed?
 
+The report is intentionally remediation-oriented. Every major section is supposed to answer the same five questions:
+
+1. What is the gap?
+2. Why does it matter?
+3. What should be done about it?
+4. Who likely owns that action?
+5. How can the team tell the issue is fixed?
+
 The report includes:
 
 - an overall status
@@ -113,10 +121,22 @@ The report includes:
 - a score legend directly above `Cluster Current State`
 - a `Cluster Current State` section near the top
 - a grouped `Operational Risk Summary` near the top
-- grouped findings
-- suggested next steps near the end
+- grouped gap summaries with business impact
+- action plans with likely owners and completion signals
 - execution details
 - a JSON file for dashboards, scripts, or later processing
+
+## How To Read A Major Section
+
+The report is easier to use when every major section follows the same reading contract:
+
+- `What is the gap`: the section identifies the issue, weakness, or missing control.
+- `Why it matters`: the section translates the issue into business or operational risk.
+- `What to do`: the section proposes a practical next step instead of only describing evidence.
+- `Who likely owns it`: the section points to the team that usually needs to act.
+- `How to tell it is fixed`: the section defines a closure signal so teams can verify the gap is actually resolved.
+
+This is deliberate. Leaders should be able to understand risk and ownership quickly, and technical teams should be able to turn the same section into a remediation backlog.
 
 ## What It Checks
 
@@ -141,7 +161,7 @@ For OpenShift, the final report is organized by priority:
 - `P12` Workload capability extensions
 - `P13` Day 2 production readiness
 
-Each section starts with a short recommendation and summary. The report moves from urgent problems first to longer-term readiness later.
+Each section starts with a short recommendation and summary. The report moves from urgent problems first to longer-term readiness later, and each major posture section is expected to explain the gap, the impact, the action, the likely owner, and the success signal.
 
 Main areas:
 
@@ -311,6 +331,15 @@ The tool is strongest as a structured evidence-gathering report. It is explicit 
 
 Optional or customer-specific capabilities are controlled by a capability profile input file. Each capability defines whether absence should be reported, how severe it is, what state is expected, who owns it, and which evidence sources are expected.
 
+Capability metadata is also used to keep optional-capability sections aligned to the same report contract:
+
+- `expected_state` helps define the gap
+- `criticality` helps explain why it matters
+- `owner` helps identify who likely owns the action
+- `notes` provide the expectation or operating intent behind the capability
+- `docs` provide an implementation or remediation reference
+- evidence settings determine how the report proves the capability is present, configured, or missing
+
 OpenShift uses `openshift_report_capability_profile` because its report can use OpenShift-specific evidence such as `oc adm must-gather`, `oc adm inspect`, `oc get`, Insights, Prometheus/Thanos, and node diagnostics. Kubernetes-family reports use `kubernetes_report_capability_profile` because they rely on portable `kubectl get`, provider metadata, and optional metrics evidence.
 
 Use the matching example as-is, or copy and adjust the values for a customer environment:
@@ -353,7 +382,9 @@ openshift_report_capability_profile:
     docs: "https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes/latest"
 ```
 
-Supported `expected_state` values are `present`, `absent`, `configured`, `healthy`, and `not_applicable`. Optional capabilities are hidden or treated as inventory context when absent unless they have findings or `required: true`. The `docs` field is used in capability-gap recommendations so report readers can jump directly to configuration guidance for the missing capability.
+Supported `expected_state` values are `present`, `absent`, `configured`, `healthy`, and `not_applicable`. Optional capabilities are hidden or treated as inventory context when absent unless they have findings or `required: true`. The `notes` and `docs` fields are used to make capability sections read like actionable gap summaries rather than raw detections, so report readers can understand the expected state and jump directly to configuration guidance when a capability is missing or weak.
+
+Capability assessment is intentionally fail-closed. If the analyzer does not produce collected capability checks, the report must say the capability assessment did not complete cleanly and mark those sections as `not-assessed` placeholders instead of inflating coverage or pretending the capability was evaluated.
 
 Capability profile input files:
 

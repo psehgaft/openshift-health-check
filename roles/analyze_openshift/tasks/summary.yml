@@ -886,6 +886,32 @@
         (clusteroperator_status_map.monitoring.available | default('Unknown')) == 'True'
         and (clusteroperator_status_map.monitoring.degraded | default('False')) != 'True'
       }}
+    vendor_managed_observability_present: >-
+      {{
+        (observability_forwarding_summary.vendor_managed_log_forwarding_present | default(false))
+        or (observability_forwarding_summary.vendor_managed_metrics_forwarding_present | default(false))
+      }}
+    vendor_managed_observability_configured: >-
+      {{
+        (
+          (observability_forwarding_summary.vendor_managed_log_forwarding_present | default(false))
+          and (
+            (observability_forwarding_summary.logs_delivery_verification_status | default('not-configured')) != 'not-configured'
+            or (observability_forwarding_summary.application_logs_collected | default(false))
+            or (observability_forwarding_summary.infrastructure_logs_collected | default(false))
+            or (observability_forwarding_summary.audit_logs_collected | default(false))
+          )
+        )
+        or
+        (
+          (observability_forwarding_summary.vendor_managed_metrics_forwarding_present | default(false))
+          and (
+            (observability_forwarding_summary.metrics_delivery_verification_status | default('not-configured')) != 'not-configured'
+            or (observability_forwarding_summary.cluster_metrics_delivery_state | default('not-configured')) != 'not-configured'
+            or (observability_forwarding_summary.user_workload_metrics_delivery_state | default('not-configured')) != 'not-configured'
+          )
+        )
+      }}
     firing_critical_alert_count: "{{ (firing_alerts_by_severity | default({})).critical | default(0) }}"
     firing_warning_alert_count: >-
       {{
@@ -926,12 +952,14 @@
       {{
         'CRITICAL'
         if (
-          not monitoring_operator_healthy
+          (not monitoring_operator_healthy and not vendor_managed_observability_configured)
           or (firing_critical_alert_count | int) > 0
         )
         else (
           'WARNING'
           if (
+            (not monitoring_operator_healthy and vendor_managed_observability_configured)
+            or
             (log_gap_count | int) > 0
             or (metrics_gap_count | int) > 0
             or (alerting_gap_count | int) > 0
@@ -947,7 +975,9 @@
       {{
         (
           []
-          + (['monitoring operator not healthy'] if not monitoring_operator_healthy else [])
+          + (['monitoring operator not healthy and no vendor-managed observability presence was detected'] if (not monitoring_operator_healthy and not vendor_managed_observability_configured) else [])
+          + (['monitoring operator not healthy but vendor-managed observability presence was detected'] if (not monitoring_operator_healthy and vendor_managed_observability_configured) else [])
+          + (['vendor-managed observability=' ~ ((((observability_forwarding_summary.metrics_forwarding_vendor_names | default([])) + (observability_forwarding_summary.log_forwarding_vendor_names | default([]))) | unique) | join(','))] if vendor_managed_observability_present else [])
           + (['critical firing alerts=' ~ ((firing_critical_alert_count | int) | string)] if (firing_critical_alert_count | int) > 0 else [])
           + (['non-critical firing alerts=' ~ ((firing_warning_alert_count | int) | string)] if (firing_warning_alert_count | int) > 0 else [])
           + (['warning events over threshold=' ~ ((recent_warning_events | default([]) | length) | string)] if (warning_event_count | int) >= (warning_event_posture_threshold | int) else [])
@@ -976,6 +1006,9 @@
       reason_summary: "{{ observability_reason_summary }}"
       recommendation: "{{ observability_recommendation }}"
       monitoring_operator_healthy: "{{ monitoring_operator_healthy }}"
+      vendor_managed_observability_present: "{{ vendor_managed_observability_present }}"
+      vendor_managed_observability_configured: "{{ vendor_managed_observability_configured }}"
+      vendor_managed_observability_vendors: "{{ ((observability_forwarding_summary.metrics_forwarding_vendor_names | default([])) + (observability_forwarding_summary.log_forwarding_vendor_names | default([]))) | unique }}"
       firing_alert_count: "{{ firing_alerts | default([]) | length }}"
       firing_critical_alert_count: "{{ firing_critical_alert_count }}"
       firing_noncritical_alert_count: "{{ firing_warning_alert_count }}"
@@ -1037,7 +1070,22 @@
         and (platform_health_summary.etcd_leader_unhealthy | default(0) | int) == 0
         and (platform_health_summary.etcd_runtime_degraded | default(0) | int) == 0
       }}
+    control_plane_backup_evidence_scanned: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).present | default(false) | bool }}"
     control_plane_snapshot_evidence_collected: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).healthy | default(false) | bool }}"
+    control_plane_backup_nodes_with_any_artifacts: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).nodes_with_any_artifacts | default(0) }}"
+    control_plane_backup_newest_matching_pair_age_hours: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).newest_matching_pair_age_hours | default('unknown') }}"
+    control_plane_backup_findings_summary: >-
+      {{
+        (
+          (control_plane_backup_evidence_data | default({})).findings
+          | default([])
+          | map(attribute='detail')
+          | list
+          | join('; ')
+        )
+        if (((control_plane_backup_evidence_data | default({})).findings | default([]) | length) > 0)
+        else 'none'
+      }}
     storage_provider_warning: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool }}"
     backup_recovery_status: >-
       {{
@@ -1095,9 +1143,13 @@
       backup_tooling_detected: "{{ backup_tooling_detected }}"
       control_plane_recovery_applicable: "{{ control_plane_recovery_applicable }}"
       control_plane_runtime_healthy: "{{ control_plane_runtime_healthy }}"
+      control_plane_backup_evidence_scanned: "{{ control_plane_backup_evidence_scanned }}"
       control_plane_snapshot_evidence_collected: "{{ control_plane_snapshot_evidence_collected }}"
       control_plane_backup_node_count: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).node_count | default(0) }}"
+      control_plane_backup_nodes_with_any_artifacts: "{{ control_plane_backup_nodes_with_any_artifacts }}"
       control_plane_backup_nodes_with_matching_pairs: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).nodes_with_matching_pairs | default(0) }}"
+      control_plane_backup_newest_matching_pair_age_hours: "{{ control_plane_backup_newest_matching_pair_age_hours }}"
+      control_plane_backup_findings_summary: "{{ control_plane_backup_findings_summary }}"
       dataprotectionapplication_count: "{{ dataprotectionapplication_summary | default([]) | length }}"
       available_backup_storage_location_count: "{{ available_backup_storage_locations | length }}"
       backup_schedule_count: "{{ backup_schedule_summary | default([]) | length }}"

@@ -1,142 +1,165 @@
 ---
+- name: Build production Day 2 posture input JSON
+  ansible.builtin.set_fact:
+    day2_posture_input_json: >-
+      {{
+        {
+          "cluster_profile": cluster_profile | default({}),
+          "clusterversion": analysis_graph.clusterversion | default({}),
+          "network_config": analysis_graph.network_config | default({}),
+          "apiserver_config": analysis_graph.apiserver_config | default({}),
+          "openshift_apiserver": analysis_graph.openshift_apiserver | default({}),
+          "kube_apiserver": analysis_graph.kube_apiserver | default({}),
+          "authentication_operator": analysis_graph.authentication_operator | default({}),
+          "project_config": analysis_graph.project_config | default({}),
+          "proxy_config": analysis_graph.proxy_config | default({}),
+          "image_config": analysis_graph.image_config | default({}),
+          "imagedigestmirrorsets": (analysis_graph.imagedigestmirrorsets | default({})).get('items', []),
+          "imagetagmirrorsets": (analysis_graph.imagetagmirrorsets | default({})).get('items', []),
+          "imagecontentsourcepolicies": (analysis_graph.imagecontentsourcepolicies | default({})).get('items', []),
+          "catalogsources": (analysis_graph.catalogsources | default({})).get('items', []),
+          "clustercatalogs": (analysis_graph.clustercatalogs | default({})).get('items', []),
+          "updateservices": (analysis_graph.updateservices | default({})).get('items', []),
+          "clusteroperators": clusteroperator_status_map | default({}),
+          "cluster_monitoring_config": cluster_monitoring_config_parsed | default({}),
+          "user_workload_monitoring_config": user_workload_monitoring_config_parsed | default({}),
+          "subscriptions": (analysis_graph.subscriptions | default({})).get('items', []),
+          "templates": (analysis_graph.templates | default({})).get('items', []),
+          "pods": (analysis_graph.pods | default({})).get('items', []),
+          "deployments": (analysis_graph.deployments | default({})).get('items', []),
+          "statefulsets": (analysis_graph.statefulsets | default({})).get('items', []),
+          "daemonsets": (analysis_graph.daemonsets | default({})).get('items', []),
+          "serviceaccounts": (analysis_graph.serviceaccounts | default({})).get('items', []),
+          "rolebindings": (analysis_graph.rolebindings | default({})).get('items', []),
+          "clusterrolebindings": (analysis_graph.clusterrolebindings | default({})).get('items', []),
+          "networkpolicies": (analysis_graph.networkpolicies | default({})).get('items', []),
+          "resourcequotas": (analysis_graph.resourcequotas | default({})).get('items', []),
+          "limitranges": (analysis_graph.limitranges | default({})).get('items', []),
+          "secrets": (analysis_graph.secrets | default({})).get('items', []),
+          "configmaps": (analysis_graph.configmaps | default({})).get('items', []),
+          "crds": (analysis_graph.crds | default({})).get('items', []),
+          "servicemonitors": (analysis_graph.servicemonitors | default({})).get('items', []),
+          "podmonitors": (analysis_graph.podmonitors | default({})).get('items', []),
+          "argocds": (analysis_graph.argocds | default({})).get('items', []),
+          "gitops_applications": (analysis_graph.gitops_applications | default({})).get('items', []),
+          "gitops_appprojects": (analysis_graph.gitops_appprojects | default({})).get('items', []),
+          "clusterautoscalers": (analysis_graph.clusterautoscalers | default({})).get('items', []),
+          "hostedclusters": (analysis_graph.hostedclusters | default({})).get('items', []),
+          "nodepools": (analysis_graph.nodepools | default({})).get('items', []),
+          "dynakubes": (analysis_graph.dynakubes | default({})).get('items', []),
+          "edgeconnects": (analysis_graph.edgeconnects | default({})).get('items', []),
+          "datadogagents": (analysis_graph.datadogagents | default({})).get('items', []),
+          "clusteragents": (analysis_graph.clusteragents | default({})).get('items', []),
+          "infravizs": (analysis_graph.infravizs | default({})).get('items', []),
+          "ansibleautomationplatforms": (analysis_graph.ansibleautomationplatforms | default({})).get('items', []),
+          "automationcontrollers": (analysis_graph.automationcontrollers | default({})).get('items', []),
+          "automationhubs": (analysis_graph.automationhubs | default({})).get('items', []),
+          "edas": (analysis_graph.edas | default({})).get('items', []),
+          "kedacontrollers": (analysis_graph.kedacontrollers | default({})).get('items', []),
+          "scaledobjects": (analysis_graph.scaledobjects | default({})).get('items', []),
+          "scaledjobs": (analysis_graph.scaledjobs | default({})).get('items', []),
+          "triggerauthentications": (analysis_graph.triggerauthentications | default({})).get('items', []),
+          "clustertriggerauthentications": (analysis_graph.clustertriggerauthentications | default({})).get('items', []),
+          "costmanagementmetricsconfigs": (analysis_graph.costmanagementmetricsconfigs | default({})).get('items', []),
+          "klusterlets": (analysis_graph.klusterlets | default({})).get('items', []),
+          "managedclusteraddons": (analysis_graph.managedclusteraddons | default({})).get('items', []),
+          "clustersecretstores": (analysis_graph.clustersecretstores | default({})).get('items', []),
+          "secretstores": (analysis_graph.secretstores | default({})).get('items', []),
+          "externalsecrets": (analysis_graph.externalsecrets | default({})).get('items', []),
+          "namespaces": (analysis_graph.namespaces | default({})).get('items', []),
+          "groups": (analysis_graph.groups | default({})).get('items', []),
+          "clusterlogforwarders": (analysis_graph.clusterlogforwarders | default({})).get('items', []),
+          "lokistacks": (analysis_graph.lokistacks | default({})).get('items', []),
+          "backupstoragelocations": (analysis_graph.backupstoragelocations | default({})).get('items', []),
+          "schedules": (analysis_graph.schedules | default({})).get('items', []),
+          "dataprotectionapplications": (analysis_graph.dataprotectionapplications | default({})).get('items', []),
+          "drpolicies": (analysis_graph.drpolicies | default({})).get('items', []),
+          "drclusters": (analysis_graph.drclusters | default({})).get('items', []),
+          "drplacementcontrols": (analysis_graph.drplacementcontrols | default({})).get('items', []),
+          "volumereplicationgroups": (analysis_graph.volumereplicationgroups | default({})).get('items', []),
+          "volumereplications": (analysis_graph.volumereplications | default({})).get('items', []),
+          "volumereplicationclasses": (analysis_graph.volumereplicationclasses | default({})).get('items', []),
+          "compliancesuites": (analysis_graph.compliancesuites | default({})).get('items', []),
+          "compliancescans": (analysis_graph.compliancescans | default({})).get('items', []),
+          "scansettings": (analysis_graph.scansettings | default({})).get('items', []),
+          "scansettingbindings": (analysis_graph.scansettingbindings | default({})).get('items', []),
+          "tailoredprofiles": (analysis_graph.tailoredprofiles | default({})).get('items', []),
+          "profilebundles": (analysis_graph.profilebundles | default({})).get('items', []),
+          "compliancecheckresults": (analysis_graph.compliancecheckresults | default({})).get('items', []),
+          "compliance_operator_summary": compliance_operator_summary | default({}),
+          "compliance_standards_summary": compliance_standards_summary | default([]),
+          "compliance_standards_findings": compliance_standards_findings | default([]),
+          "machinehealthchecks": (analysis_graph.machinehealthchecks | default({})).get('items', []),
+          "machineautoscalers": (analysis_graph.machineautoscalers | default({})).get('items', []),
+          "egressfirewalls": (analysis_graph.egressfirewalls | default({})).get('items', []),
+          "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
+          "backup_posture_findings": backup_posture_findings | default([]),
+          "control_plane_backup_evidence": control_plane_backup_evidence_data | default({}),
+          "nodes": (analysis_graph.nodes | default({})).get('items', []),
+          "pipelines": (analysis_graph.pipelines | default({})).get('items', []),
+          "pipelineruns": (analysis_graph.pipelineruns | default({})).get('items', []),
+          "storageclusters": (analysis_graph.storageclusters | default({})).get('items', []),
+          "cephclusters": (analysis_graph.cephclusters | default({})).get('items', []),
+          "noobaas": (analysis_graph.noobaas | default({})).get('items', []),
+          "kubevirts": (analysis_graph.kubevirts | default({})).get('items', []),
+          "hyperconvergeds": (analysis_graph.hyperconvergeds | default({})).get('items', []),
+          "virtualmachines": (analysis_graph.virtualmachines | default({})).get('items', []),
+          "virtualmachineinstances": (analysis_graph.virtualmachineinstances | default({})).get('items', []),
+          "datascienceclusters": (analysis_graph.datascienceclusters | default({})).get('items', []),
+          "dscinitializations": (analysis_graph.dscinitializations | default({})).get('items', []),
+          "notebooks": (analysis_graph.notebooks | default({})).get('items', []),
+          "servingruntimes": (analysis_graph.servingruntimes | default({})).get('items', []),
+          "inferenceservices": (analysis_graph.inferenceservices | default({})).get('items', []),
+          "modelmeshservings": (analysis_graph.modelmeshservings | default({})).get('items', []),
+          "acceleratorprofiles": (analysis_graph.acceleratorprofiles | default({})).get('items', []),
+          "servicemeshcontrolplanes": (analysis_graph.servicemeshcontrolplanes | default({})).get('items', []),
+          "servicemeshmemberrolls": (analysis_graph.servicemeshmemberrolls | default({})).get('items', []),
+          "servicemeshmembers": (analysis_graph.servicemeshmembers | default({})).get('items', []),
+          "knativeservings": (analysis_graph.knativeservings | default({})).get('items', []),
+          "knativeeventings": (analysis_graph.knativeeventings | default({})).get('items', []),
+          "knativeservices": (analysis_graph.knativeservices | default({})).get('items', []),
+          "nvidiaclusterpolicies": (analysis_graph.nvidiaclusterpolicies | default({})).get('items', []),
+          "kataconfigs": (analysis_graph.kataconfigs | default({})).get('items', []),
+          "tuneds": (analysis_graph.tuneds | default({})).get('items', []),
+          "tunedprofiles": (analysis_graph.tunedprofiles | default({})).get('items', []),
+          "nmstates": (analysis_graph.nmstates | default({})).get('items', []),
+          "nodenetworkconfigurationpolicies": (analysis_graph.nodenetworkconfigurationpolicies | default({})).get('items', []),
+          "nodenetworkstates": (analysis_graph.nodenetworkstates | default({})).get('items', []),
+          "deschedulers": (analysis_graph.deschedulers | default({})).get('items', []),
+          "backup_posture": backup_posture_data | default({}),
+          "observability_forwarding_summary": observability_forwarding_summary | default({}),
+          "observability_findings": observability_findings | default([]),
+          "identity_provider_count": (cluster_profile.identity_provider_count | default(0)),
+          "auth_posture_summary": auth_posture_summary | default({}),
+          "image_registry_findings": image_registry_findings | default([]),
+          "machine_healthcheck_findings": machine_healthcheck_findings | default([]),
+          "compliance_suite_findings": compliance_suite_findings | default([]),
+          "backup_posture_findings": backup_posture_findings | default([]),
+          "capability_profile": openshift_report_capability_profile | default({})
+        } | to_json
+      }}
+
+- name: Create production Day 2 posture input file
+  ansible.builtin.tempfile:
+    state: file
+    prefix: openshift-day2-posture-
+    suffix: .json
+  register: day2_posture_input_file
+
+- name: Write production Day 2 posture input file
+  ansible.builtin.copy:
+    dest: "{{ day2_posture_input_file.path }}"
+    mode: "0600"
+    content: "{{ day2_posture_input_json }}"
+
 - name: Build production Day 2 posture summary
   ansible.builtin.shell: |
-    python3 - <<'PY'
+    python3 - "{{ day2_posture_input_file.path }}" <<'PY'
     import json
+    import sys
 
-    data = json.loads(r'''{{ {
-      "cluster_profile": cluster_profile | default({}),
-      "clusterversion": analysis_graph.clusterversion | default({}),
-      "network_config": analysis_graph.network_config | default({}),
-      "apiserver_config": analysis_graph.apiserver_config | default({}),
-      "openshift_apiserver": analysis_graph.openshift_apiserver | default({}),
-      "kube_apiserver": analysis_graph.kube_apiserver | default({}),
-      "authentication_operator": analysis_graph.authentication_operator | default({}),
-      "project_config": analysis_graph.project_config | default({}),
-      "proxy_config": analysis_graph.proxy_config | default({}),
-      "image_config": analysis_graph.image_config | default({}),
-      "imagedigestmirrorsets": (analysis_graph.imagedigestmirrorsets | default({})).get('items', []),
-      "imagetagmirrorsets": (analysis_graph.imagetagmirrorsets | default({})).get('items', []),
-      "imagecontentsourcepolicies": (analysis_graph.imagecontentsourcepolicies | default({})).get('items', []),
-      "catalogsources": (analysis_graph.catalogsources | default({})).get('items', []),
-      "clustercatalogs": (analysis_graph.clustercatalogs | default({})).get('items', []),
-      "updateservices": (analysis_graph.updateservices | default({})).get('items', []),
-      "clusteroperators": clusteroperator_status_map | default({}),
-      "cluster_monitoring_config": cluster_monitoring_config_parsed | default({}),
-      "user_workload_monitoring_config": user_workload_monitoring_config_parsed | default({}),
-      "subscriptions": (analysis_graph.subscriptions | default({})).get('items', []),
-      "templates": (analysis_graph.templates | default({})).get('items', []),
-      "pods": (analysis_graph.pods | default({})).get('items', []),
-      "deployments": (analysis_graph.deployments | default({})).get('items', []),
-      "statefulsets": (analysis_graph.statefulsets | default({})).get('items', []),
-      "daemonsets": (analysis_graph.daemonsets | default({})).get('items', []),
-      "serviceaccounts": (analysis_graph.serviceaccounts | default({})).get('items', []),
-      "rolebindings": (analysis_graph.rolebindings | default({})).get('items', []),
-      "clusterrolebindings": (analysis_graph.clusterrolebindings | default({})).get('items', []),
-      "networkpolicies": (analysis_graph.networkpolicies | default({})).get('items', []),
-      "resourcequotas": (analysis_graph.resourcequotas | default({})).get('items', []),
-      "limitranges": (analysis_graph.limitranges | default({})).get('items', []),
-      "secrets": (analysis_graph.secrets | default({})).get('items', []),
-      "configmaps": (analysis_graph.configmaps | default({})).get('items', []),
-      "crds": (analysis_graph.crds | default({})).get('items', []),
-      "servicemonitors": (analysis_graph.servicemonitors | default({})).get('items', []),
-      "podmonitors": (analysis_graph.podmonitors | default({})).get('items', []),
-      "argocds": (analysis_graph.argocds | default({})).get('items', []),
-      "gitops_applications": (analysis_graph.gitops_applications | default({})).get('items', []),
-      "gitops_appprojects": (analysis_graph.gitops_appprojects | default({})).get('items', []),
-      "clusterautoscalers": (analysis_graph.clusterautoscalers | default({})).get('items', []),
-      "hostedclusters": (analysis_graph.hostedclusters | default({})).get('items', []),
-      "nodepools": (analysis_graph.nodepools | default({})).get('items', []),
-      "dynakubes": (analysis_graph.dynakubes | default({})).get('items', []),
-      "edgeconnects": (analysis_graph.edgeconnects | default({})).get('items', []),
-      "datadogagents": (analysis_graph.datadogagents | default({})).get('items', []),
-      "clusteragents": (analysis_graph.clusteragents | default({})).get('items', []),
-      "infravizs": (analysis_graph.infravizs | default({})).get('items', []),
-      "ansibleautomationplatforms": (analysis_graph.ansibleautomationplatforms | default({})).get('items', []),
-      "automationcontrollers": (analysis_graph.automationcontrollers | default({})).get('items', []),
-      "automationhubs": (analysis_graph.automationhubs | default({})).get('items', []),
-      "edas": (analysis_graph.edas | default({})).get('items', []),
-      "kedacontrollers": (analysis_graph.kedacontrollers | default({})).get('items', []),
-      "scaledobjects": (analysis_graph.scaledobjects | default({})).get('items', []),
-      "scaledjobs": (analysis_graph.scaledjobs | default({})).get('items', []),
-      "triggerauthentications": (analysis_graph.triggerauthentications | default({})).get('items', []),
-      "clustertriggerauthentications": (analysis_graph.clustertriggerauthentications | default({})).get('items', []),
-      "costmanagementmetricsconfigs": (analysis_graph.costmanagementmetricsconfigs | default({})).get('items', []),
-      "klusterlets": (analysis_graph.klusterlets | default({})).get('items', []),
-      "managedclusteraddons": (analysis_graph.managedclusteraddons | default({})).get('items', []),
-      "clustersecretstores": (analysis_graph.clustersecretstores | default({})).get('items', []),
-      "secretstores": (analysis_graph.secretstores | default({})).get('items', []),
-      "externalsecrets": (analysis_graph.externalsecrets | default({})).get('items', []),
-      "namespaces": (analysis_graph.namespaces | default({})).get('items', []),
-      "groups": (analysis_graph.groups | default({})).get('items', []),
-      "clusterlogforwarders": (analysis_graph.clusterlogforwarders | default({})).get('items', []),
-      "lokistacks": (analysis_graph.lokistacks | default({})).get('items', []),
-      "backupstoragelocations": (analysis_graph.backupstoragelocations | default({})).get('items', []),
-      "schedules": (analysis_graph.schedules | default({})).get('items', []),
-      "dataprotectionapplications": (analysis_graph.dataprotectionapplications | default({})).get('items', []),
-      "drpolicies": (analysis_graph.drpolicies | default({})).get('items', []),
-      "drclusters": (analysis_graph.drclusters | default({})).get('items', []),
-      "drplacementcontrols": (analysis_graph.drplacementcontrols | default({})).get('items', []),
-      "volumereplicationgroups": (analysis_graph.volumereplicationgroups | default({})).get('items', []),
-      "volumereplications": (analysis_graph.volumereplications | default({})).get('items', []),
-      "volumereplicationclasses": (analysis_graph.volumereplicationclasses | default({})).get('items', []),
-      "compliancesuites": (analysis_graph.compliancesuites | default({})).get('items', []),
-      "compliancescans": (analysis_graph.compliancescans | default({})).get('items', []),
-      "scansettings": (analysis_graph.scansettings | default({})).get('items', []),
-      "scansettingbindings": (analysis_graph.scansettingbindings | default({})).get('items', []),
-      "tailoredprofiles": (analysis_graph.tailoredprofiles | default({})).get('items', []),
-      "profilebundles": (analysis_graph.profilebundles | default({})).get('items', []),
-      "compliancecheckresults": (analysis_graph.compliancecheckresults | default({})).get('items', []),
-      "compliance_operator_summary": compliance_operator_summary | default({}),
-      "compliance_standards_summary": compliance_standards_summary | default([]),
-      "compliance_standards_findings": compliance_standards_findings | default([]),
-      "machinehealthchecks": (analysis_graph.machinehealthchecks | default({})).get('items', []),
-      "egressfirewalls": (analysis_graph.egressfirewalls | default({})).get('items', []),
-      "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
-      "backup_posture_findings": backup_posture_findings | default([]),
-      "control_plane_backup_evidence": control_plane_backup_evidence_data | default({}),
-      "nodes": (analysis_graph.nodes | default({})).get('items', []),
-      "pipelines": (analysis_graph.pipelines | default({})).get('items', []),
-      "pipelineruns": (analysis_graph.pipelineruns | default({})).get('items', []),
-      "storageclusters": (analysis_graph.storageclusters | default({})).get('items', []),
-      "cephclusters": (analysis_graph.cephclusters | default({})).get('items', []),
-      "noobaas": (analysis_graph.noobaas | default({})).get('items', []),
-      "kubevirts": (analysis_graph.kubevirts | default({})).get('items', []),
-      "hyperconvergeds": (analysis_graph.hyperconvergeds | default({})).get('items', []),
-      "virtualmachines": (analysis_graph.virtualmachines | default({})).get('items', []),
-      "virtualmachineinstances": (analysis_graph.virtualmachineinstances | default({})).get('items', []),
-      "datascienceclusters": (analysis_graph.datascienceclusters | default({})).get('items', []),
-      "dscinitializations": (analysis_graph.dscinitializations | default({})).get('items', []),
-      "notebooks": (analysis_graph.notebooks | default({})).get('items', []),
-      "servingruntimes": (analysis_graph.servingruntimes | default({})).get('items', []),
-      "inferenceservices": (analysis_graph.inferenceservices | default({})).get('items', []),
-      "modelmeshservings": (analysis_graph.modelmeshservings | default({})).get('items', []),
-      "acceleratorprofiles": (analysis_graph.acceleratorprofiles | default({})).get('items', []),
-      "servicemeshcontrolplanes": (analysis_graph.servicemeshcontrolplanes | default({})).get('items', []),
-      "servicemeshmemberrolls": (analysis_graph.servicemeshmemberrolls | default({})).get('items', []),
-      "servicemeshmembers": (analysis_graph.servicemeshmembers | default({})).get('items', []),
-      "knativeservings": (analysis_graph.knativeservings | default({})).get('items', []),
-      "knativeeventings": (analysis_graph.knativeeventings | default({})).get('items', []),
-      "knativeservices": (analysis_graph.knativeservices | default({})).get('items', []),
-      "nvidiaclusterpolicies": (analysis_graph.nvidiaclusterpolicies | default({})).get('items', []),
-      "kataconfigs": (analysis_graph.kataconfigs | default({})).get('items', []),
-      "tuneds": (analysis_graph.tuneds | default({})).get('items', []),
-      "tunedprofiles": (analysis_graph.tunedprofiles | default({})).get('items', []),
-      "nmstates": (analysis_graph.nmstates | default({})).get('items', []),
-      "nodenetworkconfigurationpolicies": (analysis_graph.nodenetworkconfigurationpolicies | default({})).get('items', []),
-      "nodenetworkstates": (analysis_graph.nodenetworkstates | default({})).get('items', []),
-      "deschedulers": (analysis_graph.deschedulers | default({})).get('items', []),
-      "backup_posture": backup_posture_data | default({}),
-      "observability_forwarding_summary": observability_forwarding_summary | default({}),
-      "observability_findings": observability_findings | default([]),
-      "identity_provider_count": (cluster_profile.identity_provider_count | default(0)),
-      "auth_posture_summary": auth_posture_summary | default({}),
-      "image_registry_findings": image_registry_findings | default([]),
-      "machine_healthcheck_findings": machine_healthcheck_findings | default([]),
-      "compliance_suite_findings": compliance_suite_findings | default([]),
-      "backup_posture_findings": backup_posture_findings | default([]),
-      "capability_profile": openshift_report_capability_profile | default({})
-    } | to_json }}''')
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
 
     platform = str((((data.get("cluster_profile") or {}).get("platform")) or "unknown")).strip()
     deployment_type = str((((data.get("cluster_profile") or {}).get("deployment_type")) or "openshift")).strip().lower()
@@ -411,6 +434,7 @@
     compliance_standards_summary = data.get("compliance_standards_summary") or []
     compliance_standards_findings = data.get("compliance_standards_findings") or []
     machinehealthchecks = data.get("machinehealthchecks") or []
+    machineautoscalers = data.get("machineautoscalers") or []
     egressfirewalls = data.get("egressfirewalls") or []
     machinesets = data.get("machinesets") or []
     backup_posture_findings = data.get("backup_posture_findings") or []
@@ -512,6 +536,67 @@
                 return value.strip()
         return ""
 
+    def policy_types(obj):
+        return {
+            str(item).strip()
+            for item in (((obj.get("spec") or {}).get("policyTypes")) or [])
+            if str(item).strip()
+        }
+
+    def has_match_all_pod_selector(obj):
+        selector = ((obj.get("spec") or {}).get("podSelector"))
+        return isinstance(selector, dict) and len(selector) == 0
+
+    def policy_rule_declared(obj, rule_key):
+        spec = obj.get("spec") or {}
+        return rule_key in spec and isinstance(spec.get(rule_key), list)
+
+    def metadata_labels(obj):
+        return {
+            str(key): str(value)
+            for key, value in (((obj.get("metadata") or {}).get("labels")) or {}).items()
+        }
+
+    def template_labels(obj):
+        template_meta = (((obj.get("spec") or {}).get("template")) or {}).get("metadata") or {}
+        return {
+            str(key): str(value)
+            for key, value in (template_meta.get("labels") or {}).items()
+        }
+
+    def selector_match_labels(obj):
+        selector = ((obj.get("spec") or {}).get("selector")) or {}
+        return {
+            str(key): str(value)
+            for key, value in (selector.get("matchLabels") or {}).items()
+        }
+
+    def selector_match_expressions(obj):
+        selector = ((obj.get("spec") or {}).get("selector")) or {}
+        return [
+            item for item in (selector.get("matchExpressions") or [])
+            if isinstance(item, dict)
+        ]
+
+    def labels_match_selector(labels, match_labels, match_expressions):
+        for key, value in (match_labels or {}).items():
+            if str(labels.get(key) or "") != str(value):
+                return False
+        for expression in (match_expressions or []):
+            key = str(expression.get("key") or "")
+            operator = str(expression.get("operator") or "")
+            values = [str(item) for item in (expression.get("values") or [])]
+            current = str(labels.get(key) or "")
+            if operator == "In" and current not in values:
+                return False
+            if operator == "NotIn" and current in values:
+                return False
+            if operator == "Exists" and key not in labels:
+                return False
+            if operator == "DoesNotExist" and key in labels:
+                return False
+        return True
+
     def has_true_condition(obj, *condition_types):
         wanted = {item.lower() for item in condition_types}
         for condition in status_conditions(obj):
@@ -553,6 +638,20 @@
 
     all_workloads = pods + deployments + statefulsets + daemonsets
     all_workload_blobs = [text_blob(item) for item in all_workloads]
+    worker_machinesets = []
+    for item in machinesets:
+        combined_labels = {}
+        combined_labels.update(metadata_labels(item))
+        combined_labels.update(template_labels(item))
+        role_value = str(combined_labels.get("machine.openshift.io/cluster-api-machine-role") or "").strip().lower()
+        type_value = str(combined_labels.get("machine.openshift.io/cluster-api-machine-type") or "").strip().lower()
+        role_blob = " ".join([role_value, type_value, json.dumps(combined_labels)]).lower()
+        if "worker" in role_blob and "infra" not in role_blob and "master" not in role_blob and "control-plane" not in role_blob:
+            worker_machinesets.append({
+                "name": str((((item.get("metadata") or {}).get("name")) or "")).strip(),
+                "namespace": str((((item.get("metadata") or {}).get("namespace")) or "")).strip(),
+                "labels": combined_labels,
+            })
     internal_registry_markers = [
         ".svc", ".cluster.local", "image-registry.openshift-image-registry.svc",
         "quay.io/openshift", "registry.redhat.io", "registry.access.redhat.com",
@@ -939,6 +1038,13 @@
         item for item in gitops_apps
         if any(str(source.get("repoURL") or "").strip() for source in gitops_sources(item))
     ]
+    gitops_apps_healthy_and_synced = [
+        item for item in gitops_apps
+        if (
+            str((((item.get("status") or {}).get("sync") or {}).get("status") or "")).strip().lower() == "synced"
+            and str((((item.get("status") or {}).get("health") or {}).get("status") or "")).strip().lower() == "healthy"
+        )
+    ]
     gitops_apps_with_automated_sync = [
         item for item in gitops_apps
         if isinstance(((item.get("spec") or {}).get("syncPolicy") or {}).get("automated"), dict)
@@ -1007,6 +1113,15 @@
         for item in networkpolicies
         if str(((item.get("metadata") or {}).get("namespace")) or "").strip() in user_namespace_names
     }
+    namespaces_with_default_deny_networkpolicy = {
+        str(((item.get("metadata") or {}).get("namespace")) or "").strip()
+        for item in networkpolicies
+        if (
+            str(((item.get("metadata") or {}).get("namespace")) or "").strip() in user_namespace_names
+            and has_match_all_pod_selector(item)
+            and ("Ingress" in policy_types(item) or policy_rule_declared(item, "ingress"))
+        )
+    }
     namespaces_with_egress_networkpolicy = {
         str(((item.get("metadata") or {}).get("namespace")) or "").strip()
         for item in networkpolicies
@@ -1015,12 +1130,21 @@
             and "Egress" in (((item.get("spec") or {}).get("policyTypes")) or [])
         )
     }
+    namespaces_with_baseline_egress_networkpolicy = {
+        str(((item.get("metadata") or {}).get("namespace")) or "").strip()
+        for item in networkpolicies
+        if (
+            str(((item.get("metadata") or {}).get("namespace")) or "").strip() in user_namespace_names
+            and has_match_all_pod_selector(item)
+            and ("Egress" in policy_types(item) or policy_rule_declared(item, "egress"))
+        )
+    }
     namespaces_with_egressfirewall = {
         str(((item.get("metadata") or {}).get("namespace")) or "").strip()
         for item in egressfirewalls
         if str(((item.get("metadata") or {}).get("namespace")) or "").strip() in user_namespace_names
     }
-    namespaces_with_egress_controls = namespaces_with_egress_networkpolicy | namespaces_with_egressfirewall
+    namespaces_with_egress_controls = namespaces_with_baseline_egress_networkpolicy | namespaces_with_egressfirewall
     namespaces_with_resourcequota = {
         str(((item.get("metadata") or {}).get("namespace")) or "").strip()
         for item in resourcequotas
@@ -1032,7 +1156,7 @@
         if str(((item.get("metadata") or {}).get("namespace")) or "").strip() in user_namespace_names
     }
     namespaces_with_all_baseline_guardrails = (
-        namespaces_with_networkpolicy & namespaces_with_resourcequota & namespaces_with_limitrange
+        namespaces_with_default_deny_networkpolicy & namespaces_with_resourcequota & namespaces_with_limitrange
     )
     namespaces_with_all_namespace_governance_guardrails = (
         namespaces_with_all_baseline_guardrails & namespaces_with_egress_controls
@@ -1186,6 +1310,24 @@
         or len(modelmeshservings) > 0
         or len(acceleratorprofiles) > 0
     )
+    ready_datascienceclusters = [
+        item for item in datascienceclusters
+        if (
+            has_true_condition(item, "Ready", "Available", "Completed")
+            or status_text(item, "phase").lower() in {"ready", "installed", "available", "completed"}
+        ) and not has_problem_condition(item) and not has_problem_status(item)
+    ]
+    ready_dscinitializations = [
+        item for item in dscinitializations
+        if (
+            has_true_condition(item, "Ready", "Available", "Completed")
+            or status_text(item, "phase").lower() in {"ready", "installed", "available", "completed"}
+        ) and not has_problem_condition(item) and not has_problem_status(item)
+    ]
+    openshift_ai_healthy = bool(
+        len(ready_datascienceclusters) > 0
+        or len(ready_dscinitializations) > 0
+    )
     service_mesh_subscription_present = bool(
         "servicemeshoperator" in subscription_packages or "kiali-ossm" in subscription_packages
     )
@@ -1321,7 +1463,14 @@
         or node_tuning_namespace_present
         or node_tuning_crd_present
     )
-    node_tuning_healthy = bool(len(tuneds) > 0 or len(tunedprofiles) > 0)
+    tuned_config_resources = [
+        item for item in tuneds
+        if (
+            len((((item.get("spec") or {}).get("recommend")) or [])) > 0
+            or len((((item.get("spec") or {}).get("profile")) or [])) > 0
+        ) and not has_problem_condition(item) and not has_problem_status(item)
+    ]
+    node_tuning_healthy = bool(len(tuned_config_resources) > 0 or len(tunedprofiles) > 0)
     nmstate_namespace_present = "openshift-nmstate" in namespace_names
     nmstate_operator_subscription_present = "kubernetes-nmstate-operator" in subscription_packages
     nmstate_present = bool(
@@ -1331,9 +1480,20 @@
         or nmstate_namespace_present
         or nmstate_operator_subscription_present
     )
+    ready_nodenetworkconfigurationpolicies = [
+        item for item in nodenetworkconfigurationpolicies
+        if (
+            has_true_condition(item, "Available", "SuccessfullyConfigured")
+            or status_text(item, "phase").lower() in {"available", "configured", "ready", "success"}
+        ) and not has_problem_condition(item) and not has_problem_status(item)
+    ]
+    configured_nmstates = [
+        item for item in nmstates
+        if not has_problem_condition(item) and not has_problem_status(item)
+    ]
     nmstate_healthy = bool(
-        len(nmstates) > 0
-        or len(nodenetworkconfigurationpolicies) > 0
+        len(ready_nodenetworkconfigurationpolicies) > 0
+        or len(configured_nmstates) > 0
     )
     cost_management_subscription_present = "costmanagement-metrics-operator" in subscription_packages
     cost_management_namespace_present = "costmanagement-metrics-operator" in namespace_names
@@ -1353,7 +1513,15 @@
         or descheduler_namespace_present
         or descheduler_subscription_present
     )
-    descheduler_healthy = bool(len(deschedulers) > 0)
+    configured_deschedulers = [
+        item for item in deschedulers
+        if (
+            len((item.get("spec") or {})) > 0
+            or has_true_condition(item, "Available", "Ready", "Deployed")
+            or status_text(item, "phase").lower() in {"ready", "available", "deployed"}
+        ) and not has_problem_condition(item) and not has_problem_status(item)
+    ]
+    descheduler_healthy = bool(len(configured_deschedulers) > 0)
 
     checks = []
     findings = []
@@ -1412,6 +1580,8 @@
             return "INFO"
         if expected == "absent":
             return "WARN" if present else "OK"
+        if expected == "configured":
+            return "OK" if present and healthy else ("WARN" if cap_required(key) else "INFO")
         if expected == "healthy":
             return "OK" if present and healthy else ("WARN" if cap_required(key) else "INFO")
         return "OK" if present else ("WARN" if cap_required(key) else "INFO")
@@ -1450,10 +1620,40 @@
     machine_remediation_level = cap_level("machine_health_check_remediation", "recommended" if (len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational")
     autoscaler_level = cap_level("cluster_autoscaler_configuration", "recommended" if ((public_cloud or install_model == "ipi") and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane) else "informational")
 
-    def add_check(capability, status, detail, source, level="recommended", scored=True):
+    def add_check(capability, status, detail, source, level="recommended", scored=True, capability_key=None):
         normalized_level = normalize_level(level)
         capability_key_map = {
             "GitOps controller and application inventory": "declarative_gitops_operations",
+            "Cluster logging app footprint": "cluster_log_forwarding",
+            "External Secrets Operator app footprint": "external_secrets_operator",
+            "OADP operator app footprint": "application_backup_and_restore_readiness",
+            "Compliance validation footprint": "compliance_requirements_validation",
+            "OpenShift pipeline workflow footprint": "openshift_pipeline_workflows",
+            "cert-manager operator footprint": "cert_manager_operator",
+            "Advanced Cluster Security operator footprint": "advanced_cluster_security",
+            "Dynatrace observability footprint": "dynatrace_observability",
+            "Qualys scanning agent footprint": "qualys_scanning_agents",
+            "Prisma Cloud Defender footprint": "prisma_twistlock_defenders",
+            "Aqua security platform footprint": "aqua_security_platform",
+            "Splunk observability footprint": "splunk_observability",
+            "LokiStack logging footprint": "loki_stack_logging",
+            "Datadog observability footprint": "datadog_observability",
+            "AppDynamics observability footprint": "appdynamics_observability",
+            "OpenShift AAP footprint": "openshift_aap",
+            "OpenShift KEDA custom metrics footprint": "openshift_custom_metrics_autoscaler",
+            "OpenShift Data Foundation footprint": "openshift_data_foundation",
+            "OpenShift Virtualization footprint": "openshift_virtualization",
+            "OpenShift AI footprint": "openshift_ai",
+            "Service mesh control plane footprint": "service_mesh_control_plane",
+            "OpenShift Serverless footprint": "openshift_serverless",
+            "Windows container workload footprint": "windows_container_workloads",
+            "GPU accelerated workload footprint": "gpu_accelerated_workloads",
+            "Sandboxed container workload footprint": "sandboxed_container_workloads",
+            "Node tuning operator configuration": "node_tuning_operator",
+            "Kubernetes NMState networking footprint": "kubernetes_nmstate_networking",
+            "Descheduler operator footprint": "descheduler_operator",
+            "Team project onboarding controls": "multi_tenant_namespace_governance",
+            "Cost management operator configuration": "cost_management_operator",
             "External secrets integration": "external_secrets_operator",
             "User workload monitoring enabled": "user_workload_metrics_monitoring",
             "Grafana dashboard inventory": "grafana_metrics_dashboards",
@@ -1464,9 +1664,9 @@
             "Application backup and restore baseline": "application_backup_and_restore_readiness",
             "Control plane backup and recovery baseline": "control_plane_backup_and_recovery_readiness",
             "Secondary-site disaster recovery": "secondary_site_disaster_recovery",
+            "ACM multicluster disaster recovery": "acm_multicluster_disaster_recovery",
             "Compliance requirements validation": "compliance_requirements_validation",
             "Central identity provider integration": "oauth_external_identity_provider",
-            "Red Hat Insights connectivity": "advanced_cluster_management",
             "Worker machine remediation": "machine_health_check_remediation",
             "Cluster autoscaler": "cluster_autoscaler_configuration",
             "Registry governance baseline": "image_registry_policy_governance",
@@ -1484,7 +1684,9 @@
             "Namespace egress controls": "namespace_egress_controls",
             "ACM managed-cluster registration": "advanced_cluster_management",
         }
-        capability_key = capability_key_map.get(capability, "")
+        capability_key = capability_key if capability_key is not None else capability_key_map.get(capability, "")
+        if capability_key and not cap_required(capability_key):
+            return
         checks.append({
             "capability_key": capability_key,
             "capability": capability,
@@ -1502,6 +1704,7 @@
         issue_map = {
             "prod-day2-gitops-missing": "declarative_gitops_operations",
             "prod-day2-gitops-applications-missing": "declarative_gitops_operations",
+            "prod-day2-gitops-applications-unhealthy": "declarative_gitops_operations",
             "prod-day2-gitops-repo-source-missing": "declarative_gitops_operations",
             "prod-day2-gitops-automated-sync-missing": "declarative_gitops_operations",
             "prod-day2-external-secrets-missing": "external_secrets_operator",
@@ -1559,6 +1762,12 @@
             "prod-day2-secondary-site-dr-protected-workloads-missing": "secondary_site_disaster_recovery",
             "prod-day2-secondary-site-dr-replication-config-missing": "secondary_site_disaster_recovery",
             "prod-day2-secondary-site-dr-health-warnings": "secondary_site_disaster_recovery",
+            "prod-day2-acm-dr-missing": "acm_multicluster_disaster_recovery",
+            "prod-day2-acm-dr-registration-missing": "acm_multicluster_disaster_recovery",
+            "prod-day2-acm-dr-topology-incomplete": "acm_multicluster_disaster_recovery",
+            "prod-day2-acm-dr-protected-workloads-missing": "acm_multicluster_disaster_recovery",
+            "prod-day2-acm-dr-replication-config-missing": "acm_multicluster_disaster_recovery",
+            "prod-day2-acm-dr-health-warnings": "acm_multicluster_disaster_recovery",
             "prod-day2-external-alert-delivery-missing": "external_alert_delivery",
             "prod-day2-cicd-runners-missing": "cluster_hosted_cicd_runners",
             "prod-day2-namespace-network-policy-baseline-missing": "namespace_network_policy_baseline",
@@ -1578,8 +1787,10 @@
         }
         return issue_map.get(issue, "")
 
-    def add_finding(issue, detail, severity="warning", source="general"):
-        capability_key = finding_capability_key(issue, source)
+    def add_finding(issue, detail, severity="warning", source="general", capability_key=None):
+        capability_key = capability_key if capability_key is not None else finding_capability_key(issue, source)
+        if capability_key and not cap_required(capability_key):
+            return
         docs = docs_for_capability(capability_key) if capability_key else ""
         recommendation = detail
         if docs:
@@ -1595,7 +1806,10 @@
         })
 
     gitops_present = bool(argocds or gitops_apps or gitops_projects)
-    gitops_operational = len(gitops_apps_with_repo_source) > 0
+    gitops_operational = bool(
+        len(gitops_apps_with_repo_source) > 0
+        and len(gitops_apps_healthy_and_synced) == len(gitops_apps_with_repo_source)
+    )
     gitops_automated_sync_present = len(gitops_apps_with_automated_sync) > 0
     add_check(
         "GitOps controller and application inventory",
@@ -1603,6 +1817,7 @@
         (
             f"argocds={len(argocds)} applications={len(gitops_apps)} "
             f"repoBackedApplications={len(gitops_apps_with_repo_source)} "
+            f"healthySyncedApplications={len(gitops_apps_healthy_and_synced)} "
             f"automatedSyncApplications={len(gitops_apps_with_automated_sync)} "
             f"appprojects={len(gitops_projects)}"
         ),
@@ -1613,6 +1828,16 @@
         add_finding(
             "prod-day2-gitops-missing",
             "no Argo CD, Argo CD Application, or AppProject resources were found",
+            severity=cap_failure_severity("declarative_gitops_operations"),
+            source="GitOps resource inventory",
+        )
+    if gitops_present and cap_required("declarative_gitops_operations") and len(gitops_apps_with_repo_source) > 0 and len(gitops_apps_healthy_and_synced) != len(gitops_apps_with_repo_source):
+        add_finding(
+            "prod-day2-gitops-applications-unhealthy",
+            (
+                "Argo CD Application resources were found with repository sources, but not all were healthy and synced: "
+                f"healthySynced={len(gitops_apps_healthy_and_synced)}/{len(gitops_apps_with_repo_source)}"
+            ),
             severity=cap_failure_severity("declarative_gitops_operations"),
             source="GitOps resource inventory",
         )
@@ -1645,9 +1870,19 @@
         or len(externalsecrets) > 0
         or ext_secrets_namespace_present
     )
+    ready_secret_stores = [
+        item for item in (clustersecretstores + secretstores)
+        if has_true_condition(item, "Ready") and not has_problem_condition(item) and not has_problem_status(item)
+    ]
+    ready_external_secrets = [
+        item for item in externalsecrets
+        if has_true_condition(item, "Ready", "SecretSynced") and not has_problem_condition(item) and not has_problem_status(item)
+    ]
     ext_secrets_healthy = bool(
         ext_secret_store_count > 0
         and len(externalsecrets) > 0
+        and len(ready_secret_stores) == ext_secret_store_count
+        and len(ready_external_secrets) == len(externalsecrets)
     )
     add_check(
         "External secrets integration",
@@ -1656,6 +1891,8 @@
             f"clustersecretstores={len(clustersecretstores)} "
             f"secretstores={len(secretstores)} "
             f"externalsecrets={len(externalsecrets)} "
+            f"ready_stores={len(ready_secret_stores)} "
+            f"ready_externalsecrets={len(ready_external_secrets)} "
             f"operator_namespace={ext_secrets_namespace_present}"
         ),
         "external secrets integration guidance",
@@ -1673,7 +1910,8 @@
             "prod-day2-external-secrets-missing",
             (
                 "external secret synchronization is only partially configured: "
-                f"stores={ext_secret_store_count}, externalsecrets={len(externalsecrets)}"
+                f"stores={ext_secret_store_count}, readyStores={len(ready_secret_stores)}, "
+                f"externalsecrets={len(externalsecrets)}, readyExternalSecrets={len(ready_external_secrets)}"
             ),
             severity=cap_failure_severity("external_secrets_operator"),
             source="external secrets integration guidance",
@@ -1763,13 +2001,22 @@
         "External log forwarding",
         cap_status_for_presence("cluster_log_forwarding", log_collection_present, cluster_log_forwarding_healthy),
         (
-            f"clusterlogforwarders={len(clusterlogforwarders)} "
-            f"app={obs.get('application_logs_delivery_state') or 'not-collected'} "
-            f"infra={obs.get('infrastructure_logs_delivery_state') or 'not-collected'} "
-            f"audit={obs.get('audit_logs_delivery_state') or 'not-collected'} "
-            f"external_outputs={len(obs.get('external_log_forwarding_outputs') or [])} "
-            f"vendor_managed={vendor_log_forwarding_present} "
-            f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'none'}"
+            (
+                "meets criteria via vendor-managed log forwarding evidence: "
+                f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'unknown'} "
+                f"clusterlogforwarders={len(clusterlogforwarders)} "
+                f"external_outputs={len(obs.get('external_log_forwarding_outputs') or [])}"
+            )
+            if vendor_log_forwarding_present and cluster_log_forwarding_healthy
+            else (
+                f"clusterlogforwarders={len(clusterlogforwarders)} "
+                f"app={obs.get('application_logs_delivery_state') or 'not-collected'} "
+                f"infra={obs.get('infrastructure_logs_delivery_state') or 'not-collected'} "
+                f"audit={obs.get('audit_logs_delivery_state') or 'not-collected'} "
+                f"external_outputs={len(obs.get('external_log_forwarding_outputs') or [])} "
+                f"vendor_managed={vendor_log_forwarding_present} "
+                f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'none'}"
+            )
         ),
         "cluster logging and external forwarding guidance",
         level=cap_level("cluster_log_forwarding", telemetry_level),
@@ -1842,7 +2089,7 @@
         "AlertmanagerConfig and monitoring alert delivery inventory",
         level=cap_level("external_alert_delivery", telemetry_level),
     )
-    if not external_alert_delivery_present:
+    if not external_alert_delivery_present and cap_required("external_alert_delivery"):
         add_finding(
             "prod-day2-external-alert-delivery-missing",
             "no AlertmanagerConfig external receiver or external Alertmanager routing evidence was detected",
@@ -2004,6 +2251,93 @@
             ),
             severity="warning" if not cap_required("secondary_site_disaster_recovery") else cap_failure_severity("secondary_site_disaster_recovery"),
             source="ODF DR topology and protected workload inventory",
+        )
+
+    acm_dr_present = bool(secondary_site_dr_present and (acm_registration_present or acm_managed))
+    acm_dr_healthy = bool(
+        acm_dr_present
+        and acm_registration_healthy
+        and secondary_site_dr_topology_ready
+        and secondary_site_dr_replication_ready
+        and secondary_site_dr_protected_workloads_ready
+        and len(drclusters_with_problem_status) == 0
+        and len(drpcs_with_problem_status) == 0
+        and len(vrgs_with_problem_status) == 0
+    )
+    add_check(
+        "ACM multicluster disaster recovery",
+        cap_status_for_presence("acm_multicluster_disaster_recovery", acm_dr_present, acm_dr_healthy),
+        (
+            f"acm_managed={acm_managed} "
+            f"klusterlets={len(klusterlets)} "
+            f"managedclusteraddons={len(managedclusteraddons)} "
+            f"agent_namespaces={','.join(acm_agent_namespaces) or 'none'} "
+            f"drpolicies={len(drpolicies)} validPolicies={len(valid_drpolicy_names)} "
+            f"drclusters={len(drclusters)} drplacementcontrols={len(drplacementcontrols)} "
+            f"volumereplicationgroups={len(volumereplicationgroups)} "
+            f"volumereplicationclasses={len(volumereplicationclasses)}"
+        ),
+        "ACM registration plus multicluster DR topology inventory",
+        level=cap_level("acm_multicluster_disaster_recovery", "informational"),
+        scored=False,
+    )
+    if cap_required("acm_multicluster_disaster_recovery") and not secondary_site_dr_present:
+        add_finding(
+            "prod-day2-acm-dr-missing",
+            "ACM multicluster disaster recovery was required but no DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, or VolumeReplicationClass resources were found",
+            severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
+            source="ACM registration plus multicluster DR topology inventory",
+        )
+    elif cap_required("acm_multicluster_disaster_recovery") and not acm_registration_present:
+        add_finding(
+            "prod-day2-acm-dr-registration-missing",
+            "multicluster DR resources were found, but no ACM managed-cluster registration evidence was detected from Klusterlet, ManagedClusterAddOn, or ACM agent namespaces",
+            severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
+            source="ACM registration plus multicluster DR topology inventory",
+        )
+    elif cap_required("acm_multicluster_disaster_recovery") and not acm_registration_healthy:
+        add_finding(
+            "prod-day2-acm-dr-registration-missing",
+            "partial ACM managed-cluster evidence was found, but managed-cluster registration health was incomplete for ACM-backed DR operations",
+            severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
+            source="ACM registration plus multicluster DR topology inventory",
+        )
+    if acm_dr_present and cap_required("acm_multicluster_disaster_recovery") and not secondary_site_dr_topology_ready:
+        add_finding(
+            "prod-day2-acm-dr-topology-incomplete",
+            "ACM multicluster disaster recovery inventory was detected but the topology is incomplete: at least one DRPolicy referencing two clusters and at least two DRCluster resources are expected",
+            severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
+            source="ACM registration plus multicluster DR topology inventory",
+        )
+    if acm_dr_present and cap_required("acm_multicluster_disaster_recovery") and not secondary_site_dr_replication_ready:
+        add_finding(
+            "prod-day2-acm-dr-replication-config-missing",
+            "ACM multicluster disaster recovery inventory was detected but no VolumeReplicationClass, VolumeReplication, or VolumeReplicationGroup evidence was found for storage replication",
+            severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
+            source="ACM registration plus multicluster DR topology inventory",
+        )
+    if acm_dr_present and cap_required("acm_multicluster_disaster_recovery") and not secondary_site_dr_protected_workloads_ready:
+        add_finding(
+            "prod-day2-acm-dr-protected-workloads-missing",
+            "ACM multicluster disaster recovery inventory was detected but no DRPlacementControl or VolumeReplicationGroup evidence was found for protected workloads",
+            severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
+            source="ACM registration plus multicluster DR topology inventory",
+        )
+    if acm_dr_present and (
+        len(drclusters_with_problem_status) > 0
+        or len(drpcs_with_problem_status) > 0
+        or len(vrgs_with_problem_status) > 0
+    ):
+        add_finding(
+            "prod-day2-acm-dr-health-warnings",
+            (
+                f"ACM multicluster disaster recovery resources reported warning or error states: "
+                f"drclusters={len(drclusters_with_problem_status)} "
+                f"drplacementcontrols={len(drpcs_with_problem_status)} "
+                f"volumereplicationgroups={len(vrgs_with_problem_status)}"
+            ),
+            severity="warning" if not cap_required("acm_multicluster_disaster_recovery") else cap_failure_severity("acm_multicluster_disaster_recovery"),
+            source="ACM registration plus multicluster DR topology inventory",
         )
 
     compliance_standards_by_name = {
@@ -2181,20 +2515,48 @@
         f"available={insights.get('available', 'Unknown')} degraded={insights.get('degraded', 'Unknown')}",
         "Red Hat Insights guidance",
         level=insights_level,
+        scored=False,
+        capability_key="",
     )
     if not insights_healthy:
         add_finding(
             "prod-day2-insights-not-healthy",
             "the insights operator is not healthy",
             source="Red Hat Insights guidance",
+            capability_key="",
         )
 
-    mhc_expected = len(machinesets) > 0 and not is_sno and not is_hosted_control_plane
+    mhc_expected = len(worker_machinesets) > 0 and not is_sno and not is_hosted_control_plane
+    mhc_usable = [
+        item for item in machinehealthchecks
+        if len(((item.get("spec") or {}).get("unhealthyConditions") or [])) > 0
+    ]
+    worker_machineset_names = [item["name"] for item in worker_machinesets if item.get("name")]
+    covered_worker_machinesets_by_mhc = set()
+    for mhc in mhc_usable:
+        match_labels = selector_match_labels(mhc)
+        match_expressions = selector_match_expressions(mhc)
+        for machineset in worker_machinesets:
+            if labels_match_selector(machineset["labels"], match_labels, match_expressions):
+                covered_worker_machinesets_by_mhc.add(machineset["name"])
     mhc_present = len(machinehealthchecks) > 0
+    mhc_healthy = bool(
+        not mhc_expected
+        or (
+            len(worker_machinesets) > 0
+            and len(mhc_usable) > 0
+            and len(covered_worker_machinesets_by_mhc) == len(worker_machinesets)
+        )
+    )
     add_check(
         "Worker machine remediation",
-        "OK" if (mhc_present or (not mhc_expected and not cap_required("machine_health_check_remediation"))) else "WARN",
-        f"platform={platform} machinesets={len(machinesets)} machinehealthchecks={len(machinehealthchecks)} expected={mhc_expected}",
+        cap_status_for_presence("machine_health_check_remediation", mhc_present or not mhc_expected, mhc_healthy),
+        (
+            f"platform={platform} worker_machinesets={len(worker_machinesets)} "
+            f"worker_machineset_names={','.join(worker_machineset_names) or 'none'} "
+            f"machinehealthchecks={len(machinehealthchecks)} usable_machinehealthchecks={len(mhc_usable)} "
+            f"covered_worker_machinesets={len(covered_worker_machinesets_by_mhc)} expected={mhc_expected}"
+        ),
         "machine remediation posture for Machine API worker pools",
         level=machine_remediation_level,
     )
@@ -2208,27 +2570,63 @@
             severity=cap_failure_severity("machine_health_check_remediation"),
             source="machine remediation posture for Machine API worker pools",
         )
+    elif (mhc_expected or cap_required("machine_health_check_remediation")) and not mhc_healthy:
+        add_finding(
+            "prod-day2-machinehealthcheck-missing",
+            (
+                "MachineHealthCheck coverage is incomplete for Machine API-managed worker pools: "
+                f"usableMachineHealthChecks={len(mhc_usable)}, "
+                f"coveredWorkerMachineSets={len(covered_worker_machinesets_by_mhc)}/{len(worker_machinesets)}"
+            ),
+            severity=cap_failure_severity("machine_health_check_remediation"),
+            source="machine remediation posture for Machine API worker pools",
+        )
 
     autoscaler_expected = (
         hcp_management_autoscaling_evidence
         if is_hosted_control_plane
-        else ((public_cloud or install_model == "ipi") and len(machinesets) > 0 and not is_sno and not is_hosted_control_plane)
+        else ((public_cloud or install_model == "ipi") and len(worker_machinesets) > 0 and not is_sno and not is_hosted_control_plane)
     )
-    autoscaler_present = hcp_autoscaling_present if is_hosted_control_plane else (len(clusterautoscalers) > 0)
+    usable_machineautoscalers = [
+        item for item in machineautoscalers
+        if int((item.get("spec") or {}).get("maxReplicas") or 0) > 0
+    ]
+    covered_worker_machinesets_by_autoscaler = set()
+    for autoscaler in usable_machineautoscalers:
+        match_labels = selector_match_labels(autoscaler)
+        match_expressions = selector_match_expressions(autoscaler)
+        for machineset in worker_machinesets:
+            if labels_match_selector(machineset["labels"], match_labels, match_expressions):
+                covered_worker_machinesets_by_autoscaler.add(machineset["name"])
+    autoscaler_present = hcp_autoscaling_present if is_hosted_control_plane else (len(clusterautoscalers) > 0 or len(machineautoscalers) > 0)
+    autoscaler_healthy = bool(
+        hcp_autoscaling_present
+        if is_hosted_control_plane
+        else (
+            not autoscaler_expected
+            or (
+                len(clusterautoscalers) > 0
+                and len(usable_machineautoscalers) > 0
+                and len(covered_worker_machinesets_by_autoscaler) == len(worker_machinesets)
+            )
+        )
+    )
     add_check(
         "Cluster autoscaler",
         cap_status_for_presence(
             "cluster_autoscaler_configuration",
             autoscaler_present or not autoscaler_expected,
-            autoscaler_present or not autoscaler_expected,
+            autoscaler_healthy,
         ),
         (
             f"classification={cluster_classification_label or deployment_type or 'unknown'} "
             f"serviceModel={service_model or 'unknown'} publicCloud={public_cloud} "
             f"installModel={install_model or 'unknown'} installModelConfidence={install_model_confidence or 'unknown'} "
-            f"machinesets={len(machinesets)} hostedclusters={len(hostedclusters)} nodepools={len(nodepools)} "
+            f"worker_machinesets={len(worker_machinesets)} hostedclusters={len(hostedclusters)} nodepools={len(nodepools)} "
             f"hcpHostedClusterAutoscaling={hostedcluster_autoscaling_present} hcpNodePoolAutoscaling={nodepool_autoscaling_present} "
-            f"expected={autoscaler_expected} clusterautoscalers={len(clusterautoscalers)}"
+            f"expected={autoscaler_expected} clusterautoscalers={len(clusterautoscalers)} "
+            f"machineautoscalers={len(machineautoscalers)} usable_machineautoscalers={len(usable_machineautoscalers)} "
+            f"covered_worker_machinesets={len(covered_worker_machinesets_by_autoscaler)}"
         ),
         "cluster autoscaler guidance for Machine API worker pools",
         level=autoscaler_level,
@@ -2242,6 +2640,18 @@
                 else
                 "no ClusterAutoscaler resource was found for Machine API-managed worker pools "
                 "on a public-cloud or IPI-classified cluster where worker autoscaling is expected"
+            ),
+            severity=cap_failure_severity("cluster_autoscaler_configuration"),
+            source="cluster autoscaler guidance for Machine API worker pools",
+        )
+    elif (autoscaler_expected or cap_required("cluster_autoscaler_configuration")) and not autoscaler_healthy:
+        add_finding(
+            "prod-day2-cluster-autoscaler-missing",
+            (
+                "worker autoscaling coverage is incomplete: "
+                f"clusterAutoscalers={len(clusterautoscalers)}, "
+                f"usableMachineAutoscalers={len(usable_machineautoscalers)}, "
+                f"coveredWorkerMachineSets={len(covered_worker_machinesets_by_autoscaler)}/{len(worker_machinesets)}"
             ),
             severity=cap_failure_severity("cluster_autoscaler_configuration"),
             source="cluster autoscaler guidance for Machine API worker pools",
@@ -2553,8 +2963,8 @@
             source="live workload scanner operator, agent, and report inventory",
         )
 
-    namespaces_missing_networkpolicy = sorted(user_namespace_names - namespaces_with_networkpolicy)
-    network_policy_baseline_present = len(namespaces_with_networkpolicy) > 0
+    namespaces_missing_networkpolicy = sorted(user_namespace_names - namespaces_with_default_deny_networkpolicy)
+    network_policy_baseline_present = len(namespaces_with_default_deny_networkpolicy) > 0
     network_policy_baseline_healthy = len(user_namespace_names) == 0 or len(namespaces_missing_networkpolicy) == 0
     namespaces_missing_egress_controls = sorted(user_namespace_names - namespaces_with_egress_controls)
     egress_control_present = len(namespaces_with_egress_controls) > 0
@@ -2581,59 +2991,60 @@
         cap_status_for_presence("namespace_network_policy_baseline", network_policy_baseline_present, network_policy_baseline_healthy),
         (
             f"user_namespaces={len(user_namespace_names)} "
-            f"namespaces_with_networkpolicy={len(namespaces_with_networkpolicy)} "
+            f"namespaces_with_default_deny_networkpolicy={len(namespaces_with_default_deny_networkpolicy)} "
+            f"namespaces_with_any_networkpolicy={len(namespaces_with_networkpolicy)} "
             f"missing_namespaces={len(namespaces_missing_networkpolicy)}"
         ),
-        "NetworkPolicy inventory for user namespaces",
+        "namespace default-deny NetworkPolicy inventory for user namespaces",
         level=cap_level("namespace_network_policy_baseline", namespace_guardrails_level),
     )
     if cap_required("namespace_network_policy_baseline") and not network_policy_baseline_present:
         add_finding(
             "prod-day2-namespace-network-policy-baseline-missing",
-            "no NetworkPolicy resources were found in user namespaces",
+            "no namespace-wide default-deny NetworkPolicy baseline was found in user namespaces",
             severity=cap_failure_severity("namespace_network_policy_baseline"),
-            source="NetworkPolicy inventory for user namespaces",
+            source="namespace default-deny NetworkPolicy inventory for user namespaces",
         )
     elif cap_required("namespace_network_policy_baseline") and not network_policy_baseline_healthy:
         add_finding(
             "prod-day2-namespace-network-policy-baseline-missing",
             (
-                "NetworkPolicy baseline coverage is incomplete for user namespaces: "
+                "namespace-wide default-deny NetworkPolicy baseline coverage is incomplete for user namespaces: "
                 f"missing={', '.join(namespaces_missing_networkpolicy[:15])}"
                 + (" ..." if len(namespaces_missing_networkpolicy) > 15 else "")
             ),
             severity=cap_failure_severity("namespace_network_policy_baseline"),
-            source="NetworkPolicy inventory for user namespaces",
+            source="namespace default-deny NetworkPolicy inventory for user namespaces",
         )
     add_check(
         "Namespace egress controls",
         cap_status_for_presence("namespace_egress_controls", egress_control_present, egress_control_healthy),
         (
             f"user_namespaces={len(user_namespace_names)} "
-            f"egress_networkpolicy_namespaces={len(namespaces_with_egress_networkpolicy)} "
+            f"baseline_egress_networkpolicy_namespaces={len(namespaces_with_baseline_egress_networkpolicy)} "
             f"egressfirewall_namespaces={len(namespaces_with_egressfirewall)} "
             f"missing_namespaces={len(namespaces_missing_egress_controls)}"
         ),
-        "NetworkPolicy and EgressFirewall inventory for user namespaces",
+        "namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces",
         level=cap_level("namespace_egress_controls", namespace_guardrails_level),
     )
     if not egress_control_present and cap_required("namespace_egress_controls"):
         add_finding(
             "prod-day2-namespace-egress-controls-missing",
-            "no namespace-scoped egress control was found in user namespaces from NetworkPolicy or EgressFirewall resources",
+            "no namespace baseline egress restriction was found in user namespaces from match-all Egress NetworkPolicy or EgressFirewall resources",
             severity=cap_failure_severity("namespace_egress_controls"),
-            source="NetworkPolicy and EgressFirewall inventory for user namespaces",
+            source="namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces",
         )
     elif cap_required("namespace_egress_controls") and not egress_control_healthy:
         add_finding(
             "prod-day2-namespace-egress-controls-missing",
             (
-                "egress control coverage is incomplete for user namespaces: "
+                "namespace baseline egress control coverage is incomplete for user namespaces: "
                 f"missing={', '.join(namespaces_missing_egress_controls[:15])}"
                 + (" ..." if len(namespaces_missing_egress_controls) > 15 else "")
             ),
             severity=cap_failure_severity("namespace_egress_controls"),
-            source="NetworkPolicy and EgressFirewall inventory for user namespaces",
+            source="namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces",
         )
 
     platform_app_catalog = [
@@ -2728,12 +3139,21 @@
             "source": "Dynatrace operator and workload inventory",
             "present": dynatrace_observability_present,
             "detail": (
-                f"subscription_present={dynatrace_operator_subscription_present} "
-                f"namespace_present={dynatrace_namespace_present} "
-                f"crd_present={dynatrace_crd_present} "
-                f"dynakubes={len(dynakubes)} "
-                f"edgeconnects={len(edgeconnects)} "
-                f"workload_present={dynatrace_workload_present}"
+                (
+                    "cluster meets criteria for Dynatrace-managed observability: "
+                    f"dynakubes={len(dynakubes)} "
+                    f"edgeconnects={len(edgeconnects)} "
+                    f"workload_present={dynatrace_workload_present}"
+                )
+                if dynatrace_observability_present
+                else (
+                    f"subscription_present={dynatrace_operator_subscription_present} "
+                    f"namespace_present={dynatrace_namespace_present} "
+                    f"crd_present={dynatrace_crd_present} "
+                    f"dynakubes={len(dynakubes)} "
+                    f"edgeconnects={len(edgeconnects)} "
+                    f"workload_present={dynatrace_workload_present}"
+                )
             ),
             "issue": "prod-day2-dynatrace-observability-missing",
             "finding": "no Dynatrace DynaKube, EdgeConnect, OneAgent, ActiveGate, or other managed workload footprint was detected",
@@ -2790,9 +3210,18 @@
             "source": "Splunk OpenTelemetry and logging inventory",
             "present": splunk_observability_present,
             "detail": (
-                f"namespace_present={splunk_namespace_present} "
-                f"crd_present={splunk_crd_present} "
-                f"workload_present={splunk_workload_present}"
+                (
+                    "cluster meets criteria for Splunk-managed observability: "
+                    f"namespace_present={splunk_namespace_present} "
+                    f"crd_present={splunk_crd_present} "
+                    f"workload_present={splunk_workload_present}"
+                )
+                if splunk_observability_present
+                else (
+                    f"namespace_present={splunk_namespace_present} "
+                    f"crd_present={splunk_crd_present} "
+                    f"workload_present={splunk_workload_present}"
+                )
             ),
             "issue": "prod-day2-splunk-observability-missing",
             "finding": "no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was detected",
@@ -2819,11 +3248,19 @@
             "source": "Datadog operator and agent inventory",
             "present": datadog_observability_present,
             "detail": (
-                f"subscription_present={datadog_subscription_present} "
-                f"namespace_present={datadog_namespace_present} "
-                f"crd_present={datadog_crd_present} "
-                f"datadogagents={len(datadogagents)} "
-                f"workload_present={datadog_workload_present}"
+                (
+                    "cluster meets criteria for Datadog-managed observability: "
+                    f"datadogagents={len(datadogagents)} "
+                    f"workload_present={datadog_workload_present}"
+                )
+                if datadog_observability_present
+                else (
+                    f"subscription_present={datadog_subscription_present} "
+                    f"namespace_present={datadog_namespace_present} "
+                    f"crd_present={datadog_crd_present} "
+                    f"datadogagents={len(datadogagents)} "
+                    f"workload_present={datadog_workload_present}"
+                )
             ),
             "issue": "prod-day2-datadog-observability-missing",
             "finding": "no DatadogAgent custom resource or Datadog-managed agent workload footprint was detected",
@@ -2835,12 +3272,21 @@
             "source": "AppDynamics cluster agent inventory",
             "present": appdynamics_observability_present,
             "detail": (
-                f"subscription_present={appdynamics_subscription_present} "
-                f"namespace_present={appdynamics_namespace_present} "
-                f"crd_present={appdynamics_crd_present} "
-                f"clusteragents={len(clusteragents)} "
-                f"infravizs={len(infravizs)} "
-                f"workload_present={appdynamics_workload_present}"
+                (
+                    "cluster meets criteria for AppDynamics-managed observability: "
+                    f"clusteragents={len(clusteragents)} "
+                    f"infravizs={len(infravizs)} "
+                    f"workload_present={appdynamics_workload_present}"
+                )
+                if appdynamics_observability_present
+                else (
+                    f"subscription_present={appdynamics_subscription_present} "
+                    f"namespace_present={appdynamics_namespace_present} "
+                    f"crd_present={appdynamics_crd_present} "
+                    f"clusteragents={len(clusteragents)} "
+                    f"infravizs={len(infravizs)} "
+                    f"workload_present={appdynamics_workload_present}"
+                )
             ),
             "issue": "prod-day2-appdynamics-observability-missing",
             "finding": "no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected",
@@ -2929,9 +3375,12 @@
             "level": cap_level("openshift_ai", "informational"),
             "source": "OpenShift AI resource inventory",
             "present": openshift_ai_present,
+            "healthy": openshift_ai_healthy,
             "detail": (
                 f"datascienceclusters={len(datascienceclusters)} "
+                f"ready_datascienceclusters={len(ready_datascienceclusters)} "
                 f"dscinitializations={len(dscinitializations)} "
+                f"ready_dscinitializations={len(ready_dscinitializations)} "
                 f"notebooks={len(notebooks)} "
                 f"servingruntimes={len(servingruntimes)} "
                 f"inferenceservices={len(inferenceservices)} "
@@ -3056,6 +3505,7 @@
             "detail": (
                 f"nmstates={len(nmstates)} "
                 f"nodenetworkconfigurationpolicies={len(nodenetworkconfigurationpolicies)} "
+                f"ready_nodenetworkconfigurationpolicies={len(ready_nodenetworkconfigurationpolicies)} "
                 f"nodenetworkstates={len(nodenetworkstates)} "
                 f"openshift_nmstate_namespace={nmstate_namespace_present} "
                 f"subscription_present={nmstate_operator_subscription_present}"
@@ -3097,6 +3547,7 @@
                 f"team_rbac_groups={team_rbac_group_count} "
                 f"known_team_groups={known_team_group_count} "
                 f"user_namespaces={len(user_namespace_names)} "
+                f"default_deny_networkpolicy_namespaces={len(namespaces_with_default_deny_networkpolicy)} "
                 f"networkpolicy_namespaces={len(namespaces_with_networkpolicy)} "
                 f"egress_control_namespaces={len(namespaces_with_egress_controls)} "
                 f"resourcequota_namespaces={len(namespaces_with_resourcequota)} "
@@ -3269,10 +3720,17 @@
             severity=cap_failure_severity("openshift_virtualization"),
             source="OpenShift Virtualization resource inventory",
         )
+    if cap_required("openshift_ai") and openshift_ai_present and not openshift_ai_healthy:
+        add_finding(
+            "prod-day2-openshift-ai-missing",
+            "OpenShift AI resources were detected, but no DataScienceCluster or DSCInitialization resource reported a ready or available state",
+            severity=cap_failure_severity("openshift_ai"),
+            source="OpenShift AI resource inventory",
+        )
     if cap_required("node_tuning_operator") and node_tuning_present and not node_tuning_healthy:
         add_finding(
             "prod-day2-node-tuning-operator-missing",
-            "Node Tuning Operator footprint was detected, but no Tuned or tuned Profile custom resource was found",
+            "Node Tuning Operator footprint was detected, but no usable Tuned recommendation/profile or tuned Profile custom resource was found",
             severity=cap_failure_severity("node_tuning_operator"),
             source="Node Tuning Operator inventory",
         )
@@ -3293,7 +3751,7 @@
     if cap_required("descheduler_operator") and descheduler_present and not descheduler_healthy:
         add_finding(
             "prod-day2-descheduler-operator-missing",
-            "descheduler operator footprint was detected, but no Descheduler custom resource was found",
+            "descheduler operator footprint was detected, but no configured Descheduler custom resource in a ready or non-problem state was found",
             severity=cap_failure_severity("descheduler_operator"),
             source="Descheduler Operator inventory",
         )
@@ -3312,6 +3770,7 @@
             "managed-cluster registration inventory",
             level=cap_level("advanced_cluster_management", "informational"),
             scored=False,
+            capability_key="advanced_cluster_management",
         )
     if cap_required("advanced_cluster_management") and not acm_registration_present:
         add_finding(
@@ -3331,7 +3790,7 @@
     severity_rank = {"critical": 4, "warning": 3, "warn": 3, "info": 2, "ok": 1, "unknown": 0}
     capability_sections = []
     for cap_key, cap_value in capability_profile.items():
-        if not isinstance(cap_value, dict):
+        if not isinstance(cap_value, dict) or not bool(cap_value.get("required", False)):
             continue
         cap_checks = [item for item in checks if item.get("capability_key") == cap_key]
         cap_findings = [item for item in findings if item.get("capability") == cap_key]
@@ -3388,11 +3847,15 @@
     ))
 
     print(json.dumps({
+        "assessment_state": "completed",
+        "assessment_error": "",
         "day2_posture_checks": checks,
         "day2_posture_findings": findings,
         "scored_day2_posture_findings": [item for item in findings if item.get("severity") != "info"],
         "capability_sections": capability_sections,
         "day2_posture_summary": {
+            "capability_assessment_state": "completed",
+            "capability_assessment_error": "",
             "checks_total": len(checks),
             "checks_warn": len([c for c in checks if c["status"] == "WARN"]),
             "scored_findings_count": len([item for item in findings if item.get("severity") != "info"]),
@@ -3512,6 +3975,13 @@
   changed_when: false
   failed_when: false
 
+- name: Remove production Day 2 posture input file
+  ansible.builtin.file:
+    path: "{{ day2_posture_input_file.path }}"
+    state: absent
+  when: day2_posture_input_file is defined and (day2_posture_input_file.path | default('') | length > 0)
+  changed_when: false
+
 - name: Normalize production Day 2 posture summary
   vars:
     day2_posture_payload: >-
@@ -3519,11 +3989,21 @@
         day2_posture_cmd.stdout | from_json
         if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0))
         else {
+          'assessment_state': 'failed',
+          'assessment_error': (
+            day2_posture_cmd.stderr | default('') | trim
+            or ('production Day 2 posture analyzer returned rc=' ~ (day2_posture_cmd.rc | default(-1) | string) ~ ' without JSON output')
+          ),
           'day2_posture_checks': [],
           'day2_posture_findings': [],
           'scored_day2_posture_findings': [],
           'capability_sections': [],
           'day2_posture_summary': {
+            'capability_assessment_state': 'failed',
+            'capability_assessment_error': (
+              day2_posture_cmd.stderr | default('') | trim
+              or ('production Day 2 posture analyzer returned rc=' ~ (day2_posture_cmd.rc | default(-1) | string) ~ ' without JSON output')
+            ),
             'checks_total': 0,
             'checks_warn': 0,
             'scored_findings_count': 0,
@@ -3640,8 +4120,87 @@
       }}
   ansible.builtin.set_fact:
     day2_posture_data: "{{ day2_posture_payload }}"
+    day2_capability_sections_fallback: >-
+      {%- set sections = [] -%}
+      {%- for item in (openshift_report_capability_profile | default({}) | dict2items) -%}
+        {%- set cap = item.value if item.value is mapping else {} -%}
+        {%- if (cap.get('required', false) | bool) -%}
+        {%- set _ = sections.append({
+          'key': item.key,
+          'title': (item.key | replace('_', ' ') | trim),
+          'required': (cap.get('required', false) | bool),
+          'criticality': (cap.get('criticality', 'medium') | string | lower | trim),
+          'expected_state': (cap.get('expected_state', 'present') | string | lower | trim),
+          'owner': (cap.get('owner', 'platform') | string | trim or 'platform'),
+          'evidence_required': ((cap.get('evidence_required', []) or []) | map('string') | map('trim') | reject('equalto', '') | list),
+          'notes': (cap.get('notes', '') | string | trim),
+          'docs': (cap.get('docs', '') | string | trim),
+          'status': 'not-assessed',
+          'check_count': 0,
+          'finding_count': 0,
+          'checks': [],
+          'findings': [],
+          'recommended_action': 'Collect or review the expected evidence for this capability and remediate any gaps.',
+          'top_detail': 'No collected capability check was produced in this run. Review the expected evidence sources and rerun the report.'
+        }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ sections }}
+
+- name: Resolve production Day 2 capability sections
+  vars:
+    day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+  ansible.builtin.set_fact:
+    day2_capability_sections_resolved: >-
+      {{
+        (day2_posture_payload.capability_sections | default([]))
+        if (
+          (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+          and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+        )
+        else (day2_capability_sections_fallback | default([]))
+      }}
+
+- name: Resolve production Day 2 posture summary aggregate
+  vars:
+    day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+  ansible.builtin.set_fact:
+    day2_posture_summary_resolved: >-
+      {{
+        (day2_posture_payload.day2_posture_summary | default({}))
+        | combine(
+            {
+              'capability_assessment_state': (
+                'completed'
+                if (
+                  (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+                  and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+                )
+                else 'failed'
+              ),
+              'capability_assessment_error': (
+                ''
+                if (
+                  (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+                  and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+                )
+                else (
+                  day2_posture_payload.day2_posture_summary.capability_assessment_error
+                  | default(day2_posture_payload.assessment_error | default('production Day 2 capability assessment did not produce mapped capability sections'))
+                )
+              ),
+              'checks_total': (day2_posture_payload.day2_posture_summary.checks_total | default(0) | int)
+            },
+            recursive=True
+          )
+      }}
+
+- name: Publish production Day 2 posture facts
+  vars:
+    day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+  ansible.builtin.set_fact:
     day2_posture_checks: "{{ day2_posture_payload.day2_posture_checks | default([]) }}"
     day2_posture_findings: "{{ day2_posture_payload.day2_posture_findings | default([]) }}"
     scored_day2_posture_findings: "{{ day2_posture_payload.scored_day2_posture_findings | default([]) }}"
-    day2_capability_sections: "{{ day2_posture_payload.capability_sections | default([]) }}"
-    day2_posture_summary: "{{ day2_posture_payload.day2_posture_summary | default({}) }}"
+    day2_capability_sections: "{{ day2_capability_sections_resolved }}"
+    day2_posture_summary: "{{ day2_posture_summary_resolved }}"

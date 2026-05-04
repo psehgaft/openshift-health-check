@@ -1016,6 +1016,59 @@
     cp_summary: "{{ (control_plane_evidence_data | default({})).get('summary', {}) }}"
     kube_apiserver_operator: "{{ (clusteroperator_status_map | default({})).get('kube-apiserver', {}) }}"
     kube_apiserver_healthy: "{{ (kube_apiserver_operator.get('available', 'Unknown') == 'True') and (kube_apiserver_operator.get('degraded', 'False') != 'True') }}"
+    live_support_parsed: "{{ (live_support_data | default({})).get('parsed', {}) }}"
+    sosreport_summary: "{{ (live_support_parsed.sosreport | default(sosreport_data | default({}))).get('summary', {}) }}"
+    sosreport_node_names: "{{ sosreport_summary.node_names | default([]) }}"
+    control_plane_node_names: >-
+      {%- set nodes = [] -%}
+      {%- for node in ((analysis_graph.nodes | default({'items': []})).get('items', [])) -%}
+        {%- set labels = node.metadata.labels | default({}) -%}
+        {%- set name = node.metadata.name | default('') -%}
+        {%- if name and ('node-role.kubernetes.io/master' in labels or 'node-role.kubernetes.io/control-plane' in labels) -%}
+          {%- set _ = nodes.append(name) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ nodes | unique }}
+    worker_node_names: >-
+      {%- set nodes = [] -%}
+      {%- for node in ((analysis_graph.nodes | default({'items': []})).get('items', [])) -%}
+        {%- set labels = node.metadata.labels | default({}) -%}
+        {%- set name = node.metadata.name | default('') -%}
+        {%- if name and ('node-role.kubernetes.io/worker' in labels) -%}
+          {%- set _ = nodes.append(name) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ nodes | unique }}
+    sosreport_control_plane_nodes: "{{ sosreport_node_names | intersect(control_plane_node_names) }}"
+    sosreport_worker_nodes: "{{ sosreport_node_names | intersect(worker_node_names) }}"
+    controlplane_to_worker_network_text: >-
+      {{
+        (
+          'network diagnostics present on control plane nodes '
+          ~ ((sosreport_control_plane_nodes | length) | string)
+          ~ '/'
+          ~ ((control_plane_node_names | length) | string)
+          ~ ' and worker nodes '
+          ~ ((sosreport_worker_nodes | length) | string)
+          ~ '/'
+          ~ ((worker_node_names | length) | string)
+          ~ '; measured control-plane-to-worker RTT was not available in this run'
+        )
+        if ((sosreport_control_plane_nodes | length) > 0 or (sosreport_worker_nodes | length) > 0)
+        else ''
+      }}
+    worker_to_worker_network_text: >-
+      {{
+        (
+          'network diagnostics present on worker nodes '
+          ~ ((sosreport_worker_nodes | length) | string)
+          ~ '/'
+          ~ ((worker_node_names | length) | string)
+          ~ '; measured worker-to-worker RTT was not available in this run'
+        )
+        if ((sosreport_worker_nodes | length) > 0)
+        else ''
+      }}
     offline_readyz_status: >-
       {{
         'failed'
@@ -1054,13 +1107,28 @@
       etcd_backend_commit: not-collected
       etcd_leader_changes: not-collected
       etcd_peer_rtt: not-collected
-      controlplane_to_worker_network_latency: not-configured
-      worker_to_worker_network_latency: not-configured
+      controlplane_to_worker_network_latency: "{{ 'derived' if ((sosreport_control_plane_nodes | length) > 0 or (sosreport_worker_nodes | length) > 0) else 'not-configured' }}"
+      worker_to_worker_network_latency: "{{ 'derived' if ((sosreport_worker_nodes | length) > 0) else 'not-configured' }}"
     apiserver_readyz_status_offline: "{{ offline_readyz_status }}"
     apiserver_readyz_failed_checks_offline: "{{ cp_summary.apiserver_readyz_failed_checks | default(0) }}"
     apiserver_storage_objects_total_offline: "{{ cp_summary.apiserver_storage_objects_total if (cp_summary.object_count_present | default(false)) else '' }}"
     etcd_members_reporting_leader_offline: "{{ cp_summary.etcd_members_reporting_leader if (cp_summary.endpoint_status_present | default(false)) else '' }}"
     etcd_leader_count_offline: "{{ cp_summary.etcd_leader_count if (cp_summary.endpoint_status_present | default(false)) else '' }}"
+    controlplane_to_worker_network_latency_offline: "{{ controlplane_to_worker_network_text }}"
+    worker_to_worker_network_latency_offline: "{{ worker_to_worker_network_text }}"
+    controlplane_to_worker_network_latency_offline_meta:
+      evidence_type: qualitative-node-network-diagnostics
+      control_plane_nodes_covered: "{{ sosreport_control_plane_nodes | default([]) }}"
+      worker_nodes_covered: "{{ sosreport_worker_nodes | default([]) }}"
+      control_plane_coverage_count: "{{ sosreport_control_plane_nodes | length }}"
+      worker_coverage_count: "{{ sosreport_worker_nodes | length }}"
+      control_plane_total_count: "{{ control_plane_node_names | length }}"
+      worker_total_count: "{{ worker_node_names | length }}"
+    worker_to_worker_network_latency_offline_meta:
+      evidence_type: qualitative-node-network-diagnostics
+      worker_nodes_covered: "{{ sosreport_worker_nodes | default([]) }}"
+      worker_coverage_count: "{{ sosreport_worker_nodes | length }}"
+      worker_total_count: "{{ worker_node_names | length }}"
   changed_when: false
 
 - name: Record Prometheus query availability finding
@@ -1235,8 +1303,8 @@
     apiserver_current_write_inflight: "{{ (prom_result_map.apiserver_write_inflight[0].value[1]) if (prom_result_map.apiserver_write_inflight | default([]) | length > 0) else '' }}"
     apiserver_storage_objects_total: "{{ (prom_result_map.apiserver_storage_objects[0].value[1]) if (prom_result_map.apiserver_storage_objects | default([]) | length > 0) else (apiserver_storage_objects_total_offline | default('')) }}"
     controlplane_to_controlplane_network_latency_ms: "{{ (prom_result_map.etcd_peer_rtt[0].value[1]) if (prom_result_map.etcd_peer_rtt | default([]) | length > 0) else '' }}"
-    controlplane_to_worker_network_latency_ms: "{{ (prom_result_map.controlplane_to_worker_network_latency[0].value[1]) if (prom_result_map.controlplane_to_worker_network_latency | default([]) | length > 0) else '' }}"
-    worker_to_worker_network_latency_ms: "{{ (prom_result_map.worker_to_worker_network_latency[0].value[1]) if (prom_result_map.worker_to_worker_network_latency | default([]) | length > 0) else '' }}"
+    controlplane_to_worker_network_latency_ms: "{{ (prom_result_map.controlplane_to_worker_network_latency[0].value[1]) if (prom_result_map.controlplane_to_worker_network_latency | default([]) | length > 0) else (controlplane_to_worker_network_latency_offline | default('')) }}"
+    worker_to_worker_network_latency_ms: "{{ (prom_result_map.worker_to_worker_network_latency[0].value[1]) if (prom_result_map.worker_to_worker_network_latency | default([]) | length > 0) else (worker_to_worker_network_latency_offline | default('')) }}"
     apiserver_readyz_status: "{{ 'ok' if (apiserver_readyz_cmd.rc | default(1)) == 0 else ('failed' if (apiserver_readyz_cmd.stdout | default('') | trim | length > 0 or apiserver_readyz_cmd.stderr | default('') | trim | length > 0) else (apiserver_readyz_status_offline | default('not-collected'))) }}"
     apiserver_readyz_failed_checks: "{{ (((apiserver_readyz_cmd.stdout | default('')) ~ '\n' ~ (apiserver_readyz_cmd.stderr | default(''))) | regex_findall('(?im)\\bfailed\\b') | length) if (apiserver_readyz_cmd is defined and (apiserver_readyz_cmd.stdout is defined or apiserver_readyz_cmd.stderr is defined)) else (apiserver_readyz_failed_checks_offline | default(0)) }}"
     node_cpu_utilization_results: "{{ (runtime_signal_resolution_map.node_cpu_utilization | default({})).get('value', []) }}"
@@ -1269,8 +1337,8 @@
           'etcd_backend_commit': prom_status.get('etcd_backend_commit', offline_status.get('etcd_backend_commit', 'not-collected')),
           'etcd_leader_changes': prom_status.get('etcd_leader_changes', offline_status.get('etcd_leader_changes', 'not-collected')),
           'etcd_peer_rtt': prom_status.get('etcd_peer_rtt', offline_status.get('etcd_peer_rtt', 'not-collected')),
-          'controlplane_to_worker_network_latency': prom_status.get('controlplane_to_worker_network_latency', offline_status.get('controlplane_to_worker_network_latency', 'not-configured')),
-          'worker_to_worker_network_latency': prom_status.get('worker_to_worker_network_latency', offline_status.get('worker_to_worker_network_latency', 'not-configured')),
+          'controlplane_to_worker_network_latency': (prom_status.get('controlplane_to_worker_network_latency') if prom_status.get('controlplane_to_worker_network_latency') == 'collected' else offline_status.get('controlplane_to_worker_network_latency', prom_status.get('controlplane_to_worker_network_latency', 'not-configured'))),
+          'worker_to_worker_network_latency': (prom_status.get('worker_to_worker_network_latency') if prom_status.get('worker_to_worker_network_latency') == 'collected' else offline_status.get('worker_to_worker_network_latency', prom_status.get('worker_to_worker_network_latency', 'not-configured'))),
         }
       }}
   changed_when: false
@@ -1375,12 +1443,16 @@
         value: "{{ controlplane_to_worker_network_latency_ms | default('') }}"
         prom_status_name: controlplane_to_worker_network_latency
         units: milliseconds
+        offline_method: sosreport-network-coverage
+        offline_source: sosreport
         approximation: false
         related_capabilities: ['persistent_monitoring_storage']
       - name: worker_to_worker_network_latency
         value: "{{ worker_to_worker_network_latency_ms | default('') }}"
         prom_status_name: worker_to_worker_network_latency
         units: milliseconds
+        offline_method: sosreport-network-coverage
+        offline_source: sosreport
         approximation: false
         related_capabilities: ['persistent_monitoring_storage']
   ansible.builtin.set_fact:
@@ -1416,12 +1488,21 @@
             'capability_profile_related_capabilities': (spec.related_capabilities | default([])),
             'capability_profile_expected_live': expected_live
           } -%}
-        {%- elif final_status == 'collected' and (spec.offline_method is defined) -%}
+        {%- elif final_status in ['collected', 'derived'] and (spec.offline_method is defined) -%}
           {%- set entry = {
             'value': spec.value,
             'status': 'derived',
             'source': (spec.offline_source | default('must-gather')),
             'method': spec.offline_method,
+            'evidence_type': (
+              controlplane_to_worker_network_latency_offline_meta.evidence_type
+              if name == 'controlplane_to_worker_network_latency'
+              else (
+                worker_to_worker_network_latency_offline_meta.evidence_type
+                if name == 'worker_to_worker_network_latency'
+                else 'offline-derived'
+              )
+            ),
             'confidence': ('low' if (spec.approximation | default(false)) else 'high'),
             'is_approximation': (spec.approximation | default(false)),
             'units': spec.units,
@@ -1430,6 +1511,15 @@
               'offline-fallback-used-live-metrics-expected-by-capability-profile'
               if expected_live
               else ('prometheus-' ~ prom_status if prom_status not in ['not-collected', 'not-configured'] else 'offline-fallback-used')
+            ),
+            'coverage': (
+              controlplane_to_worker_network_latency_offline_meta
+              if name == 'controlplane_to_worker_network_latency'
+              else (
+                worker_to_worker_network_latency_offline_meta
+                if name == 'worker_to_worker_network_latency'
+                else {}
+              )
             ),
             'capability_profile_related_capabilities': (spec.related_capabilities | default([])),
             'capability_profile_expected_live': expected_live
@@ -1440,6 +1530,7 @@
             'status': final_status,
             'source': ('prometheus' if final_status in ['query-failed', 'no-data', 'not-configured', 'not-collected'] else 'unavailable'),
             'method': ('prometheus-query' if final_status in ['query-failed', 'no-data', 'not-configured', 'not-collected'] else 'not-collected'),
+            'evidence_type': 'not-collected',
             'confidence': 'low',
             'is_approximation': false,
             'units': spec.units,

@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 EXPECTED_CLUSTER_SECTIONS = [
     "Report Context",
@@ -47,6 +49,10 @@ FORBIDDEN_MARKDOWN_PATTERNS = [
 
 RUNTIME_SIGNAL_OUTPUT_MARKERS = [
     "Runtime signal basis",
+]
+
+REQUIRED_DAY2_MARKERS = [
+    "### Individual Capability Sections",
 ]
 
 FORBIDDEN_JSON_PATTERNS = [
@@ -123,6 +129,10 @@ def validate_markdown(path: Path) -> None:
         if marker not in markdown:
             fail(f"{path}: missing runtime signal provenance marker {marker!r}")
 
+    for marker in REQUIRED_DAY2_MARKERS:
+        if marker not in markdown:
+            fail(f"{path}: missing required Day 2 capability marker {marker!r}")
+
 
 def validate_json(path: Path) -> None:
     payload = read_json(path)
@@ -134,6 +144,39 @@ def validate_json(path: Path) -> None:
     metadata = payload.get("metadata", {})
     if metadata.get("platform_family") != "openshift":
         fail(f"{path}: metadata.platform_family must be openshift")
+
+    capability_sections = (
+        (((payload.get("audit_report") or {}).get("domains") or {}).get("production_day2_readiness") or {}).get("capability_sections")
+        or []
+    )
+    if not isinstance(capability_sections, list) or len(capability_sections) == 0:
+        fail(f"{path}: production_day2_readiness.capability_sections must be present and non-empty")
+
+    capability_keys = [
+        str((item or {}).get("key") or "").strip()
+        for item in capability_sections
+        if isinstance(item, dict)
+    ]
+    if any(not key for key in capability_keys):
+        fail(f"{path}: every capability section must include a non-empty key")
+    if len(set(capability_keys)) != len(capability_keys):
+        fail(f"{path}: capability section keys must be unique")
+
+    profile_path = Path(__file__).resolve().parent.parent / "inputs" / "openshift-capability-profile.yml"
+    profile_payload = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    expected_keys = {
+        str(key).strip()
+        for key, value in ((profile_payload.get("openshift_report_capability_profile") or {}).items())
+        if str(key).strip() and isinstance(value, dict) and bool(value.get("required", False))
+    }
+    if not expected_keys:
+        fail(f"{profile_path}: openshift_report_capability_profile must be present for validation")
+    missing = sorted(expected_keys - set(capability_keys))
+    extra = sorted(set(capability_keys) - expected_keys)
+    if missing:
+        fail(f"{path}: missing capability sections for {', '.join(missing)}")
+    if extra:
+        fail(f"{path}: unexpected capability sections for {', '.join(extra)}")
 
 
 def main() -> int:

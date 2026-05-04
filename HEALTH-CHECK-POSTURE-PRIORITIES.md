@@ -8,6 +8,23 @@ The goal is to:
 - explain the main health-check areas
 - explain why they matter to the business
 - provide a usable review sequence for technical teams
+- keep every major section readable in the same way for leaders and engineers
+
+## How To Read Any Major Section
+
+Every major section in the report should answer the same five questions:
+
+1. What is the gap?
+2. Why does it matter?
+3. What should be done?
+4. Who likely owns that action?
+5. How can the team tell it is fixed?
+
+This is the reading contract for the report.
+
+- Leaders should be able to use it to understand risk, ownership, and urgency quickly.
+- Technical teams should be able to use it to turn findings into a practical action plan.
+- If a section only shows evidence and does not help answer those questions, it is not doing its job well enough.
 
 
 ## What The Report Is Trying To Answer

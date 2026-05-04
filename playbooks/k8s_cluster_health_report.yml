@@ -317,7 +317,7 @@
         - name: Validate Kubernetes resume manifest content
           ansible.builtin.assert:
             that:
-              - (report_resume_manifest.status | default('')) == 'failed'
+              - (report_resume_manifest.status | default('')) in ['failed', 'completed']
               - (report_resume_manifest.snapshot_path | default('') | length) > 0
               - (report_resume_manifest.resume_next_stage | default('') | length) > 0
             fail_msg: "The last saved Kubernetes checkpoint is not resumable. Use report_run_mode=fresh."
@@ -401,8 +401,8 @@
                 name: report_common
                 tasks_from: save_run_checkpoint.yml
               vars:
-                run_checkpoint_stage: "{{ report_resume_last_resume_next_stage | default('collection') }}"
-                run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+                run_checkpoint_stage: "{{ report_resume_last_resume_next_stage or 'collection' }}"
+                run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage or 'collection' }}"
                 run_checkpoint_status: failed
                 run_checkpoint_write_snapshot: false
             - name: Re-raise fresh Kubernetes workflow failure
@@ -457,8 +457,8 @@
                 name: report_common
                 tasks_from: save_run_checkpoint.yml
               vars:
-                run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage | default('report') }}"
-                run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
+                run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
+                run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
                 run_checkpoint_status: failed
                 run_checkpoint_write_snapshot: false
             - name: Re-raise resumed Kubernetes workflow failure
