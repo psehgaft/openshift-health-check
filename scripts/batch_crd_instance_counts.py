@@ -5,11 +5,15 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+def count_named_output(stdout: str) -> int:
+    return sum(1 for line in (stdout or "").splitlines() if line.strip())
+
+
 def run_count(kube_cli, timeout_seconds, item):
     plural = item.get("plural", "")
     group = item.get("group", "")
     resource = f"{plural}.{group}" if plural and group else ""
-    argv = [kube_cli, "get", resource, "-A", "-o", "json"]
+    argv = [kube_cli, "get", resource, "-A", "--ignore-not-found", "-o", "name"]
     try:
         proc = subprocess.run(
             argv,
@@ -20,10 +24,7 @@ def run_count(kube_cli, timeout_seconds, item):
         )
         count = 0
         if proc.returncode == 0 and (proc.stdout or "").strip():
-            try:
-                count = len((json.loads(proc.stdout) or {}).get("items", []))
-            except Exception:
-                proc = subprocess.CompletedProcess(argv, 1, proc.stdout, "failed to parse json")
+            count = count_named_output(proc.stdout)
         return {
             "name": item.get("name", ""),
             "group": group,
