@@ -1,18 +1,37 @@
 ---
 - name: Build Kubernetes provider analysis
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
-    from collections import defaultdict
+  block:
+    - name: Create Kubernetes provider analysis input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-k8s-provider-
+        suffix: .json
+      register: kubernetes_provider_analysis_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "provider_family": resolved_provider_family | default(provider_family | default('generic')),
-      "nodes": (nodes | default({})).get('items', []),
-      "pods": (pods | default({})).get('items', []),
-      "deployments": (deployments | default({})).get('items', []),
-      "daemonsets": (daemonsets | default({})).get('items', []),
-      "namespaces": (namespaces | default({})).get('items', [])
-    } | to_json }}''')
+    - name: Write Kubernetes provider analysis input data
+      ansible.builtin.copy:
+        dest: "{{ kubernetes_provider_analysis_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'provider_family': (resolved_provider_family | default(provider_family | default('generic'))),
+          'nodes': ((nodes | default({})).get('items', [])),
+          'pods': ((pods | default({})).get('items', [])),
+          'deployments': ((deployments | default({})).get('items', [])),
+          'daemonsets': ((daemonsets | default({})).get('items', [])),
+          'namespaces': ((namespaces | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run Kubernetes provider analysis
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ kubernetes_provider_analysis_input_file.path }}"
+        import json
+        import sys
+        from collections import defaultdict
+
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
     provider = str(data.get("provider_family") or "generic").lower()
     nodes = data.get("nodes") or []
@@ -255,16 +274,23 @@
                 "detail": f'{item["kind"]} {item["namespace"]}/{item["name"]} is not fully ready'
             })
 
-    print(json.dumps({
-        "provider_nodepool_summary": nodepools,
-        "provider_component_summary": components,
-        "provider_specific_findings": findings,
-        "provider_current_state": current_state,
-    }))
-    PY
-  register: kubernetes_provider_analysis_cmd
-  changed_when: false
-  failed_when: false
+        print(json.dumps({
+            "provider_nodepool_summary": nodepools,
+            "provider_component_summary": components,
+            "provider_specific_findings": findings,
+            "provider_current_state": current_state,
+        }))
+        PY
+      register: kubernetes_provider_analysis_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove Kubernetes provider analysis input file
+      ansible.builtin.file:
+        path: "{{ kubernetes_provider_analysis_input_file.path }}"
+        state: absent
+      when: kubernetes_provider_analysis_input_file is defined and (kubernetes_provider_analysis_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize Kubernetes provider analysis
   ansible.builtin.set_fact:

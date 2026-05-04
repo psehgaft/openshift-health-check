@@ -126,27 +126,46 @@
   changed_when: false
 
 - name: Build compliance program posture summary
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
-    import re
+  block:
+    - name: Create compliance program posture input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-compliance-program-
+        suffix: .json
+      register: compliance_program_summary_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "namespaces": (analysis_graph.namespaces | default({})).get('items', []),
-      "compliancesuites": (analysis_graph.compliancesuites | default({})).get('items', []),
-      "compliancescans": (analysis_graph.compliancescans | default({})).get('items', []),
-      "scansettings": (analysis_graph.scansettings | default({})).get('items', []),
-      "scansettingbindings": (analysis_graph.scansettingbindings | default({})).get('items', []),
-      "tailoredprofiles": (analysis_graph.tailoredprofiles | default({})).get('items', []),
-      "profiles": (analysis_graph.profiles | default({})).get('items', []),
-      "profilebundles": (analysis_graph.profilebundles | default({})).get('items', []),
-      "compliancecheckresults": (analysis_graph.compliancecheckresults | default({})).get('items', []),
-      "sosreport_reports": (
-        (live_support_data.parsed.sosreport.reports | default([]))
-        if (live_support_data is defined and live_support_data.parsed is defined)
-        else (sosreport_data.reports | default([]))
-      )
-    } | to_json }}''')
+    - name: Write compliance program posture input data
+      ansible.builtin.copy:
+        dest: "{{ compliance_program_summary_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
+          'compliancesuites': ((analysis_graph.compliancesuites | default({})).get('items', [])),
+          'compliancescans': ((analysis_graph.compliancescans | default({})).get('items', [])),
+          'scansettings': ((analysis_graph.scansettings | default({})).get('items', [])),
+          'scansettingbindings': ((analysis_graph.scansettingbindings | default({})).get('items', [])),
+          'tailoredprofiles': ((analysis_graph.tailoredprofiles | default({})).get('items', [])),
+          'profiles': ((analysis_graph.profiles | default({})).get('items', [])),
+          'profilebundles': ((analysis_graph.profilebundles | default({})).get('items', [])),
+          'compliancecheckresults': ((analysis_graph.compliancecheckresults | default({})).get('items', [])),
+          'sosreport_reports': (
+            (live_support_data.parsed.sosreport.reports | default([]))
+            if (live_support_data is defined and live_support_data.parsed is defined)
+            else (sosreport_data.reports | default([]))
+          )
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run compliance program posture summary
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ compliance_program_summary_input_file.path }}"
+        import json
+        import re
+        import sys
+
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
     standards = [
         ("FIPS", [r"\bfips\b"]),
@@ -490,36 +509,43 @@
         findings.append({"severity": "warning", "area": "compliance", "detail": f"Compliance check results not passing: {check_fail_count}."})
     findings.extend(standards_findings)
 
-    print(json.dumps({
-        "operator_summary": {
-            "present": operator_present,
-            "namespace_present": "openshift-compliance" in namespace_names,
-            "suite_count": len(suites),
-            "scan_count": len(scans),
-            "scan_setting_count": len(scan_settings),
-            "scan_setting_binding_count": len(scan_setting_bindings),
-            "profile_count": len(profiles),
-            "tailored_profile_count": len(tailored_profiles),
-            "profilebundle_count": len(profile_bundles),
-            "valid_profilebundle_count": valid_profilebundle_count,
-            "invalid_profilebundle_count": invalid_profilebundle_count,
-            "failing_scan_count": failing_scan_count,
-            "failed_check_count": check_fail_count,
-            "standards_configured_count": len([item for item in standards_summary if item["configured"]]),
-            "fips_runtime_status": next((item["runtime_status"] for item in standards_summary if item["standard"] == "FIPS"), "unknown"),
-            "fips_enabled_node_count": fips_enabled_nodes,
-            "fips_disabled_node_count": fips_disabled_nodes,
-            "verdict": operator_verdict,
-            "profilebundle_summary": profilebundle_summary,
-            "scan_summary": scan_summary[:20],
-        },
-        "standards_summary": standards_summary,
-        "findings": findings,
-    }))
-    PY
-  register: compliance_program_summary_cmd
-  changed_when: false
-  failed_when: false
+        print(json.dumps({
+            "operator_summary": {
+                "present": operator_present,
+                "namespace_present": "openshift-compliance" in namespace_names,
+                "suite_count": len(suites),
+                "scan_count": len(scans),
+                "scan_setting_count": len(scan_settings),
+                "scan_setting_binding_count": len(scan_setting_bindings),
+                "profile_count": len(profiles),
+                "tailored_profile_count": len(tailored_profiles),
+                "profilebundle_count": len(profile_bundles),
+                "valid_profilebundle_count": valid_profilebundle_count,
+                "invalid_profilebundle_count": invalid_profilebundle_count,
+                "failing_scan_count": failing_scan_count,
+                "failed_check_count": check_fail_count,
+                "standards_configured_count": len([item for item in standards_summary if item["configured"]]),
+                "fips_runtime_status": next((item["runtime_status"] for item in standards_summary if item["standard"] == "FIPS"), "unknown"),
+                "fips_enabled_node_count": fips_enabled_nodes,
+                "fips_disabled_node_count": fips_disabled_nodes,
+                "verdict": operator_verdict,
+                "profilebundle_summary": profilebundle_summary,
+                "scan_summary": scan_summary[:20],
+            },
+            "standards_summary": standards_summary,
+            "findings": findings,
+        }))
+        PY
+      register: compliance_program_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove compliance program posture input file
+      ansible.builtin.file:
+        path: "{{ compliance_program_summary_input_file.path }}"
+        state: absent
+      when: compliance_program_summary_input_file is defined and (compliance_program_summary_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize compliance program posture summary
   vars:
@@ -571,168 +597,44 @@
   changed_when: false
 
 - name: Build backup posture summary
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
-    from datetime import datetime, timezone, timedelta
+  block:
+    - name: Create backup posture input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-backup-posture-
+        suffix: .json
+      register: backup_posture_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "dataprotectionapplications": (analysis_graph.dataprotectionapplications | default({})).get('items', []),
-      "backupstoragelocations": (analysis_graph.backupstoragelocations | default({})).get('items', []),
-      "schedules": (analysis_graph.schedules | default({})).get('items', []),
-      "backups": (analysis_graph.backups | default({})).get('items', []),
-      "restores": (analysis_graph.restores | default({})).get('items', [])
-    } | to_json }}''')
+    - name: Write backup posture input data
+      ansible.builtin.copy:
+        dest: "{{ backup_posture_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'dataprotectionapplications': ((analysis_graph.dataprotectionapplications | default({})).get('items', [])),
+          'backupstoragelocations': ((analysis_graph.backupstoragelocations | default({})).get('items', [])),
+          'schedules': ((analysis_graph.schedules | default({})).get('items', [])),
+          'backups': ((analysis_graph.backups | default({})).get('items', [])),
+          'restores': ((analysis_graph.restores | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
 
-    def parse_time(value):
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except Exception:
-            return None
-
-    def bsl_available(item):
-        for condition in ((item.get("status") or {}).get("conditions") or []):
-            if condition.get("type") == "Available":
-                return str(condition.get("status") or "Unknown")
-        return "Unknown"
-
-    dpas = data.get("dataprotectionapplications", []) or []
-    bsl_items = data.get("backupstoragelocations", []) or []
-    schedule_items = data.get("schedules", []) or []
-    backup_items = data.get("backups", []) or []
-    restore_items = data.get("restores", []) or []
-
-    backup_storage_location_summary = []
-    for item in bsl_items:
-        meta = item.get("metadata", {}) or {}
-        spec = item.get("spec", {}) or {}
-        backup_storage_location_summary.append({
-            "namespace": meta.get("namespace", ""),
-            "name": meta.get("name", ""),
-            "provider": spec.get("provider", "unknown"),
-            "default": bool((meta.get("labels") or {}).get("velero.io/default-backup-storage-location") == "true"),
-            "available": bsl_available(item),
-            "bucket": ((spec.get("objectStorage") or {}).get("bucket") or spec.get("bucket") or ""),
-            "prefix": ((spec.get("objectStorage") or {}).get("prefix") or ""),
-        })
-
-    backup_schedule_summary = []
-    paused_schedules = []
-    for item in schedule_items:
-        meta = item.get("metadata", {}) or {}
-        spec = item.get("spec", {}) or {}
-        status = item.get("status", {}) or {}
-        paused = bool(spec.get("paused", False))
-        if paused:
-            paused_schedules.append(f"{meta.get('namespace', '')}/{meta.get('name', '')}")
-        backup_schedule_summary.append({
-            "namespace": meta.get("namespace", ""),
-            "name": meta.get("name", ""),
-            "paused": paused,
-            "schedule": spec.get("schedule", ""),
-            "last_backup": status.get("lastBackup", ""),
-            "storage_location": ((spec.get("template") or {}).get("storageLocation") or ""),
-        })
-
-    successful_backups = []
-    clean_successful_backups = []
-    backup_summary = []
-    for item in backup_items:
-        meta = item.get("metadata", {}) or {}
-        spec = item.get("spec", {}) or {}
-        status = item.get("status", {}) or {}
-        phase = str(status.get("phase") or "Unknown")
-        completion = status.get("completionTimestamp") or meta.get("creationTimestamp") or ""
-        backup_summary.append({
-            "namespace": meta.get("namespace", ""),
-            "name": meta.get("name", ""),
-            "phase": phase,
-            "storage_location": spec.get("storageLocation", ""),
-            "completion_timestamp": completion,
-            "warnings": int(status.get("warnings", 0) or 0),
-            "errors": int(status.get("errors", 0) or 0),
-        })
-        if phase == "Completed":
-            successful_backups.append(parse_time(completion))
-            if int(status.get("warnings", 0) or 0) == 0 and int(status.get("errors", 0) or 0) == 0:
-                clean_successful_backups.append(parse_time(completion))
-
-    completed_restores = []
-    clean_completed_restores = []
-    restore_summary = []
-    for item in restore_items:
-        meta = item.get("metadata", {}) or {}
-        spec = item.get("spec", {}) or {}
-        status = item.get("status", {}) or {}
-        phase = str(status.get("phase") or "Unknown")
-        completion = status.get("completionTimestamp") or meta.get("creationTimestamp") or ""
-        restore_summary.append({
-            "namespace": meta.get("namespace", ""),
-            "name": meta.get("name", ""),
-            "phase": phase,
-            "backup_name": spec.get("backupName", ""),
-            "completion_timestamp": completion,
-            "warnings": int(status.get("warnings", 0) or 0),
-            "errors": int(status.get("errors", 0) or 0),
-        })
-        if phase == "Completed":
-            completed_restores.append(parse_time(completion))
-            if int(status.get("warnings", 0) or 0) == 0 and int(status.get("errors", 0) or 0) == 0:
-                clean_completed_restores.append(parse_time(completion))
-
-    findings = []
-    if dpas or bsl_items or schedule_items or backup_items or restore_items:
-        if not bsl_items:
-            findings.append({"issue": "backup-storage-location-missing", "detail": "no BackupStorageLocation resource was found"})
-        elif not any(item["available"] == "True" for item in backup_storage_location_summary):
-            findings.append({"issue": "backup-storage-location-unavailable", "detail": "no BackupStorageLocation reported Available=True"})
-
-        if not schedule_items:
-            findings.append({"issue": "backup-schedule-missing", "detail": "no Velero Schedule resource was found"})
-        elif paused_schedules:
-            findings.append({"issue": "backup-schedule-paused", "detail": ", ".join(paused_schedules[:10])})
-
-        successful_count = len([item for item in successful_backups if item is not None])
-        clean_successful_count = len([item for item in clean_successful_backups if item is not None])
-        if successful_count == 0:
-            findings.append({"issue": "successful-backup-missing", "detail": "no Velero Backup resource reported phase=Completed"})
-        elif clean_successful_count == 0:
-            findings.append({"issue": "successful-backup-has-warnings-or-errors", "detail": "completed backups were found, but all recent completed backups reported warnings or errors"})
-        else:
-            latest_success = max(item for item in clean_successful_backups if item is not None)
-            if latest_success < datetime.now(timezone.utc) - timedelta(days=7):
-                findings.append({"issue": "successful-backup-stale", "detail": latest_success.isoformat()})
-
-        completed_restore_count = len([item for item in completed_restores if item is not None])
-        clean_completed_restore_count = len([item for item in clean_completed_restores if item is not None])
-        if completed_restore_count == 0:
-            findings.append({"issue": "restore-evidence-not-demonstrated", "detail": "no Velero Restore resource reported phase=Completed"})
-        elif clean_completed_restore_count == 0:
-            findings.append({"issue": "restore-evidence-has-warnings-or-errors", "detail": "completed restores were found, but all reported warnings or errors"})
-    else:
-        findings.append({
-            "issue": "backup-tooling-not-detected",
-            "detail": "no DataProtectionApplication, BackupStorageLocation, Schedule, Backup, or Restore resources were found"
-        })
-
-    print(json.dumps({
-        "backup_storage_location_summary": sorted(backup_storage_location_summary, key=lambda item: (item["namespace"], item["name"])),
-        "backup_schedule_summary": sorted(backup_schedule_summary, key=lambda item: (item["namespace"], item["name"])),
-        "backup_summary": sorted(backup_summary, key=lambda item: (item["completion_timestamp"], item["namespace"], item["name"]), reverse=True)[:15],
-        "restore_summary": sorted(restore_summary, key=lambda item: (item["completion_timestamp"], item["namespace"], item["name"]), reverse=True)[:15],
-        "backup_posture_findings": findings,
-        "successful_backup_count": len([item for item in successful_backups if item is not None]),
-        "clean_successful_backup_count": len([item for item in clean_successful_backups if item is not None]),
-        "completed_restore_count": len([item for item in completed_restores if item is not None]),
-        "clean_completed_restore_count": len([item for item in clean_completed_restores if item is not None]),
-    }))
-    PY
-  register: backup_posture_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run backup posture analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_backup_posture_summary.py"
+          - "{{ backup_posture_input_file.path }}"
+      register: backup_posture_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove backup posture input file
+      ansible.builtin.file:
+        path: "{{ backup_posture_input_file.path }}"
+        state: absent
+      when: backup_posture_input_file is defined and (backup_posture_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize backup posture summary
   ansible.builtin.set_fact:
@@ -747,62 +649,41 @@
     backup_posture_findings: "{{ backup_posture_data.backup_posture_findings | default([]) }}"
 
 - name: Build machine remediation posture summary
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create machine remediation input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-machine-remediation-
+        suffix: .json
+      register: machine_remediation_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
-      "machinehealthchecks": (analysis_graph.machinehealthchecks | default({})).get('items', [])
-    } | to_json }}''')
+    - name: Write machine remediation input data
+      ansible.builtin.copy:
+        dest: "{{ machine_remediation_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'machinesets': ((analysis_graph.machinesets | default({})).get('items', [])),
+          'machinehealthchecks': ((analysis_graph.machinehealthchecks | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
 
-    machine_sets = data.get("machinesets", []) or []
-    mhcs = data.get("machinehealthchecks", []) or []
-    findings = []
-    summary = []
-
-    if machine_sets and not mhcs:
-        findings.append({
-            "issue": "machinehealthcheck-missing",
-            "detail": "Machine API-managed worker pools were found but no MachineHealthCheck resource was collected"
-        })
-
-    for item in mhcs:
-        meta = item.get("metadata", {}) or {}
-        spec = item.get("spec", {}) or {}
-        status = item.get("status", {}) or {}
-        paused = bool((meta.get("annotations") or {}).get("cluster.x-k8s.io/paused") == "true" or spec.get("paused", False))
-        selector = spec.get("selector") or {}
-        empty_selector = not ((selector.get("matchLabels") or {}) or (selector.get("matchExpressions") or []))
-        entry = {
-            "namespace": meta.get("namespace", ""),
-            "name": meta.get("name", ""),
-            "paused": paused,
-            "max_unhealthy": spec.get("maxUnhealthy", ""),
-            "expected_machines": status.get("expectedMachines", "unknown"),
-            "current_healthy": status.get("currentHealthy", "unknown"),
-            "selector_empty": empty_selector,
-        }
-        summary.append(entry)
-        if paused:
-            findings.append({
-                "issue": "machinehealthcheck-paused",
-                "detail": f"{entry['namespace']}/{entry['name']} is paused"
-            })
-        if empty_selector:
-            findings.append({
-                "issue": "machinehealthcheck-selector-empty",
-                "detail": f"{entry['namespace']}/{entry['name']} has no selector"
-            })
-
-    print(json.dumps({
-        "machinehealthcheck_summary": sorted(summary, key=lambda item: (item["namespace"], item["name"])),
-        "machine_healthcheck_findings": findings,
-    }))
-    PY
-  register: machine_remediation_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run machine remediation analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_machine_remediation_summary.py"
+          - "{{ machine_remediation_input_file.path }}"
+      register: machine_remediation_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove machine remediation input file
+      ansible.builtin.file:
+        path: "{{ machine_remediation_input_file.path }}"
+        state: absent
+      when: machine_remediation_input_file is defined and (machine_remediation_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize machine remediation posture summary
   ansible.builtin.set_fact:
@@ -814,137 +695,168 @@
     machine_healthcheck_findings: "{{ machine_remediation_data.machine_healthcheck_findings | default([]) }}"
 
 - name: Build SCC posture summary
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create SCC posture input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-scc-posture-
+        suffix: .json
+      register: scc_posture_input_file
+      changed_when: false
 
-    sccs = json.loads(r'''{{ (analysis_graph.securitycontextconstraints | default({})).get('items', []) | to_json }}''')
-    pods = json.loads(r'''{{ (analysis_graph.pods | default({})).get('items', []) | to_json }}''')
-    summary = []
-    findings = []
-    pod_findings = []
+    - name: Write SCC posture input data
+      ansible.builtin.copy:
+        dest: "{{ scc_posture_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'sccs': ((analysis_graph.securitycontextconstraints | default({})).get('items', [])),
+          'pods': ((analysis_graph.pods | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
 
-    def is_platform_namespace(ns):
-        return ns.startswith("openshift-") or ns.startswith("kube-") or ns in {"default", "openshift"}
+    - name: Run SCC posture analysis
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ scc_posture_input_file.path }}"
+        import json
+        import sys
 
-    risky_sccs = {}
-    for scc in sccs:
-        meta = scc.get("metadata", {}) or {}
-        users = (scc.get("users") or [])
-        groups = (scc.get("groups") or [])
-        volumes = scc.get("volumes") or []
-        run_as_user = ((scc.get("runAsUser") or {}).get("type") or "Unknown")
-        name = meta.get("name", "unknown")
-        privileged = bool(scc.get("allowPrivilegedContainer", False))
-        host_dir = bool(scc.get("allowHostDirVolumePlugin", False))
-        host_network = bool(scc.get("allowHostNetwork", False))
-        host_pid = bool(scc.get("allowHostPID", False))
-        host_ipc = bool(scc.get("allowHostIPC", False))
-        anyuid = run_as_user == "RunAsAny"
-        all_volumes = "*" in volumes
-        risk_flags = []
-        if privileged:
-            risk_flags.append("privileged")
-        if anyuid:
-            risk_flags.append("runAsAny")
-        if host_dir:
-            risk_flags.append("hostPath")
-        if host_network:
-            risk_flags.append("hostNetwork")
-        if host_pid:
-            risk_flags.append("hostPID")
-        if host_ipc:
-            risk_flags.append("hostIPC")
-        if all_volumes:
-            risk_flags.append("allVolumes")
-        summary.append({
-            "name": name,
-            "priority": meta.get("annotations", {}).get("kubernetes.io/description", ""),
-            "privileged": privileged,
-            "anyuid": anyuid,
-            "host_network": host_network,
-            "host_pid": host_pid,
-            "host_ipc": host_ipc,
-            "host_dir": host_dir,
-            "all_volumes": all_volumes,
-            "user_count": len(users),
-            "group_count": len(groups),
-            "risk_summary": ", ".join(risk_flags) if risk_flags else "restricted"
-        })
-        if risk_flags:
-            risky_sccs[name] = ", ".join(risk_flags)
-        if not risk_flags:
-            continue
-        for subject in users:
-            if subject.startswith("system:serviceaccount:"):
-                parts = subject.split(":")
-                if len(parts) >= 4:
-                    ns = parts[2]
-                    sa = parts[3]
-                    if not is_platform_namespace(ns):
-                        findings.append({
-                            "scc": name,
-                            "subject_kind": "ServiceAccount",
-                            "subject": f"{ns}/{sa}",
-                            "risk_summary": ", ".join(risk_flags),
-                        })
-            elif not subject.startswith("system:"):
-                findings.append({
-                    "scc": name,
-                    "subject_kind": "User",
-                    "subject": subject,
-                    "risk_summary": ", ".join(risk_flags),
-                })
-        for subject in groups:
-            if subject.startswith("system:serviceaccounts:"):
-                parts = subject.split(":")
-                if len(parts) >= 3:
-                    ns = parts[2]
-                    if not is_platform_namespace(ns):
-                        findings.append({
-                            "scc": name,
-                            "subject_kind": "ServiceAccount group",
-                            "subject": ns,
-                            "risk_summary": ", ".join(risk_flags),
-                        })
-            elif not subject.startswith("system:"):
-                findings.append({
-                    "scc": name,
-                    "subject_kind": "Group",
-                    "subject": subject,
-                    "risk_summary": ", ".join(risk_flags),
-                })
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
-    for pod in pods:
-        meta = pod.get("metadata", {}) or {}
-        ns = str(meta.get("namespace") or "")
-        if is_platform_namespace(ns):
-            continue
-        annotations = meta.get("annotations", {}) or {}
-        scc_name = (
-            annotations.get("openshift.io/scc")
-            or annotations.get("security.openshift.io/scc.podSecurityLabelSync")
-            or ""
-        )
-        if scc_name not in risky_sccs:
-            continue
-        pod_findings.append({
-            "namespace": ns,
-            "pod": str(meta.get("name") or "unknown"),
-            "service_account": str(((pod.get("spec") or {}).get("serviceAccountName")) or "default"),
-            "scc": scc_name,
-            "risk_summary": risky_sccs[scc_name],
-        })
+        sccs = data.get("sccs") or []
+        pods = data.get("pods") or []
+        summary = []
+        findings = []
+        pod_findings = []
 
-    print(json.dumps({
-        "scc_posture_summary": sorted(summary, key=lambda item: item["name"]),
-        "scc_grant_findings": sorted(findings, key=lambda item: (item["scc"], item["subject_kind"], item["subject"])),
-        "scc_pod_findings": sorted(pod_findings, key=lambda item: (item["scc"], item["namespace"], item["pod"])),
-    }))
-    PY
-  register: scc_posture_summary_cmd
-  changed_when: false
-  failed_when: false
+        def is_platform_namespace(ns):
+            return ns.startswith("openshift-") or ns.startswith("kube-") or ns in {"default", "openshift"}
+
+        risky_sccs = {}
+        for scc in sccs:
+            meta = scc.get("metadata", {}) or {}
+            users = (scc.get("users") or [])
+            groups = (scc.get("groups") or [])
+            volumes = scc.get("volumes") or []
+            run_as_user = ((scc.get("runAsUser") or {}).get("type") or "Unknown")
+            name = meta.get("name", "unknown")
+            privileged = bool(scc.get("allowPrivilegedContainer", False))
+            host_dir = bool(scc.get("allowHostDirVolumePlugin", False))
+            host_network = bool(scc.get("allowHostNetwork", False))
+            host_pid = bool(scc.get("allowHostPID", False))
+            host_ipc = bool(scc.get("allowHostIPC", False))
+            anyuid = run_as_user == "RunAsAny"
+            all_volumes = "*" in volumes
+            risk_flags = []
+            if privileged:
+                risk_flags.append("privileged")
+            if anyuid:
+                risk_flags.append("runAsAny")
+            if host_dir:
+                risk_flags.append("hostPath")
+            if host_network:
+                risk_flags.append("hostNetwork")
+            if host_pid:
+                risk_flags.append("hostPID")
+            if host_ipc:
+                risk_flags.append("hostIPC")
+            if all_volumes:
+                risk_flags.append("allVolumes")
+            summary.append({
+                "name": name,
+                "priority": meta.get("annotations", {}).get("kubernetes.io/description", ""),
+                "privileged": privileged,
+                "anyuid": anyuid,
+                "host_network": host_network,
+                "host_pid": host_pid,
+                "host_ipc": host_ipc,
+                "host_dir": host_dir,
+                "all_volumes": all_volumes,
+                "user_count": len(users),
+                "group_count": len(groups),
+                "risk_summary": ", ".join(risk_flags) if risk_flags else "restricted"
+            })
+            if risk_flags:
+                risky_sccs[name] = ", ".join(risk_flags)
+            if not risk_flags:
+                continue
+            for subject in users:
+                if subject.startswith("system:serviceaccount:"):
+                    parts = subject.split(":")
+                    if len(parts) >= 4:
+                        ns = parts[2]
+                        sa = parts[3]
+                        if not is_platform_namespace(ns):
+                            findings.append({
+                                "scc": name,
+                                "subject_kind": "ServiceAccount",
+                                "subject": f"{ns}/{sa}",
+                                "risk_summary": ", ".join(risk_flags),
+                            })
+                elif not subject.startswith("system:"):
+                    findings.append({
+                        "scc": name,
+                        "subject_kind": "User",
+                        "subject": subject,
+                        "risk_summary": ", ".join(risk_flags),
+                    })
+            for subject in groups:
+                if subject.startswith("system:serviceaccounts:"):
+                    parts = subject.split(":")
+                    if len(parts) >= 3:
+                        ns = parts[2]
+                        if not is_platform_namespace(ns):
+                            findings.append({
+                                "scc": name,
+                                "subject_kind": "ServiceAccount group",
+                                "subject": ns,
+                                "risk_summary": ", ".join(risk_flags),
+                            })
+                elif not subject.startswith("system:"):
+                    findings.append({
+                        "scc": name,
+                        "subject_kind": "Group",
+                        "subject": subject,
+                        "risk_summary": ", ".join(risk_flags),
+                    })
+
+        for pod in pods:
+            meta = pod.get("metadata", {}) or {}
+            ns = str(meta.get("namespace") or "")
+            if is_platform_namespace(ns):
+                continue
+            annotations = meta.get("annotations", {}) or {}
+            scc_name = (
+                annotations.get("openshift.io/scc")
+                or annotations.get("security.openshift.io/scc.podSecurityLabelSync")
+                or ""
+            )
+            if scc_name not in risky_sccs:
+                continue
+            pod_findings.append({
+                "namespace": ns,
+                "pod": str(meta.get("name") or "unknown"),
+                "service_account": str(((pod.get("spec") or {}).get("serviceAccountName")) or "default"),
+                "scc": scc_name,
+                "risk_summary": risky_sccs[scc_name],
+            })
+
+        print(json.dumps({
+            "scc_posture_summary": sorted(summary, key=lambda item: item["name"]),
+            "scc_grant_findings": sorted(findings, key=lambda item: (item["scc"], item["subject_kind"], item["subject"])),
+            "scc_pod_findings": sorted(pod_findings, key=lambda item: (item["scc"], item["namespace"], item["pod"])),
+        }))
+        PY
+      register: scc_posture_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove SCC posture input file
+      ansible.builtin.file:
+        path: "{{ scc_posture_input_file.path }}"
+        state: absent
+      when: scc_posture_input_file is defined and (scc_posture_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize SCC posture summary
   ansible.builtin.set_fact:

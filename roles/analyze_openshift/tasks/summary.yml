@@ -2389,17 +2389,35 @@
   changed_when: false
 
 - name: Build OpenShift topology resilience summary
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import base64
-    import json
-    from collections import Counter
+  block:
+    - name: Create OpenShift topology resilience input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-ocp-topology-
+        suffix: .json
+      register: topology_resilience_input_file
+      changed_when: false
 
-    data = json.loads(base64.b64decode(r'''{{ {
-      "nodes": (analysis_graph.nodes | default({})).get('items', []),
-      "worker_pools": (cluster_current_state.worker_pools | default([])),
-      "machinesets": (analysis_graph.machinesets | default({})).get('items', [])
-    } | to_json | b64encode }}''').decode("utf-8"))
+    - name: Write OpenShift topology resilience input data
+      ansible.builtin.copy:
+        dest: "{{ topology_resilience_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
+          'worker_pools': (cluster_current_state.worker_pools | default([])),
+          'machinesets': ((analysis_graph.machinesets | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run OpenShift topology resilience summary
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ topology_resilience_input_file.path }}"
+        import json
+        import sys
+        from collections import Counter
+
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
     worker_zone_counts = Counter()
     unlabeled_worker_nodes = 0
@@ -2508,23 +2526,30 @@
 
     machineset_replica_unbalanced = (max(replicas) - min(replicas) > 1) if len(replicas) > 1 else False
 
-    print(json.dumps({
-        "worker_failure_domains_observed": sorted(worker_zone_counts.keys()),
-        "worker_zone_counts": [{"zone": z, "nodes": worker_zone_counts[z]} for z in sorted(worker_zone_counts.keys())],
-        "worker_nodes_without_zone_label": unlabeled_worker_nodes,
-        "single_zone_worker_pools": [{"type": p.get("type", "unknown"), "nodes": p.get("nodes", 0), "zones": p.get("zones", [])} for p in single_zone_pools],
-        "single_zone_worker_pool_count": len(single_zone_pools),
-        "worker_zone_spread_unbalanced": zone_spread_unbalanced,
-        "machineset_summary": machineset_summary,
-        "machine_set_failure_domains_observed": sorted(machine_set_zone_counts.keys()),
-        "machine_set_zone_counts": [{"zone": z, "replicas": machine_set_zone_counts[z]} for z in sorted(machine_set_zone_counts.keys())],
-        "machinesets_without_zone_label": machinesets_without_zone,
-        "machineset_replica_unbalanced": machineset_replica_unbalanced,
-    }))
-    PY
-  register: topology_resilience_cmd
-  changed_when: false
-  failed_when: false
+        print(json.dumps({
+            "worker_failure_domains_observed": sorted(worker_zone_counts.keys()),
+            "worker_zone_counts": [{"zone": z, "nodes": worker_zone_counts[z]} for z in sorted(worker_zone_counts.keys())],
+            "worker_nodes_without_zone_label": unlabeled_worker_nodes,
+            "single_zone_worker_pools": [{"type": p.get("type", "unknown"), "nodes": p.get("nodes", 0), "zones": p.get("zones", [])} for p in single_zone_pools],
+            "single_zone_worker_pool_count": len(single_zone_pools),
+            "worker_zone_spread_unbalanced": zone_spread_unbalanced,
+            "machineset_summary": machineset_summary,
+            "machine_set_failure_domains_observed": sorted(machine_set_zone_counts.keys()),
+            "machine_set_zone_counts": [{"zone": z, "replicas": machine_set_zone_counts[z]} for z in sorted(machine_set_zone_counts.keys())],
+            "machinesets_without_zone_label": machinesets_without_zone,
+            "machineset_replica_unbalanced": machineset_replica_unbalanced,
+        }))
+        PY
+      register: topology_resilience_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove OpenShift topology resilience input file
+      ansible.builtin.file:
+        path: "{{ topology_resilience_input_file.path }}"
+        state: absent
+      when: topology_resilience_input_file is defined and (topology_resilience_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize OpenShift topology resilience summary
   ansible.builtin.set_fact:

@@ -1,45 +1,64 @@
 ---
 - name: Build Kubernetes capability profile summary
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create Kubernetes capability profile input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-k8s-capability-profile-
+        suffix: .json
+      register: kubernetes_capability_profile_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "profile": kubernetes_report_capability_profile | default({}),
-      "provider_family": resolved_provider_family | default(provider_family | default("generic")),
-      "cluster_profile_mode": resolved_cluster_profile_mode | default(cluster_profile_mode | default("production")),
-      "namespaces": (namespaces | default({})).get("items", []),
-      "pods": (pods | default({})).get("items", []),
-      "deployments": (deployments | default({})).get("items", []),
-      "statefulsets": (statefulsets | default({})).get("items", []),
-      "daemonsets": (daemonsets | default({})).get("items", []),
-      "crds": (crds | default({})).get("items", []),
-      "ingresses": (ingresses | default({})).get("items", []),
-      "secrets": (secrets | default({})).get("items", []),
-      "configmaps": (configmaps | default({})).get("items", []),
-      "serviceaccounts": (serviceaccounts | default({})).get("items", []),
-      "networkpolicies": (networkpolicies | default({})).get("items", []),
-      "resourcequotas": (resourcequotas | default({})).get("items", []),
-      "limitranges": (limitranges | default({})).get("items", []),
-      "poddisruptionbudgets": (poddisruptionbudgets | default({})).get("items", []),
-      "horizontalpodautoscalers": (horizontalpodautoscalers | default({})).get("items", []),
-      "servicemonitors": (servicemonitors | default({})).get("items", []),
-      "podmonitors": (podmonitors | default({})).get("items", []),
-      "storage_posture_summary": storage_posture_summary | default({}),
-      "topology_resilience": topology_resilience | default({}),
-      "user_namespace_names": user_namespace_names | default([]),
-      "namespaces_without_networkpolicy": namespaces_without_networkpolicy | default([]),
-      "namespaces_without_resourcequota": namespaces_without_resourcequota | default([]),
-      "namespaces_without_limitrange": namespaces_without_limitrange | default([]),
-      "workload_resilience_data": workload_resilience_data | default({}),
-      "workload_resource_findings": workload_resource_findings | default([]),
-      "workload_probe_findings": workload_probe_findings | default([]),
-      "deprecated_crd_findings": deprecated_crd_findings | default([]),
-      "deprecated_api_lines": deprecated_api_lines | default([]),
-      "certificate_expiry_findings": certificate_expiry_findings | default([]),
-      "provider_nodepool_summary": provider_nodepool_summary | default([]),
-      "provider_component_summary": provider_component_summary | default([])
-    } | to_json }}''')
+    - name: Write Kubernetes capability profile input data
+      ansible.builtin.copy:
+        dest: "{{ kubernetes_capability_profile_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'profile': (kubernetes_report_capability_profile | default({})),
+          'provider_family': (resolved_provider_family | default(provider_family | default('generic'))),
+          'cluster_profile_mode': (resolved_cluster_profile_mode | default(cluster_profile_mode | default('production'))),
+          'namespaces': ((namespaces | default({})).get('items', [])),
+          'pods': ((pods | default({})).get('items', [])),
+          'deployments': ((deployments | default({})).get('items', [])),
+          'statefulsets': ((statefulsets | default({})).get('items', [])),
+          'daemonsets': ((daemonsets | default({})).get('items', [])),
+          'crds': ((crds | default({})).get('items', [])),
+          'ingresses': ((ingresses | default({})).get('items', [])),
+          'secrets': ((secrets | default({})).get('items', [])),
+          'configmaps': ((configmaps | default({})).get('items', [])),
+          'serviceaccounts': ((serviceaccounts | default({})).get('items', [])),
+          'networkpolicies': ((networkpolicies | default({})).get('items', [])),
+          'resourcequotas': ((resourcequotas | default({})).get('items', [])),
+          'limitranges': ((limitranges | default({})).get('items', [])),
+          'poddisruptionbudgets': ((poddisruptionbudgets | default({})).get('items', [])),
+          'horizontalpodautoscalers': ((horizontalpodautoscalers | default({})).get('items', [])),
+          'servicemonitors': ((servicemonitors | default({})).get('items', [])),
+          'podmonitors': ((podmonitors | default({})).get('items', [])),
+          'storage_posture_summary': (storage_posture_summary | default({})),
+          'topology_resilience': (topology_resilience | default({})),
+          'user_namespace_names': (user_namespace_names | default([])),
+          'namespaces_without_networkpolicy': (namespaces_without_networkpolicy | default([])),
+          'namespaces_without_resourcequota': (namespaces_without_resourcequota | default([])),
+          'namespaces_without_limitrange': (namespaces_without_limitrange | default([])),
+          'workload_resilience_data': (workload_resilience_data | default({})),
+          'workload_resource_findings': (workload_resource_findings | default([])),
+          'workload_probe_findings': (workload_probe_findings | default([])),
+          'deprecated_crd_findings': (deprecated_crd_findings | default([])),
+          'deprecated_api_lines': (deprecated_api_lines | default([])),
+          'certificate_expiry_findings': (certificate_expiry_findings | default([])),
+          'provider_nodepool_summary': (provider_nodepool_summary | default([])),
+          'provider_component_summary': (provider_component_summary | default([]))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run Kubernetes capability profile summary
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ kubernetes_capability_profile_input_file.path }}"
+        import json
+        import sys
+
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
     profile = data.get("profile") or {}
     user_namespaces = set(data.get("user_namespace_names") or [])
@@ -363,23 +382,30 @@
         })
 
     overall = "WARNING" if counts["missing"] else "OK"
-    print(json.dumps({
-        "summary": {
-            "status": overall,
-            "capability_count": len(rows),
-            "ok_count": counts["ok"],
-            "missing_required_count": counts["missing"],
-            "optional_absent_count": counts["not_applicable"],
-            "profile_mode": mode,
-            "provider_family": provider,
-        },
-        "rows": rows,
-        "findings": findings,
-    }))
-    PY
-  register: kubernetes_capability_profile_cmd
-  changed_when: false
-  failed_when: false
+        print(json.dumps({
+            "summary": {
+                "status": overall,
+                "capability_count": len(rows),
+                "ok_count": counts["ok"],
+                "missing_required_count": counts["missing"],
+                "optional_absent_count": counts["not_applicable"],
+                "profile_mode": mode,
+                "provider_family": provider,
+            },
+            "rows": rows,
+            "findings": findings,
+        }))
+        PY
+      register: kubernetes_capability_profile_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove Kubernetes capability profile input file
+      ansible.builtin.file:
+        path: "{{ kubernetes_capability_profile_input_file.path }}"
+        state: absent
+      when: kubernetes_capability_profile_input_file is defined and (kubernetes_capability_profile_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize Kubernetes capability profile summary
   ansible.builtin.set_fact:

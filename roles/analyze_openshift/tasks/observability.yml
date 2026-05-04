@@ -188,136 +188,162 @@
   changed_when: false
 
 - name: Build offline workload metric fallbacks
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
-    import re
+  block:
+    - name: Create offline workload fallback input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-offline-workload-
+        suffix: .json
+      register: offline_workload_fallback_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "nodes": (analysis_graph.nodes | default({})).get('items', []),
-      "pods": (analysis_graph.pods | default({})).get('items', []),
-      "exclude_regex": user_namespaces_exclude_regex,
-      "omc_summary": omc_summary | default({}),
-    } | to_json }}''')
+    - name: Write offline workload fallback input data
+      ansible.builtin.copy:
+        dest: "{{ offline_workload_fallback_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
+          'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'exclude_regex': user_namespaces_exclude_regex,
+          'omc_summary': (omc_summary | default({}))
+        } | to_json }}"
+      changed_when: false
 
-    def parse_cpu(value):
-        if value in (None, ""):
-            return 0.0
-        s = str(value).strip()
-        if s.endswith("m"):
-            try:
-                return float(s[:-1]) / 1000.0
-            except Exception:
+    - name: Run offline workload fallback analysis
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ offline_workload_fallback_input_file.path }}"
+        import json
+        import re
+        import sys
+
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+
+        def parse_cpu(value):
+            if value in (None, ""):
                 return 0.0
-        try:
-            return float(s)
-        except Exception:
-            return 0.0
-
-    def parse_mem(value):
-        if value in (None, ""):
-            return 0.0
-        s = str(value).strip()
-        units = {
-            "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
-            "Pi": 1024**5, "Ei": 1024**6, "K": 1000, "M": 1000**2,
-            "G": 1000**3, "T": 1000**4, "P": 1000**5, "E": 1000**6,
-        }
-        for suf, mult in units.items():
-            if s.endswith(suf):
+            s = str(value).strip()
+            if s.endswith("m"):
                 try:
-                    return float(s[:-len(suf)]) * mult
+                    return float(s[:-1]) / 1000.0
                 except Exception:
                     return 0.0
-        try:
-            return float(s)
-        except Exception:
-            return 0.0
+            try:
+                return float(s)
+            except Exception:
+                return 0.0
 
-    exclude_re = re.compile(data.get("exclude_regex") or r"^$")
-    node_alloc = {}
-    for node in data.get("nodes") or []:
-        meta = node.get("metadata", {}) or {}
-        status = node.get("status", {}) or {}
-        alloc = status.get("allocatable", {}) or {}
-        name = meta.get("name") or ""
-        if not name:
-            continue
-        node_alloc[name] = {
-            "cpu_m": parse_cpu(alloc.get("cpu")) * 1000.0,
-            "memory_b": parse_mem(alloc.get("memory")),
-            "disk_b": parse_mem(alloc.get("ephemeral-storage")),
-            "pods": int(alloc.get("pods") or 0),
-        }
+        def parse_mem(value):
+            if value in (None, ""):
+                return 0.0
+            s = str(value).strip()
+            units = {
+                "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
+                "Pi": 1024**5, "Ei": 1024**6, "K": 1000, "M": 1000**2,
+                "G": 1000**3, "T": 1000**4, "P": 1000**5, "E": 1000**6,
+            }
+            for suf, mult in units.items():
+                if s.endswith(suf):
+                    try:
+                        return float(s[:-len(suf)]) * mult
+                    except Exception:
+                        return 0.0
+            try:
+                return float(s)
+            except Exception:
+                return 0.0
 
-    node_cpu_req = {}
-    node_mem_req = {}
-    node_disk_req = {}
-    node_pod_counts = {}
-    pod_cpu_rows = []
-    pod_mem_rows = []
-    for pod in data.get("pods") or []:
-        meta = pod.get("metadata", {}) or {}
-        spec = pod.get("spec", {}) or {}
-        ns = meta.get("namespace") or ""
-        name = meta.get("name") or ""
-        node = spec.get("nodeName") or ""
-        if node:
-            node_pod_counts[node] = node_pod_counts.get(node, 0) + 1
+        exclude_re = re.compile(data.get("exclude_regex") or r"^$")
+        node_alloc = {}
+        for node in data.get("nodes") or []:
+            meta = node.get("metadata", {}) or {}
+            status = node.get("status", {}) or {}
+            alloc = status.get("allocatable", {}) or {}
+            name = meta.get("name") or ""
+            if not name:
+                continue
+            node_alloc[name] = {
+                "cpu_m": parse_cpu(alloc.get("cpu")) * 1000.0,
+                "memory_b": parse_mem(alloc.get("memory")),
+                "disk_b": parse_mem(alloc.get("ephemeral-storage")),
+                "pods": int(alloc.get("pods") or 0),
+            }
 
-        cpu_m = 0.0
-        mem_b = 0.0
-        disk_b = 0.0
-        for c in (spec.get("containers") or []):
-            req = (c.get("resources", {}) or {}).get("requests", {}) or {}
-            cpu_m += parse_cpu(req.get("cpu")) * 1000.0
-            mem_b += parse_mem(req.get("memory"))
-            disk_b += parse_mem(req.get("ephemeral-storage"))
+        node_cpu_req = {}
+        node_mem_req = {}
+        node_disk_req = {}
+        node_pod_counts = {}
+        pod_cpu_rows = []
+        pod_mem_rows = []
+        for pod in data.get("pods") or []:
+            meta = pod.get("metadata", {}) or {}
+            spec = pod.get("spec", {}) or {}
+            ns = meta.get("namespace") or ""
+            name = meta.get("name") or ""
+            node = spec.get("nodeName") or ""
+            if node:
+                node_pod_counts[node] = node_pod_counts.get(node, 0) + 1
 
-        if node:
-            node_cpu_req[node] = node_cpu_req.get(node, 0.0) + cpu_m
-            node_mem_req[node] = node_mem_req.get(node, 0.0) + mem_b
-            node_disk_req[node] = node_disk_req.get(node, 0.0) + disk_b
+            cpu_m = 0.0
+            mem_b = 0.0
+            disk_b = 0.0
+            for c in (spec.get("containers") or []):
+                req = (c.get("resources", {}) or {}).get("requests", {}) or {}
+                cpu_m += parse_cpu(req.get("cpu")) * 1000.0
+                mem_b += parse_mem(req.get("memory"))
+                disk_b += parse_mem(req.get("ephemeral-storage"))
 
-        if ns and name and not exclude_re.match(ns):
-            pod_cpu_rows.append({"metric": {"namespace": ns, "pod": name}, "value": [0, str(cpu_m / 1000.0)]})
-            pod_mem_rows.append({"metric": {"namespace": ns, "pod": name}, "value": [0, str(mem_b)]})
+            if node:
+                node_cpu_req[node] = node_cpu_req.get(node, 0.0) + cpu_m
+                node_mem_req[node] = node_mem_req.get(node, 0.0) + mem_b
+                node_disk_req[node] = node_disk_req.get(node, 0.0) + disk_b
 
-    node_cpu_rows = []
-    node_mem_rows = []
-    node_disk_rows = []
-    node_density_rows = []
-    for node_name, alloc in node_alloc.items():
-        cpu_pct = round((node_cpu_req.get(node_name, 0.0) / alloc["cpu_m"]) * 100.0, 1) if alloc["cpu_m"] > 0 else 0.0
-        mem_pct = round((node_mem_req.get(node_name, 0.0) / alloc["memory_b"]) * 100.0, 1) if alloc["memory_b"] > 0 else 0.0
-        disk_pct = round((node_disk_req.get(node_name, 0.0) / alloc["disk_b"]) * 100.0, 1) if alloc["disk_b"] > 0 else 0.0
-        density_pct = round((node_pod_counts.get(node_name, 0) / alloc["pods"]) * 100.0, 1) if alloc["pods"] > 0 else 0.0
-        node_cpu_rows.append({"metric": {"node": node_name}, "value": [0, str(cpu_pct)]})
-        node_mem_rows.append({"metric": {"node": node_name}, "value": [0, str(mem_pct)]})
-        node_disk_rows.append({"metric": {"node": node_name}, "value": [0, str(disk_pct)]})
-        node_density_rows.append({"metric": {"node": node_name}, "value": [0, str(density_pct)]})
+            if ns and name and not exclude_re.match(ns):
+                pod_cpu_rows.append({"metric": {"namespace": ns, "pod": name}, "value": [0, str(cpu_m / 1000.0)]})
+                pod_mem_rows.append({"metric": {"namespace": ns, "pod": name}, "value": [0, str(mem_b)]})
 
-    pod_cpu_rows.sort(key=lambda item: float(item["value"][1]), reverse=True)
-    pod_mem_rows.sort(key=lambda item: float(item["value"][1]), reverse=True)
+        node_cpu_rows = []
+        node_mem_rows = []
+        node_disk_rows = []
+        node_density_rows = []
+        for node_name, alloc in node_alloc.items():
+            cpu_pct = round((node_cpu_req.get(node_name, 0.0) / alloc["cpu_m"]) * 100.0, 1) if alloc["cpu_m"] > 0 else 0.0
+            mem_pct = round((node_mem_req.get(node_name, 0.0) / alloc["memory_b"]) * 100.0, 1) if alloc["memory_b"] > 0 else 0.0
+            disk_pct = round((node_disk_req.get(node_name, 0.0) / alloc["disk_b"]) * 100.0, 1) if alloc["disk_b"] > 0 else 0.0
+            density_pct = round((node_pod_counts.get(node_name, 0) / alloc["pods"]) * 100.0, 1) if alloc["pods"] > 0 else 0.0
+            node_cpu_rows.append({"metric": {"node": node_name}, "value": [0, str(cpu_pct)]})
+            node_mem_rows.append({"metric": {"node": node_name}, "value": [0, str(mem_pct)]})
+            node_disk_rows.append({"metric": {"node": node_name}, "value": [0, str(disk_pct)]})
+            node_density_rows.append({"metric": {"node": node_name}, "value": [0, str(density_pct)]})
 
-    sample_alert_rules = ((data.get("omc_summary") or {}).get("sample_alert_rules") or [])[:20]
-    firing_alerts = [{"metric": {"severity": "warning", "alertname": line, "namespace": "cluster"}, "value": [0, "1"]} for line in sample_alert_rules]
+        pod_cpu_rows.sort(key=lambda item: float(item["value"][1]), reverse=True)
+        pod_mem_rows.sort(key=lambda item: float(item["value"][1]), reverse=True)
 
-    print(json.dumps({
-        "node_cpu_utilization": node_cpu_rows,
-        "node_memory_utilization": node_mem_rows,
-        "node_disk_utilization": node_disk_rows,
-        "kubelet_pod_density": node_density_rows,
-        "top_pod_cpu_usage": pod_cpu_rows[:20],
-        "top_pod_memory_usage": pod_mem_rows[:20],
-        "pod_cpu_usage_all": pod_cpu_rows,
-        "pod_memory_usage_all": pod_mem_rows,
-        "firing_alerts": firing_alerts,
-    }))
-    PY
-  register: offline_workload_fallback_cmd
-  changed_when: false
-  failed_when: false
+        sample_alert_rules = ((data.get("omc_summary") or {}).get("sample_alert_rules") or [])[:20]
+        firing_alerts = [{"metric": {"severity": "warning", "alertname": line, "namespace": "cluster"}, "value": [0, "1"]} for line in sample_alert_rules]
+
+        print(json.dumps({
+            "node_cpu_utilization": node_cpu_rows,
+            "node_memory_utilization": node_mem_rows,
+            "node_disk_utilization": node_disk_rows,
+            "kubelet_pod_density": node_density_rows,
+            "top_pod_cpu_usage": pod_cpu_rows[:20],
+            "top_pod_memory_usage": pod_mem_rows[:20],
+            "pod_cpu_usage_all": pod_cpu_rows,
+            "pod_memory_usage_all": pod_mem_rows,
+            "firing_alerts": firing_alerts,
+        }))
+        PY
+      register: offline_workload_fallback_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove offline workload fallback input file
+      ansible.builtin.file:
+        path: "{{ offline_workload_fallback_input_file.path }}"
+        state: absent
+      when: offline_workload_fallback_input_file is defined and (offline_workload_fallback_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize offline workload metric fallbacks
   ansible.builtin.set_fact:
@@ -344,24 +370,43 @@
   changed_when: false
 
 - name: Detect vendor-managed telemetry evidence
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create vendor-managed telemetry input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-vendor-telemetry-
+        suffix: .json
+      register: observability_vendor_telemetry_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "dynakubes": (analysis_graph.dynakubes | default({})).get('items', []),
-      "edgeconnects": (analysis_graph.edgeconnects | default({})).get('items', []),
-      "datadogagents": (analysis_graph.datadogagents | default({})).get('items', []),
-      "clusteragents": (analysis_graph.clusteragents | default({})).get('items', []),
-      "infravizs": (analysis_graph.infravizs | default({})).get('items', []),
-      "lokistacks": (analysis_graph.lokistacks | default({})).get('items', []),
-      "crds": (analysis_graph.crds | default({})).get('items', []),
-      "namespaces": (analysis_graph.namespaces | default({})).get('items', []),
-      "pods": (analysis_graph.pods | default({})).get('items', []),
-      "deployments": (analysis_graph.deployments | default({})).get('items', []),
-      "daemonsets": (analysis_graph.daemonsets | default({})).get('items', []),
-      "statefulsets": (analysis_graph.statefulsets | default({})).get('items', [])
-    } | to_json }}''')
+    - name: Write vendor-managed telemetry input data
+      ansible.builtin.copy:
+        dest: "{{ observability_vendor_telemetry_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'dynakubes': ((analysis_graph.dynakubes | default({})).get('items', [])),
+          'edgeconnects': ((analysis_graph.edgeconnects | default({})).get('items', [])),
+          'datadogagents': ((analysis_graph.datadogagents | default({})).get('items', [])),
+          'clusteragents': ((analysis_graph.clusteragents | default({})).get('items', [])),
+          'infravizs': ((analysis_graph.infravizs | default({})).get('items', [])),
+          'lokistacks': ((analysis_graph.lokistacks | default({})).get('items', [])),
+          'crds': ((analysis_graph.crds | default({})).get('items', [])),
+          'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
+          'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+          'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+          'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run vendor-managed telemetry detection
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ observability_vendor_telemetry_input_file.path }}"
+        import json
+        import sys
+
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
     def crd_has(group_fragment):
         target = str(group_fragment).lower()
@@ -426,334 +471,152 @@
     if loki_present:
         log_vendors.append("loki")
 
-    print(json.dumps({
-        "vendor_managed_metrics_forwarding_present": len(metrics_vendors) > 0,
-        "vendor_managed_log_forwarding_present": len(log_vendors) > 0,
-        "metrics_vendor_names": metrics_vendors,
-        "log_vendor_names": log_vendors,
-    }))
-    PY
-  register: observability_vendor_telemetry_cmd
-  changed_when: false
-  failed_when: false
+        print(json.dumps({
+            "vendor_managed_metrics_forwarding_present": len(metrics_vendors) > 0,
+            "vendor_managed_log_forwarding_present": len(log_vendors) > 0,
+            "metrics_vendor_names": metrics_vendors,
+            "log_vendor_names": log_vendors,
+        }))
+        PY
+      register: observability_vendor_telemetry_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove vendor-managed telemetry input file
+      ansible.builtin.file:
+        path: "{{ observability_vendor_telemetry_input_file.path }}"
+        state: absent
+      when: observability_vendor_telemetry_input_file is defined and (observability_vendor_telemetry_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize vendor-managed telemetry evidence
   ansible.builtin.set_fact:
     observability_vendor_telemetry_data: "{{ observability_vendor_telemetry_cmd.stdout | from_json if (observability_vendor_telemetry_cmd.rc == 0 and (observability_vendor_telemetry_cmd.stdout | default('') | length > 0)) else {'vendor_managed_metrics_forwarding_present': false, 'vendor_managed_log_forwarding_present': false, 'metrics_vendor_names': [], 'log_vendor_names': []} }}"
 
 - name: Build log forwarding findings
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create log forwarding input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-log-forwarding-
+        suffix: .json
+      register: observability_log_forwarding_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "items": (analysis_graph.clusterlogforwarders | default({})).get('items', []),
-      "vendor_managed_present": observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false),
-      "vendor_names": observability_vendor_telemetry_data.log_vendor_names | default([])
-    } | to_json }}''')
+    - name: Write log forwarding input data
+      ansible.builtin.copy:
+        dest: "{{ observability_log_forwarding_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'items': ((analysis_graph.clusterlogforwarders | default({})).get('items', [])),
+          'vendor_managed_present': (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)),
+          'vendor_names': (observability_vendor_telemetry_data.log_vendor_names | default([])),
+          'require_cluster_log_forwarder': (require_cluster_log_forwarder | bool)
+        } | to_json }}"
+      changed_when: false
 
-    findings = []
-    outputs = []
-    external_outputs = []
-    pipeline_counts = {"application": 0, "infrastructure": 0, "audit": 0}
-    external_pipeline_counts = {"application": 0, "infrastructure": 0, "audit": 0}
-
-    def is_external_url(url):
-        if not url:
-            return False
-        s = str(url).lower()
-        return not (".svc" in s or ".cluster.local" in s or s.startswith("http://localhost") or s.startswith("https://localhost"))
-
-    def output_is_external(output):
-        otype = str(output.get("type", "")).lower()
-        url = output.get("url") or output.get("endpoint") or output.get("host") or ""
-        if is_external_url(url):
-            return True
-        if otype in {"cloudwatch", "azuremonitor", "googlecloudlogging"}:
-            return True
-        return False
-
-    def normalize_inputs(pipeline):
-        refs = pipeline.get("inputRefs")
-        if isinstance(refs, list):
-            return [str(item).lower() for item in refs if item not in (None, "")]
-        if refs not in (None, ""):
-            return [str(refs).lower()]
-        input_ref = pipeline.get("inputRef")
-        if input_ref not in (None, ""):
-            return [str(input_ref).lower()]
-        return []
-
-    for clf in data["items"]:
-        ns = clf.get("metadata", {}).get("namespace", "")
-        name = clf.get("metadata", {}).get("name", "")
-        spec = clf.get("spec", {}) or {}
-        pipelines = spec.get("pipelines", []) or []
-        output_refs = set()
-        for pipeline in pipelines:
-            for ref in pipeline.get("outputRefs", []) or []:
-                output_refs.add(ref)
-        current_outputs = spec.get("outputs", []) or []
-        output_by_name = {str(item.get("name", "")): item for item in current_outputs if item.get("name")}
-        if not current_outputs:
-            findings.append({
-                "issue": "clusterlogforwarder-without-outputs",
-                "detail": f"{ns}/{name} has no outputs"
-            })
-        for output in current_outputs:
-            output_name = output.get("name", "")
-            record = {
-                "namespace": ns,
-                "clusterlogforwarder": name,
-                "name": output_name,
-                "type": output.get("type", "unknown"),
-                "target": output.get("url") or output.get("endpoint") or output.get("host") or ""
-            }
-            outputs.append(record)
-            if output_is_external(output):
-                external_outputs.append(record)
-        for pipeline in pipelines:
-            input_refs = normalize_inputs(pipeline)
-            pipeline_output_refs = [str(ref) for ref in (pipeline.get("outputRefs", []) or []) if ref not in (None, "")]
-            pipeline_external = any(output_is_external(output_by_name.get(ref, {})) for ref in pipeline_output_refs)
-            for log_type in ("application", "infrastructure", "audit"):
-                if log_type in input_refs:
-                    pipeline_counts[log_type] += 1
-                    if pipeline_external:
-                        external_pipeline_counts[log_type] += 1
-        if current_outputs and not any(output_is_external(o) for o in current_outputs):
-            findings.append({
-                "issue": "logs-not-forwarded-to-external-destination",
-                "detail": f"{ns}/{name} outputs appear cluster-local only"
-            })
-        if pipelines and not output_refs:
-            findings.append({
-                "issue": "clusterlogforwarder-pipelines-without-outputrefs",
-                "detail": f"{ns}/{name} has pipelines with no outputRefs"
-            })
-
-    if not data["items"] and {{ require_cluster_log_forwarder | bool | to_json }} and not data.get("vendor_managed_present"):
-        findings.append({
-            "issue": "missing-clusterlogforwarder",
-            "detail": "no ClusterLogForwarder resource found"
-        })
-
-    for log_type in ("application", "infrastructure", "audit"):
-        if {{ require_cluster_log_forwarder | bool | to_json }} and not data.get("vendor_managed_present"):
-            if pipeline_counts[log_type] == 0:
-                findings.append({
-                    "issue": f"{log_type}-logs-not-collected",
-                    "detail": f"no ClusterLogForwarder pipeline was found for {log_type} logs"
-                })
-            elif external_pipeline_counts[log_type] == 0:
-                findings.append({
-                    "issue": f"{log_type}-logs-not-exported-external",
-                    "detail": f"{log_type} logs appear to be collected but not forwarded to an external destination"
-                })
-
-    print(json.dumps({
-        "findings": findings,
-        "outputs": outputs,
-        "external_outputs": external_outputs,
-        "pipeline_counts": pipeline_counts,
-        "external_pipeline_counts": external_pipeline_counts
-    }))
-    PY
-  register: observability_log_forwarding_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run log forwarding analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_log_forwarding_findings.py"
+          - "{{ observability_log_forwarding_input_file.path }}"
+      register: observability_log_forwarding_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove log forwarding input file
+      ansible.builtin.file:
+        path: "{{ observability_log_forwarding_input_file.path }}"
+        state: absent
+      when: observability_log_forwarding_input_file is defined and (observability_log_forwarding_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize log forwarding findings
   ansible.builtin.set_fact:
     observability_log_forwarding_data: "{{ observability_log_forwarding_cmd.stdout | from_json if (observability_log_forwarding_cmd.rc == 0 and (observability_log_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'outputs': [], 'external_outputs': [], 'pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}, 'external_pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}} }}"
 
 - name: Build metrics forwarding findings
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create metrics forwarding input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-metrics-forwarding-
+        suffix: .json
+      register: observability_metrics_forwarding_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "cluster_remote_write": ((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([])),
-      "user_remote_write": ((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([])),
-      "vendor_managed_present": observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false),
-      "vendor_names": observability_vendor_telemetry_data.metrics_vendor_names | default([])
-    } | to_json }}''')
+    - name: Write metrics forwarding input data
+      ansible.builtin.copy:
+        dest: "{{ observability_metrics_forwarding_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'cluster_remote_write': (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([]))),
+          'user_remote_write': (((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([]))),
+          'vendor_managed_present': (observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false)),
+          'vendor_names': (observability_vendor_telemetry_data.metrics_vendor_names | default([])),
+          'require_external_metrics_remote_write': (require_external_metrics_remote_write | bool)
+        } | to_json }}"
+      changed_when: false
 
-    findings = []
-
-    def is_external_url(url):
-        if not url:
-            return False
-        s = str(url).lower()
-        return not (".svc" in s or ".cluster.local" in s or s.startswith("http://localhost") or s.startswith("https://localhost"))
-
-    cluster_external = [item for item in data["cluster_remote_write"] if is_external_url(item.get("url", ""))]
-    user_external = [item for item in data["user_remote_write"] if is_external_url(item.get("url", ""))]
-
-    if {{ require_external_metrics_remote_write | bool | to_json }} and not data.get("vendor_managed_present"):
-        if not data["cluster_remote_write"]:
-            findings.append({
-                "issue": "cluster-metrics-remote-write-missing",
-                "detail": "cluster-monitoring-config has no prometheusK8s.remoteWrite target"
-            })
-        elif not cluster_external:
-            findings.append({
-                "issue": "cluster-metrics-not-forwarded-external",
-                "detail": "prometheusK8s.remoteWrite targets appear cluster-local only"
-            })
-
-        if not data["user_remote_write"]:
-            findings.append({
-                "issue": "user-workload-metrics-remote-write-missing",
-                "detail": "user-workload-monitoring-config has no prometheus.remoteWrite target"
-            })
-        elif not user_external:
-            findings.append({
-                "issue": "user-workload-metrics-not-forwarded-external",
-                "detail": "user workload remoteWrite targets appear cluster-local only"
-            })
-
-    print(json.dumps({
-        "findings": findings,
-        "cluster_external_count": len(cluster_external),
-        "user_external_count": len(user_external)
-    }))
-    PY
-  register: observability_metrics_forwarding_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run metrics forwarding analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_metrics_forwarding_findings.py"
+          - "{{ observability_metrics_forwarding_input_file.path }}"
+      register: observability_metrics_forwarding_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove metrics forwarding input file
+      ansible.builtin.file:
+        path: "{{ observability_metrics_forwarding_input_file.path }}"
+        state: absent
+      when: observability_metrics_forwarding_input_file is defined and (observability_metrics_forwarding_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize metrics forwarding findings
   ansible.builtin.set_fact:
     observability_metrics_forwarding_data: "{{ observability_metrics_forwarding_cmd.stdout | from_json if (observability_metrics_forwarding_cmd.rc == 0 and (observability_metrics_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'cluster_external_count': 0, 'user_external_count': 0} }}"
 
 - name: Build external alert delivery findings
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create external alert delivery input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-alert-delivery-
+        suffix: .json
+      register: observability_alert_delivery_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "items": (analysis_graph.alertmanagerconfigs | default({})).get('items', []),
-      "cluster_alertmanager_additional_configs": (((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([]))),
-      "user_workload_alertmanager_additional_configs": (((user_workload_monitoring_config_parsed.alertmanager | default({})).additionalAlertmanagerConfigs | default([])))
-    } | to_json }}''')
+    - name: Write external alert delivery input data
+      ansible.builtin.copy:
+        dest: "{{ observability_alert_delivery_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'items': ((analysis_graph.alertmanagerconfigs | default({})).get('items', [])),
+          'cluster_alertmanager_additional_configs': ((((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([])))),
+          'user_workload_alertmanager_additional_configs': ((((user_workload_monitoring_config_parsed.alertmanager | default({})).additionalAlertmanagerConfigs | default([]))))
+        } | to_json }}"
+      changed_when: false
 
-    findings = []
-    receivers = []
-    config_sources = []
-    supported_receiver_keys = [
-        ("slackConfigs", "slack"),
-        ("pagerdutyConfigs", "pagerduty"),
-        ("opsgenieConfigs", "opsgenie"),
-        ("victorOpsConfigs", "victorops"),
-        ("webhookConfigs", "webhook"),
-        ("wechatConfigs", "wechat"),
-        ("emailConfigs", "email"),
-    ]
-
-    def describe_target(receiver_type, cfg):
-        if receiver_type == "slack":
-            return cfg.get("channel") or "configured"
-        if receiver_type == "webhook":
-            return cfg.get("url") or "secret-or-config-ref"
-        if receiver_type == "email":
-            return cfg.get("to") or "configured"
-        if receiver_type in {"pagerduty", "opsgenie", "victorops", "wechat"}:
-            return "configured"
-        return "configured"
-
-    def collect_route_receivers(route_obj, result):
-        route_obj = route_obj or {}
-        receiver = route_obj.get("receiver")
-        if receiver:
-            result.add(str(receiver))
-        for child in route_obj.get("routes", []) or []:
-            collect_route_receivers(child, result)
-
-    configs_with_external_routes = 0
-    configs_without_route_receivers = 0
-    for item in data.get("items", []):
-        meta = item.get("metadata", {}) or {}
-        namespace = meta.get("namespace", "")
-        config_name = meta.get("name", "")
-        external_receiver_names = set()
-        for receiver in (item.get("spec", {}) or {}).get("receivers", []) or []:
-            receiver_name = receiver.get("name", "unnamed")
-            for key, receiver_type in supported_receiver_keys:
-                for cfg in receiver.get(key, []) or []:
-                    external_receiver_names.add(receiver_name)
-                    receivers.append({
-                        "namespace": namespace,
-                        "alertmanagerconfig": config_name,
-                        "receiver": receiver_name,
-                        "type": receiver_type,
-                        "target": describe_target(receiver_type, cfg),
-                    })
-        if external_receiver_names:
-            config_sources.append({
-                "source": "AlertmanagerConfig",
-                "namespace": namespace,
-                "name": config_name,
-            })
-
-        route_receivers = set()
-        collect_route_receivers((item.get("spec", {}) or {}).get("route") or {}, route_receivers)
-        routed_external_receivers = sorted(route_receivers.intersection(external_receiver_names))
-        if external_receiver_names and routed_external_receivers:
-            configs_with_external_routes += 1
-        elif external_receiver_names and not route_receivers:
-            configs_without_route_receivers += 1
-            findings.append({
-                "issue": "alertmanagerconfig-route-missing",
-                "detail": f"{namespace}/{config_name} defines external receivers but no route receiver was configured"
-            })
-        elif external_receiver_names and not routed_external_receivers:
-            findings.append({
-                "issue": "external-alert-receiver-not-routed",
-                "detail": f"{namespace}/{config_name} defines external receivers that are not referenced by any route"
-            })
-
-    cluster_additional_count = len(data.get("cluster_alertmanager_additional_configs") or [])
-    user_additional_count = len(data.get("user_workload_alertmanager_additional_configs") or [])
-    if cluster_additional_count > 0:
-        config_sources.append({
-            "source": "cluster-monitoring-config",
-            "namespace": "openshift-monitoring",
-            "name": "alertmanagerMain.additionalAlertmanagerConfigs",
-        })
-    if user_additional_count > 0:
-        config_sources.append({
-            "source": "user-workload-monitoring-config",
-            "namespace": "openshift-user-workload-monitoring",
-            "name": "alertmanager.additionalAlertmanagerConfigs",
-        })
-
-    if not receivers and not config_sources:
-        findings.append({
-            "issue": "external-alert-delivery-not-configured",
-            "detail": "no AlertmanagerConfig receiver was found for supported external channels such as email, Slack, PagerDuty, Opsgenie, VictorOps, webhook, or WeChat"
-        })
-    elif not receivers and config_sources:
-        findings.append({
-            "issue": "external-alert-delivery-not-verifiable",
-            "detail": "additional Alertmanager configuration was detected, but no explicit externally routed receivers were visible in AlertmanagerConfig resources"
-        })
-
-    print(json.dumps({
-        "findings": findings,
-        "receivers": receivers,
-        "config_sources": config_sources,
-        "alert_delivery_source_count": len(config_sources),
-        "external_alert_receiver_count": len(receivers),
-        "external_alert_delivery_configured": len(receivers) > 0,
-        "alert_routing_to_external_receiver_configured": configs_with_external_routes > 0,
-        "alertmanagerconfigs_with_external_routes": configs_with_external_routes,
-        "alertmanagerconfigs_without_route_receivers": configs_without_route_receivers
-    }))
-    PY
-  register: observability_alert_delivery_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run external alert delivery analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_external_alert_delivery_findings.py"
+          - "{{ observability_alert_delivery_input_file.path }}"
+      register: observability_alert_delivery_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove external alert delivery input file
+      ansible.builtin.file:
+        path: "{{ observability_alert_delivery_input_file.path }}"
+        state: absent
+      when: observability_alert_delivery_input_file is defined and (observability_alert_delivery_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize external alert delivery findings
   ansible.builtin.set_fact:
@@ -1602,185 +1465,88 @@
   changed_when: false
 
 - name: Build overprovisioned pod findings from Prometheus usage
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
-    import math
+  block:
+    - name: Create overprovisioned pod input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-overprovisioned-pods-
+        suffix: .json
+      register: overprovisioned_pods_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "pods": (analysis_graph.pods | default({})).get('items', []),
-      "cpu_usage": pod_cpu_usage_all_results | default([]),
-      "memory_usage": pod_memory_usage_all_results | default([]),
-      "exclude_regex": user_namespaces_exclude_regex,
-      "cpu_usage_status": ((runtime_signal_resolution_map.pod_cpu_usage_all | default({})).get('status', 'not-collected')),
-      "memory_usage_status": ((runtime_signal_resolution_map.pod_memory_usage_all | default({})).get('status', 'not-collected'))
-    } | to_json }}''')
+    - name: Write overprovisioned pod input data
+      ansible.builtin.copy:
+        dest: "{{ overprovisioned_pods_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'cpu_usage': (pod_cpu_usage_all_results | default([])),
+          'memory_usage': (pod_memory_usage_all_results | default([])),
+          'exclude_regex': user_namespaces_exclude_regex,
+          'cpu_usage_status': (((runtime_signal_resolution_map.pod_cpu_usage_all | default({})).get('status', 'not-collected'))),
+          'memory_usage_status': (((runtime_signal_resolution_map.pod_memory_usage_all | default({})).get('status', 'not-collected')))
+        } | to_json }}"
+      changed_when: false
+      when: prom_available | bool
 
-    if data.get("cpu_usage_status") != "observed" or data.get("memory_usage_status") != "observed":
-        print("[]")
-        raise SystemExit(0)
-
-    def parse_cpu(value):
-        if not value:
-            return 0.0
-        s = str(value)
-        if s.endswith("m"):
-            return float(s[:-1])
-        try:
-            return float(s) * 1000.0
-        except Exception:
-            return 0.0
-
-    def parse_mem(value):
-        if not value:
-            return 0.0
-        s = str(value)
-        table = {
-            "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
-            "Pi": 1024**5, "Ei": 1024**6, "K": 1000, "M": 1000**2,
-            "G": 1000**3, "T": 1000**4, "P": 1000**5, "E": 1000**6,
-        }
-        for suf, mult in table.items():
-            if s.endswith(suf):
-                try:
-                    return float(s[:-len(suf)]) * mult
-                except Exception:
-                    return 0.0
-        try:
-            return float(s)
-        except Exception:
-            return 0.0
-
-    cpu_usage = {}
-    for item in data["cpu_usage"]:
-        key = f'{item.get("metric", {}).get("namespace","")}/{item.get("metric", {}).get("pod","")}'
-        try:
-            cpu_usage[key] = float(item["value"][1]) * 1000.0
-        except Exception:
-            cpu_usage[key] = 0.0
-
-    mem_usage = {}
-    for item in data["memory_usage"]:
-        key = f'{item.get("metric", {}).get("namespace","")}/{item.get("metric", {}).get("pod","")}'
-        try:
-            mem_usage[key] = float(item["value"][1])
-        except Exception:
-            mem_usage[key] = 0.0
-
-    findings = []
-    import re
-    exclude_re = re.compile(data["exclude_regex"])
-    for pod in data["pods"]:
-        ns = pod.get("metadata", {}).get("namespace", "")
-        if exclude_re.match(ns):
-            continue
-        if pod.get("status", {}).get("phase") != "Running":
-            continue
-        key = f'{ns}/{pod.get("metadata", {}).get("name","")}'
-        containers = pod.get("spec", {}).get("containers", []) or []
-        cpu_req = sum(parse_cpu((c.get("resources", {}).get("requests", {}) or {}).get("cpu")) for c in containers)
-        mem_req = sum(parse_mem((c.get("resources", {}).get("requests", {}) or {}).get("memory")) for c in containers)
-        cpu_use = cpu_usage.get(key, 0.0)
-        mem_use = mem_usage.get(key, 0.0)
-        cpu_ratio = (cpu_use / cpu_req) if cpu_req > 0 else None
-        mem_ratio = (mem_use / mem_req) if mem_req > 0 else None
-
-        reasons = []
-        if cpu_req >= 200 and cpu_ratio is not None and cpu_ratio < 0.20:
-            reasons.append(("cpu", round(cpu_ratio, 3)))
-        if mem_req >= 512 * 1024 * 1024 and mem_ratio is not None and mem_ratio < 0.30:
-            reasons.append(("memory", round(mem_ratio, 3)))
-        if reasons:
-            findings.append({
-                "namespace": ns,
-                "pod": pod.get("metadata", {}).get("name", ""),
-                "cpu_request_millicores": round(cpu_req, 1),
-                "cpu_usage_millicores": round(cpu_use, 1),
-                "memory_request_mib": round(mem_req / 1048576, 1),
-                "memory_usage_mib": round(mem_use / 1048576, 1),
-                "reasons": reasons,
-            })
-
-    findings.sort(key=lambda x: (
-        min([r[1] for r in x["reasons"]]) if x["reasons"] else 1.0,
-        -(x["cpu_request_millicores"] + x["memory_request_mib"])
-    ))
-    print(json.dumps(findings[:50]))
-    PY
-  register: overprovisioned_pods_cmd
-  changed_when: false
-  failed_when: false
-  when: prom_available | bool
+    - name: Run overprovisioned pod analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_overprovisioned_pods.py"
+          - "{{ overprovisioned_pods_input_file.path }}"
+      register: overprovisioned_pods_cmd
+      changed_when: false
+      failed_when: false
+      when: prom_available | bool
+  always:
+    - name: Remove overprovisioned pod input file
+      ansible.builtin.file:
+        path: "{{ overprovisioned_pods_input_file.path }}"
+        state: absent
+      when:
+        - prom_available | bool
+        - overprovisioned_pods_input_file is defined
+        - (overprovisioned_pods_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize overprovisioned pod findings
   ansible.builtin.set_fact:
     overprovisioned_pods: "{{ overprovisioned_pods_cmd.stdout | from_json if (overprovisioned_pods_cmd is defined and overprovisioned_pods_cmd.rc is defined and overprovisioned_pods_cmd.rc == 0 and (overprovisioned_pods_cmd.stdout | default('') | length > 0)) else [] }}"
 
 - name: Build quota pressure findings
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create quota pressure input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-quota-pressure-
+        suffix: .json
+      register: quota_pressure_input_file
+      changed_when: false
 
-    quotas = json.loads(r'''{{ (analysis_graph.resourcequotas | default({})).get('items', []) | to_json }}''')
+    - name: Write quota pressure input data
+      ansible.builtin.copy:
+        dest: "{{ quota_pressure_input_file.path }}"
+        mode: "0600"
+        content: "{{ ((analysis_graph.resourcequotas | default({})).get('items', [])) | to_json }}"
+      changed_when: false
 
-    def parse_qty(val):
-        if val is None:
-            return None
-        s = str(val)
-        units = {
-            "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
-            "Pi": 1024**5, "Ei": 1024**6, "K": 1000, "M": 1000**2,
-            "G": 1000**3, "T": 1000**4, "P": 1000**5, "E": 1000**6,
-        }
-        if s.endswith("m"):
-            try:
-                return float(s[:-1]) / 1000.0
-            except Exception:
-                return None
-        for suf, mult in units.items():
-            if s.endswith(suf):
-                try:
-                    return float(s[:-len(suf)]) * mult
-                except Exception:
-                    return None
-        try:
-            return float(s)
-        except Exception:
-            return None
-
-    findings = []
-    interesting = {
-        "pods", "persistentvolumeclaims", "requests.cpu", "requests.memory",
-        "limits.cpu", "limits.memory", "requests.storage"
-    }
-    for quota in quotas:
-        ns = quota.get("metadata", {}).get("namespace", "")
-        qn = quota.get("metadata", {}).get("name", "")
-        hard = (quota.get("status", {}) or {}).get("hard", {}) or {}
-        used = (quota.get("status", {}) or {}).get("used", {}) or {}
-        for key, hard_val in hard.items():
-            if key not in interesting:
-                continue
-            used_val = used.get(key)
-            h = parse_qty(hard_val)
-            u = parse_qty(used_val)
-            if h and h > 0 and u is not None:
-                pct = round((u / h) * 100, 1)
-                if pct >= 80:
-                    findings.append({
-                        "namespace": ns,
-                        "quota": qn,
-                        "resource": key,
-                        "used": str(used_val),
-                        "hard": str(hard_val),
-                        "pct": pct,
-                    })
-    findings.sort(key=lambda x: (-x["pct"], x["namespace"], x["resource"]))
-    print(json.dumps(findings[:50]))
-    PY
-  register: quota_pressure_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run quota pressure analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_quota_pressure_findings.py"
+          - "{{ quota_pressure_input_file.path }}"
+      register: quota_pressure_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove quota pressure input file
+      ansible.builtin.file:
+        path: "{{ quota_pressure_input_file.path }}"
+        state: absent
+      when: quota_pressure_input_file is defined and (quota_pressure_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize quota pressure findings
   ansible.builtin.set_fact:

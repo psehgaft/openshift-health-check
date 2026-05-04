@@ -47,90 +47,116 @@
       infra_node_count: 0
 
 - name: Build authentication findings
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
+  block:
+    - name: Create authentication findings input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-auth-findings-
+        suffix: .json
+      register: auth_posture_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "oauth_config": analysis_graph.oauth_config | default({}),
-      "secrets": (analysis_graph.secrets | default({})).get('items', [])
-    } | to_json }}''')
+    - name: Write authentication findings input data
+      ansible.builtin.copy:
+        dest: "{{ auth_posture_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'oauth_config': (analysis_graph.oauth_config | default({})),
+          'secrets': ((analysis_graph.secrets | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
 
-    idps = (((data.get("oauth_config") or {}).get("spec") or {}).get("identityProviders") or [])
-    secrets = data.get("secrets") or []
+    - name: Run authentication findings analysis
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ auth_posture_input_file.path }}"
+        import json
+        import sys
 
-    local_types = {"htpasswd", "basicAuth"}
-    generic_keys = {"name", "mappingMethod", "type", "challenge", "login"}
-    provider_types = []
-    provider_names = []
-    external_provider_count = 0
-    local_provider_count = 0
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
-    for item in idps:
-        if not isinstance(item, dict):
-            continue
-        provider_names.append(str(item.get("name") or "unnamed"))
-        typed_keys = [key for key in item.keys() if key not in generic_keys and item.get(key) is not None]
-        provider_type = typed_keys[0] if typed_keys else str(item.get("type") or "unknown")
-        provider_types.append(provider_type)
-        if provider_type in local_types:
-            local_provider_count += 1
+        idps = (((data.get("oauth_config") or {}).get("spec") or {}).get("identityProviders") or [])
+        secrets = data.get("secrets") or []
+
+        local_types = {"htpasswd", "basicAuth"}
+        generic_keys = {"name", "mappingMethod", "type", "challenge", "login"}
+        provider_types = []
+        provider_names = []
+        external_provider_count = 0
+        local_provider_count = 0
+
+        for item in idps:
+            if not isinstance(item, dict):
+                continue
+            provider_names.append(str(item.get("name") or "unnamed"))
+            typed_keys = [key for key in item.keys() if key not in generic_keys and item.get(key) is not None]
+            provider_type = typed_keys[0] if typed_keys else str(item.get("type") or "unknown")
+            provider_types.append(provider_type)
+            if provider_type in local_types:
+                local_provider_count += 1
+            else:
+                external_provider_count += 1
+
+        kubeadmin_secret_present = any(
+            ((item.get("metadata") or {}).get("name") == "kubeadmin")
+            and ((item.get("metadata") or {}).get("namespace") == "kube-system")
+            for item in secrets
+            if isinstance(item, dict)
+        )
+
+        findings = []
+        if len(idps) == 0:
+            detail = "oauth/cluster has no configured identityProviders"
+            if kubeadmin_secret_present:
+                detail += "; kubeadmin secret is still present"
+            findings.append({"issue": "missing-identity-provider", "detail": detail})
+            status = "warning"
+            reason_summary = "no configured identity providers"
+        elif external_provider_count == 0 and local_provider_count > 0:
+            detail = "only local identity providers are configured: " + ", ".join(sorted(set(provider_types)))
+            if kubeadmin_secret_present:
+                detail += "; kubeadmin secret is still present"
+            findings.append({"issue": "local-only-identity-provider", "detail": detail})
+            status = "warning"
+            reason_summary = "only local identity providers are configured"
+        elif kubeadmin_secret_present:
+            findings.append({
+                "issue": "kubeadmin-secret-still-present",
+                "detail": "kubeadmin secret is still present while identity providers are configured",
+            })
+            status = "review"
+            reason_summary = "external identity providers are configured, but kubeadmin fallback is still present"
+        elif external_provider_count == 1 and len(idps) == 1:
+            status = "healthy"
+            reason_summary = "single external identity provider configured"
         else:
-            external_provider_count += 1
+            status = "healthy"
+            reason_summary = "external identity providers are configured"
 
-    kubeadmin_secret_present = any(
-        ((item.get("metadata") or {}).get("name") == "kubeadmin")
-        and ((item.get("metadata") or {}).get("namespace") == "kube-system")
-        for item in secrets
-        if isinstance(item, dict)
-    )
-
-    findings = []
-    if len(idps) == 0:
-        detail = "oauth/cluster has no configured identityProviders"
-        if kubeadmin_secret_present:
-            detail += "; kubeadmin secret is still present"
-        findings.append({"issue": "missing-identity-provider", "detail": detail})
-        status = "warning"
-        reason_summary = "no configured identity providers"
-    elif external_provider_count == 0 and local_provider_count > 0:
-        detail = "only local identity providers are configured: " + ", ".join(sorted(set(provider_types)))
-        if kubeadmin_secret_present:
-            detail += "; kubeadmin secret is still present"
-        findings.append({"issue": "local-only-identity-provider", "detail": detail})
-        status = "warning"
-        reason_summary = "only local identity providers are configured"
-    elif kubeadmin_secret_present:
-        findings.append({
-            "issue": "kubeadmin-secret-still-present",
-            "detail": "kubeadmin secret is still present while identity providers are configured",
-        })
-        status = "review"
-        reason_summary = "external identity providers are configured, but kubeadmin fallback is still present"
-    elif external_provider_count == 1 and len(idps) == 1:
-        status = "healthy"
-        reason_summary = "single external identity provider configured"
-    else:
-        status = "healthy"
-        reason_summary = "external identity providers are configured"
-
-    print(json.dumps({
-        "auth_findings": findings,
-        "auth_posture_summary": {
-            "status": status,
-            "identity_provider_count": len(idps),
-            "provider_names": provider_names,
-            "provider_types": provider_types,
-            "external_identity_provider_count": external_provider_count,
-            "local_identity_provider_count": local_provider_count,
-            "kubeadmin_secret_present": kubeadmin_secret_present,
-            "reason_summary": reason_summary,
-        },
-    }))
-    PY
-  register: auth_posture_cmd
-  changed_when: false
-  failed_when: false
+        print(json.dumps({
+            "auth_findings": findings,
+            "auth_posture_summary": {
+                "status": status,
+                "identity_provider_count": len(idps),
+                "provider_names": provider_names,
+                "provider_types": provider_types,
+                "external_identity_provider_count": external_provider_count,
+                "local_identity_provider_count": local_provider_count,
+                "kubeadmin_secret_present": kubeadmin_secret_present,
+                "reason_summary": reason_summary,
+            },
+        }))
+        PY
+      register: auth_posture_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove authentication findings input file
+      ansible.builtin.file:
+        path: "{{ auth_posture_input_file.path }}"
+        state: absent
+      when: auth_posture_input_file is defined and (auth_posture_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize authentication findings
   vars:
