@@ -403,73 +403,99 @@
     openshift_infra_node_count: 0
 
 - name: Build pod count and restart hotspots
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
-    import re
+  block:
+    - name: Create temporary pod hotspot input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-pod-hotspots-
+        suffix: .json
+      register: pod_restart_hotspots_input_file
+      changed_when: false
 
-    data = json.loads(r'''{{ {
-      "pods": (analysis_graph.pods | default({})).get('items', []),
-      "exclude_regex": user_namespaces_exclude_regex
-    } | to_json }}''')
+    - name: Write pod hotspot input data
+      ansible.builtin.copy:
+        dest: "{{ pod_restart_hotspots_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'exclude_regex': (user_namespaces_exclude_regex | default('^$'))
+        } | to_json }}"
+      changed_when: false
 
-    exclude_re = re.compile(data.get("exclude_regex") or r"^$")
-    pod_restart_hotspots = []
-    pod_phase_counts = {}
-    node_pod_counts = {}
-    namespace_pod_counts = {}
-    pod_object_counts = {
-        "total": 0,
-        "running": 0,
-        "user_total": 0,
-        "user_running": 0,
-    }
+    - name: Run pod hotspot analysis
+      ansible.builtin.shell: |
+        python3 - <<'PY' "{{ pod_restart_hotspots_input_file.path }}"
+        import json
+        import re
+        import sys
 
-    for item in data.get("pods") or []:
-        status = item.get("status") or {}
-        spec = item.get("spec") or {}
-        metadata = item.get("metadata") or {}
-        phase = str(status.get("phase") or "Unknown")
-        node_name = str(spec.get("nodeName") or "unscheduled")
-        namespace_name = str(metadata.get("namespace") or "")
-        pod_name = str(metadata.get("name") or "unknown")
-        is_user_namespace = not exclude_re.search(namespace_name or "")
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            data = json.load(handle)
 
-        pod_phase_counts[phase] = pod_phase_counts.get(phase, 0) + 1
-        node_pod_counts[node_name] = node_pod_counts.get(node_name, 0) + 1
-        namespace_pod_counts[namespace_name] = namespace_pod_counts.get(namespace_name, 0) + 1
+        exclude_re = re.compile(data.get("exclude_regex") or r"^$")
+        pod_restart_hotspots = []
+        pod_phase_counts = {}
+        node_pod_counts = {}
+        namespace_pod_counts = {}
+        pod_object_counts = {
+            "total": 0,
+            "running": 0,
+            "user_total": 0,
+            "user_running": 0,
+        }
 
-        pod_object_counts["total"] += 1
-        if phase == "Running":
-            pod_object_counts["running"] += 1
-        if is_user_namespace:
-            pod_object_counts["user_total"] += 1
+        for item in data.get("pods") or []:
+            status = item.get("status") or {}
+            spec = item.get("spec") or {}
+            metadata = item.get("metadata") or {}
+            phase = str(status.get("phase") or "Unknown")
+            node_name = str(spec.get("nodeName") or "unscheduled")
+            namespace_name = str(metadata.get("namespace") or "")
+            pod_name = str(metadata.get("name") or "unknown")
+            is_user_namespace = not exclude_re.search(namespace_name or "")
+
+            pod_phase_counts[phase] = pod_phase_counts.get(phase, 0) + 1
+            node_pod_counts[node_name] = node_pod_counts.get(node_name, 0) + 1
+            namespace_pod_counts[namespace_name] = namespace_pod_counts.get(namespace_name, 0) + 1
+
+            pod_object_counts["total"] += 1
             if phase == "Running":
-                pod_object_counts["user_running"] += 1
+                pod_object_counts["running"] += 1
+            if is_user_namespace:
+                pod_object_counts["user_total"] += 1
+                if phase == "Running":
+                    pod_object_counts["user_running"] += 1
 
-        restart_count = sum(
-            int(container.get("restartCount") or 0)
-            for container in (status.get("containerStatuses") or [])
-        )
-        if is_user_namespace and restart_count > 0:
-            pod_restart_hotspots.append({
-                "namespace": namespace_name,
-                "name": pod_name,
-                "phase": phase,
-                "restarts": restart_count,
-                "node": node_name,
-            })
+            restart_count = sum(
+                int(container.get("restartCount") or 0)
+                for container in (status.get("containerStatuses") or [])
+            )
+            if is_user_namespace and restart_count > 0:
+                pod_restart_hotspots.append({
+                    "namespace": namespace_name,
+                    "name": pod_name,
+                    "phase": phase,
+                    "restarts": restart_count,
+                    "node": node_name,
+                })
 
-    print(json.dumps({
-        "pod_restart_hotspots": pod_restart_hotspots,
-        "pod_phase_counts": pod_phase_counts,
-        "node_pod_counts": node_pod_counts,
-        "namespace_pod_counts": namespace_pod_counts,
-        "pod_object_counts": pod_object_counts,
-    }))
-    PY
-  register: pod_restart_hotspots_cmd
-  changed_when: false
+        print(json.dumps({
+            "pod_restart_hotspots": pod_restart_hotspots,
+            "pod_phase_counts": pod_phase_counts,
+            "node_pod_counts": node_pod_counts,
+            "namespace_pod_counts": namespace_pod_counts,
+            "pod_object_counts": pod_object_counts,
+        }))
+        PY
+      register: pod_restart_hotspots_cmd
+      changed_when: false
+  always:
+    - name: Remove temporary pod hotspot input file
+      ansible.builtin.file:
+        path: "{{ pod_restart_hotspots_input_file.path }}"
+        state: absent
+      when: pod_restart_hotspots_input_file is defined and (pod_restart_hotspots_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize pod count and restart hotspots
   ansible.builtin.set_fact:
