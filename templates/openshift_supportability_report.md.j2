@@ -16,6 +16,51 @@
 {%- endif -%}
 {%- endmacro %}
 
+{% macro fallback_label(value, empty_label='not-assessed') -%}
+{%- set text = value | default('') | string | trim -%}
+{%- set key = text | upper -%}
+{%- if text == '' -%}
+{{ empty_label }}
+{%- elif key in ['UNKNOWN', 'UNKONWN', 'UNKNWON', 'UNKNONW', 'NOT-DERIVED'] -%}
+not-assessed
+{%- elif key == 'NOT-COLLECTED' -%}
+not-collected
+{%- else -%}
+{{ text }}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro coverage_label(value) -%}
+{%- set key = value | default('unknown') | string | trim | lower -%}
+{%- if key == 'present' -%}
+present
+{%- elif key == 'partial' -%}
+partial; fallback evidence only
+{%- elif key == 'missing' -%}
+not-provided
+{%- elif key == 'not-requested' -%}
+not-requested
+{%- elif key == 'not-applicable' -%}
+not-applicable
+{%- else -%}
+not-assessed
+{%- endif -%}
+{%- endmacro %}
+
+{% macro hygiene_verdict_label(summary) -%}
+{%- set verdict = (summary | default({})).get('verdict', 'unknown') | string | trim | lower -%}
+{%- set count = (summary | default({})).get('candidate_count', 0) | int -%}
+{%- if verdict == 'review-required' -%}
+review-required; {{ count }} candidate file{{ '' if count == 1 else 's' }} need redaction review before broader sharing
+{%- elif verdict == 'supported' -%}
+supported; no filename-based sensitive candidates detected
+{%- elif verdict == 'unknown' -%}
+not-assessed; hygiene scan did not run
+{%- else -%}
+{{ fallback_label(verdict) }}
+{%- endif -%}
+{%- endmacro %}
+
 # OpenShift Cluster Health Report
 
 - Generated at: `{{ supportability_report_payload.metadata.generated_at }}`
@@ -32,15 +77,15 @@
 ### Recommendations
 
 **Findings Summary**
-- Health verdict is `{{ supportability_report_payload.supportability.summary.health_verdict | default('unknown') }}`; supportability verdict is `{{ supportability_report_payload.supportability.summary.supportability_verdict | default('unknown') }}`; remote health posture is `{{ supportability_report_payload.domains.observability.connected_cluster_posture.remote_health_posture | default('not-derived') }}`.
+- Health verdict is `{{ fallback_label(supportability_report_payload.supportability.summary.health_verdict) }}`; supportability verdict is `{{ fallback_label(supportability_report_payload.supportability.summary.supportability_verdict) }}`; remote health posture is `{{ fallback_label(supportability_report_payload.domains.observability.connected_cluster_posture.remote_health_posture) }}`.
 
 {% endif %}
 
-- Overall verdict: `{{ supportability_report_payload.supportability.summary.verdict | default('unknown') }}`
-- Health verdict: `{{ supportability_report_payload.supportability.summary.health_verdict | default('unknown') }}`
-- Supportability verdict: `{{ supportability_report_payload.supportability.summary.supportability_verdict | default('unknown') }}`
-- Reference compliance verdict: `{{ supportability_report_payload.supportability.summary.reference_compliance_verdict | default('unknown') }}`
-- Evidence confidence: `{{ supportability_report_payload.supportability.summary.evidence_confidence | default('unknown') }}`
+- Overall verdict: `{{ fallback_label(supportability_report_payload.supportability.summary.verdict) }}`
+- Health verdict: `{{ fallback_label(supportability_report_payload.supportability.summary.health_verdict) }}`
+- Supportability verdict: `{{ fallback_label(supportability_report_payload.supportability.summary.supportability_verdict) }}`
+- Reference compliance verdict: `{{ fallback_label(supportability_report_payload.supportability.summary.reference_compliance_verdict) }}`
+- Evidence confidence: `{{ fallback_label(supportability_report_payload.supportability.summary.evidence_confidence) }}`
 
 {% if supportability_report_payload.supportability.summary.key_findings | default([]) | length > 0 %}
 ## Key Findings
@@ -577,7 +622,7 @@ This is a condensed support-focused view. The posture-ordered OpenShift report g
 
 | Item | Value |
 | --- | --- |
-| Verdict | `{{ supportability_report_payload.evidence.hygiene_summary.verdict | default('unknown') }}` |
+| Verdict | `{{ hygiene_verdict_label(supportability_report_payload.evidence.hygiene_summary) }}` |
 | Sensitive candidates | `{{ supportability_report_payload.evidence.hygiene_summary.candidate_count | default(0) }}` |
 | Archive files | `{{ supportability_report_payload.evidence.hygiene_summary.archive_file_count | default(0) }}` |
 | Private key candidates | `{{ supportability_report_payload.evidence.hygiene_summary.private_key_candidates | default(0) }}` |
@@ -586,8 +631,8 @@ This is a condensed support-focused view. The posture-ordered OpenShift report g
 | Token candidates | `{{ supportability_report_payload.evidence.hygiene_summary.token_candidates | default(0) }}` |
 | Credential candidates | `{{ supportability_report_payload.evidence.hygiene_summary.credential_candidates | default(0) }}` |
 | Secret-like candidates | `{{ supportability_report_payload.evidence.hygiene_summary.secret_like_candidates | default(0) }}` |
-| Redaction manifest written | `{{ supportability_report_payload.evidence.redaction_outputs.manifest_written | default(false) }}` |
-| Redacted bundle written | `{{ supportability_report_payload.evidence.redaction_outputs.redacted_bundle_written | default(false) }}` |
+| Redaction manifest written | `{% if supportability_report_payload.evidence.redaction_outputs.manifest_written | default(false) %}true{% else %}false; no manifest generated in this run{% endif %}` |
+| Redacted bundle written | `{% if supportability_report_payload.evidence.redaction_outputs.redacted_bundle_written | default(false) %}true{% else %}false; no redacted bundle generated in this run{% endif %}` |
 
 {% if supportability_report_payload.evidence.hygiene_findings | default([]) | length > 0 %}
 ### Evidence Hygiene Findings
@@ -597,12 +642,19 @@ This is a condensed support-focused view. The posture-ordered OpenShift report g
 {% endfor %}
 {% endif %}
 
-{% if supportability_report_payload.evidence.sensitive_candidates | default([]) | length > 0 %}
-### Sensitive Candidate Files
+{% if (supportability_report_payload.evidence.hygiene_summary.candidate_count | default(0) | int) > 0 %}
+### Sensitive Candidate Summary
 
-{% for item in supportability_report_payload.evidence.sensitive_candidates %}
-- `{{ item.category }}` `{{ item.label }}` `{{ item.relative_path }}`: {{ item.reason }}
-{% endfor %}
+Candidate file paths are intentionally omitted from the Markdown report. Use the redaction manifest or redacted bundle workflow for exact paths when that workflow is enabled.
+
+| Category | Count |
+| --- | --- |
+| Private key candidates | `{{ supportability_report_payload.evidence.hygiene_summary.private_key_candidates | default(0) }}` |
+| Kubeconfig candidates | `{{ supportability_report_payload.evidence.hygiene_summary.kubeconfig_candidates | default(0) }}` |
+| Pull-secret candidates | `{{ supportability_report_payload.evidence.hygiene_summary.pull_secret_candidates | default(0) }}` |
+| Token candidates | `{{ supportability_report_payload.evidence.hygiene_summary.token_candidates | default(0) }}` |
+| Credential candidates | `{{ supportability_report_payload.evidence.hygiene_summary.credential_candidates | default(0) }}` |
+| Secret-like candidates | `{{ supportability_report_payload.evidence.hygiene_summary.secret_like_candidates | default(0) }}` |
 {% endif %}
 
 {% if supportability_report_payload.evidence.redaction_guidance | default([]) | length > 0 %}

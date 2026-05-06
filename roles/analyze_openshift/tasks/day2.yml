@@ -135,7 +135,12 @@
           "machine_healthcheck_findings": machine_healthcheck_findings | default([]),
           "compliance_suite_findings": compliance_suite_findings | default([]),
           "backup_posture_findings": backup_posture_findings | default([]),
-          "capability_profile": openshift_report_capability_profile | default({})
+          "capability_profile": (
+            openshift_report_capability_profile_defaults | default({})
+          ) | combine(
+            openshift_report_capability_profile | default({}),
+            recursive=True
+          )
         } | to_json
       }}
 
@@ -4122,7 +4127,8 @@
     day2_posture_data: "{{ day2_posture_payload }}"
     day2_capability_sections_fallback: >-
       {%- set sections = [] -%}
-      {%- for item in (openshift_report_capability_profile | default({}) | dict2items) -%}
+      {%- set resolved_capability_profile = ((openshift_report_capability_profile_defaults | default({})) | combine((openshift_report_capability_profile | default({})), recursive=True)) -%}
+      {%- for item in (resolved_capability_profile | dict2items) -%}
         {%- set cap = item.value if item.value is mapping else {} -%}
         {%- if (cap.get('required', false) | bool) -%}
         {%- set _ = sections.append({

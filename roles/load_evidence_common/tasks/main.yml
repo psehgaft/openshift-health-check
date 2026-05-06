@@ -23,17 +23,6 @@
   changed_when: false
   when: case_bundle_path | default('') | trim | length > 0
 
-- name: Parse case bundle discovery JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ case_bundle_discovery.stdout | default('') }}"
-  register: case_bundle_discovery_parse_cmd
-  changed_when: false
-  when: case_bundle_path | default('') | trim | length > 0
-
 - name: Resolve evidence paths from case bundle
   ansible.builtin.set_fact:
     must_gather_path: "{{ resolved_must_gather_path }}"
@@ -44,8 +33,7 @@
     insights_archive_path: "{{ resolved_insights_archive_path }}"
     sosreport_paths: "{{ resolved_sosreport_paths }}"
   vars:
-    case_bundle_discovery_payload: "{{ (case_bundle_discovery_parse_cmd.stdout | from_json) if (case_bundle_discovery_parse_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'case bundle discovery parser returned no output'} }}"
-    bundle_data: "{{ case_bundle_discovery_payload.data if (case_bundle_discovery_payload.ok | default(false)) else {} }}"
+    bundle_data: "{{ (case_bundle_discovery.stdout | from_json) if (case_bundle_discovery.stdout | default('') | trim | length > 0) else {} }}"
     resolved_must_gather_path: "{{ must_gather_path if (must_gather_path | default('') | trim | length > 0) else (bundle_data.must_gather_path | default('')) }}"
     resolved_cluster_compare_path: "{{ cluster_compare_path if (cluster_compare_path | default('') | trim | length > 0) else (bundle_data.cluster_compare_path | default('')) }}"
     resolved_managed_gates_path: "{{ managed_gates_path if (managed_gates_path | default('') | trim | length > 0) else (bundle_data.managed_gates_path | default('')) }}"
@@ -57,11 +45,13 @@
 
 - name: Validate case bundle discovery JSON
   vars:
-    case_bundle_discovery_payload: "{{ (case_bundle_discovery_parse_cmd.stdout | from_json) if (case_bundle_discovery_parse_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'case bundle discovery parser returned no output'} }}"
+    case_bundle_discovery_payload: "{{ (case_bundle_discovery.stdout | from_json) if (case_bundle_discovery.stdout | default('') | trim | length > 0) else {} }}"
   ansible.builtin.assert:
     that:
-      - case_bundle_discovery_payload.ok | default(false)
-    fail_msg: "Case bundle discovery returned invalid JSON. {{ case_bundle_discovery_payload.error | default('Unknown parse error.') }}"
+      - case_bundle_discovery.rc == 0
+      - case_bundle_discovery.stdout | default('') | trim | length > 0
+      - case_bundle_discovery_payload is mapping
+    fail_msg: "Case bundle discovery returned invalid JSON."
   when: case_bundle_path | default('') | trim | length > 0
 
 - name: Record case bundle in evidence summary
@@ -214,22 +204,11 @@
   changed_when: false
   when: must_gather_path | default('') | trim | length > 0
 
-- name: Parse must-gather evidence JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ must_gather_parse_cmd.stdout | default('') }}"
-  register: must_gather_parse_json_cmd
-  changed_when: false
-  when: must_gather_path | default('') | trim | length > 0
-
 - name: Normalize must-gather evidence data
   vars:
-    must_gather_payload: "{{ (must_gather_parse_json_cmd.stdout | from_json) if (must_gather_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'must-gather parser returned no output'} }}"
+    must_gather_payload: "{{ (must_gather_parse_cmd.stdout | from_json) if (must_gather_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
   ansible.builtin.set_fact:
-    must_gather_inventory: "{{ must_gather_payload.data if (must_gather_payload.ok | default(false)) else {} }}"
+    must_gather_inventory: "{{ must_gather_payload }}"
     evidence_sources: "{{ (evidence_sources | default([])) + [{'name': 'must-gather', 'type': 'archive-directory', 'mode': 'offline', 'path': must_gather_path, 'parser': 'parse_must_gather.py'}] }}"
   when: must_gather_path | default('') | trim | length > 0
 
@@ -239,12 +218,12 @@
   when: must_gather_path | default('') | trim | length > 0
 
 - name: Validate must-gather evidence JSON
-  vars:
-    must_gather_payload: "{{ (must_gather_parse_json_cmd.stdout | from_json) if (must_gather_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'must-gather parser returned no output'} }}"
   ansible.builtin.assert:
     that:
-      - must_gather_payload.ok | default(false)
-    fail_msg: "Must-gather parser returned invalid JSON. {{ must_gather_payload.error | default('Unknown parse error.') }}"
+      - must_gather_parse_cmd.rc == 0
+      - must_gather_inventory is mapping
+      - must_gather_inventory.summary is defined
+    fail_msg: "Must-gather parser returned invalid JSON."
   when: must_gather_path | default('') | trim | length > 0
 
 - name: Parse optional etcd-ocp-diag evidence from must-gather
@@ -257,22 +236,11 @@
   changed_when: false
   when: must_gather_path | default('') | trim | length > 0
 
-- name: Parse optional etcd-ocp-diag JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ etcd_ocp_diag_parse_cmd.stdout | default('') }}"
-  register: etcd_ocp_diag_parse_json_cmd
-  changed_when: false
-  when: must_gather_path | default('') | trim | length > 0
-
 - name: Merge optional etcd-ocp-diag evidence facts
   vars:
-    etcd_ocp_diag_payload: "{{ (etcd_ocp_diag_parse_json_cmd.stdout | from_json) if (etcd_ocp_diag_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'etcd-ocp-diag parser returned no output'} }}"
+    etcd_ocp_diag_payload: "{{ (etcd_ocp_diag_parse_cmd.stdout | from_json) if (etcd_ocp_diag_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
   ansible.builtin.set_fact:
-    etcd_ocp_diag_data: "{{ etcd_ocp_diag_payload.data if (etcd_ocp_diag_payload.ok | default(false)) else {} }}"
+    etcd_ocp_diag_data: "{{ etcd_ocp_diag_payload }}"
   when: must_gather_path | default('') | trim | length > 0
 
 - name: Merge optional etcd-ocp-diag evidence summary
@@ -291,22 +259,11 @@
   changed_when: false
   when: must_gather_path | default('') | trim | length > 0
 
-- name: Parse optional omc JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ omc_parse_cmd.stdout | default('') }}"
-  register: omc_parse_json_cmd
-  changed_when: false
-  when: must_gather_path | default('') | trim | length > 0
-
 - name: Merge optional omc evidence facts
   vars:
-    omc_payload: "{{ (omc_parse_json_cmd.stdout | from_json) if (omc_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'omc parser returned no output'} }}"
+    omc_payload: "{{ (omc_parse_cmd.stdout | from_json) if (omc_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
   ansible.builtin.set_fact:
-    omc_data: "{{ omc_payload.data if (omc_payload.ok | default(false)) else {} }}"
+    omc_data: "{{ omc_payload }}"
   when: must_gather_path | default('') | trim | length > 0
 
 - name: Merge optional omc evidence summary
@@ -333,32 +290,20 @@
   changed_when: false
   when: cluster_compare_path | default('') | trim | length > 0
 
-- name: Parse optional cluster-compare JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ cluster_compare_parse_cmd.stdout | default('') }}"
-  register: cluster_compare_parse_json_cmd
-  changed_when: false
-  when: cluster_compare_path | default('') | trim | length > 0
-
 - name: Merge optional cluster-compare evidence
   vars:
-    cluster_compare_payload: "{{ (cluster_compare_parse_json_cmd.stdout | from_json) if (cluster_compare_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'cluster-compare parser returned no output'} }}"
-  ansible.builtin.set_fact:
-    cluster_compare_data: "{{ cluster_compare_payload.data if (cluster_compare_payload.ok | default(false)) else {} }}"
-    evidence_sources: "{{ evidence_sources + ([cluster_compare_source] if (cluster_compare_payload.ok | default(false)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (cluster_compare_payload.ok | default(false)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['cluster-compare'] if (cluster_compare_payload.ok | default(false)) else [])), 'cluster_compare_path': cluster_compare_path}, recursive=True) }}"
-    evidence_limitations: "{{ (evidence_limitations | default([])) + ([{'area': 'cluster-compare', 'detail': 'cluster-compare evidence was provided but its parser output was not valid JSON: ' ~ (cluster_compare_payload.error | default('unknown parse error'))}] if not (cluster_compare_payload.ok | default(false)) else []) }}"
-  vars:
+    cluster_compare_payload: "{{ (cluster_compare_parse_cmd.stdout | from_json) if (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
     cluster_compare_source:
       name: cluster-compare
       type: report-file
       mode: offline
       path: "{{ cluster_compare_path }}"
       parser: parse_cluster_compare.py
+  ansible.builtin.set_fact:
+    cluster_compare_data: "{{ cluster_compare_payload }}"
+    evidence_sources: "{{ evidence_sources + ([cluster_compare_source] if (cluster_compare_parse_cmd.rc == 0 and (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
+    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (cluster_compare_parse_cmd.rc == 0 and (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['cluster-compare'] if (cluster_compare_parse_cmd.rc == 0 and (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'cluster_compare_path': cluster_compare_path}, recursive=True) }}"
+    evidence_limitations: "{{ evidence_limitations | default([]) }}"
   when: cluster_compare_path | default('') | trim | length > 0
 
 - name: Parse optional inspect evidence
@@ -371,32 +316,20 @@
   changed_when: false
   when: inspect_path | default('') | trim | length > 0
 
-- name: Parse optional inspect JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ inspect_parse_cmd.stdout | default('') }}"
-  register: inspect_parse_json_cmd
-  changed_when: false
-  when: inspect_path | default('') | trim | length > 0
-
 - name: Merge optional inspect evidence
   vars:
-    inspect_payload: "{{ (inspect_parse_json_cmd.stdout | from_json) if (inspect_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'inspect parser returned no output'} }}"
-  ansible.builtin.set_fact:
-    inspect_data: "{{ inspect_payload.data if (inspect_payload.ok | default(false)) else {} }}"
-    evidence_sources: "{{ evidence_sources + ([inspect_source] if (inspect_payload.ok | default(false)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (inspect_payload.ok | default(false)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['inspect'] if (inspect_payload.ok | default(false)) else [])), 'inspect_path': inspect_path}, recursive=True) }}"
-    evidence_limitations: "{{ (evidence_limitations | default([])) + ([{'area': 'inspect parsing', 'detail': 'inspect evidence was provided but its parser output was not valid JSON: ' ~ (inspect_payload.error | default('unknown parse error'))}] if not (inspect_payload.ok | default(false)) else []) }}"
-  vars:
+    inspect_payload: "{{ (inspect_parse_cmd.stdout | from_json) if (inspect_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
     inspect_source:
       name: inspect
       type: resource-directory
       mode: offline
       path: "{{ inspect_path }}"
       parser: parse_inspect.py
+  ansible.builtin.set_fact:
+    inspect_data: "{{ inspect_payload }}"
+    evidence_sources: "{{ evidence_sources + ([inspect_source] if (inspect_parse_cmd.rc == 0 and (inspect_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
+    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (inspect_parse_cmd.rc == 0 and (inspect_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['inspect'] if (inspect_parse_cmd.rc == 0 and (inspect_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'inspect_path': inspect_path}, recursive=True) }}"
+    evidence_limitations: "{{ evidence_limitations | default([]) }}"
   when: inspect_path | default('') | trim | length > 0
 
 - name: Resolve evidence mode
@@ -425,32 +358,20 @@
   changed_when: false
   when: managed_gates_path | default('') | trim | length > 0
 
-- name: Parse optional managed gates JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ managed_gates_parse_cmd.stdout | default('') }}"
-  register: managed_gates_parse_json_cmd
-  changed_when: false
-  when: managed_gates_path | default('') | trim | length > 0
-
 - name: Merge optional managed gates evidence
   vars:
-    managed_gates_payload: "{{ (managed_gates_parse_json_cmd.stdout | from_json) if (managed_gates_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'managed gates parser returned no output'} }}"
-  ansible.builtin.set_fact:
-    managed_gates_data: "{{ managed_gates_payload.data if (managed_gates_payload.ok | default(false)) else {} }}"
-    evidence_sources: "{{ evidence_sources + ([managed_gates_source] if (managed_gates_payload.ok | default(false)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (managed_gates_payload.ok | default(false)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['managed-gates'] if (managed_gates_payload.ok | default(false)) else [])), 'managed_gates_path': managed_gates_path}, recursive=True) }}"
-    evidence_limitations: "{{ (evidence_limitations | default([])) + ([{'area': 'managed-gates', 'detail': 'managed gates evidence was provided but its parser output was not valid JSON: ' ~ (managed_gates_payload.error | default('unknown parse error'))}] if not (managed_gates_payload.ok | default(false)) else []) }}"
-  vars:
+    managed_gates_payload: "{{ (managed_gates_parse_cmd.stdout | from_json) if (managed_gates_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
     managed_gates_source:
       name: managed-gates
       type: report-file
       mode: offline
       path: "{{ managed_gates_path }}"
       parser: parse_managed_gates.py
+  ansible.builtin.set_fact:
+    managed_gates_data: "{{ managed_gates_payload }}"
+    evidence_sources: "{{ evidence_sources + ([managed_gates_source] if (managed_gates_parse_cmd.rc == 0 and (managed_gates_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
+    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (managed_gates_parse_cmd.rc == 0 and (managed_gates_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['managed-gates'] if (managed_gates_parse_cmd.rc == 0 and (managed_gates_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'managed_gates_path': managed_gates_path}, recursive=True) }}"
+    evidence_limitations: "{{ evidence_limitations | default([]) }}"
   when: managed_gates_path | default('') | trim | length > 0
 
 - name: Parse optional sosreport evidence
@@ -464,21 +385,9 @@
   changed_when: false
   when: (sosreport_paths | default([]) | length) > 0
 
-- name: Parse optional sosreport JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ sosreport_parse_cmd.stdout | default('') }}"
-  register: sosreport_parse_json_cmd
-  changed_when: false
-  when: (sosreport_paths | default([]) | length) > 0
-
 - name: Merge optional sosreport evidence
   vars:
-    sosreport_payload: "{{ (sosreport_parse_json_cmd.stdout | from_json) if (sosreport_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'sosreport parser returned no output'} }}"
-    parsed_sosreport_data: "{{ sosreport_payload.data if (sosreport_payload.ok | default(false)) else {} }}"
+    parsed_sosreport_data: "{{ (sosreport_parse_cmd.stdout | from_json) if (sosreport_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
     sosreport_sources: >-
       {{
         (parsed_sosreport_data.reports | default([]))
@@ -487,9 +396,9 @@
       }}
   ansible.builtin.set_fact:
     sosreport_data: "{{ parsed_sosreport_data }}"
-    evidence_sources: "{{ evidence_sources + (sosreport_sources if (sosreport_payload.ok | default(false)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + ((sosreport_sources | length) if (sosreport_payload.ok | default(false)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['sosreport'] if ((sosreport_payload.ok | default(false)) and ((sosreport_sources | length) > 0)) else [])), 'sosreport_count': (parsed_sosreport_data.summary.count | default(0))}, recursive=True) }}"
-    evidence_limitations: "{{ (evidence_limitations | default([])) + ([{'area': 'sosreport', 'detail': 'sosreport evidence was provided but its parser output was not valid JSON: ' ~ (sosreport_payload.error | default('unknown parse error'))}] if not (sosreport_payload.ok | default(false)) else []) }}"
+    evidence_sources: "{{ evidence_sources + (sosreport_sources if (sosreport_parse_cmd.rc == 0 and (sosreport_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
+    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + ((sosreport_sources | length) if (sosreport_parse_cmd.rc == 0 and (sosreport_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['sosreport'] if ((sosreport_parse_cmd.rc == 0 and (sosreport_parse_cmd.stdout | default('') | trim | length > 0)) and ((sosreport_sources | length) > 0)) else [])), 'sosreport_count': (parsed_sosreport_data.summary.count | default(0))}, recursive=True) }}"
+    evidence_limitations: "{{ evidence_limitations | default([]) }}"
   when: (sosreport_paths | default([]) | length) > 0
 
 - name: Parse optional advisor export evidence
@@ -502,32 +411,20 @@
   changed_when: false
   when: advisor_export_path | default('') | trim | length > 0
 
-- name: Parse optional advisor export JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ advisor_export_parse_cmd.stdout | default('') }}"
-  register: advisor_export_parse_json_cmd
-  changed_when: false
-  when: advisor_export_path | default('') | trim | length > 0
-
 - name: Merge optional advisor export evidence
   vars:
-    advisor_export_payload: "{{ (advisor_export_parse_json_cmd.stdout | from_json) if (advisor_export_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'advisor export parser returned no output'} }}"
-  ansible.builtin.set_fact:
-    advisor_export_data: "{{ advisor_export_payload.data if (advisor_export_payload.ok | default(false)) else {} }}"
-    evidence_sources: "{{ evidence_sources + ([advisor_source] if (advisor_export_payload.ok | default(false)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (advisor_export_payload.ok | default(false)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['advisor-export'] if (advisor_export_payload.ok | default(false)) else [])), 'advisor_export_path': advisor_export_path}, recursive=True) }}"
-    evidence_limitations: "{{ (evidence_limitations | default([])) + ([{'area': 'advisor-export', 'detail': 'advisor export evidence was provided but its parser output was not valid JSON: ' ~ (advisor_export_payload.error | default('unknown parse error'))}] if not (advisor_export_payload.ok | default(false)) else []) }}"
-  vars:
+    advisor_export_payload: "{{ (advisor_export_parse_cmd.stdout | from_json) if (advisor_export_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
     advisor_source:
       name: advisor-export
       type: report-file
       mode: offline
       path: "{{ advisor_export_path }}"
       parser: parse_advisor_export.py
+  ansible.builtin.set_fact:
+    advisor_export_data: "{{ advisor_export_payload }}"
+    evidence_sources: "{{ evidence_sources + ([advisor_source] if (advisor_export_parse_cmd.rc == 0 and (advisor_export_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
+    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (advisor_export_parse_cmd.rc == 0 and (advisor_export_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['advisor-export'] if (advisor_export_parse_cmd.rc == 0 and (advisor_export_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'advisor_export_path': advisor_export_path}, recursive=True) }}"
+    evidence_limitations: "{{ evidence_limitations | default([]) }}"
   when: advisor_export_path | default('') | trim | length > 0
 
 - name: Parse optional insights archive evidence
@@ -540,32 +437,20 @@
   changed_when: false
   when: insights_archive_path | default('') | trim | length > 0
 
-- name: Parse optional insights archive JSON
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-      - --stdin
-    stdin: "{{ insights_archive_parse_cmd.stdout | default('') }}"
-  register: insights_archive_parse_json_cmd
-  changed_when: false
-  when: insights_archive_path | default('') | trim | length > 0
-
 - name: Merge optional insights archive evidence
   vars:
-    insights_archive_payload: "{{ (insights_archive_parse_json_cmd.stdout | from_json) if (insights_archive_parse_json_cmd.stdout | default('') | length > 0) else {'ok': false, 'data': {}, 'error': 'insights archive parser returned no output'} }}"
-  ansible.builtin.set_fact:
-    insights_archive_data: "{{ insights_archive_payload.data if (insights_archive_payload.ok | default(false)) else {} }}"
-    evidence_sources: "{{ evidence_sources + ([insights_archive_source] if (insights_archive_payload.ok | default(false)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (insights_archive_payload.ok | default(false)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['insights-archive'] if (insights_archive_payload.ok | default(false)) else [])), 'insights_archive_path': insights_archive_path}, recursive=True) }}"
-    evidence_limitations: "{{ (evidence_limitations | default([])) + ([{'area': 'insights-archive', 'detail': 'insights archive evidence was provided but its parser output was not valid JSON: ' ~ (insights_archive_payload.error | default('unknown parse error'))}] if not (insights_archive_payload.ok | default(false)) else []) }}"
-  vars:
+    insights_archive_payload: "{{ (insights_archive_parse_cmd.stdout | from_json) if (insights_archive_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
     insights_archive_source:
       name: insights-archive
       type: archive-directory
       mode: offline
       path: "{{ insights_archive_path }}"
       parser: parse_insights_archive.py
+  ansible.builtin.set_fact:
+    insights_archive_data: "{{ insights_archive_payload }}"
+    evidence_sources: "{{ evidence_sources + ([insights_archive_source] if (insights_archive_parse_cmd.rc == 0 and (insights_archive_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
+    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (insights_archive_parse_cmd.rc == 0 and (insights_archive_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['insights-archive'] if (insights_archive_parse_cmd.rc == 0 and (insights_archive_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'insights_archive_path': insights_archive_path}, recursive=True) }}"
+    evidence_limitations: "{{ evidence_limitations | default([]) }}"
   when: insights_archive_path | default('') | trim | length > 0
 
 - name: Build evidence coverage facts
