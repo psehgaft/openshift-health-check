@@ -944,6 +944,11 @@
         (1 if ((observability_forwarding_summary.alertmanagerconfigs_without_route_receivers | default(0) | int) > 0) else 0)
         + (1 if ((observability_forwarding_summary.external_alert_receiver_count | default(0) | int) > 0 and not (observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false))) else 0)
         + (1 if ((observability_forwarding_summary.alert_delivery_source_count | default(0) | int) > 0 and (observability_forwarding_summary.external_alert_receiver_count | default(0) | int) == 0) else 0)
+        + (1 if (
+            (require_external_alert_delivery | default(false) | bool)
+            and ((observability_forwarding_summary.alert_delivery_verification_status | default('not-configured')) in ['not-configured', 'missing', 'failed'])
+            and not (observability_forwarding_summary.vendor_managed_alerting_present | default(false))
+          ) else 0)
       }}
     prometheus_query_applicable: "{{ prometheus_evidence_summary.applicable | default((report_mode_resolved | default('live')) == 'live') | bool }}"
     prometheus_query_collected: "{{ prometheus_evidence_summary.collected | default(false) | bool }}"

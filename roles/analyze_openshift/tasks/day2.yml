@@ -132,6 +132,7 @@
           "nodenetworkstates": (analysis_graph.nodenetworkstates | default({})).get('items', []),
           "deschedulers": (analysis_graph.deschedulers | default({})).get('items', []),
           "backup_posture": backup_posture_data | default({}),
+          "platform_health_summary": platform_health_summary | default({}),
           "observability_forwarding_summary": observability_forwarding_summary | default({}),
           "observability_findings": observability_findings | default([]),
           "identity_provider_count": (cluster_profile.identity_provider_count | default(0)),
@@ -479,6 +480,7 @@
     operators = data.get("clusteroperators") or {}
     obs = data.get("observability_forwarding_summary") or {}
     backup_posture = data.get("backup_posture") or {}
+    platform_health_summary = data.get("platform_health_summary") or {}
     groups = data.get("groups") or []
 
     insights = operators.get("insights", {}) or {}
@@ -2213,11 +2215,23 @@
 
     etcd_operator = operators.get("etcd") or {}
     kube_apiserver_operator = operators.get("kube-apiserver") or {}
-    control_plane_runtime_healthy = bool(
+    control_plane_runtime_from_platform = bool(
+        int(platform_health_summary.get("apiserver_readyz_failed") or 0) == 0
+        and int(platform_health_summary.get("apiserver_runtime_degraded") or 0) == 0
+        and int(platform_health_summary.get("etcd_leader_unhealthy") or 0) == 0
+        and int(platform_health_summary.get("etcd_runtime_degraded") or 0) == 0
+    )
+    control_plane_runtime_from_operators = bool(
         str(etcd_operator.get("available") or "").lower() == "true"
         and str(etcd_operator.get("degraded") or "").lower() != "true"
         and str(kube_apiserver_operator.get("available") or "").lower() == "true"
         and str(kube_apiserver_operator.get("degraded") or "").lower() != "true"
+    )
+    control_plane_runtime_operator_signal_available = bool(etcd_operator or kube_apiserver_operator)
+    control_plane_runtime_healthy = (
+        control_plane_runtime_from_platform
+        if platform_health_summary
+        else control_plane_runtime_from_operators
     )
     control_plane_snapshot_evidence_collected = bool(((control_plane_backup_evidence.get("summary") or {}).get("healthy")) or False)
     backup_tooling_present = bool(dataprotectionapplications or backupstoragelocations or schedules or backup_posture.get("successful_backup_count") or backup_posture.get("completed_restore_count"))
@@ -2278,14 +2292,18 @@
                 control_plane_runtime_healthy,
                 control_plane_snapshot_evidence_collected,
             ),
-            f"etcd_available={etcd_operator.get('available', 'Unknown')} etcd_degraded={etcd_operator.get('degraded', 'Unknown')} kube_apiserver_available={kube_apiserver_operator.get('available', 'Unknown')} kube_apiserver_degraded={kube_apiserver_operator.get('degraded', 'Unknown')} snapshot_evidence_collected={control_plane_snapshot_evidence_collected}",
+            f"platformReadyzFailed={platform_health_summary.get('apiserver_readyz_failed', 'Unknown')} platformApiRuntimeDegraded={platform_health_summary.get('apiserver_runtime_degraded', 'Unknown')} platformEtcdLeaderUnhealthy={platform_health_summary.get('etcd_leader_unhealthy', 'Unknown')} platformEtcdRuntimeDegraded={platform_health_summary.get('etcd_runtime_degraded', 'Unknown')} etcd_available={etcd_operator.get('available', 'Unknown')} etcd_degraded={etcd_operator.get('degraded', 'Unknown')} kube_apiserver_available={kube_apiserver_operator.get('available', 'Unknown')} kube_apiserver_degraded={kube_apiserver_operator.get('degraded', 'Unknown')} snapshot_evidence_collected={control_plane_snapshot_evidence_collected}",
             "OpenShift control plane backup and recovery guidance",
             level=cap_level("control_plane_backup_and_recovery_readiness", base_required_level),
         )
         if not control_plane_runtime_healthy:
             add_finding(
                 "prod-day2-control-plane-runtime-unhealthy-for-recovery",
-                "control plane recovery readiness could not be validated because the etcd or kube-apiserver operator is not healthy",
+                (
+                    "control plane recovery readiness could not be validated because API or etcd runtime health signals are degraded"
+                    if platform_health_summary
+                    else "control plane recovery readiness could not be validated because the etcd or kube-apiserver operator is not healthy"
+                ),
                 severity=cap_failure_severity("control_plane_backup_and_recovery_readiness"),
                 source="OpenShift control plane backup and recovery guidance",
             )
