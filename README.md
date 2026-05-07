@@ -65,6 +65,59 @@ Example live OpenShift run:
 ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
+Common OpenShift command variants:
+
+- Default live scan
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml
+```
+- Live scan with a custom profile override file
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e cluster_health_profile_override_source_path=/path/to/custom-openshift-cluster-health-profile.yml
+```
+- Collected-state scan from existing support data
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=collected \
+  -e must_gather_path=/path/to/must-gather.local.123456 \
+  -e inspect_path=/path/to/inspect-dir
+```
+- Resume the last failed OpenShift run
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_run_mode=resume_last_failure
+```
+- Disable HTML and PDF generation
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_generate_html=false \
+  -e report_generate_pdf=false
+```
+
+Most-used OpenShift options:
+
+- `cluster_health_profile_override_source_path`
+  Load a second profile file and merge it onto `inputs/openshift-cluster-health-profile.yml`
+- `report_mode`
+  Use `live`, `collected`, or `auto`
+- `report_run_mode`
+  Use `fresh` or `resume_last_failure`
+- `must_gather_path`
+  Reprocess an extracted `must-gather.local*` directory
+- `inspect_path`
+  Reprocess an extracted `oc adm inspect` directory
+- `case_bundle_path`
+  Reprocess a folder that contains mixed collected-state inputs
+- `report_output_dir`
+  Choose where the report files are written
+- `report_basename`
+  Change the report filename prefix
+- `report_generate_html`
+  Enable or disable HTML output
+- `report_generate_pdf`
+  Enable or disable PDF output
+
 `must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates and Advisor export can run in the same scan when their command prerequisites are available. Node-level `oc debug node/<node>` plus `sosreport` collection is enabled by default for derived symptom nodes, capped by `live_support_sosreport_node_limit`; if no symptom-based targets are found, the collector skips cleanly instead of collecting arbitrary nodes. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
 
 The same OpenShift playbook also supports collected-state reprocessing. If you set any of these inputs, the playbook automatically switches to the collected-state path:
@@ -800,6 +853,27 @@ Use this for OpenShift, SNO, ARO, ROSA, and ROSA HCP:
 ```bash
 . .venv/bin/activate
 ansible-playbook playbooks/openshift_cluster_health_report.yml
+```
+
+Most common OpenShift commands:
+
+```bash
+# live cluster scan
+ansible-playbook playbooks/openshift_cluster_health_report.yml
+
+# collected-state scan
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=collected \
+  -e must_gather_path=/path/to/must-gather.local.123456 \
+  -e inspect_path=/path/to/inspect-dir
+
+# resume the last failed run
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_run_mode=resume_last_failure
+
+# merge a second profile file onto the default OpenShift profile
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e cluster_health_profile_override_source_path=/path/to/custom-openshift-cluster-health-profile.yml
 ```
 
 Collected-state example:
