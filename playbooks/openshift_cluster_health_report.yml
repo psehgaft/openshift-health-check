@@ -91,11 +91,24 @@
         file: "{{ cluster_health_profile_source_path }}"
         name: built_in_cluster_health_profile
 
+    - name: Resolve optional cluster health profile override path
+      ansible.builtin.set_fact:
+        cluster_health_profile_override_source_path_resolved: >-
+          {{
+            ''
+            if (cluster_health_profile_override_source_path | default('') | trim | length) == 0
+            else (
+              cluster_health_profile_override_source_path
+              if (cluster_health_profile_override_source_path | regex_search('^/'))
+              else (playbook_dir ~ '/../' ~ cluster_health_profile_override_source_path)
+            )
+          }}
+
     - name: Load optional cluster health profile override
       ansible.builtin.include_vars:
-        file: "{{ cluster_health_profile_override_source_path }}"
+        file: "{{ cluster_health_profile_override_source_path_resolved }}"
         name: cluster_health_profile_override_payload
-      when: cluster_health_profile_override_source_path | default('') | trim | length > 0
+      when: cluster_health_profile_override_source_path_resolved | default('') | trim | length > 0
 
     - name: Resolve OpenShift cluster health profile
       ansible.builtin.set_fact:
