@@ -2,6 +2,15 @@
 - name: Resolve live support artifact root
   ansible.builtin.set_fact:
     collect_live_support_artifacts_resolved: "{{ collect_live_support_artifacts | default(true) | bool }}"
+    live_support_artifact_timeout_seconds_resolved: "{{ live_support_artifact_timeout_seconds | default(900) | int }}"
+    live_support_artifact_parallelism_resolved: >-
+      {{
+        effective_live_support_artifact_parallelism
+        | default(live_support_artifact_parallelism)
+        | default(collection_parallelism)
+        | default(4)
+        | int
+      }}
     live_support_artifact_root: >-
       {{
         (live_support_artifact_output_dir | default('') | trim)
@@ -283,7 +292,7 @@
           - "{{ live_support_must_gather_root }}"
         output_kind: directory
         output_path: ""
-        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds_resolved | int }}"
       - name: inspect
         enabled: "{{ live_support_collect_inspect_resolved | bool }}"
         argv:
@@ -298,7 +307,7 @@
           - "{{ live_support_inspect_path }}"
         output_kind: directory
         output_path: ""
-        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds_resolved | int }}"
       - name: cluster-compare
         enabled: "{{ live_support_collect_cluster_compare_resolved | bool }}"
         argv: >-
@@ -309,19 +318,19 @@
           }}
         output_kind: file
         output_path: "{{ live_support_cluster_compare_path }}"
-        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds_resolved | int }}"
       - name: managed-gates
         enabled: "{{ live_support_collect_managed_gates_resolved | bool }}"
         argv: "{{ live_support_managed_gates_command_argv | default([]) }}"
         output_kind: file
         output_path: "{{ live_support_managed_gates_path }}"
-        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds_resolved | int }}"
       - name: advisor-export
         enabled: "{{ live_support_collect_advisor_export_resolved | bool }}"
         argv: "{{ live_support_advisor_export_command_argv | default([]) }}"
         output_kind: file
         output_path: "{{ live_support_advisor_export_path }}"
-        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds_resolved | int }}"
       - name: insights-archive
         enabled: "{{ live_support_collect_insights_archive_resolved | bool }}"
         argv:
@@ -333,7 +342,7 @@
           - "{{ live_support_insights_archive_path }}"
         output_kind: none
         output_path: ""
-        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds_resolved | int }}"
       - name: sosreport
         enabled: "{{ live_support_collect_sosreport_resolved | bool }}"
         argv: >-
@@ -349,7 +358,7 @@
                 '--output-dir',
                 live_support_sosreport_output_dir,
                 '--timeout-seconds',
-                live_support_artifact_timeout_seconds | string,
+                live_support_artifact_timeout_seconds_resolved | string,
                 '--node-limit',
                 live_support_sosreport_node_limit | default(0) | string
               ]
@@ -377,13 +386,13 @@
           }}
         output_kind: none
         output_path: ""
-        timeout_seconds: "{{ live_support_artifact_timeout_seconds | int }}"
+        timeout_seconds: "{{ live_support_artifact_timeout_seconds_resolved | int }}"
 
 - name: Write live support collector specification
   ansible.builtin.copy:
     dest: "{{ live_support_artifact_root }}/collector-spec.json"
     mode: "0644"
-    content: "{{ {'parallelism': (effective_live_support_artifact_parallelism | default(live_support_artifact_parallelism) | int), 'collectors': live_support_collectors} | to_nice_json }}"
+    content: "{{ {'parallelism': (live_support_artifact_parallelism_resolved | int), 'collectors': live_support_collectors} | to_nice_json }}"
   when: collect_live_support_artifacts_resolved | bool
 
 - name: Run live support collectors in parallel
@@ -484,7 +493,7 @@
           '--output',
           live_support_control_plane_backup_evidence_path,
           '--timeout-seconds',
-          (live_support_artifact_timeout_seconds | int) | string
+          (live_support_artifact_timeout_seconds_resolved | int) | string
         ]
         + (
           (control_plane_backup_search_paths | default([]))

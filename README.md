@@ -799,6 +799,8 @@ Important runtime settings:
   The runtime now auto-caps this for smaller machines based on local CPU and memory. The default budget targets are `50%` of local CPU and `50%` of local memory. On a 4 vCPU / 8 GiB VM, the effective cap is `2`.
 - `collection_command_timeout_seconds`
   Timeout for each collection command. Default: `300`
+- `live_support_artifact_timeout_seconds`
+  Timeout for each live support artifact collector command. Default: `900`
 - `keep_collection_artifacts`
   If `true`, keep the temporary raw collection file for debugging. Default: `false`
 - `report_run_mode`
