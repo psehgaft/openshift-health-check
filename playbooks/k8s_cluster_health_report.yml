@@ -29,6 +29,34 @@
     top_deprecated_api_limit: 25
     platform_namespaces_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*|kubernetes-.*)$"
     user_namespaces_exclude_regex: "^(default|openshift|openshift-.*|kube-system|kube-public|kube-node-lease|kube-.*|kubernetes-.*)$"
+    kubernetes_cluster_health_profile_source_path: >-
+      {{
+        playbook_dir ~ '/../inputs/' ~ (
+          'aks-cluster-health-profile.yml'
+          if (provider_family | default('generic')) == 'aks'
+          else (
+            'eks-cluster-health-profile.yml'
+            if (provider_family | default('generic')) == 'eks'
+            else (
+              'gke-cluster-health-profile.yml'
+              if (provider_family | default('generic')) == 'gke'
+              else (
+                'rancher-cluster-health-profile.yml'
+                if (provider_family | default('generic')) == 'rancher'
+                else (
+                  'minikube-cluster-health-profile.yml'
+                  if (provider_family | default('generic')) == 'minikube'
+                  else (
+                    'development-k8s-cluster-health-profile.yml'
+                    if (cluster_profile_mode | default('production')) == 'development'
+                    else 'kubernetes-cluster-health-profile.yml'
+                  )
+                )
+              )
+            )
+          )
+        )
+      }}
     kubernetes_report_capability_profile:
       namespace_network_policy_baseline:
         required: true
@@ -271,6 +299,15 @@
         notes: "Managed or provider-backed clusters should expose enough node-pool, zone, and provider metadata for capacity and resilience review."
         docs: "https://kubernetes.io/docs/reference/labels-annotations-taints/"
   tasks:
+    - name: Load canonical Kubernetes cluster health profile
+      ansible.builtin.include_vars:
+        file: "{{ kubernetes_cluster_health_profile_source_path }}"
+        name: canonical_kubernetes_cluster_health_profile
+
+    - name: Apply canonical Kubernetes cluster health profile
+      ansible.builtin.set_fact:
+        kubernetes_report_capability_profile: "{{ canonical_kubernetes_cluster_health_profile.kubernetes_report_capability_profile }}"
+
     - name: Run Kubernetes cluster health report scaffold
       block:
         - name: Define Kubernetes run checkpoint paths
@@ -309,20 +346,12 @@
           register: report_resume_manifest_raw
           when: report_run_mode | default('fresh') == 'resume_last_failure'
 
-        - name: Parse Kubernetes resume manifest JSON
-          ansible.builtin.command:
-            argv:
-              - python3
-              - "{{ playbook_dir }}/../scripts/load_json_payload.py"
-              - --stdin
-            stdin: "{{ report_resume_manifest_raw.content | b64decode }}"
-          register: report_resume_manifest_parse_cmd
-          changed_when: false
-          when: report_run_mode | default('fresh') == 'resume_last_failure'
-
         - name: Decode Kubernetes resume manifest
           ansible.builtin.set_fact:
-            report_resume_manifest_parse: "{{ (report_resume_manifest_parse_cmd.stdout | from_json) if (report_resume_manifest_parse_cmd is defined and (report_resume_manifest_parse_cmd.stdout | default('') | length > 0)) else {'ok': false, 'data': {}, 'error': 'resume manifest parser returned no output'} }}"
+            report_resume_manifest_parse:
+              ok: true
+              data: "{{ report_resume_manifest_raw.content | b64decode | from_json }}"
+              error: ""
           when: report_run_mode | default('fresh') == 'resume_last_failure'
 
         - name: Set Kubernetes resume manifest data

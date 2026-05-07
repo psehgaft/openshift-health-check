@@ -3,13 +3,26 @@
   vars:
     base_graph: >-
       {{
-        analysis_graph_overlay
-        | default(collected_resource_graph | default({}))
+        (
+          analysis_graph_overlay
+          | default(collected_resource_graph | default({}))
+        )
+        | to_json
+        | from_json
+      }}
+    support_resources: >-
+      {{
+        (
+          live_support_data.resources
+          | default(collected_support_resources | default({}))
+        )
+        | to_json
+        | from_json
       }}
     merged_graph: >-
       {{
         (base_graph | default({}))
-        | combine((live_support_data.resources | default(collected_support_resources | default({}))), recursive=True)
+        | combine((support_resources | default({})), recursive=True)
       }}
     merged_sources: >-
       {{
@@ -43,7 +56,7 @@
           }, recursive=True)
       }}
   ansible.builtin.set_fact:
-    openshift_analysis_graph: "{{ openshift_analysis_graph_payload }}"
+    openshift_analysis_graph: "{{ openshift_analysis_graph_payload | to_json | from_json }}"
     openshift_analysis_graph_summary:
-      sources: "{{ openshift_analysis_graph_payload.source_summary.sources | default([]) }}"
-      resource_counts: "{{ openshift_analysis_graph_payload.resource_counts | default({}) }}"
+      sources: "{{ openshift_analysis_graph_payload.source_summary.sources | default([]) | to_json | from_json }}"
+      resource_counts: "{{ openshift_analysis_graph_payload.resource_counts | default({}) | to_json | from_json }}"

@@ -15,15 +15,14 @@ EXPECTED_SECTIONS = [
     "Platform Health",
     "Node Health And Capacity",
     "Backup And Disaster Recovery",
-    "Networking Architecture And Application Access",
+    "Application Access And Network Isolation",
     "Observability",
     "Security And Governance",
     "Workload Health",
     "Platform Architecture And Lifecycle",
-    "Cluster Capacity Snapshot",
-    "Operations Maturity",
+    "Capacity Planning Snapshot",
+    "Declarative Operations",
     "Container Platform Adoption And Release Engineering",
-    "Workload Capability Extensions",
     "Day 2 Production Readiness",
 ]
 
@@ -32,6 +31,22 @@ REQUIRED_SUBSECTIONS = [
     "### Recommendations",
     "### Findings",
 ]
+
+POSTURE_SECTIONS = {
+    "Evidence And Supportability",
+    "Platform Health",
+    "Node Health And Capacity",
+    "Backup And Disaster Recovery",
+    "Application Access And Network Isolation",
+    "Observability",
+    "Security And Governance",
+    "Workload Health",
+    "Platform Architecture And Lifecycle",
+    "Capacity Planning Snapshot",
+    "Declarative Operations",
+    "Container Platform Adoption And Release Engineering",
+    "Day 2 Production Readiness",
+}
 
 FORBIDDEN_PATTERNS = [
     (r"\{% if false %\}", "disabled legacy blocks must be removed"),
@@ -92,6 +107,8 @@ def main() -> int:
         end = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines) + 1
         block = "\n".join(lines[start - 1 : end - 1])
         missing = [heading for heading in REQUIRED_SUBSECTIONS if heading not in block]
+        if title in POSTURE_SECTIONS and "### Operating Questions" not in block:
+            missing.append("### Operating Questions")
         if missing:
             fail(f"{title!r} at line {start} missing {', '.join(missing)}")
 

@@ -36,15 +36,18 @@ def main():
     splunk_present = bool(crd_has("enterprise.splunk.com") or crd_has("monitoring.splunk.com") or namespace_has("splunk") or workload_has_any(["splunk-otel-collector", "splunk-connect-for-kubernetes", "splunk-cluster-receiver", "splunk-kubernetes-objects", "splunk-enterprise", "splunk-indexer", "splunk-search-head"]))
     loki_present = bool((data.get("lokistacks") or []) or crd_has("loki.grafana.com") or namespace_has("openshift-logging") or namespace_has("logging-loki"))
     metrics_vendors = []
+    log_vendors = []
     if dynatrace_present:
         metrics_vendors.append("dynatrace")
+        log_vendors.append("dynatrace")
     if datadog_present:
         metrics_vendors.append("datadog")
+        log_vendors.append("datadog")
     if appdynamics_present:
         metrics_vendors.append("appdynamics")
     if splunk_present:
         metrics_vendors.append("splunk")
-    log_vendors = list(metrics_vendors)
+        log_vendors.append("splunk")
     if loki_present:
         log_vendors.append("loki")
     print(json.dumps({"vendor_managed_metrics_forwarding_present": len(metrics_vendors) > 0, "vendor_managed_log_forwarding_present": len(log_vendors) > 0, "metrics_vendor_names": metrics_vendors, "log_vendor_names": log_vendors}))

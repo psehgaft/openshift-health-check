@@ -96,6 +96,7 @@ assert payload["domains"]["security_and_governance"]["summary"]["recommendation"
 assert payload["domains"]["production_day2_readiness"]["day2_production_readiness_summary"]["status"] in ["CRITICAL", "WARNING", "HEALTHY", "UNKNOWN"]
 assert payload["domains"]["production_day2_readiness"]["day2_production_readiness_summary"]["recommendation"]
 assert isinstance(payload["domains"]["production_day2_readiness"]["day2_production_readiness_summary"]["top_blockers"], list)
+assert "declarative_operations_summary" in payload["domains"]["production_day2_readiness"]
 assert payload["domains"]["production_day2_readiness"]["operations_recommendations"]
 assert payload["domains"]["security_and_governance"]["compliance"]["operator_summary"]["present"] is True
 assert int(payload["domains"]["security_and_governance"]["compliance"]["operator_summary"]["scan_count"]) == 2
@@ -124,17 +125,13 @@ PY
 rg -q '^# OpenShift Cluster Health Report' "${report_md}"
 rg -q 'Overall verdict: `unsupported-risk`' "${report_md}"
 rg -q '### Failed PipelineRuns' "${report_md}"
-rg -q '### Day 2 Posture' "${report_md}"
+rg -q '^## Day 2 Production Readiness' "${report_md}"
 rg -q '## Node Health And Capacity' "${report_md}"
-rg -q '## Reference Compliance' "${report_md}"
-rg -q '### Advisor' "${report_md}"
-rg -q '## Upgrade And Lifecycle Risk' "${report_md}"
-rg -q '| Upgrade readiness status |' "${report_md}"
+rg -q '^## Platform Architecture And Lifecycle' "${report_md}"
 rg -q '## Observability' "${report_md}"
-rg -q '| Observability posture status |' "${report_md}"
 rg -q '## Security And Governance' "${report_md}"
-rg -q '| Security posture status |' "${report_md}"
-rg -q '## Production Day 2 Readiness' "${report_md}"
+rg -q '### Individual Capability Sections' "${report_md}"
+rg -q '| Capability assessment state |' "${report_md}"
 rg -q '| Top blockers |' "${report_md}"
 rg -q '### Product Evidence' "${report_md}"
 rg -q '| AI | `True` |' "${report_md}"

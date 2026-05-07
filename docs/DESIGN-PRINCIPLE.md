@@ -4,9 +4,8 @@ This guide explains how the cluster health report in this repo is designed and w
 
 If you are new here, read the docs in this order:
 
-1. Start with [README.md](README.md) for setup and basic usage.
+1. Start with [README.md](../README.md) for setup and basic usage.
 2. Read this file to understand the design.
-3. Then use [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md) as a practical guide when reading the OpenShift report.
 
 The original design started from OpenShift operations, but the repo has grown into something broader:
 
@@ -45,28 +44,27 @@ The goal is to let these tools enrich the report, not split the repo into separa
 
 ## Current Report Model
 
-The OpenShift report now follows one clear order, from urgent risk to overall readiness:
+The OpenShift report now follows one order, from immediate risk to broader readiness:
 
-1. `P1` Supportability
-2. `P2` Core platform health
-3. `P3` Platform architecture and lifecycle
-4. `P4` Networking architecture
-5. `P5` Security and compliance
-6. `P6` Observability
-7. `P7` Backup and disaster recovery
-8. `P8` Node health and capacity planning
-9. `P9` Workload health and deployment hygiene
-10. `P10` Operations and lifecycle maturity
-11. `P11` Container platform adoption and release engineering
-12. `P12` Workload capability extensions
-13. `P13` Day 2 production readiness
+1. Evidence And Supportability
+2. Platform Health
+3. Node Health And Capacity
+4. Backup And Disaster Recovery
+5. Application Access And Network Isolation
+6. Observability
+7. Security And Governance
+8. Workload Health
+9. Platform Architecture And Lifecycle
+10. Capacity Planning Snapshot
+11. Declarative Operations
+12. Container Platform Adoption And Release Engineering
+13. Day 2 Production Readiness
 
-This split keeps the later sections easier to understand:
+This keeps the report readable:
 
-- `P10` covers daily operations
-- `P11` covers delivery and platform adoption
-- `P12` covers workload extensions, mainly Virtualization and AI
-- `P13` is the final readiness roll-up
+- early sections answer whether the cluster is safe to operate right now
+- middle sections explain resilience, security, and workload quality
+- later sections cover operating model, delivery practice, and production-readiness roll-up
 
 Each posture section should start with a short recommendation and summary before the detailed tables.
 
@@ -80,7 +78,7 @@ More importantly, every major posture section should answer the same five questi
 
 That is the section contract for this repo. The report should behave like a practical remediation guide, not just a status dump.
 
-In the current template, that contract is reflected through the recurring section structure:
+In the current template, that contract shows up as a recurring section structure:
 
 - a short leadership-oriented summary
 - evidence-backed findings
@@ -88,9 +86,9 @@ In the current template, that contract is reflected through the recurring sectio
 - a suggested owner
 - a clear completion signal such as `Done When`
 
-If a new section does not help a reader answer those five questions, it is incomplete even if the raw evidence is technically correct.
+If a section does not help the reader answer those five questions, it is incomplete even if the evidence is technically correct.
 
-If you want the short version of that review flow, use [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md).
+If you want the short version of that review flow, start with the first three report sections and move down only after supportability and platform health look trustworthy.
 
 ## Supported Cluster Types
 

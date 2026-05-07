@@ -66,6 +66,7 @@
           "clustersecretstores": (analysis_graph.clustersecretstores | default({})).get('items', []),
           "secretstores": (analysis_graph.secretstores | default({})).get('items', []),
           "externalsecrets": (analysis_graph.externalsecrets | default({})).get('items', []),
+          "secretproviderclasses": (analysis_graph.secretproviderclasses | default({})).get('items', []),
           "namespaces": (analysis_graph.namespaces | default({})).get('items', []),
           "groups": (analysis_graph.groups | default({})).get('items', []),
           "clusterlogforwarders": (analysis_graph.clusterlogforwarders | default({})).get('items', []),
@@ -103,10 +104,14 @@
           "noobaas": (analysis_graph.noobaas | default({})).get('items', []),
           "kubevirts": (analysis_graph.kubevirts | default({})).get('items', []),
           "hyperconvergeds": (analysis_graph.hyperconvergeds | default({})).get('items', []),
+          "ssps": (analysis_graph.ssps | default({})).get('items', []),
+          "cdis": (analysis_graph.cdis | default({})).get('items', []),
+          "datavolumes": (analysis_graph.datavolumes | default({})).get('items', []),
           "virtualmachines": (analysis_graph.virtualmachines | default({})).get('items', []),
           "virtualmachineinstances": (analysis_graph.virtualmachineinstances | default({})).get('items', []),
           "datascienceclusters": (analysis_graph.datascienceclusters | default({})).get('items', []),
           "dscinitializations": (analysis_graph.dscinitializations | default({})).get('items', []),
+          "icp4aclusters": (analysis_graph.icp4aclusters | default({})).get('items', []),
           "notebooks": (analysis_graph.notebooks | default({})).get('items', []),
           "servingruntimes": (analysis_graph.servingruntimes | default({})).get('items', []),
           "inferenceservices": (analysis_graph.inferenceservices | default({})).get('items', []),
@@ -136,10 +141,7 @@
           "compliance_suite_findings": compliance_suite_findings | default([]),
           "backup_posture_findings": backup_posture_findings | default([]),
           "capability_profile": (
-            openshift_report_capability_profile_defaults | default({})
-          ) | combine(
-            openshift_report_capability_profile | default({}),
-            recursive=True
+            (cluster_health_profile | default({})).get('capabilities', {})
           )
         } | to_json
       }}
@@ -193,6 +195,7 @@
     catalogsources = data.get("catalogsources") or []
     clustercatalogs = data.get("clustercatalogs") or []
     updateservices = data.get("updateservices") or []
+    subscriptions = data.get("subscriptions") or []
     control_plane_backup_evidence = data.get("control_plane_backup_evidence") or {}
     nodes = data.get("nodes") or []
     uwm = data.get("user_workload_monitoring_config") or {}
@@ -297,10 +300,6 @@
         return [component_labels.get(item, item) for item in items]
 
     etcd_encryption_detail_text = format_etcd_encryption_details()
-    platform_encryption_at_rest_detail_text = (
-        "validated_scope=etcd_api_data "
-        f"{etcd_encryption_detail_text}"
-    )
     proxy_spec = proxy_config.get("spec") or {}
     image_spec = image_config.get("spec") or {}
     cluster_proxy_configured = bool(proxy_spec.get("httpProxy") or proxy_spec.get("httpsProxy"))
@@ -355,7 +354,7 @@
     ])
     disconnected_clustercatalog_count = len([
         item for item in clustercatalogs
-        if not is_public_image_ref(((((item.get("spec") or {}).get("source") or {}).get("image") or {}).get("ref"))
+        if not is_public_image_ref((((item.get("spec") or {}).get("source") or {}).get("image") or {}).get("ref"))
     ])
     public_catalogsource_count = len([
         item for item in catalogsources
@@ -363,7 +362,7 @@
     ])
     public_clustercatalog_count = len([
         item for item in clustercatalogs
-        if is_public_image_ref(((((item.get("spec") or {}).get("source") or {}).get("image") or {}).get("ref"))
+        if is_public_image_ref((((item.get("spec") or {}).get("source") or {}).get("image") or {}).get("ref"))
     ])
     release_image = str((((clusterversion.get("status") or {}).get("desired") or {}).get("image") or "")).strip()
     release_image_mirrored = bool(release_image) and not is_public_image_ref(release_image)
@@ -380,13 +379,13 @@
     )
 
     argocds = data.get("argocds") or []
-    subscriptions = data.get("subscriptions") or []
     templates = data.get("templates") or []
     gitops_apps = data.get("gitops_applications") or []
     gitops_projects = data.get("gitops_appprojects") or []
     clustersecretstores = data.get("clustersecretstores") or []
     secretstores = data.get("secretstores") or []
     externalsecrets = data.get("externalsecrets") or []
+    secretproviderclasses = data.get("secretproviderclasses") or []
     clusterautoscalers = data.get("clusterautoscalers") or []
     hostedclusters = data.get("hostedclusters") or []
     nodepools = data.get("nodepools") or []
@@ -450,10 +449,14 @@
     noobaas = data.get("noobaas") or []
     kubevirts = data.get("kubevirts") or []
     hyperconvergeds = data.get("hyperconvergeds") or []
+    ssps = data.get("ssps") or []
+    cdis = data.get("cdis") or []
+    datavolumes = data.get("datavolumes") or []
     virtualmachines = data.get("virtualmachines") or []
     virtualmachineinstances = data.get("virtualmachineinstances") or []
     datascienceclusters = data.get("datascienceclusters") or []
     dscinitializations = data.get("dscinitializations") or []
+    icp4aclusters = data.get("icp4aclusters") or []
     notebooks = data.get("notebooks") or []
     servingruntimes = data.get("servingruntimes") or []
     inferenceservices = data.get("inferenceservices") or []
@@ -1272,6 +1275,28 @@
         len(storageclusters) > 0
         and (len(cephclusters) > 0 or len(noobaas) > 0)
     )
+    cp4ba_operator_subscription_present = "ibm-cp4a-operator" in subscription_packages
+    cp4ba_namespace_present = bool(
+        any(
+            ("cp4ba" in name or "ibm-baw" in name or "ibm-ba" in name)
+            for name in namespace_names
+        )
+    )
+    cp4ba_crd_present = crd_has("icp4aclusters.icp4a.ibm.com")
+    ready_icp4aclusters = [
+        item for item in icp4aclusters
+        if (
+            has_true_condition(item, "Ready", "Available", "Successful", "Completed")
+            or status_text(item, "phase").lower() in {"ready", "available", "successful", "completed", "running", "deployed"}
+        ) and not has_problem_condition(item) and not has_problem_status(item)
+    ]
+    ibm_cloud_pak_business_automation_present = bool(
+        len(icp4aclusters) > 0
+        or cp4ba_operator_subscription_present
+        or cp4ba_namespace_present
+        or cp4ba_crd_present
+    )
+    ibm_cloud_pak_business_automation_healthy = bool(len(ready_icp4aclusters) > 0)
     virtualization_operator_subscription_present = "kubevirt-hyperconverged" in subscription_packages
     virtualization_namespace_present = "openshift-cnv" in namespace_names
     virtualization_platform_present = bool(len(kubevirts) > 0 or len(hyperconvergeds) > 0)
@@ -1548,8 +1573,11 @@
         value = capability_profile.get(key) or {}
         return value if isinstance(value, dict) else {}
 
+    def cap_enabled(key):
+        return bool(cap(key).get("enabled", True))
+
     def cap_required(key):
-        return bool(cap(key).get("required", False))
+        return cap_enabled(key) and bool(cap(key).get("required", False))
 
     def cap_expected_state(key, fallback="present"):
         value = str(cap(key).get("expected_state") or fallback).strip().lower()
@@ -1647,6 +1675,7 @@
             "OpenShift AAP footprint": "openshift_aap",
             "OpenShift KEDA custom metrics footprint": "openshift_custom_metrics_autoscaler",
             "OpenShift Data Foundation footprint": "openshift_data_foundation",
+            "IBM Cloud Pak for Business Automation footprint": "ibm_cloud_pak_business_automation",
             "OpenShift Virtualization footprint": "openshift_virtualization",
             "OpenShift AI footprint": "openshift_ai",
             "Service mesh control plane footprint": "service_mesh_control_plane",
@@ -1660,6 +1689,7 @@
             "Team project onboarding controls": "multi_tenant_namespace_governance",
             "Cost management operator configuration": "cost_management_operator",
             "External secrets integration": "external_secrets_operator",
+            "CyberArk Conjur secrets management footprint": "cyberark_conjur_secrets_management",
             "User workload monitoring enabled": "user_workload_metrics_monitoring",
             "Grafana dashboard inventory": "grafana_metrics_dashboards",
             "Persistent cluster monitoring storage": "persistent_monitoring_storage",
@@ -1679,7 +1709,6 @@
             "Disconnected installation image sources": "disconnected_cluster_image_sources",
             "IPsec encryption enabled": "ovn_ipsec_encryption",
             "etcd encryption enabled": "etcd_encryption",
-            "Data-at-rest encryption posture": "platform_encryption_at_rest",
             "Cluster proxy configuration": "cluster_proxy_configuration",
             "Custom trust bundle configuration": "custom_ca_trust_bundle",
             "Application external private registry usage": "workloads_using_external_private_registries",
@@ -1713,6 +1742,7 @@
             "prod-day2-gitops-repo-source-missing": "declarative_gitops_operations",
             "prod-day2-gitops-automated-sync-missing": "declarative_gitops_operations",
             "prod-day2-external-secrets-missing": "external_secrets_operator",
+            "prod-day2-cyberark-conjur-secrets-management-missing": "cyberark_conjur_secrets_management",
             "prod-day2-user-workload-monitoring-disabled": "user_workload_metrics_monitoring",
             "prod-day2-grafana-dashboards-missing": "grafana_metrics_dashboards",
             "prod-day2-monitoring-persistence-missing": "persistent_monitoring_storage",
@@ -1736,8 +1766,6 @@
             "prod-day2-ipsec-not-enabled": "ovn_ipsec_encryption",
             "prod-day2-etcd-encryption-not-enabled": "etcd_encryption",
             "prod-day2-etcd-encryption-rollout-incomplete": "etcd_encryption",
-            "prod-day2-encryption-at-rest-not-enabled": "platform_encryption_at_rest",
-            "prod-day2-encryption-at-rest-rollout-incomplete": "platform_encryption_at_rest",
             "prod-day2-proxy-configuration-missing": "cluster_proxy_configuration",
             "prod-day2-custom-ca-trust-missing": "custom_ca_trust_bundle",
             "prod-day2-external-private-registry-missing": "workloads_using_external_private_registries",
@@ -1778,6 +1806,7 @@
             "prod-day2-namespace-network-policy-baseline-missing": "namespace_network_policy_baseline",
             "prod-day2-namespace-egress-controls-missing": "namespace_egress_controls",
             "prod-day2-openshift-data-foundation-missing": "openshift_data_foundation",
+            "prod-day2-ibm-cloud-pak-business-automation-missing": "ibm_cloud_pak_business_automation",
             "prod-day2-openshift-virtualization-missing": "openshift_virtualization",
             "prod-day2-openshift-ai-missing": "openshift_ai",
             "prod-day2-image-registry-policy-governance-missing": "image_registry_policy_governance",
@@ -1796,18 +1825,14 @@
         capability_key = capability_key if capability_key is not None else finding_capability_key(issue, source)
         if capability_key and not cap_required(capability_key):
             return
-        docs = docs_for_capability(capability_key) if capability_key else ""
-        recommendation = detail
-        if docs:
-            recommendation = f"{detail}. Docs: {docs}"
         findings.append({
             "issue": issue,
             "detail": detail,
             "severity": severity,
             "source": source,
             "capability": capability_key,
-            "docs": docs,
-            "recommended_action": recommendation,
+            "docs": docs_for_capability(capability_key) if capability_key else "",
+            "recommended_action": detail,
         })
 
     gitops_present = bool(argocds or gitops_apps or gitops_projects)
@@ -1920,6 +1945,78 @@
             ),
             severity=cap_failure_severity("external_secrets_operator"),
             source="external secrets integration guidance",
+        )
+
+    conjur_namespace_present = any(
+        name in namespace_names
+        for name in {
+            "conjur",
+            "conjur-server",
+            "cyberark-conjur",
+        }
+    )
+    conjur_workload_present = any_keyword(
+        [
+            "conjur",
+            "conjur-oss",
+            "conjur-follower",
+            "conjur-appliance",
+            "authn-k8s",
+            "conjur-authn",
+            "secretless",
+            "secrets-provider-for-k8s",
+            "conjur-csi-provider",
+        ],
+        all_workload_blobs,
+    )
+    conjur_secretproviderclass_resources = [
+        item for item in secretproviderclasses
+        if (
+            str((((item.get("spec") or {}).get("provider")) or "")).strip().lower() == "conjur"
+            or "conjur.org" in json.dumps(((item.get("spec") or {}).get("parameters")) or {}).lower()
+            or "cyberark" in json.dumps(((item.get("spec") or {}).get("parameters")) or {}).lower()
+        )
+    ]
+    conjur_secretproviderclass_present = len(conjur_secretproviderclass_resources) > 0
+    cyberark_conjur_secrets_management_present = bool(
+        conjur_workload_present
+        or conjur_secretproviderclass_present
+        or conjur_namespace_present
+    )
+    cyberark_conjur_secrets_management_healthy = bool(
+        conjur_workload_present
+        or conjur_secretproviderclass_present
+    )
+    add_check(
+        "CyberArk Conjur secrets management footprint",
+        cap_status_for_presence(
+            "cyberark_conjur_secrets_management",
+            cyberark_conjur_secrets_management_present,
+            cyberark_conjur_secrets_management_healthy,
+        ),
+        (
+            f"conjur_namespaces={conjur_namespace_present} "
+            f"conjur_workload_present={conjur_workload_present} "
+            f"conjur_secretproviderclasses={len(conjur_secretproviderclass_resources)}"
+        ),
+        "CyberArk Conjur workload and Secrets Provider inventory",
+        level=cap_level("cyberark_conjur_secrets_management", "informational"),
+        scored=False,
+        capability_key="cyberark_conjur_secrets_management",
+    )
+    if cap_required("cyberark_conjur_secrets_management") and not cyberark_conjur_secrets_management_present:
+        add_finding(
+            "prod-day2-cyberark-conjur-secrets-management-missing",
+            "no CyberArk Conjur namespace, workload, or Conjur-backed SecretProviderClass footprint was detected",
+            severity=cap_failure_severity("cyberark_conjur_secrets_management"),
+            source="CyberArk Conjur workload and Secrets Provider inventory",
+        )
+    elif cap_required("cyberark_conjur_secrets_management") and not cyberark_conjur_secrets_management_healthy:
+        add_finding(
+            "prod-day2-cyberark-conjur-secrets-management-missing",
+            "partial CyberArk Conjur signals were found, but no Conjur workload footprint or Conjur-backed SecretProviderClass was detected to demonstrate an active secrets-management path",
+            severity=cap_failure_severity("cyberark_conjur_secrets_management"),
+            source="CyberArk Conjur workload and Secrets Provider inventory",
         )
 
     add_check(
@@ -2053,7 +2150,7 @@
     user_remote_write = int(obs.get("external_user_workload_metrics_remote_write_count") or 0)
     add_check(
         "Cluster metrics remote write",
-        cap_status_for_presence("cluster_metrics_remote_write", cluster_remote_write_total > 0 or vendor_managed_metrics_forwarding_present, cluster_remote_write > 0 or vendor_managed_metrics_forwarding_present),
+        cap_status_for_presence("cluster_metrics_remote_write", cluster_remote_write_total > 0 or vendor_metrics_forwarding_present, cluster_remote_write > 0 or vendor_metrics_forwarding_present),
         (
             f"cluster_state={obs.get('cluster_metrics_delivery_state') or 'not-configured'} "
             f"cluster_remote_write_total={cluster_remote_write_total} "
@@ -2061,20 +2158,20 @@
             f"user_workload_state={obs.get('user_workload_metrics_delivery_state') or 'not-configured'} "
             f"user_workload_remote_write_total={user_remote_write_total} "
             f"user_workload_remote_write_external={user_remote_write} "
-            f"vendor_managed={vendor_managed_metrics_forwarding_present} "
+            f"vendor_managed={vendor_metrics_forwarding_present} "
             f"vendors={','.join(vendor_metrics_forwarding_names) if vendor_metrics_forwarding_names else 'none'}"
         ),
         "Red Hat monitoring + vendor monitoring guidance",
         level=cap_level("cluster_metrics_remote_write", telemetry_level),
     )
-    if cap_required("cluster_metrics_remote_write") and cluster_remote_write_total == 0 and not vendor_managed_metrics_forwarding_present:
+    if cap_required("cluster_metrics_remote_write") and cluster_remote_write_total == 0 and not vendor_metrics_forwarding_present:
         add_finding(
             "prod-day2-cluster-metrics-remote-write-missing",
             "cluster-monitoring-config does not define any prometheusK8s.remoteWrite target and no vendor-managed metrics forwarding evidence was detected for cluster metrics export",
             severity=cap_failure_severity("cluster_metrics_remote_write"),
             source="Red Hat monitoring + vendor monitoring guidance",
         )
-    elif cap_required("cluster_metrics_remote_write") and cluster_remote_write == 0 and not vendor_managed_metrics_forwarding_present:
+    elif cap_required("cluster_metrics_remote_write") and cluster_remote_write == 0 and not vendor_metrics_forwarding_present:
         add_finding(
             "prod-day2-cluster-metrics-remote-write-missing",
             "prometheusK8s.remoteWrite is configured but all detected cluster metrics targets appear cluster-local only, and no vendor-managed metrics forwarding evidence was detected",
@@ -2114,8 +2211,8 @@
             source="AlertmanagerConfig and monitoring alert delivery inventory",
         )
 
-    etcd_operator = clusteroperators.get("etcd") or {}
-    kube_apiserver_operator = clusteroperators.get("kube-apiserver") or {}
+    etcd_operator = operators.get("etcd") or {}
+    kube_apiserver_operator = operators.get("kube-apiserver") or {}
     control_plane_runtime_healthy = bool(
         str(etcd_operator.get("available") or "").lower() == "true"
         and str(etcd_operator.get("degraded") or "").lower() != "true"
@@ -2258,6 +2355,7 @@
             source="ODF DR topology and protected workload inventory",
         )
 
+    acm_managed = bool(klusterlets or managedclusteraddons or acm_agent_namespaces)
     acm_dr_present = bool(secondary_site_dr_present and (acm_registration_present or acm_managed))
     acm_dr_healthy = bool(
         acm_dr_present
@@ -2820,32 +2918,6 @@
         )
 
     add_check(
-        "Data-at-rest encryption posture",
-        cap_status_for_presence("platform_encryption_at_rest", etcd_encryption, etcd_encryption_complete),
-        platform_encryption_at_rest_detail_text,
-        "OpenShift APIServer etcd encryption configuration",
-        level=cap_level("platform_encryption_at_rest", "recommended"),
-        scored=False,
-    )
-    if not etcd_encryption and cap_required("platform_encryption_at_rest"):
-        add_finding(
-            "prod-day2-encryption-at-rest-not-enabled",
-            "validated platform data-at-rest coverage for OpenShift API data is missing because APIServer etcd encryption is identity or not configured",
-            severity=cap_failure_severity("platform_encryption_at_rest"),
-            source="OpenShift APIServer etcd encryption configuration",
-        )
-    elif etcd_encryption and not etcd_encryption_complete and cap_required("platform_encryption_at_rest"):
-        add_finding(
-            "prod-day2-encryption-at-rest-rollout-incomplete",
-            (
-                "validated platform data-at-rest coverage for OpenShift API data is configured but rollout is not completed across all reported API server components; "
-                f"incomplete components: {', '.join(format_etcd_encryption_component_names(etcd_encryption_missing_components)) or 'none'}"
-            ),
-            severity=cap_failure_severity("platform_encryption_at_rest"),
-            source="OpenShift APIServer etcd encryption configuration",
-        )
-
-    add_check(
         "Cluster proxy configuration",
         cap_status_for_presence("cluster_proxy_configuration", cluster_proxy_configured, cluster_proxy_healthy),
         (
@@ -3352,6 +3424,24 @@
             "finding": "no OpenShift Data Foundation StorageCluster, CephCluster, or NooBaa resource was detected",
         },
         {
+            "key": "ibm_cloud_pak_business_automation",
+            "capability": "IBM Cloud Pak for Business Automation footprint",
+            "level": cap_level("ibm_cloud_pak_business_automation", "informational"),
+            "source": "IBM Cloud Pak for Business Automation operator and custom resource inventory",
+            "present": ibm_cloud_pak_business_automation_present,
+            "healthy": ibm_cloud_pak_business_automation_healthy,
+            "detail": (
+                f"icp4aclusters={len(icp4aclusters)} "
+                f"ready_icp4aclusters={len(ready_icp4aclusters)} "
+                f"subscription_present={cp4ba_operator_subscription_present} "
+                f"namespace_present={cp4ba_namespace_present} "
+                f"crd_present={cp4ba_crd_present}"
+            ),
+            "issue": "prod-day2-ibm-cloud-pak-business-automation-missing",
+            "finding": "no IBM Cloud Pak for Business Automation Icp4aCluster custom resource or operator footprint was detected",
+            "finding_when_unhealthy": "IBM Cloud Pak for Business Automation resources were detected, but no Icp4aCluster resource reported a ready, available, successful, or completed state",
+        },
+        {
             "key": "openshift_virtualization",
             "capability": "OpenShift Virtualization footprint",
             "level": cap_level("openshift_virtualization", "informational"),
@@ -3561,6 +3651,9 @@
             ),
             "issue": "prod-day2-platform-namespace-governance-weak",
             "finding": (
+                "no tenant onboarding or namespace-governance controls were detected for shared user namespaces"
+            ),
+            "finding_when_unhealthy": (
                 "multi-tenant namespace governance is incomplete: "
                 "non-admin namespace self-provisioning is not fully governed or project onboarding controls or tenant baseline guardrails are missing "
                 f"(selfProvisioningRestricted={self_provisioning_restricted}, "
@@ -3592,12 +3685,13 @@
     for item in platform_app_catalog:
         present = bool(item["present"])
         key = item["key"]
+        healthy = bool(item.get("healthy", True))
         required_or_present = present or cap_required(key)
         if not required_or_present:
             continue
         add_check(
             item["capability"],
-            cap_status_for_presence(key, present, item.get("healthy", True)),
+            cap_status_for_presence(key, present, healthy),
             item["detail"],
             item["source"],
             level=item["level"],
@@ -3607,6 +3701,13 @@
             add_finding(
                 item["issue"],
                 item["finding"],
+                severity=cap_failure_severity(key),
+                source=item["source"],
+            )
+        elif present and not healthy and item.get("finding_when_unhealthy"):
+            add_finding(
+                item["issue"],
+                item["finding_when_unhealthy"],
                 severity=cap_failure_severity(key),
                 source=item["source"],
             )
@@ -3795,10 +3896,12 @@
     severity_rank = {"critical": 4, "warning": 3, "warn": 3, "info": 2, "ok": 1, "unknown": 0}
     capability_sections = []
     for cap_key, cap_value in capability_profile.items():
-        if not isinstance(cap_value, dict) or not bool(cap_value.get("required", False)):
+        if not isinstance(cap_value, dict) or not bool(cap_value.get("enabled", True)):
             continue
         cap_checks = [item for item in checks if item.get("capability_key") == cap_key]
         cap_findings = [item for item in findings if item.get("capability") == cap_key]
+        if not bool(cap_value.get("required", False)) and not cap_checks and not cap_findings:
+            continue
         finding_severities = [str(item.get("severity") or "info").lower() for item in cap_findings]
         check_statuses = [str(item.get("status") or "unknown").upper() for item in cap_checks]
         if any(item == "critical" for item in finding_severities):
@@ -3831,7 +3934,16 @@
             "owner": str(cap_value.get("owner") or "platform").strip() or "platform",
             "evidence_required": [str(item).strip() for item in (cap_value.get("evidence_required") or []) if str(item).strip()],
             "notes": str(cap_value.get("notes") or "").strip(),
-            "docs": str(cap_value.get("docs") or "").strip(),
+            "docs": (
+                [str(item).strip() for item in (cap_value.get("docs") or []) if str(item).strip()]
+                if isinstance(cap_value.get("docs"), list)
+                else ([str(cap_value.get("docs") or "").strip()] if str(cap_value.get("docs") or "").strip() else [])
+            ),
+            "verification": (
+                [str(item).strip() for item in (cap_value.get("verification") or []) if str(item).strip()]
+                if isinstance(cap_value.get("verification"), list)
+                else ([str(cap_value.get("verification") or "").strip()] if str(cap_value.get("verification") or "").strip() else [])
+            ),
             "status": overall_status,
             "check_count": len(cap_checks),
             "finding_count": len(cap_findings),
@@ -4127,10 +4239,10 @@
     day2_posture_data: "{{ day2_posture_payload }}"
     day2_capability_sections_fallback: >-
       {%- set sections = [] -%}
-      {%- set resolved_capability_profile = ((openshift_report_capability_profile_defaults | default({})) | combine((openshift_report_capability_profile | default({})), recursive=True)) -%}
+      {%- set resolved_capability_profile = ((cluster_health_profile | default({})).get('capabilities', {})) -%}
       {%- for item in (resolved_capability_profile | dict2items) -%}
         {%- set cap = item.value if item.value is mapping else {} -%}
-        {%- if (cap.get('required', false) | bool) -%}
+        {%- if (cap.get('enabled', true) | bool) and (cap.get('required', false) | bool) -%}
         {%- set _ = sections.append({
           'key': item.key,
           'title': (item.key | replace('_', ' ') | trim),
@@ -4140,7 +4252,16 @@
           'owner': (cap.get('owner', 'platform') | string | trim or 'platform'),
           'evidence_required': ((cap.get('evidence_required', []) or []) | map('string') | map('trim') | reject('equalto', '') | list),
           'notes': (cap.get('notes', '') | string | trim),
-          'docs': (cap.get('docs', '') | string | trim),
+          'docs': (
+            (cap.get('docs', []) or [])
+            if (cap.get('docs', []) is sequence and cap.get('docs', []) is not string and cap.get('docs', []) is not mapping)
+            else ([cap.get('docs', '') | string | trim] if (cap.get('docs', '') | string | trim | length > 0) else [])
+          ),
+          'verification': (
+            (cap.get('verification', []) or [])
+            if (cap.get('verification', []) is sequence and cap.get('verification', []) is not string and cap.get('verification', []) is not mapping)
+            else ([cap.get('verification', '') | string | trim] if (cap.get('verification', '') | string | trim | length > 0) else [])
+          ),
           'status': 'not-assessed',
           'check_count': 0,
           'finding_count': 0,

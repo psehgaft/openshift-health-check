@@ -230,6 +230,10 @@ The next report run can assess this item with sufficient evidence and a clear ow
 {%- endmacro %}
 
 {% macro capability_success_signal(section) -%}
+{%- set verification = profile_text(section.verification | default('')) | trim -%}
+{%- if verification | length > 0 -%}
+{{ verification }}
+{%- else -%}
 {%- set evidence = section.evidence_required | default([]) -%}
 {%- if evidence | length > 0 -%}
 The next report run shows this capability in `OK` state with supporting evidence for `{{ evidence | join(', ') }}`.
@@ -237,6 +241,17 @@ The next report run shows this capability in `OK` state with supporting evidence
 The next report run shows the capability in `OK` state and aligned with the expected state `{{ section.expected_state }}`.
 {%- else -%}
 The next report run shows this capability in `OK` state with no unresolved mapped findings.
+{%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro capability_gap_statement(section) -%}
+{%- set status = section.status | default('UNKNOWN') | string | trim | upper -%}
+{%- set detail = section.top_detail | default('No collected check detail was mapped for this capability.') | trim -%}
+{%- if status in ['OK', 'HEALTHY', 'PASS', 'PASSED', 'PRESENT', 'SUPPORTED'] -%}
+No gap is currently identified. Supporting evidence: {{ detail }}
+{%- else -%}
+{{ detail }}
 {%- endif -%}
 {%- endmacro %}
 
@@ -282,8 +297,12 @@ The condition is either confirmed healthy or intentionally accepted with documen
 {%- endmacro %}
 
 {% macro recommended_action_with_docs(action, severity, keys) -%}
-{%- set sev = severity | default('unknown') | string | trim | upper -%}
-{{ action }}{%- if sev not in ['INFO', 'OK', 'UNKNOWN', 'NOT-ASSESSED'] -%}{{ docs_links(keys) }}{%- endif -%}
+{{ action }}{{ docs_links(keys) }}
+{%- endmacro %}
+
+{% macro recommended_action_with_capability_docs(action, section) -%}
+{%- set docs = profile_text(section.docs | default([])) | trim -%}
+{{ action }}{% if docs %} Reference: {{ docs }}.{% elif section.key | default('') %}{{ docs_links([section.key]) }}{% endif %}
 {%- endmacro %}
 
 {% macro likely_owner_label(value) -%}
@@ -323,9 +342,17 @@ Platform engineering and SRE
 {%- endif -%}
 {%- endmacro %}
 
+{% macro profile_text(value) -%}
+{%- if value is sequence and value is not string and value is not mapping -%}
+{{ value | map('string') | map('trim') | reject('equalto', '') | join('; ') }}
+{%- else -%}
+{{ value | default('') | string | trim }}
+{%- endif -%}
+{%- endmacro %}
+
 {% macro posture_notes(posture_key, default='') -%}
 {%- set entry = (posture_profile | default({})).get(posture_key, {}) -%}
-{{ (entry.get('notes') or default) | string | trim }}
+{{ profile_text(entry.get('notes') or default) }}
 {%- endmacro %}
 
 {% macro posture_owner(posture_key, fallback='platform') -%}
@@ -335,14 +362,13 @@ Platform engineering and SRE
 
 {% macro posture_verification(posture_key, fallback='') -%}
 {%- set entry = (posture_profile | default({})).get(posture_key, {}) -%}
-{{ (entry.get('verification') or fallback) | string | trim }}
+{{ profile_text(entry.get('verification') or fallback) }}
 {%- endmacro %}
 
 {% macro recommended_action_with_posture_docs(action, severity, keys, posture_key) -%}
-{%- set sev = severity | default('unknown') | string | trim | upper -%}
 {%- set entry = (posture_profile | default({})).get(posture_key, {}) -%}
-{%- set docs = (entry.get('docs') or '') | string | trim -%}
-{{ action }}{%- if sev not in ['INFO', 'OK', 'UNKNOWN', 'NOT-ASSESSED'] -%}{%- if docs -%} Reference: {{ docs }}.{%- else -%}{{ docs_links(keys) }}{%- endif -%}{%- endif -%}
+{%- set docs = profile_text(entry.get('docs') or '') | trim -%}
+{{ action }}{% if docs %} Reference: {{ docs }}.{% else %}{{ docs_links(keys) }}{% endif %}
 {%- endmacro %}
 
 {% macro operating_questions(gap, why, action, owner, done, notes='') -%}
@@ -355,93 +381,8 @@ Platform engineering and SRE
 | How can the team tell it is fixed? | {{ done | replace('\n', ' ') | replace('|', '\\|') }} |
 {%- endmacro %}
 
-{% set posture_profile_defaults = {
-  'evidence_and_supportability': {
-    'owner': 'supportability',
-    'notes': 'Use this posture to confirm the evidence bundle is complete enough for escalation, triage, and final report sign-off.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/support/gathering-cluster-data',
-    'verification': 'The next report run shows supportability in `supported` or `healthy` state, evidence confidence is `medium` or `high`, and unresolved collection or diagnostic gaps are cleared.'
-  },
-  'platform_health': {
-    'owner': 'platform',
-    'notes': 'This posture covers core control-plane, operator, ingress, APIService, and etcd runtime stability before lower-priority remediation is trusted.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/operators/index',
-    'verification': 'The next report run shows no degraded or unavailable core operators, no blocking node or MCP runtime faults, and no unresolved API, etcd, ingress, or APIService runtime issues.'
-  },
-  'node_health_and_capacity': {
-    'owner': 'node',
-    'notes': 'Use this posture to confirm worker stability, hotspot risk, and whether the available node diagnostics are strong enough for host-level conclusions.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/nodes/nodes',
-    'verification': 'The next report run shows no NotReady nodes, no unresolved pressure or hotspot findings, and a node diagnostics verdict that is sufficient for the expected troubleshooting depth.'
-  },
-  'backup_and_disaster_recovery': {
-    'owner': 'backup',
-    'notes': 'This posture should prove both workload recovery and, where applicable, self-managed control-plane snapshot recovery rather than assuming tooling alone is enough.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/backup_and_restore/oadp-application-backup-and-restore',
-    'verification': 'The next report run shows usable backup locations, active schedules, successful backup evidence, restore evidence, and the expected control-plane backup evidence for the cluster type.'
-  },
-  'networking_architecture_and_application_access': {
-    'owner': 'network',
-    'notes': 'Use this posture to validate application entry paths, service-to-backend wiring, host ownership, proxy exclusions, and the intended namespace isolation model.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-routes',
-    'verification': 'The next report run shows clean route and ingress health, no unresolved host conflicts or endpoint gaps, and proxy or isolation controls aligned with the intended access design.'
-  },
-  'observability': {
-    'owner': 'observability',
-    'notes': 'This posture should confirm that telemetry leaves the cluster through the intended monitoring, logging, metrics, and alerting paths and can be trusted during incidents.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/monitoring/index',
-    'verification': 'The next report run shows healthy monitoring, expected log and metrics export paths configured, external alert delivery verified, and no unresolved observability blocker findings.'
-  },
-  'security_and_governance': {
-    'owner': 'security',
-    'notes': 'Use this posture to validate production access, workload isolation, secret and certificate hygiene, and the active compliance decision path.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/security_and_compliance/index',
-    'verification': 'The next report run shows identity, privilege, SCC, certificate, registry, and compliance findings reduced to accepted or healthy state with accountable ownership.'
-  },
-  'workload_health': {
-    'owner': 'workload',
-    'notes': 'This posture should separate immediate application instability from follow-on hygiene work such as probes, resource settings, labels, ownership, and rightsizing.',
-    'docs': 'https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/',
-    'verification': 'The next report run shows no unresolved unhealthy pods or rollout blockers, and any remaining hygiene findings are intentionally tracked with workload-owner sign-off.'
-  },
-  'platform_architecture_and_lifecycle': {
-    'owner': 'lifecycle',
-    'notes': 'Use this posture to confirm that the cluster is in a supported release state, upgrade-safe, and deployed across the expected failure domains and network boundaries.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/updating_clusters/index',
-    'verification': 'The next report run shows supported lifecycle status, no blocking upgrade risks, and no unresolved topology or boundary assumptions that would affect maintenance decisions.'
-  },
-  'cluster_capacity_snapshot': {
-    'owner': 'capacity',
-    'notes': 'Treat this posture as planning input only when allocatable node inventory is complete enough to support sizing, scaling, and headroom decisions.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/scalability_and_performance/scalability-and-performance-overview',
-    'verification': 'The next report run includes complete node inventory plus allocatable CPU and memory values, and the team accepts the resulting sizing and headroom numbers for planning use.'
-  },
-  'operations_maturity': {
-    'owner': 'operations',
-    'notes': 'This posture should confirm the intended declarative operating model, especially Git-backed reconciliation, before the cluster is treated as sustainably operable.',
-    'docs': 'https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.20/html/declarative_cluster_configuration/index',
-    'verification': 'The next report run shows the intended GitOps operating model present with healthy, repo-backed, and appropriately synchronized application definitions.'
-  },
-  'container_platform_adoption_and_release_engineering': {
-    'owner': 'release',
-    'notes': 'Use this posture to confirm that cluster-hosted delivery tooling, pipeline execution, and build ownership are stable enough to support repeatable release operations.',
-    'docs': 'https://docs.redhat.com/en/documentation/red_hat_openshift_pipelines/latest',
-    'verification': 'The next report run shows no unresolved failed pipeline or trigger-ownership findings, and any cluster-hosted runner footprint is healthy and intentionally governed.'
-  },
-  'workload_capability_extensions': {
-    'owner': 'extensions',
-    'notes': 'This posture is inventory plus health context for major optional platform extensions such as Virtualization and AI that materially change operational requirements.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/virtualization/index',
-    'verification': 'The next report run shows installed extension capabilities either healthy or intentionally absent, with extension-specific warnings remediated by the owning team.'
-  },
-  'day2_production_readiness': {
-    'owner': 'operations',
-    'notes': 'Use this posture as the final production-readiness call after the owning posture sections and required capability sections have been reviewed and assigned.',
-    'docs': 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/postinstallation_configuration/index',
-    'verification': 'The next report run shows no unresolved blocking postures, evidence confidence is acceptable, and required capability sections no longer carry unowned warning or critical gaps.'
-  }
-} %}
-{% set posture_profile = posture_profile_defaults | combine(openshift_report_posture_profile | default({}), recursive=True) %}
+{% set posture_profile = (cluster_health_profile | default({})).get('postures', {}) %}
+{% set collected_report_payload = supportability_report_payload | default({}) %}
 {% set graph = analysis_graph | default({}) %}
 {% set live_support = live_support_data | default({}) %}
 {% set live_support_artifacts = live_support.artifacts | default({}) %}
@@ -731,7 +672,8 @@ Every major posture section below follows the same operating model: define the g
 
 ## Evidence And Supportability
 
-{% set supportability = audit_report.supportability.summary | default({}) %}
+{% set supportability_summary_fact = supportability_summary | default({}) %}
+{% set supportability = audit_report.supportability.summary | default((collected_report_payload.supportability | default({})).summary | default(supportability_summary_fact)) %}
 {% set evidence_coverage = audit_report.evidence.coverage | default({}) %}
 {% set supportability_verdict = supportability.verdict | default('not-derived') %}
 {% set supportability_health = supportability.health_verdict | default('not-derived') %}
@@ -774,7 +716,7 @@ Every major posture section below follows the same operating model: define the g
 
 ## Platform Health
 
-{% set platform_health_summary = audit_report.domains.platform_health.summary | default(health_summary) %}
+{% set platform_health_summary = audit_report.domains.platform_health.summary | default((collected_report_payload.domains | default({})).platform_health.summary | default(health_summary)) %}
 {% set platform_status = platform_health_summary.status | default('not-derived') %}
 {% set platform_reason = platform_health_summary.core_platform_runtime_reason_summary | default('') %}
 {% set platform_operator_blockers = (platform_health_summary.operators_degraded | default(0) | int) + (platform_health_summary.operators_unavailable | default(0) | int) %}
@@ -849,7 +791,8 @@ Every major posture section below follows the same operating model: define the g
 
 ## Node Health And Capacity
 
-{% set node_health_capacity_summary = audit_report.domains.node_health_and_capacity.summary | default({}) %}
+{% set node_health_capacity_summary_fact = node_health_capacity_summary | default({}) %}
+{% set node_health_capacity_summary = audit_report.domains.node_health_and_capacity.summary | default((collected_report_payload.domains | default({})).node_health_and_capacity.summary | default(node_health_capacity_summary_fact)) %}
 {% set node_diagnostics = audit_report.domains.node_health_and_capacity.diagnostics_summary | default({}) %}
 {% set node_metric_source_status = audit_observability.get('prometheus_query', {}).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected')) %}
 {% set node_has_actionable_capacity_findings = (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 or (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 or (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 or (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 %}
@@ -987,7 +930,8 @@ Every major posture section below follows the same operating model: define the g
 
 ## Backup And Disaster Recovery
 
-{% set backup_recovery_summary = audit_report.domains.storage_and_resilience.summary | default({}) %}
+{% set backup_recovery_summary_fact = backup_recovery_summary | default({}) %}
+{% set backup_recovery_summary = audit_report.domains.storage_and_resilience.summary | default((collected_report_payload.domains | default({})).storage_and_resilience.summary | default(backup_recovery_summary_fact)) %}
 {% set backup_recovery_has_findings = not (backup_recovery_summary.backup_tooling_detected | default(false)) or (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 or (backup_recovery_summary.clean_completed_restore_count | default(0) | int) == 0 or (backup_recovery_summary.paused_backup_schedule_count | default(0) | int) > 0 or (backup_recovery_summary.completed_backup_with_issues_count | default(0) | int) > 0 or (backup_recovery_summary.completed_restore_with_issues_count | default(0) | int) > 0 or (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 or (backup_recovery_summary.local_or_ephemeral_only_risk | default(false)) %}
 
 ### Health Score
@@ -1188,7 +1132,7 @@ Every major posture section below follows the same operating model: define the g
 {% endfor %}
 {% endif %}
 
-## Networking Architecture And Application Access
+## Application Access And Network Isolation
 
 {% set network_has_actionable_findings = (network_architecture_summary.route_issue_count | default(0) | int) > 0 or (network_architecture_summary.ingress_issue_count | default(0) | int) > 0 or (network_architecture_summary.route_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingress_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.cross_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingresscontroller_issue_count | default(0) | int) > 0 or (network_architecture_summary.service_endpoint_gap_count | default(0) | int) > 0 or (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 %}
 {% set network_has_policy_context = (network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | length) > 0 or (network_architecture_summary.exposed_namespaces_missing_ingress_policies | default([]) | length) > 0 or (network_architecture_summary.exposed_namespaces_missing_egress_policies | default([]) | length) > 0 %}
@@ -1229,10 +1173,10 @@ Every major posture section below follows the same operating model: define the g
 {{ operating_questions(
   'Network access posture is ' ~ (network_architecture_summary.status | default('unknown')) ~ ' with route issues=' ~ (network_architecture_summary.route_issue_count | default(0) | string) ~ ', ingress issues=' ~ (network_architecture_summary.ingress_issue_count | default(0) | string) ~ ', and endpoint gaps=' ~ (network_architecture_summary.service_endpoint_gap_count | default(0) | string) ~ '.',
   'Traffic-path defects create user-visible outages even when pods appear healthy.',
-  recommended_action_with_posture_docs('Repair route, ingress, host-ownership, service-endpoint, and proxy `noProxy` issues before treating application access as healthy.', 'WARNING' if network_has_actionable_findings else ('INFO' if network_has_policy_context else 'OK'), ['network', 'security'], 'networking_architecture_and_application_access'),
-  posture_owner('networking_architecture_and_application_access', 'network'),
-  posture_verification('networking_architecture_and_application_access', gap_done_when('WARNING' if network_has_actionable_findings else ('INFO' if network_has_policy_context else 'OK'))),
-  posture_notes('networking_architecture_and_application_access')
+  recommended_action_with_posture_docs('Repair route, ingress, host-ownership, service-endpoint, and proxy `noProxy` issues before treating application access as healthy.', 'WARNING' if network_has_actionable_findings else ('INFO' if network_has_policy_context else 'OK'), ['network', 'security'], 'application_access_and_network_isolation'),
+  posture_owner('application_access_and_network_isolation', 'network'),
+  posture_verification('application_access_and_network_isolation', gap_done_when('WARNING' if network_has_actionable_findings else ('INFO' if network_has_policy_context else 'OK'))),
+  posture_notes('application_access_and_network_isolation')
 ) }}
 
 ### Findings
@@ -1318,7 +1262,8 @@ Every major posture section below follows the same operating model: define the g
 
 ## Observability
 
-{% set observability_summary = audit_report.domains.observability.summary | default({}) %}
+{% set observability_summary_fact = observability_summary | default({}) %}
+{% set observability_summary = audit_report.domains.observability.summary | default((collected_report_payload.domains | default({})).observability.summary | default(observability_summary_fact)) %}
 {% set observability_metric_evidence_gap = (observability_summary.metric_evidence_gap_count | default(0) | int) > 0 %}
 {% set observability_prom_status = observability_summary.prometheus_query_status | default(audit_observability.get('prometheus_query', {}).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected'))) %}
 {% set observability_prom_transport = observability_summary.prometheus_query_transport | default(audit_observability.get('prometheus_query', {}).get('transport', (prometheus_evidence_summary | default({})).get('transport', 'unavailable'))) %}
@@ -1458,7 +1403,8 @@ Every major posture section below follows the same operating model: define the g
 
 ## Security And Governance
 
-{% set security_governance_summary = audit_report.domains.security_and_governance.summary | default({}) %}
+{% set security_governance_summary_fact = security_governance_summary | default({}) %}
+{% set security_governance_summary = audit_report.domains.security_and_governance.summary | default((collected_report_payload.domains | default({})).security_and_governance.summary | default(security_governance_summary_fact)) %}
 {% set auth_posture_summary = audit_report.domains.security_and_governance.auth_posture_summary | default({}) %}
 {% set auth_identity_provider_count = auth_posture_summary.identity_provider_count | default(0) | int %}
 {% set auth_external_identity_provider_count = auth_posture_summary.external_identity_provider_count | default(0) | int %}
@@ -1787,7 +1733,8 @@ Every major posture section below follows the same operating model: define the g
 
 ## Workload Health
 
-{% set workload_summary = audit_report.domains.workload_health.summary | default({}) %}
+{% set workload_summary_fact = workload_summary | default({}) %}
+{% set workload_summary = audit_report.domains.workload_health.summary | default((collected_report_payload.domains | default({})).workload_health.summary | default(workload_summary_fact)) %}
 {% set workload_metric_source_status = audit_observability.get('prometheus_query', {}).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected')) %}
 {% set workload_soft_hygiene_count = (workload_summary.high_replica_workload_count | default(0) | int) + (workload_summary.orphan_pod_count | default(0) | int) + (workload_summary.workload_label_governance_count | default(0) | int) + (workload_summary.workload_resource_finding_count | default(0) | int) %}
 {% set workload_runtime_issue_count = (workload_summary.unhealthy_user_pod_count | default(0) | int) + (workload_summary.workload_health_issue_count | default(0) | int) %}
@@ -2195,7 +2142,7 @@ Cluster update history was not returned.
 {% endfor %}
 {% endif %}
 
-## Cluster Capacity Snapshot
+## Capacity Planning Snapshot
 
 ### Health Score
 
@@ -2217,10 +2164,10 @@ Cluster update history was not returned.
 {{ operating_questions(
   'Capacity snapshot shows nodes=' ~ (cluster_current_state.node_counts.total | default(0) | string) ~ ', workers=' ~ (cluster_current_state.node_counts.worker | default(0) | string) ~ ', cpu=' ~ (cluster_current_state.resources.total_cpu_millicores | default('not-derived') | string) ~ 'm, and memory=' ~ (cluster_current_state.resources.total_memory_mib | default('not-derived') | string) ~ 'MiB.',
   'Sizing, growth planning, and incident response decisions are weaker when baseline allocatable capacity or node inventory is missing.',
-  recommended_action_with_posture_docs('Use this section for sizing only when node inventory and allocatable CPU and memory are fully derived; otherwise rerun collection or confirm node allocatable facts before using it for planning.', 'INFO' if (cluster_current_state.node_counts.total | default(0) | int) == 0 or (cluster_current_state.resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or (cluster_current_state.resources.total_memory_mib | default('not-derived')) == 'not-derived' else 'OK', ['capacity'], 'cluster_capacity_snapshot'),
-  posture_owner('cluster_capacity_snapshot', 'capacity'),
-  posture_verification('cluster_capacity_snapshot', gap_done_when('INFO' if (cluster_current_state.node_counts.total | default(0) | int) == 0 or (cluster_current_state.resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or (cluster_current_state.resources.total_memory_mib | default('not-derived')) == 'not-derived' else 'OK')),
-  posture_notes('cluster_capacity_snapshot')
+  recommended_action_with_posture_docs('Use this section for sizing only when node inventory and allocatable CPU and memory are fully derived; otherwise rerun collection or confirm node allocatable facts before using it for planning.', 'INFO' if (cluster_current_state.node_counts.total | default(0) | int) == 0 or (cluster_current_state.resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or (cluster_current_state.resources.total_memory_mib | default('not-derived')) == 'not-derived' else 'OK', ['capacity'], 'capacity_planning_snapshot'),
+  posture_owner('capacity_planning_snapshot', 'capacity'),
+  posture_verification('capacity_planning_snapshot', gap_done_when('INFO' if (cluster_current_state.node_counts.total | default(0) | int) == 0 or (cluster_current_state.resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or (cluster_current_state.resources.total_memory_mib | default('not-derived')) == 'not-derived' else 'OK')),
+  posture_notes('capacity_planning_snapshot')
 ) }}
 
 ### Findings
@@ -2460,61 +2407,64 @@ Cluster update history was not returned.
 {% endfor %}
 {% endif %}
 
-## Operations Maturity
+## Declarative Operations
 
-{% set operations_maturity_summary = audit_report.domains.production_day2_readiness.operations_lifecycle_maturity_summary | default({}) %}
+{% set declarative_operations_summary_fact = declarative_operations_summary | default({}) %}
+{% set declarative_operations_summary = audit_report.domains.production_day2_readiness.declarative_operations_summary | default((collected_report_payload.domains | default({})).production_day2_readiness.declarative_operations_summary | default(declarative_operations_summary_fact)) %}
 
 ### Health Score
 
 | Signal | Value | Status |
 | --- | --- | --- |
-| Operations maturity status | `{{ operations_maturity_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (operations_maturity_summary.status | default('unknown')) == 'WARNING' else ('OK' if (operations_maturity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')) }} |
-| Health score | `{{ posture_score(operations_maturity_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
-| Reason summary | `{{ operations_maturity_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
-| Declarative operations evidence | `{{ operations_maturity_summary.gitops_present | default(false) }}` | {{ status_badge('OK' if (operations_maturity_summary.gitops_present | default(false)) else 'WARN') }} |
-| Argo CD controllers | `{{ operations_maturity_summary.argocd_count | default(0) }}` | {{ status_badge('INFO' if (operations_maturity_summary.argocd_count | default(0) | int) == 0 else 'OK') }} |
-| GitOps applications | `{{ operations_maturity_summary.gitops_application_count | default(0) }}` | {{ status_badge('OK' if (operations_maturity_summary.gitops_application_count | default(0) | int) > 0 else 'WARN') }} |
-| Repo-backed GitOps applications | `{{ operations_maturity_summary.gitops_repo_backed_application_count | default(0) }}` | {{ status_badge('OK' if (operations_maturity_summary.gitops_repo_backed_application_count | default(0) | int) > 0 else ('INFO' if (operations_maturity_summary.gitops_application_count | default(0) | int) == 0 else 'WARN')) }} |
-| Automated-sync GitOps applications | `{{ operations_maturity_summary.gitops_automated_sync_application_count | default(0) }}` | {{ status_badge('OK' if (operations_maturity_summary.gitops_automated_sync_application_count | default(0) | int) > 0 else ('INFO' if (operations_maturity_summary.gitops_application_count | default(0) | int) == 0 else 'WARN')) }} |
-| GitOps AppProjects | `{{ operations_maturity_summary.gitops_appproject_count | default(0) }}` | {{ status_badge('INFO' if (operations_maturity_summary.gitops_appproject_count | default(0) | int) == 0 else 'OK') }} |
-| Managed-cluster registration evidence | `{{ operations_maturity_summary.acm_managed | default(false) }}` | {{ status_badge('INFO' if not (operations_maturity_summary.acm_managed | default(false)) else 'OK') }} |
-| Identity provider inventory | `{{ operations_maturity_summary.identity_provider_count | default(0) }}` | {{ status_badge('INFO' if (operations_maturity_summary.identity_provider_count | default(0) | int) == 0 else 'OK') }} |
-| Backup execution inventory | `schedules={{ operations_maturity_summary.backup_schedule_count | default(0) }}, successful={{ operations_maturity_summary.successful_backup_count | default(0) }}` | {{ status_badge('INFO' if (operations_maturity_summary.successful_backup_count | default(0) | int) == 0 else 'OK') }} |
-| Machine remediation inventory | `machineHealthChecks={{ operations_maturity_summary.machinehealthcheck_count | default(0) }}, expected={{ operations_maturity_summary.machinehealthcheck_expected | default(false) }}` | {{ status_badge('INFO' if (operations_maturity_summary.machinehealthcheck_expected | default(false) and (operations_maturity_summary.machinehealthcheck_count | default(0) | int) == 0) else 'OK') }} |
-| Day 2 capability checks inventoried | `{{ operations_maturity_summary.day2_check_count | default(0) }}` | {{ status_badge('INFO' if (operations_maturity_summary.day2_check_count | default(0) | int) > 0 else 'UNKNOWN') }} |
-| Day 2 capability warnings | `{{ operations_maturity_summary.capability_check_warning_count | default(0) }}` | {{ status_badge('INFO' if (operations_maturity_summary.capability_check_warning_count | default(0) | int) > 0 else 'OK') }} |
+| Declarative operations status | `{{ declarative_operations_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')) }} |
+| Health score | `{{ posture_score(declarative_operations_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Reason summary | `{{ declarative_operations_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
+| Declarative operations evidence | `{{ declarative_operations_summary.gitops_present | default(false) }}` | {{ status_badge('OK' if (declarative_operations_summary.gitops_present | default(false)) else 'WARN') }} |
+| Argo CD controllers | `{{ declarative_operations_summary.argocd_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.argocd_count | default(0) | int) == 0 else 'OK') }} |
+| GitOps applications | `{{ declarative_operations_summary.gitops_application_count | default(0) }}` | {{ status_badge('OK' if (declarative_operations_summary.gitops_application_count | default(0) | int) > 0 else 'WARN') }} |
+| Repo-backed GitOps applications | `{{ declarative_operations_summary.gitops_repo_backed_application_count | default(0) }}` | {{ status_badge('OK' if (declarative_operations_summary.gitops_repo_backed_application_count | default(0) | int) > 0 else ('INFO' if (declarative_operations_summary.gitops_application_count | default(0) | int) == 0 else 'WARN')) }} |
+| Automated-sync GitOps applications | `{{ declarative_operations_summary.gitops_automated_sync_application_count | default(0) }}` | {{ status_badge('OK' if (declarative_operations_summary.gitops_automated_sync_application_count | default(0) | int) > 0 else ('INFO' if (declarative_operations_summary.gitops_application_count | default(0) | int) == 0 else 'WARN')) }} |
+| GitOps AppProjects | `{{ declarative_operations_summary.gitops_appproject_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.gitops_appproject_count | default(0) | int) == 0 else 'OK') }} |
+| Managed-cluster registration evidence | `{{ declarative_operations_summary.acm_managed | default(false) }}` | {{ status_badge('INFO' if not (declarative_operations_summary.acm_managed | default(false)) else 'OK') }} |
+| Identity provider inventory | `{{ declarative_operations_summary.identity_provider_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.identity_provider_count | default(0) | int) == 0 else 'OK') }} |
+| Backup execution inventory | `schedules={{ declarative_operations_summary.backup_schedule_count | default(0) }}, successful={{ declarative_operations_summary.successful_backup_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.successful_backup_count | default(0) | int) == 0 else 'OK') }} |
+| Machine remediation inventory | `machineHealthChecks={{ declarative_operations_summary.machinehealthcheck_count | default(0) }}, expected={{ declarative_operations_summary.machinehealthcheck_expected | default(false) }}` | {{ status_badge('INFO' if (declarative_operations_summary.machinehealthcheck_expected | default(false) and (declarative_operations_summary.machinehealthcheck_count | default(0) | int) == 0) else 'OK') }} |
+| Day 2 capability checks inventoried | `{{ declarative_operations_summary.day2_check_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.day2_check_count | default(0) | int) > 0 else 'UNKNOWN') }} |
+| Day 2 capability warnings | `{{ declarative_operations_summary.capability_check_warning_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.capability_check_warning_count | default(0) | int) > 0 else 'OK') }} |
 
 ### Recommendations
 
 **Findings Summary**
-- {% if (operations_maturity_summary.status | default('unknown')) == 'WARNING' %}Declarative operations gap detected: GitOps is required for this report posture, but the collected inventory does not yet show a complete declarative model. GitOps present=`{{ operations_maturity_summary.gitops_present | default(false) }}`, GitOps Applications=`{{ operations_maturity_summary.gitops_application_count | default(0) }}`, repo-backed Applications=`{{ operations_maturity_summary.gitops_repo_backed_application_count | default(0) }}`, automated-sync Applications=`{{ operations_maturity_summary.gitops_automated_sync_application_count | default(0) }}`, and AppProjects=`{{ operations_maturity_summary.gitops_appproject_count | default(0) }}`.{% else %}Declarative operations resources were detected with `{{ operations_maturity_summary.gitops_application_count | default(0) }}` GitOps Applications, `{{ operations_maturity_summary.gitops_repo_backed_application_count | default(0) }}` repo-backed Applications, `{{ operations_maturity_summary.gitops_automated_sync_application_count | default(0) }}` automated-sync Applications, and `{{ operations_maturity_summary.gitops_appproject_count | default(0) }}` AppProjects.{% endif %}
+- {% if (declarative_operations_summary.status | default('unknown')) == 'WARNING' %}Declarative operations gap detected: GitOps is required for this report posture, but the collected inventory does not yet show a complete declarative model. GitOps present=`{{ declarative_operations_summary.gitops_present | default(false) }}`, GitOps Applications=`{{ declarative_operations_summary.gitops_application_count | default(0) }}`, repo-backed Applications=`{{ declarative_operations_summary.gitops_repo_backed_application_count | default(0) }}`, automated-sync Applications=`{{ declarative_operations_summary.gitops_automated_sync_application_count | default(0) }}`, and AppProjects=`{{ declarative_operations_summary.gitops_appproject_count | default(0) }}`.{% else %}Declarative operations resources were detected with `{{ declarative_operations_summary.gitops_application_count | default(0) }}` GitOps Applications, `{{ declarative_operations_summary.gitops_repo_backed_application_count | default(0) }}` repo-backed Applications, `{{ declarative_operations_summary.gitops_automated_sync_application_count | default(0) }}` automated-sync Applications, and `{{ declarative_operations_summary.gitops_appproject_count | default(0) }}` AppProjects.{% endif %}
 
 ### Operating Questions
 
 {{ operating_questions(
-  'Operations maturity is ' ~ (operations_maturity_summary.status | default('unknown')) ~ ' with GitOps present=' ~ (operations_maturity_summary.gitops_present | default(false) | string) ~ ', applications=' ~ (operations_maturity_summary.gitops_application_count | default(0) | string) ~ ', repo-backed applications=' ~ (operations_maturity_summary.gitops_repo_backed_application_count | default(0) | string) ~ ', and automated sync applications=' ~ (operations_maturity_summary.gitops_automated_sync_application_count | default(0) | string) ~ '.',
+  'Declarative operations posture is ' ~ (declarative_operations_summary.status | default('unknown')) ~ ' with GitOps present=' ~ (declarative_operations_summary.gitops_present | default(false) | string) ~ ', applications=' ~ (declarative_operations_summary.gitops_application_count | default(0) | string) ~ ', repo-backed applications=' ~ (declarative_operations_summary.gitops_repo_backed_application_count | default(0) | string) ~ ', and automated sync applications=' ~ (declarative_operations_summary.gitops_automated_sync_application_count | default(0) | string) ~ '.',
   'A weak declarative operating model makes change control, repeatability, auditability, and environment recovery harder.',
-  recommended_action_with_posture_docs('Establish or complete the GitOps operating model, then use the owning posture sections for backup, identity, remediation, and fleet-management follow-through.', 'WARNING' if (operations_maturity_summary.status | default('unknown')) == 'WARNING' else ('OK' if (operations_maturity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'), ['operations'], 'operations_maturity'),
-  posture_owner('operations_maturity', 'operations'),
-  posture_verification('operations_maturity', gap_done_when('WARNING' if (operations_maturity_summary.status | default('unknown')) == 'WARNING' else ('OK' if (operations_maturity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))),
-  posture_notes('operations_maturity')
+  recommended_action_with_posture_docs('Establish or complete the GitOps operating model, then use the owning posture sections for backup, identity, remediation, and fleet-management follow-through.', 'WARNING' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'), ['operations'], 'declarative_operations'),
+  posture_owner('declarative_operations', 'operations'),
+  posture_verification('declarative_operations', gap_done_when('WARNING' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))),
+  posture_notes('declarative_operations')
 ) }}
 
 ### Findings
 
 | Finding | Severity | Current State | Business Impact | Technical Evidence | Action Plan | Suggested Owner | Done When |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `Declarative operations model` | `{% if (operations_maturity_summary.status | default('unknown')) == 'WARNING' %}WARNING{% elif (operations_maturity_summary.status | default('unknown')) == 'HEALTHY' %}OK{% else %}UNKNOWN{% endif %}` | `present={{ operations_maturity_summary.gitops_present | default(false) }}, applications={{ operations_maturity_summary.gitops_application_count | default(0) }}, repoBacked={{ operations_maturity_summary.gitops_repo_backed_application_count | default(0) }}, automatedSync={{ operations_maturity_summary.gitops_automated_sync_application_count | default(0) }}` | `A clear operating model improves repeatability, auditability, and change control.` | `argocd={{ operations_maturity_summary.argocd_count | default(0) }}, appProjects={{ operations_maturity_summary.gitops_appproject_count | default(0) }}` | `{% if (operations_maturity_summary.status | default('unknown')) == 'WARNING' %}Ensure GitOps is present, GitOps Applications are defined, Git-backed, and use the intended reconciliation policy.{% else %}No declarative-operations remediation is required for this posture.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('WARNING' if (operations_maturity_summary.status | default('unknown')) == 'WARNING' else ('OK' if (operations_maturity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')) }}` |
-| `Managed-cluster operations context` | `{% if operations_maturity_summary.acm_managed | default(false) %}OK{% else %}INFO{% endif %}` | `managed={{ operations_maturity_summary.acm_managed | default(false) }}` | `Managed-cluster registration can support fleet operations, policy, and centralized lifecycle workflows, but absence is context unless required by the customer model.` | `klusterlets={{ operations_maturity_summary.acm_klusterlet_count | default(0) }}, addons={{ operations_maturity_summary.acm_managedclusteraddon_count | default(0) }}, agentNamespaces={{ operations_maturity_summary.acm_agent_namespace_count | default(0) }}` | `Confirm whether fleet management is expected; if not, treat this as operating-model context only.` |
-| `Operational prerequisites context` | `INFO` | `identityProviders={{ operations_maturity_summary.identity_provider_count | default(0) }}, backupSchedules={{ operations_maturity_summary.backup_schedule_count | default(0) }}, successfulBackups={{ operations_maturity_summary.successful_backup_count | default(0) }}, machineHealthChecks={{ operations_maturity_summary.machinehealthcheck_count | default(0) }}` | `Identity, backup execution, and machine remediation affect operational maturity, but detailed health decisions belong in their owning posture sections.` | `clusterAutoscalers={{ operations_maturity_summary.clusterautoscaler_count | default(0) }}, autoscalerExpected={{ operations_maturity_summary.clusterautoscaler_expected | default(false) }}, insightsHealthy={{ operations_maturity_summary.insights_healthy | default(false) }}` | `Review weak inventory values in Security, Backup/DR, Node Health, Observability, and Lifecycle rather than treating this row as a separate remediation queue.` |
-| `Day 2 capability inventory context` | `{% if (operations_maturity_summary.capability_check_warning_count | default(0) | int) > 0 %}INFO{% elif (operations_maturity_summary.day2_check_count | default(0) | int) > 0 %}OK{% else %}UNKNOWN{% endif %}` | `checks={{ operations_maturity_summary.day2_check_count | default(0) }}, warnings={{ operations_maturity_summary.capability_check_warning_count | default(0) }}` | `Capability inventory helps explain how the platform is operated, but individual capability health belongs in the relevant posture sections.` | `checks={{ operations_maturity_summary.day2_check_count | default(0) }}, warnings={{ operations_maturity_summary.capability_check_warning_count | default(0) }}` | `Use this row as inventory context; remediate specific capability warnings in their owning posture sections.` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('INFO' if (operations_maturity_summary.capability_check_warning_count | default(0) | int) > 0 else ('OK' if (operations_maturity_summary.day2_check_count | default(0) | int) > 0 else 'UNKNOWN')) }}` |
+| `Declarative operations model` | `{% if (declarative_operations_summary.status | default('unknown')) == 'WARNING' %}WARNING{% elif (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' %}OK{% else %}UNKNOWN{% endif %}` | `present={{ declarative_operations_summary.gitops_present | default(false) }}, applications={{ declarative_operations_summary.gitops_application_count | default(0) }}, repoBacked={{ declarative_operations_summary.gitops_repo_backed_application_count | default(0) }}, automatedSync={{ declarative_operations_summary.gitops_automated_sync_application_count | default(0) }}` | `A clear operating model improves repeatability, auditability, and change control.` | `argocd={{ declarative_operations_summary.argocd_count | default(0) }}, appProjects={{ declarative_operations_summary.gitops_appproject_count | default(0) }}` | `{% if (declarative_operations_summary.status | default('unknown')) == 'WARNING' %}Ensure GitOps is present, GitOps Applications are defined, Git-backed, and use the intended reconciliation policy.{% else %}No declarative-operations remediation is required for this posture.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('WARNING' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')) }}` |
+| `Managed-cluster operations context` | `{% if declarative_operations_summary.acm_managed | default(false) %}OK{% else %}INFO{% endif %}` | `managed={{ declarative_operations_summary.acm_managed | default(false) }}` | `Managed-cluster registration can support fleet operations, policy, and centralized lifecycle workflows, but absence is context unless required by the customer model.` | `klusterlets={{ declarative_operations_summary.acm_klusterlet_count | default(0) }}, addons={{ declarative_operations_summary.acm_managedclusteraddon_count | default(0) }}, agentNamespaces={{ declarative_operations_summary.acm_agent_namespace_count | default(0) }}` | `Confirm whether fleet management is expected; if not, treat this as operating-model context only.` |
+| `Operational prerequisites context` | `INFO` | `identityProviders={{ declarative_operations_summary.identity_provider_count | default(0) }}, backupSchedules={{ declarative_operations_summary.backup_schedule_count | default(0) }}, successfulBackups={{ declarative_operations_summary.successful_backup_count | default(0) }}, machineHealthChecks={{ declarative_operations_summary.machinehealthcheck_count | default(0) }}` | `Identity, backup execution, and machine remediation affect declarative operations, but detailed health decisions belong in their owning posture sections.` | `clusterAutoscalers={{ declarative_operations_summary.clusterautoscaler_count | default(0) }}, autoscalerExpected={{ declarative_operations_summary.clusterautoscaler_expected | default(false) }}, insightsHealthy={{ declarative_operations_summary.insights_healthy | default(false) }}` | `Review weak inventory values in Security, Backup/DR, Node Health, Observability, and Lifecycle rather than treating this row as a separate remediation queue.` |
+| `Day 2 capability inventory context` | `{% if (declarative_operations_summary.capability_check_warning_count | default(0) | int) > 0 %}INFO{% elif (declarative_operations_summary.day2_check_count | default(0) | int) > 0 %}OK{% else %}UNKNOWN{% endif %}` | `checks={{ declarative_operations_summary.day2_check_count | default(0) }}, warnings={{ declarative_operations_summary.capability_check_warning_count | default(0) }}` | `Capability inventory helps explain how the platform is operated, but individual capability health belongs in the relevant posture sections.` | `checks={{ declarative_operations_summary.day2_check_count | default(0) }}, warnings={{ declarative_operations_summary.capability_check_warning_count | default(0) }}` | `Use this row as inventory context; remediate specific capability warnings in their owning posture sections.` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('INFO' if (declarative_operations_summary.capability_check_warning_count | default(0) | int) > 0 else ('OK' if (declarative_operations_summary.day2_check_count | default(0) | int) > 0 else 'UNKNOWN')) }}` |
 
 ## Container Platform Adoption And Release Engineering
 
-{% set release_engineering_summary = audit_report.domains.production_day2_readiness.release_engineering_adoption_summary | default({}) %}
+{% set release_engineering_summary_fact = release_engineering_summary | default({}) %}
+{% set release_engineering_summary = audit_report.domains.production_day2_readiness.release_engineering_adoption_summary | default((collected_report_payload.domains | default({})).production_day2_readiness.release_engineering_adoption_summary | default(release_engineering_summary_fact)) %}
 {% set cicd_runner_summary = release_engineering_summary.runner_summary | default({}) %}
 {% set cicd_runner_findings = release_engineering_summary.runner_findings | default([]) %}
 {% set cicd_runner_present = cicd_runner_summary.present | default(false) | bool %}
+{% set cicd_runner_warning_count = (cicd_runner_summary.unhealthy_pod_count | default(0) | int) + (cicd_runner_summary.unschedulable_pod_count | default(0) | int) + (cicd_runner_summary.privileged_pod_count | default(0) | int) %}
 
 ### Health Score
 
@@ -2541,7 +2491,7 @@ Cluster update history was not returned.
 ### Operating Questions
 
 {{ operating_questions(
-  'Release-engineering posture is ' ~ (release_engineering_summary.status | default('unknown')) ~ ' with failed PipelineRuns=' ~ (release_engineering_summary.failed_pipelinerun_count | default(0) | string) ~ ', triggerless BuildConfigs needing review=' ~ (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | string) ~ ', and runner warnings=' ~ ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) + (cicd_runner_summary.unschedulable_pod_count | default(0) | int) + (cicd_runner_summary.privileged_pod_count | default(0) | int) | string) ~ '.',
+  'Release-engineering posture is ' ~ (release_engineering_summary.status | default('unknown')) ~ ' with failed PipelineRuns=' ~ (release_engineering_summary.failed_pipelinerun_count | default(0) | string) ~ ', triggerless BuildConfigs needing review=' ~ (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | string) ~ ', and runner warnings=' ~ (cicd_runner_warning_count | string) ~ '.',
   'Delivery failures and unowned automation slow releases, increase manual change risk, and can block urgent remediation.',
   recommended_action_with_posture_docs('Stabilize failed pipelines and runner pods first, then close trigger-ownership and build-automation gaps with the delivery engineering team.', 'WARNING' if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 or (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | int) > 0 or (cicd_runner_present and ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 or (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 or (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0)) else ('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else 'INFO'), ['release'], 'container_platform_adoption_and_release_engineering'),
   posture_owner('container_platform_adoption_and_release_engineering', 'release'),
@@ -2632,77 +2582,10 @@ Cluster update history was not returned.
 {% endfor %}
 {% endif %}
 
-## Workload Capability Extensions
-
-{% set capability_extensions_summary = audit_report.domains.production_day2_readiness.workload_capability_extensions_summary | default({}) %}
-{% set capability_product_evidence = audit_report.domains.production_day2_readiness.product_evidence | default({}) %}
-{% set capability_extension_findings = (audit_report.domains.production_day2_readiness.product_evidence_findings | default([])) | selectattr('area', 'in', ['virtualization', 'ai']) | list %}
-
-### Health Score
-
-| Signal | Value | Status |
-| --- | --- | --- |
-| Capability extensions posture | `{{ capability_extensions_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (capability_extensions_summary.status | default('unknown')) == 'WARNING' else ('OK' if (capability_extensions_summary.status | default('unknown')) == 'HEALTHY' else ('INFO' if (capability_extensions_summary.status | default('unknown')) == 'INFO' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(capability_extensions_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
-| Reason summary | `{{ capability_extensions_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
-| Installed workload extension count | `{{ capability_extensions_summary.workload_extension_present_count | default(0) }}` | {{ status_badge('OK' if (capability_extensions_summary.workload_extension_present_count | default(0) | int) > 0 else 'INFO') }} |
-| Virtualization footprint | `{{ capability_extensions_summary.virtualization_present | default(false) }}` | {{ status_badge('WARN' if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 else ('INFO' if (capability_extensions_summary.virtualization_present | default(false)) else 'OK')) }} |
-| Virtualization warnings | `{{ capability_extensions_summary.virtualization_warning_count | default(0) }}` | {{ status_badge('WARN' if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 else 'OK') }} |
-| AI footprint | `{{ capability_extensions_summary.ai_present | default(false) }}` | {{ status_badge('WARN' if (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 else ('INFO' if (capability_extensions_summary.ai_present | default(false)) else 'OK')) }} |
-| AI warnings | `{{ capability_extensions_summary.ai_warning_count | default(0) }}` | {{ status_badge('WARN' if (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 else 'OK') }} |
-| Optional context capabilities | `{{ capability_extensions_summary.extension_context_present_count | default(0) }}` | {{ status_badge('INFO' if (capability_extensions_summary.extension_context_present_count | default(0) | int) > 0 else 'OK') }} |
-| Optional capability inventory notes | `{{ capability_extensions_summary.capability_inventory_info_count | default(0) }}` | {{ status_badge('INFO' if (capability_extensions_summary.capability_inventory_info_count | default(0) | int) > 0 else 'OK') }} |
-
-### Recommendations
-
-**Findings Summary**
-- {% if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 or (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 %}Capability extension gaps detected: {% if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 %}`{{ capability_extensions_summary.virtualization_warning_count }}` virtualization warnings were found and need operator, VM, VMI, storage, network, node-capacity, or alert remediation; {% endif %}{% if (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 %}`{{ capability_extensions_summary.ai_warning_count }}` AI warnings were found and need DataScienceCluster, notebook, model-serving, runtime, operator, accelerator, storage, networking, or alert remediation.{% endif %}{% elif capability_extensions_summary.virtualization_present | default(false) or capability_extensions_summary.ai_present | default(false) %}Installed workload extensions were detected without extension-specific warning findings: virtualization=`{{ capability_extensions_summary.virtualization_present | default(false) }}`, AI=`{{ capability_extensions_summary.ai_present | default(false) }}`. This posture is healthy for installed extension resources; continue normal extension health review.{% else %}No Virtualization or AI footprint was detected. Treat absent optional workload capabilities as inventory context, not as a maturity or health defect.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Capability extensions posture is ' ~ (capability_extensions_summary.status | default('unknown')) ~ ' with virtualization warnings=' ~ (capability_extensions_summary.virtualization_warning_count | default(0) | string) ~ ', AI warnings=' ~ (capability_extensions_summary.ai_warning_count | default(0) | string) ~ ', and installed extension count=' ~ (capability_extensions_summary.workload_extension_present_count | default(0) | string) ~ '.',
-  'Optional workload extensions can introduce major storage, network, accelerator, backup, and monitoring dependencies that the base platform team must still support.',
-  recommended_action_with_posture_docs('Treat virtualization and AI as first-class production capabilities when present, and remediate extension-specific warnings with the platform and workload-extension owners.', 'WARNING' if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 or (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 else ('OK' if capability_extensions_summary.virtualization_present | default(false) or capability_extensions_summary.ai_present | default(false) else 'INFO'), ['extensions'], 'workload_capability_extensions'),
-  posture_owner('workload_capability_extensions', 'extensions'),
-  posture_verification('workload_capability_extensions', gap_done_when('WARNING' if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 or (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 else ('OK' if capability_extensions_summary.virtualization_present | default(false) or capability_extensions_summary.ai_present | default(false) else 'INFO'))),
-  posture_notes('workload_capability_extensions')
-) }}
-
-### Findings
-
-| Finding | Severity | Current State | Business Impact | Technical Evidence | Action Plan | Suggested Owner | Done When |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `Virtualization capability` | `{% if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 %}WARNING{% elif capability_extensions_summary.virtualization_present | default(false) %}OK{% else %}INFO{% endif %}` | `present={{ capability_extensions_summary.virtualization_present | default(false) }}, warnings={{ capability_extensions_summary.virtualization_warning_count | default(0) }}` | `Virtualization workloads can materially change compute, storage, network, backup, and monitoring requirements.` | `kubevirt={{ (capability_product_evidence.virtualization | default({})).kubevirt_count | default(0) }}, hco={{ (capability_product_evidence.virtualization | default({})).hyperconverged_count | default(0) }}, vms={{ (capability_product_evidence.virtualization | default({})).virtualmachine_count | default(0) }}, vmis={{ (capability_product_evidence.virtualization | default({})).virtualmachineinstance_count | default(0) }}` | `{% if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 %}Review unhealthy KubeVirt or HyperConverged resources and non-running VMIs; correlate with storage, network, node capacity, backup, and alerts.{% elif capability_extensions_summary.virtualization_present | default(false) %}Keep installed virtualization resources under normal health, capacity, backup, and monitoring review.{% else %}No virtualization remediation is required because no virtualization footprint was detected.{% endif %}` | `{{ gap_owner('extensions') }}` | `{{ gap_done_when('WARNING' if (capability_extensions_summary.virtualization_warning_count | default(0) | int) > 0 else ('OK' if capability_extensions_summary.virtualization_present | default(false) else 'INFO')) }}` |
-| `AI capability` | `{% if (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 %}WARNING{% elif capability_extensions_summary.ai_present | default(false) %}OK{% else %}INFO{% endif %}` | `present={{ capability_extensions_summary.ai_present | default(false) }}, warnings={{ capability_extensions_summary.ai_warning_count | default(0) }}` | `AI workloads can introduce accelerator, storage, networking, serving, and runtime dependencies.` | `dsc={{ (capability_product_evidence.ai | default({})).datasciencecluster_count | default(0) }}, dsci={{ (capability_product_evidence.ai | default({})).dscinitialization_count | default(0) }}, notebooks={{ (capability_product_evidence.ai | default({})).notebook_count | default(0) }}, inferenceServices={{ (capability_product_evidence.ai | default({})).inferenceservice_count | default(0) }}` | `{% if (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 %}Review unready DataScienceCluster, notebook, model-serving, and InferenceService resources; correlate with accelerator capacity, storage, networking, and alerts.{% elif capability_extensions_summary.ai_present | default(false) %}Keep installed AI resources under normal operator, serving, notebook, capacity, and monitoring review.{% else %}No AI remediation is required because no AI footprint was detected.{% endif %}` | `{{ gap_owner('extensions') }}` | `{{ gap_done_when('WARNING' if (capability_extensions_summary.ai_warning_count | default(0) | int) > 0 else ('OK' if capability_extensions_summary.ai_present | default(false) else 'INFO')) }}` |
-| `Optional capability context` | `{% if (capability_extensions_summary.extension_context_present_count | default(0) | int) > 0 or (capability_extensions_summary.capability_inventory_info_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `context={{ capability_extensions_summary.extension_context_present_count | default(0) }}, inventoryNotes={{ capability_extensions_summary.capability_inventory_info_count | default(0) }}` | `Other platform features can explain operating model, but they should not drive this workload-extension posture.` | `odf={{ capability_extensions_summary.odf_present | default(false) }}, logging={{ capability_extensions_summary.logging_present | default(false) }}, gitops={{ capability_extensions_summary.gitops_present | default(false) }}` | `Use this row as context only; remediate those features in their owning posture sections if they have warnings.` | `{{ gap_owner('extensions') }}` | `{{ gap_done_when('INFO' if (capability_extensions_summary.extension_context_present_count | default(0) | int) > 0 or (capability_extensions_summary.capability_inventory_info_count | default(0) | int) > 0 else 'OK') }}` |
-
-{% if capability_extensions_summary.virtualization_present | default(false) or capability_extensions_summary.ai_present | default(false) %}
-#### Workload Capability Extensions
-
-| Capability | Present | Observed Cluster State | Key Counts |
-| --- | --- | --- | --- |
-{% if capability_extensions_summary.virtualization_present | default(false) %}
-| Virtualization | `{{ (capability_product_evidence.virtualization | default({})).present | default(false) }}` | `{% if ((capability_product_evidence.virtualization | default({})).virtualmachine_count | default(0) | int) > 0 %}VirtualMachine resources are present{% elif ((capability_product_evidence.virtualization | default({})).kubevirt_count | default(0) | int) > 0 or ((capability_product_evidence.virtualization | default({})).hyperconverged_count | default(0) | int) > 0 %}Virtualization control-plane resources are present{% else %}No virtualization workload inventory was found{% endif %}` | kubevirt=`{{ (capability_product_evidence.virtualization | default({})).kubevirt_count | default(0) }}` hco=`{{ (capability_product_evidence.virtualization | default({})).hyperconverged_count | default(0) }}` vms=`{{ (capability_product_evidence.virtualization | default({})).virtualmachine_count | default(0) }}` vmis=`{{ (capability_product_evidence.virtualization | default({})).virtualmachineinstance_count | default(0) }}` |
-{% endif %}
-{% if capability_extensions_summary.ai_present | default(false) %}
-| AI | `{{ (capability_product_evidence.ai | default({})).present | default(false) }}` | `{% if ((capability_product_evidence.ai | default({})).inferenceservice_count | default(0) | int) > 0 %}InferenceService resources are present{% elif ((capability_product_evidence.ai | default({})).datasciencecluster_count | default(0) | int) > 0 %}OpenShift AI control-plane resources are present{% else %}No AI workload inventory was found{% endif %}` | dsc=`{{ (capability_product_evidence.ai | default({})).datasciencecluster_count | default(0) }}` dsci=`{{ (capability_product_evidence.ai | default({})).dscinitialization_count | default(0) }}` notebooks=`{{ (capability_product_evidence.ai | default({})).notebook_count | default(0) }}` isvc=`{{ (capability_product_evidence.ai | default({})).inferenceservice_count | default(0) }}` |
-{% endif %}
-
-{% if capability_extension_findings | length > 0 %}
-#### Extension Health
-
-| Area | Severity | Detail |
-| --- | --- | --- |
-{% for item in capability_extension_findings %}
-| `{{ item.area }}` | `{{ item.severity | upper }}` | {{ item.detail }} |
-{% endfor %}
-{% endif %}
-{% endif %}
-
 ## Day 2 Production Readiness
 
-{% set day2_readiness_summary = audit_report.domains.production_day2_readiness.day2_production_readiness_summary | default({}) %}
+{% set day2_readiness_summary_fact = day2_readiness_summary | default({}) %}
+{% set day2_readiness_summary = audit_report.domains.production_day2_readiness.day2_production_readiness_summary | default((collected_report_payload.domains | default({})).production_day2_readiness.day2_production_readiness_summary | default(day2_readiness_summary_fact)) %}
 {% set day2_status = day2_readiness_summary.status | default('unknown') %}
 {% set day2_top_blockers = day2_readiness_summary.top_blockers | default([]) %}
 {% set day2_evidence_confidence = day2_readiness_summary.evidence_confidence | default('unknown') %}
@@ -2711,13 +2594,12 @@ Cluster update history was not returned.
 {% set day2_observability_status = day2_readiness_summary.observability_status | default('not-derived') %}
 {% set day2_backup_status = day2_readiness_summary.backup_recovery_status | default('not-derived') %}
 {% set day2_security_status = day2_readiness_summary.security_compliance_status | default('not-derived') %}
-{% set day2_operations_status = day2_readiness_summary.operations_maturity_status | default('not-derived') %}
-{% set day2_extensions_status = day2_readiness_summary.workload_capability_extensions_status | default('not-derived') %}
-{% set day2_capability_sections = audit_report.domains.production_day2_readiness.capability_sections | default([]) %}
-{% set day2_capability_assessment_state = audit_report.domains.production_day2_readiness.capability_assessment_state | default(day2_readiness_summary.capability_assessment_state | default('unknown')) %}
-{% set day2_capability_assessment_error = audit_report.domains.production_day2_readiness.capability_assessment_error | default(day2_readiness_summary.capability_assessment_error | default('')) %}
+{% set day2_operations_status = day2_readiness_summary.declarative_operations_status | default('not-derived') %}
+{% set day2_capability_sections = audit_report.domains.production_day2_readiness.capability_sections | default((collected_report_payload.domains | default({})).production_day2_readiness.capability_sections | default([])) %}
+{% set day2_capability_assessment_state = audit_report.domains.production_day2_readiness.capability_assessment_state | default((collected_report_payload.domains | default({})).production_day2_readiness.capability_assessment_state | default(day2_readiness_summary.capability_assessment_state | default('unknown'))) %}
+{% set day2_capability_assessment_error = audit_report.domains.production_day2_readiness.capability_assessment_error | default((collected_report_payload.domains | default({})).production_day2_readiness.capability_assessment_error | default(day2_readiness_summary.capability_assessment_error | default(''))) %}
 {% set day2_critical_blocker_present = day2_upgrade_status == 'BLOCKED' or day2_observability_status == 'CRITICAL' or day2_backup_status == 'CRITICAL' or day2_security_status == 'CRITICAL' %}
-{% set day2_warning_blocker_present = day2_lifecycle_status not in ['supported', 'unknown', 'not-derived'] or day2_upgrade_status == 'WARNING' or day2_observability_status == 'WARNING' or day2_backup_status == 'WARNING' or day2_security_status == 'WARNING' or day2_operations_status == 'WARNING' or day2_extensions_status == 'WARNING' %}
+{% set day2_warning_blocker_present = day2_lifecycle_status not in ['supported', 'unknown', 'not-derived'] or day2_upgrade_status == 'WARNING' or day2_observability_status == 'WARNING' or day2_backup_status == 'WARNING' or day2_security_status == 'WARNING' or day2_operations_status == 'WARNING' %}
 {% set ns_day2 = namespace(ok=0, warn=0, critical=0, unknown=0, required_gaps=0) %}
 {% for section in day2_capability_sections %}
 {% set section_status = section.status | default('UNKNOWN') | string | trim | upper %}
@@ -2745,12 +2627,12 @@ Cluster update history was not returned.
 | Capability assessment state | `{{ day2_capability_assessment_state }}` | {{ status_badge('OK' if day2_capability_assessment_state == 'completed' else 'UNKNOWN') }} |
 | Top blockers | `{{ day2_top_blockers | join('; ') or 'none' }}` | {{ status_badge('WARN' if day2_top_blockers | length > 0 else 'OK') }} |
 | Critical blocker state | `upgrade={{ day2_upgrade_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}` | {{ status_badge('CRITICAL' if day2_critical_blocker_present else 'OK') }} |
-| Warning blocker state | `lifecycle={{ day2_lifecycle_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}, operations={{ day2_operations_status }}, extensions={{ day2_extensions_status }}` | {{ status_badge('WARN' if day2_warning_blocker_present else 'OK') }} |
+| Warning blocker state | `lifecycle={{ day2_lifecycle_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}, operations={{ day2_operations_status }}` | {{ status_badge('WARN' if day2_warning_blocker_present else 'OK') }} |
 
 ### Recommendations
 
 **Findings Summary**
-- {% if day2_capability_assessment_state != 'completed' %}Capability assessment did not complete cleanly in this run, so the capability sections below are fallback placeholders rather than collected assessment results. Treat `gap status` and `capability key` rows marked `not-assessed` as a rerun requirement. {% if day2_capability_assessment_error %}Analyzer detail: `{{ day2_capability_assessment_error | replace('|', '\\|') }}`.{% endif %}{% elif day2_top_blockers | length > 0 %}The cluster should not be treated as fully Day 2 production-ready until these blockers are resolved: `{{ day2_top_blockers | join('; ') }}`. The readiness roll-up shows `{{ day2_readiness_summary.reason_summary | default('one or more readiness domains require review') }}`.{% elif day2_status == 'HEALTHY' %}No Day 2 production-readiness blockers were summarized by the owning postures. Readiness confidence is `{{ day2_evidence_confidence }}` and the owning postures did not report blocking lifecycle, upgrade, recovery, security, operations, or extension gaps.{% else %}The Day 2 production-readiness decision is incomplete because the roll-up status is `{{ day2_status }}` and no blocker list was produced. Resolve the incomplete readiness inputs in the owning posture sections before using this section as the production-readiness decision.{% endif %}
+- {% if day2_capability_assessment_state != 'completed' %}Capability assessment did not complete cleanly in this run, so the capability sections below are fallback placeholders rather than collected assessment results. Treat `gap status` and `capability key` rows marked `not-assessed` as a rerun requirement. {% if day2_capability_assessment_error %}Analyzer detail: `{{ day2_capability_assessment_error | replace('|', '\\|') }}`.{% endif %}{% elif day2_top_blockers | length > 0 %}The cluster should not be treated as fully Day 2 production-ready until these blockers are resolved: `{{ day2_top_blockers | join('; ') }}`. The readiness roll-up shows `{{ day2_readiness_summary.reason_summary | default('one or more readiness domains require review') }}`.{% elif day2_status == 'HEALTHY' %}No Day 2 production-readiness blockers were summarized by the owning postures. Readiness confidence is `{{ day2_evidence_confidence }}` and the owning postures did not report blocking lifecycle, upgrade, recovery, security, or operations gaps.{% else %}The Day 2 production-readiness decision is incomplete because the roll-up status is `{{ day2_status }}` and no blocker list was produced. Resolve the incomplete readiness inputs in the owning posture sections before using this section as the production-readiness decision.{% endif %}
 
 ### Operating Questions
 
@@ -2797,9 +2679,9 @@ Technical focus: {{ section.recommended_action | default('Review the expected ev
 ##### Operating Questions
 
 {{ operating_questions(
-  section.top_detail | default('No collected check detail was mapped for this capability.'),
+  capability_gap_statement(section),
   capability_business_impact(section),
-  recommended_action_with_docs(section.recommended_action | default('Review the expected evidence for this capability.'), section.status | default('UNKNOWN'), [section.key | default('day2')]),
+  recommended_action_with_capability_docs(section.recommended_action | default('Review the expected evidence for this capability.'), section),
   likely_owner_label(section.owner | default('platform')),
   capability_success_signal(section),
   section.notes | default('')
@@ -2820,13 +2702,13 @@ Technical focus: {{ section.recommended_action | default('Review the expected ev
 | Why it matters | `{{ capability_business_impact(section) }}` | {{ status_badge('INFO') }} |
 | Action plan | `{{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
 | Done when | `{{ capability_success_signal(section) | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
-| Reference | `{{ section.docs | default('not-declared') | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
+| Reference | `{{ profile_text(section.docs | default('not-declared')) | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
 
 {% if section.notes | default('') %}
 Expected operating model: {{ section.notes | replace('|', '\\|') }}
 {% endif %}
-{% if section.docs | default('') %}
-Implementation reference: {{ section.docs }}
+{% if profile_text(section.docs | default('')) | trim | length > 0 %}
+Implementation reference: {{ profile_text(section.docs | default('')) }}
 {% endif %}
 
 {% if section.checks | default([]) | length > 0 %}
@@ -2857,8 +2739,8 @@ Findings
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `Production-readiness decision` | `{% if day2_status == 'CRITICAL' %}CRITICAL{% elif day2_status == 'WARNING' %}WARNING{% elif day2_status == 'HEALTHY' %}OK{% else %}UNKNOWN{% endif %}` | `{% if day2_top_blockers | length > 0 %}top blockers={{ day2_top_blockers | join('; ') }}{% else %}top blockers=none{% endif %}` | `This final roll-up determines whether the cluster is ready for Day 2 production operations based on the owning posture sections.` | `status={{ day2_status }}, reason={{ day2_readiness_summary.reason_summary | default('none') }}` | `{% if day2_top_blockers | length > 0 %}Resolve the named blockers in the owning posture sections before declaring the cluster production-ready.{% elif day2_status == 'HEALTHY' %}No production-readiness remediation is required for this posture.{% else %}Verify incomplete readiness evidence before using this roll-up as a final decision.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when(day2_status) }}` |
 | `Critical blocker state` | `{% if day2_critical_blocker_present %}CRITICAL{% else %}OK{% endif %}` | `upgrade={{ day2_upgrade_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}` | `Blocked upgrades, missing incident visibility, missing recovery confidence, or critical security findings can prevent safe production operation.` | `upgrade={{ day2_upgrade_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}` | `{% if day2_critical_blocker_present %}Clear upgrade blockers and critical observability, backup, recovery, security, or compliance findings before production sign-off.{% else %}No critical production-readiness blockers were summarized from these domains.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('CRITICAL' if day2_critical_blocker_present else 'OK') }}` |
-| `Warning blocker state` | `{% if day2_warning_blocker_present %}WARNING{% else %}OK{% endif %}` | `lifecycle={{ day2_lifecycle_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}, operations={{ day2_operations_status }}, extensions={{ day2_extensions_status }}` | `Warning-level readiness gaps increase operational risk even when they do not fully block production use.` | `lifecycle={{ day2_lifecycle_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}, operations={{ day2_operations_status }}, extensions={{ day2_extensions_status }}` | `{% if day2_warning_blocker_present %}Use the owning posture sections to remediate lifecycle, observability, backup/DR, security, operations, or optional capability warnings, then regenerate the report.{% else %}No warning-level production-readiness blockers were summarized from these domains.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('WARNING' if day2_warning_blocker_present else 'OK') }}` |
-| `Readiness blocker count` | `{% if day2_top_blockers | length > 0 %}WARNING{% elif day2_status == 'HEALTHY' %}OK{% else %}UNKNOWN{% endif %}` | `{{ day2_top_blockers | length }} blockers` | `Production sign-off should be based on unresolved lifecycle, recovery, security, observability, operations, and extension blockers.` | `blockers={{ day2_top_blockers | join('; ') or 'none' }}` | `{% if day2_top_blockers | length > 0 %}Resolve the named readiness blockers in the owning posture sections before production sign-off.{% elif day2_status == 'HEALTHY' %}No readiness-blocker remediation is required for this posture.{% else %}Verify incomplete readiness inputs before using this roll-up as a final decision.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('WARNING' if day2_top_blockers | length > 0 else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN')) }}` |
+| `Warning blocker state` | `{% if day2_warning_blocker_present %}WARNING{% else %}OK{% endif %}` | `lifecycle={{ day2_lifecycle_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}, operations={{ day2_operations_status }}` | `Warning-level readiness gaps increase operational risk even when they do not fully block production use.` | `lifecycle={{ day2_lifecycle_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}, operations={{ day2_operations_status }}` | `{% if day2_warning_blocker_present %}Use the owning posture sections to remediate lifecycle, observability, backup/DR, security, or operations warnings, then regenerate the report.{% else %}No warning-level production-readiness blockers were summarized from these domains.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('WARNING' if day2_warning_blocker_present else 'OK') }}` |
+| `Readiness blocker count` | `{% if day2_top_blockers | length > 0 %}WARNING{% elif day2_status == 'HEALTHY' %}OK{% else %}UNKNOWN{% endif %}` | `{{ day2_top_blockers | length }} blockers` | `Production sign-off should be based on unresolved lifecycle, recovery, security, observability, and operations blockers.` | `blockers={{ day2_top_blockers | join('; ') or 'none' }}` | `{% if day2_top_blockers | length > 0 %}Resolve the named readiness blockers in the owning posture sections before production sign-off.{% elif day2_status == 'HEALTHY' %}No readiness-blocker remediation is required for this posture.{% else %}Verify incomplete readiness inputs before using this roll-up as a final decision.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('WARNING' if day2_top_blockers | length > 0 else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN')) }}` |
 
 ## Appendix: Detailed Evidence Samples
 
@@ -2875,7 +2757,7 @@ Findings
 | --- | --- | --- |
 | Supporting evidence present | `{{ has_supporting_evidence }}` | {{ status_badge('INFO' if has_supporting_evidence else 'OK') }} |
 | Namespace evidence samples | `{{ top_namespace_issue_summary | default([]) | length }}` | {{ status_badge('INFO' if (top_namespace_issue_summary | default([]) | length) > 0 else 'OK') }} |
-| Storage issue samples | `{{ (top_pv_issues | default([]) | length) + (top_pvc_issues | default([]) | length) }}` | {{ status_badge('INFO' if ((top_pv_issues | default([]) | length) + (top_pvc_issues | default([]) | length)) > 0 else 'OK') }} |
+| Storage issue samples | `{{ (top_pv_issues | default([]) | length | int) + (top_pvc_issues | default([]) | length | int) }}` | {{ status_badge('INFO' if (((top_pv_issues | default([]) | length | int) + (top_pvc_issues | default([]) | length | int)) > 0) else 'OK') }} |
 
 ### Recommendations
 

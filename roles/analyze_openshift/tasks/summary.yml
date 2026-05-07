@@ -1573,9 +1573,9 @@
       machine_networks_evidence_gap: "{{ machine_networks_evidence_gap }}"
       lifecycle_policy_source: repo-local-versioned-policy
 
-- name: Build operations and lifecycle maturity summary
+- name: Build declarative operations summary
   vars:
-    operations_maturity_status: >-
+    declarative_operations_status: >-
       {{
         'WARNING'
         if (
@@ -1595,7 +1595,7 @@
         )
         else 'HEALTHY'
       }}
-    operations_maturity_reason_summary: >-
+    declarative_operations_reason_summary: >-
       {{
         (
           []
@@ -1603,22 +1603,22 @@
           + (['GitOps controller evidence is present but no GitOps Application resources were found'] if ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0) else [])
           + (['GitOps Applications were found but none exposed a Git repository source'] if (((day2_posture_summary.gitops_application_count | default(0) | int) > 0) and not (day2_posture_summary.gitops_operational | default(false))) else [])
           + (['GitOps Applications were found but none showed automated sync'] if (((day2_posture_summary.gitops_application_count | default(0) | int) > 0) and not (day2_posture_summary.gitops_automated_sync_present | default(false))) else [])
-          + (['supporting operations context: identityProviders=' ~ (day2_posture_summary.identity_provider_count | default(0) | string) ~ ', successfulBackups=' ~ (day2_posture_summary.successful_backup_count | default(0) | string) ~ ', machineHealthChecks=' ~ (day2_posture_summary.machinehealthcheck_count | default(0) | string)] if operations_maturity_status != 'WARNING' else [])
+          + (['supporting operations context: identityProviders=' ~ (day2_posture_summary.identity_provider_count | default(0) | string) ~ ', successfulBackups=' ~ (day2_posture_summary.successful_backup_count | default(0) | string) ~ ', machineHealthChecks=' ~ (day2_posture_summary.machinehealthcheck_count | default(0) | string)] if declarative_operations_status != 'WARNING' else [])
         ) | join('; ')
       }}
-    operations_maturity_recommendation: >-
+    declarative_operations_recommendation: >-
       {{
         (
           'Strengthen the operating model next: ensure GitOps is present, GitOps Applications exist, point to Git repository sources, and use the intended reconciliation policy. Onboard platform and application resources into the declared operating model and verify whether automated sync should be enabled for those applications.'
-          if operations_maturity_status == 'WARNING'
+          if declarative_operations_status == 'WARNING'
           else 'Operations and lifecycle maturity look acceptable for this run. Treat GitOps and broader Day 2 inventory as operating-model context unless the customer requires a declarative operations standard.'
         )
       }}
   ansible.builtin.set_fact:
-    operations_lifecycle_maturity_summary:
-      status: "{{ operations_maturity_status }}"
-      reason_summary: "{{ operations_maturity_reason_summary }}"
-      recommendation: "{{ operations_maturity_recommendation }}"
+    declarative_operations_summary:
+      status: "{{ declarative_operations_status }}"
+      reason_summary: "{{ declarative_operations_reason_summary }}"
+      recommendation: "{{ declarative_operations_recommendation }}"
       gitops_present: "{{ day2_posture_summary.gitops_present | default(false) }}"
       gitops_operational: "{{ day2_posture_summary.gitops_operational | default(false) }}"
       gitops_automated_sync_present: "{{ day2_posture_summary.gitops_automated_sync_present | default(false) }}"
@@ -1642,103 +1642,6 @@
       day2_check_count: "{{ day2_posture_summary.checks_total | default(0) }}"
       capability_check_warning_count: "{{ day2_posture_summary.checks_warn | default(0) }}"
 
-- name: Build workload capability extensions summary
-  vars:
-    capability_product_evidence: "{{ assessment_product_evidence | default({}) }}"
-    capability_product_findings: "{{ assessment_product_evidence_findings | default([]) }}"
-    virtualization_present: "{{ capability_product_evidence.virtualization.present | default(false) }}"
-    ai_present: "{{ capability_product_evidence.ai.present | default(false) }}"
-    odf_present: "{{ capability_product_evidence.odf.present | default(false) }}"
-    logging_present: "{{ capability_product_evidence.logging.present | default(false) }}"
-    gitops_present: "{{ capability_product_evidence.gitops.present | default(false) }}"
-    workload_extension_present_count: >-
-      {{
-        (1 if (virtualization_present | bool) else 0)
-        + (1 if (ai_present | bool) else 0)
-      }}
-    extension_context_present_count: >-
-      {{
-        (1 if (odf_present | bool) else 0)
-        + (1 if (logging_present | bool) else 0)
-        + (1 if (gitops_present | bool) else 0)
-      }}
-    virtualization_warning_count: >-
-      {{
-        capability_product_findings
-        | selectattr('area', 'equalto', 'virtualization')
-        | selectattr('severity', 'equalto', 'warning')
-        | list
-        | length
-      }}
-    ai_warning_count: >-
-      {{
-        capability_product_findings
-        | selectattr('area', 'equalto', 'ai')
-        | selectattr('severity', 'equalto', 'warning')
-        | list
-        | length
-      }}
-    capability_inventory_info_count: >-
-      {{
-        (day2_posture_findings | default([]))
-        | selectattr('severity', 'equalto', 'info')
-        | list
-        | length
-      }}
-    workload_capability_extensions_status: >-
-      {{
-        'WARNING'
-        if (
-          (virtualization_warning_count | int) > 0
-          or (ai_warning_count | int) > 0
-        )
-        else (
-          'HEALTHY'
-          if (workload_extension_present_count | int) > 0
-          else 'INFO'
-        )
-      }}
-    workload_capability_extensions_reason_summary: >-
-      {{
-        (
-          []
-          + (['virtualization present'] if (virtualization_present | bool) else [])
-          + (['AI present'] if (ai_present | bool) else [])
-          + (['virtualization warnings=' ~ ((virtualization_warning_count | int) | string)] if (virtualization_warning_count | int) > 0 else [])
-          + (['AI warnings=' ~ ((ai_warning_count | int) | string)] if (ai_warning_count | int) > 0 else [])
-          + (['optional context capabilities=' ~ ((extension_context_present_count | int) | string)] if (extension_context_present_count | int) > 0 else [])
-          + (['optional capability inventory notes=' ~ ((capability_inventory_info_count | int) | string)] if ((capability_inventory_info_count | int) > 0 and (workload_extension_present_count | int) == 0) else [])
-          + (['no virtualization or AI footprint detected'] if (workload_extension_present_count | int) == 0 else [])
-        ) | join('; ')
-      }}
-    workload_capability_extensions_recommendation: >-
-      {{
-        (
-          'Reduce workload capability risk next: review OpenShift Virtualization and AI health findings first, because the capability is present but some extension-specific resources are not healthy.'
-          if workload_capability_extensions_status == 'WARNING'
-          else (
-            'Installed workload capability extensions did not report extension-specific warnings in collected evidence. Keep Virtualization or AI resources under normal operator, workload, storage, network, and monitoring review.'
-            if workload_capability_extensions_status == 'HEALTHY'
-            else 'Workload capability-extension posture is inventory context for this run. Treat absent optional Virtualization or AI capabilities as context rather than defects.'
-          )
-        )
-      }}
-  ansible.builtin.set_fact:
-    workload_capability_extensions_summary:
-      status: "{{ workload_capability_extensions_status }}"
-      reason_summary: "{{ workload_capability_extensions_reason_summary }}"
-      recommendation: "{{ workload_capability_extensions_recommendation }}"
-      workload_extension_present_count: "{{ workload_extension_present_count }}"
-      extension_context_present_count: "{{ extension_context_present_count }}"
-      virtualization_present: "{{ virtualization_present }}"
-      ai_present: "{{ ai_present }}"
-      odf_present: "{{ odf_present }}"
-      logging_present: "{{ logging_present }}"
-      gitops_present: "{{ gitops_present }}"
-      virtualization_warning_count: "{{ virtualization_warning_count }}"
-      ai_warning_count: "{{ ai_warning_count }}"
-      capability_inventory_info_count: "{{ capability_inventory_info_count }}"
-
 - name: Build Day 2 production readiness synthesis summary
   vars:
     readiness_lifecycle_warning: >-
@@ -1753,8 +1656,7 @@
     readiness_backup_warning: "{{ (backup_recovery_summary.status | default('not-assessed')) == 'WARNING' }}"
     readiness_security_critical: "{{ (security_compliance_summary.status | default('not-assessed')) == 'CRITICAL' }}"
     readiness_security_warning: "{{ (security_compliance_summary.status | default('not-assessed')) == 'WARNING' }}"
-    readiness_operations_warning: "{{ (operations_lifecycle_maturity_summary.status | default('not-assessed')) == 'WARNING' }}"
-    readiness_extensions_warning: "{{ (workload_capability_extensions_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_operations_warning: "{{ (declarative_operations_summary.status | default('not-assessed')) == 'WARNING' }}"
     readiness_collection: "{{ assessment_collection_summary | default(report_collection | default({})) }}"
     readiness_collection_confidence: >-
       {{
@@ -1809,7 +1711,6 @@
           + (['Backup and disaster recovery posture needs review'] if (not readiness_backup_critical and readiness_backup_warning) else [])
           + (['Security and compliance posture needs review'] if (not readiness_security_critical and readiness_security_warning) else [])
           + (['Operations maturity needs review'] if readiness_operations_warning else [])
-          + (['Workload capability extensions need review'] if readiness_extensions_warning else [])
         )[:3]
       }}
     day2_production_readiness_reason_summary: >-
@@ -1821,8 +1722,7 @@
           + (['observability=' ~ (observability_summary.status | default('not-assessed'))] if (readiness_observability_critical or readiness_observability_warning) else [])
           + (['backup and DR=' ~ (backup_recovery_summary.status | default('not-assessed'))] if (readiness_backup_critical or readiness_backup_warning) else [])
           + (['security and compliance=' ~ (security_compliance_summary.status | default('not-assessed'))] if (readiness_security_critical or readiness_security_warning) else [])
-          + (['operations maturity=' ~ (operations_lifecycle_maturity_summary.status | default('not-assessed'))] if readiness_operations_warning else [])
-          + (['workload extensions=' ~ (workload_capability_extensions_summary.status | default('not-assessed'))] if readiness_extensions_warning else [])
+          + (['declarative operations=' ~ (declarative_operations_summary.status | default('not-assessed'))] if readiness_operations_warning else [])
           + (['evidence confidence=' ~ readiness_evidence_confidence] if readiness_evidence_warning else [])
         ) | join('; ')
       }}
@@ -1832,9 +1732,9 @@
           'Production readiness is blocked by higher-risk posture gaps. Resolve critical blockers in priority order: close evidence gaps if confidence is low, clear upgrade blockers, then fix critical observability, backup, disaster-recovery, security, or compliance findings before treating the cluster as production-ready.'
           if day2_production_readiness_status == 'CRITICAL'
           else (
-            'Production readiness needs follow-up. Address lifecycle, upgrade, observability, recovery, security, operations, extension, or evidence-confidence warnings in the owning posture sections, then re-run the report before declaring the cluster production-ready.'
+            'Production readiness needs follow-up. Address lifecycle, upgrade, observability, recovery, security, operations, or evidence-confidence warnings in the owning posture sections, then re-run the report before declaring the cluster production-ready.'
             if day2_production_readiness_status == 'WARNING'
-            else 'Day 2 production readiness looks acceptable for this run. Keep lifecycle, observability, recovery, operations maturity, and extension health under normal review as the cluster evolves.'
+            else 'Day 2 production readiness looks acceptable for this run. Keep lifecycle, observability, recovery, and operations maturity under normal review as the cluster evolves.'
           )
         )
       }}
@@ -1848,8 +1748,7 @@
       observability_status: "{{ observability_summary.status | default('not-assessed') }}"
       backup_recovery_status: "{{ backup_recovery_summary.status | default('not-assessed') }}"
       security_compliance_status: "{{ security_compliance_summary.status | default('not-assessed') }}"
-      operations_maturity_status: "{{ operations_lifecycle_maturity_summary.status | default('not-assessed') }}"
-      workload_capability_extensions_status: "{{ workload_capability_extensions_summary.status | default('not-assessed') }}"
+      declarative_operations_status: "{{ declarative_operations_summary.status | default('not-assessed') }}"
       evidence_confidence: "{{ readiness_evidence_confidence }}"
       top_blockers: "{{ day2_production_readiness_top_blockers }}"
 

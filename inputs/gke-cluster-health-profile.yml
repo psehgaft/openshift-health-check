@@ -1,7 +1,7 @@
 ---
-# Rancher-managed Kubernetes production capability profile.
+# GKE production capability profile.
 # Use with:
-#   ansible-playbook playbooks/rancher_cluster_health_report.yml -e @inputs/rancher-capability-profile.yml
+#   ansible-playbook playbooks/gke_cluster_health_report.yml -e @inputs/gke-cluster-health-profile.yml
 kubernetes_report_capability_profile:
   backup_and_restore_readiness:
     required: true
@@ -9,7 +9,7 @@ kubernetes_report_capability_profile:
     expected_state: healthy
     owner: operations
     evidence_required: [kubectl-get]
-    notes: "Production Rancher-managed clusters should have backup and restore evidence."
+    notes: "Production GKE clusters should have backup and restore evidence."
     docs: "https://velero.io/docs/latest/"
   namespace_network_policy_baseline:
     required: true
@@ -17,7 +17,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: security
     evidence_required: [kubectl-get]
-    notes: "Rancher-managed production namespaces should have NetworkPolicy coverage or an approved alternate segmentation control."
+    notes: "GKE production namespaces should have NetworkPolicy coverage or an approved Google Cloud network segmentation alternative."
     docs: "https://kubernetes.io/docs/concepts/services-networking/network-policies/"
   namespace_resource_quota_governance:
     required: true
@@ -49,7 +49,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: storage
     evidence_required: [kubectl-get]
-    notes: "Production Rancher-managed clusters should expose a supported persistent storage provider."
+    notes: "Production GKE clusters normally use Persistent Disk, Filestore, or another CSI-backed provider."
     docs: "https://kubernetes.io/docs/concepts/storage/storage-classes/"
   deprecated_api_upgrade_review:
     required: true
@@ -57,7 +57,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: platform
     evidence_required: [kubectl-get]
-    notes: "Deprecated APIs should be reviewed before Kubernetes upgrades."
+    notes: "Deprecated APIs should be reviewed before GKE upgrades."
     docs: "https://kubernetes.io/docs/reference/using-api/deprecation-guide/"
   external_log_forwarding:
     required: true
@@ -73,7 +73,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: observability
     evidence_required: [kubectl-get, metrics]
-    notes: "Monitoring and alerting should be configured through Rancher monitoring, Prometheus, or another supported platform."
+    notes: "Monitoring and alerting should be configured through Cloud Monitoring, Prometheus, or another supported platform."
     docs: "https://prometheus-operator.dev/docs/developer/getting-started/"
   user_workload_metrics_monitoring:
     required: true
@@ -196,12 +196,12 @@ kubernetes_report_capability_profile:
     notes: "Require when workloads are expected to pull application images from an external private registry."
     docs: "https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/"
   workload_autoscaling:
-    required: false
+    required: true
     criticality: medium
     expected_state: configured
     owner: platform
     evidence_required: [kubectl-get, metrics]
-    notes: "Require when workload or node autoscaling is expected."
+    notes: "Most production GKE clusters should use HPA, cluster autoscaler, KEDA, or an approved fixed-capacity model."
     docs: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/"
   admission_policy_engine:
     required: false
@@ -209,7 +209,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: security
     evidence_required: [kubectl-get]
-    notes: "Require when Rancher policy, Gatekeeper, Kyverno, or another admission policy engine is part of the baseline."
+    notes: "Require when Policy Controller, Gatekeeper, Kyverno, or another admission policy engine is part of the baseline."
     docs: "https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/"
   external_or_sealed_secrets_management:
     required: false
@@ -217,7 +217,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: security
     evidence_required: [kubectl-get]
-    notes: "Require when external or sealed secret workflows are expected."
+    notes: "Require when Secret Manager integration, external-secrets, or sealed secrets are expected."
     docs: "https://external-secrets.io/latest/"
   cluster_hosted_cicd_runners:
     required: false
@@ -233,7 +233,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: platform
     evidence_required: [kubectl-get, provider-api]
-    notes: "Rancher cluster, node-pool, and failure-domain metadata should be available for resilience review."
+    notes: "GKE node-pool, zone, and provider labels should be available for resilience review."
     docs: "https://kubernetes.io/docs/reference/labels-annotations-taints/"
   service_mesh_control_plane:
     required: false

@@ -36,16 +36,14 @@ By default, it collects data in parallel so the run finishes faster. It also tel
 If you are new to this repo, use this reading order:
 
 1. Stay in [README.md](README.md) to learn what the tool does and how to run it.
-2. Read [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md) to understand why the report is structured the way it is.
-3. Read [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md) when you want a simple review order for reading the final OpenShift report.
+2. Read [DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md) to understand why the report is structured the way it is.
 
 ## Design Notes
 
-The check set in this repo follows the design in [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md).
+The check set in this repo follows the design in [DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md).
 
 Use this `README.md` when you want to install, run, or use the tool.
 Use the design notes when you want to understand why the checks exist and how the report is meant to be read.
-Use [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md) when you want a simple walkthrough order for the OpenShift posture sections.
 
 ## Quick Start
 
@@ -129,7 +127,7 @@ This validation covers:
 - OpenShift report template validation
 - capability profile validation for OpenShift and Kubernetes variants
 
-Each run also writes a copy of stdout and stderr to `.logs/<cluster-type>-run-<timestamp>.log`. The `.logs/` directory is created automatically if it does not already exist. If you do not pass a cluster type label, the log file uses `repo`.
+The wrapper scripts in `scripts/`, such as `run_ci_report.sh` and `validate_repo.sh`, also write stdout and stderr to `.logs/<cluster-type>-run-<timestamp>.log`. Direct `ansible-playbook ...` runs only write there if you pipe them through `tee` yourself. The `.logs/` directory is created automatically by the wrappers when it does not already exist.
 
 If you want Git to enforce this locally before every push, add a pre-push hook:
 
@@ -149,7 +147,7 @@ In simple terms, the tool is trying to answer two questions:
 1. Is the cluster healthy right now?
 2. Is there anything risky, weak, or badly configured that should be fixed?
 
-The report is intentionally remediation-oriented. Every major section is supposed to answer the same five questions:
+The report is written to drive action. Every major section should answer the same five questions:
 
 1. What is the gap?
 2. Why does it matter?
@@ -180,7 +178,7 @@ The report is easier to use when every major section follows the same reading co
 - `Who likely owns it`: the section points to the team that usually needs to act.
 - `How to tell it is fixed`: the section defines a closure signal so teams can verify the gap is actually resolved.
 
-This is deliberate. Leaders should be able to understand risk and ownership quickly, and technical teams should be able to turn the same section into a remediation backlog.
+That keeps the same section useful for leadership review and for engineering follow-up.
 
 ## What It Checks
 
@@ -189,23 +187,23 @@ The report covers the main areas operators usually care about.
 The OpenShift path is the deepest path in the repo.
 The Kubernetes path covers shared checks plus provider-aware sections where safe cluster-local signals exist.
 
-For OpenShift, the final report is organized by priority:
+For OpenShift, the report is ordered from immediate operational risk to longer-term readiness:
 
-- `P1` Supportability
-- `P2` Core platform health
-- `P3` Platform architecture and lifecycle
-- `P4` Networking architecture
-- `P5` Security and compliance
-- `P6` Observability
-- `P7` Backup and disaster recovery
-- `P8` Node health and capacity planning
-- `P9` Workload health and deployment hygiene
-- `P10` Operations and lifecycle maturity
-- `P11` Container platform adoption and release engineering
-- `P12` Workload capability extensions
-- `P13` Day 2 production readiness
+- Evidence And Supportability
+- Platform Health
+- Node Health And Capacity
+- Backup And Disaster Recovery
+- Application Access And Network Isolation
+- Observability
+- Security And Governance
+- Workload Health
+- Platform Architecture And Lifecycle
+- Capacity Planning Snapshot
+- Declarative Operations
+- Container Platform Adoption And Release Engineering
+- Day 2 Production Readiness
 
-Each section starts with a short recommendation and summary. The report moves from urgent problems first to longer-term readiness later, and each major posture section is expected to explain the gap, the impact, the action, the likely owner, and the success signal.
+Each section opens with a short summary and then works into findings and actions. Supportability and platform risk come first. Operating model and readiness come later.
 
 Main areas:
 
@@ -272,7 +270,7 @@ The report also includes:
 - OpenShift deployment type labels for SNO and ROSA HCP
 - cleaned-up section formatting that prefers readable tables and plain-language labels over debug-style issue dumps
 
-If you want help reading the OpenShift report in order, go to [HEALTH-CHECK-POSTURE-PRIORITIES.md](HEALTH-CHECK-POSTURE-PRIORITIES.md).
+If you want help reading the OpenShift report in order, start with the early sections first: Evidence And Supportability, Platform Health, and Security And Governance. Those sections usually determine whether the rest of the report is actionable or only informational.
 
 
 ## Signal Notes
@@ -384,56 +382,99 @@ Capability metadata is also used to keep optional-capability sections aligned to
 - `docs` provide an implementation or remediation reference
 - evidence settings determine how the report proves the capability is present, configured, or missing
 
-OpenShift uses `openshift_report_capability_profile` because its report can use OpenShift-specific evidence such as `oc adm must-gather`, `oc adm inspect`, `oc get`, Insights, Prometheus/Thanos, and node diagnostics. Kubernetes-family reports use `kubernetes_report_capability_profile` because they rely on portable `kubectl get`, provider metadata, and optional metrics evidence.
+OpenShift uses the unified `cluster_health_profile` because its report can combine posture and capability expectations with OpenShift-specific evidence such as `oc adm must-gather`, `oc adm inspect`, `oc get`, Insights, Prometheus/Thanos, and node diagnostics. Kubernetes-family reports still use `kubernetes_report_capability_profile` because they rely on portable `kubectl get`, provider metadata, and optional metrics evidence.
 
-Use the matching example as-is, or copy and adjust the values for a customer environment:
+Use the matching example as-is, or copy it and toggle the fields you want to customize:
 
 ```bash
-ansible-playbook playbooks/openshift_cluster_health_report.yml -e @inputs/openshift-capability-profile.yml
+ansible-playbook playbooks/openshift_cluster_health_report.yml
 
-ansible-playbook playbooks/k8s_cluster_health_report.yml -e @inputs/kubernetes-capability-profile.yml
+ansible-playbook playbooks/k8s_cluster_health_report.yml -e @inputs/kubernetes-cluster-health-profile.yml
 
-ansible-playbook playbooks/aks_cluster_health_report.yml -e @inputs/aks-capability-profile.yml
+ansible-playbook playbooks/aks_cluster_health_report.yml -e @inputs/aks-cluster-health-profile.yml
 
-ansible-playbook playbooks/eks_cluster_health_report.yml -e @inputs/eks-capability-profile.yml
+ansible-playbook playbooks/eks_cluster_health_report.yml -e @inputs/eks-cluster-health-profile.yml
 
-ansible-playbook playbooks/gke_cluster_health_report.yml -e @inputs/gke-capability-profile.yml
+ansible-playbook playbooks/gke_cluster_health_report.yml -e @inputs/gke-cluster-health-profile.yml
 
-ansible-playbook playbooks/rancher_cluster_health_report.yml -e @inputs/rancher-capability-profile.yml
+ansible-playbook playbooks/rancher_cluster_health_report.yml -e @inputs/rancher-cluster-health-profile.yml
 
-ansible-playbook playbooks/development_k8s_cluster_health_report.yml -e @inputs/development-k8s-capability-profile.yml
+ansible-playbook playbooks/development_k8s_cluster_health_report.yml -e @inputs/development-k8s-cluster-health-profile.yml
 
-ansible-playbook playbooks/minikube_cluster_health_report.yml -e @inputs/minikube-capability-profile.yml
+ansible-playbook playbooks/minikube_cluster_health_report.yml -e @inputs/minikube-cluster-health-profile.yml
 ```
 
 ```yaml
-openshift_report_capability_profile:
-  advanced_cluster_security:
-    required: false
-    criticality: high
-    expected_state: present
-    owner: security
-    evidence_required: [must-gather, oc-get]
-    notes: "Require when Advanced Cluster Security is part of the customer security baseline."
-    docs: "https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes/latest"
+cluster_health_profile:
+  postures:
+    observability:
+      notes: "Confirm the cluster can deliver metrics, alerts, and logs through the native stack or an approved alternate observability platform."
+      docs:
+        - "https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/monitoring/index"
+        - "https://docs.datadoghq.com/containers/datadog_operator/"
+        - "https://help.splunk.com/en/splunk-observability-cloud/manage-data/splunk-distribution-of-the-opentelemetry-collector/get-started-with-the-splunk-distribution-of-the-opentelemetry-collector/collector-for-kubernetes"
+      includes:
+        - cluster_log_forwarding
+        - external_alert_delivery
+        - user_workload_metrics_monitoring
+        - persistent_monitoring_storage
+      satisfied_by_all:
+        - dynatrace_observability
+        - datadog_observability
+        - splunk_observability
+  capabilities:
+    dynatrace_observability:
+      enabled: true
+      notes: "Use this capability when Dynatrace is expected to provide the cluster's primary observability path for metrics, alerts, and logs."
+      docs:
+        - "https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s"
+    datadog_observability:
+      enabled: true
+      notes: "Use this capability when Datadog is expected to provide the cluster's primary observability path for metrics, monitors, and logs."
+      docs:
+        - "https://docs.datadoghq.com/containers/datadog_operator/"
+    splunk_observability:
+      enabled: true
+      notes: "Use this capability when Splunk is expected to provide the cluster's primary observability path for metrics, alerts, and logs."
+      docs:
+        - "https://help.splunk.com/en/splunk-observability-cloud/manage-data/splunk-distribution-of-the-opentelemetry-collector/get-started-with-the-splunk-distribution-of-the-opentelemetry-collector/collector-for-kubernetes"
+    advanced_cluster_management:
+      enabled: false
+      required: false
+      notes: "Set enabled=true or required=true only when the customer expects ACM fleet registration or governance."
+    openshift_data_foundation:
+      enabled: false
+      required: false
+      notes: "Set enabled=true or required=true only when the customer expects ODF-managed storage services."
 ```
 
 Supported `expected_state` values are `present`, `absent`, `configured`, `healthy`, and `not_applicable`. Optional capabilities are hidden or treated as inventory context when absent unless they have findings or `required: true`. The `notes` and `docs` fields are used to make capability sections read like actionable gap summaries rather than raw detections, so report readers can understand the expected state and jump directly to configuration guidance when a capability is missing or weak.
 
+For customer-specific optional platforms and vendor-managed extensions such as Dynatrace, Datadog, Splunk, ACM, or ODF, the built-in defaults now leave them off. Set `enabled: true` in the override file to surface them as optional context when detected, or `required: true` when the report should treat their absence as a gap.
+
+The unified OpenShift profile is also the single source of truth for analyzer-supported capabilities. If Day 2 analyzer logic can emit a capability key, that key must exist in `inputs/openshift-cluster-health-profile.yml`, even when it is optional and off by default.
+
 Capability assessment is intentionally fail-closed. If the analyzer does not produce collected capability checks, the report must say the capability assessment did not complete cleanly and mark those sections as `not-assessed` placeholders instead of inflating coverage or pretending the capability was evaluated.
+
+Maintainer extension workflow:
+- follow [docs/cluster-health-extension-guide.md](/Users/luqman/workspace/guides/openshift-health-check/docs/cluster-health-extension-guide.md:1) when adding a posture, capability, or new scan scope
+- keep OpenShift profile metadata in `inputs/openshift-cluster-health-profile.yml`
+- keep evidence collection and scoring in analyzer code
+- use `scripts/scaffold_cluster_health_entry.py` to generate new posture or capability YAML snippets instead of hand-building the schema
+- run `scripts/validate_repo.sh` after profile, template, or capability-content changes so the fixture render and rendered-output validator both run in the standard gate
 
 Capability profile input files:
 
 | Cluster type | Playbook | Capability input file |
 | --- | --- | --- |
-| OpenShift, ARO, ROSA, ROSA HCP, SNO | [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml) | [inputs/openshift-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/openshift-capability-profile.yml) |
-| Generic Kubernetes | [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml) | [inputs/kubernetes-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/kubernetes-capability-profile.yml) |
-| Development Kubernetes | [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml) | [inputs/development-k8s-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/development-k8s-capability-profile.yml) |
-| AKS | [playbooks/aks_cluster_health_report.yml](playbooks/aks_cluster_health_report.yml) | [inputs/aks-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/aks-capability-profile.yml) |
-| EKS | [playbooks/eks_cluster_health_report.yml](playbooks/eks_cluster_health_report.yml) | [inputs/eks-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/eks-capability-profile.yml) |
-| GKE | [playbooks/gke_cluster_health_report.yml](playbooks/gke_cluster_health_report.yml) | [inputs/gke-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/gke-capability-profile.yml) |
-| Rancher-managed Kubernetes | [playbooks/rancher_cluster_health_report.yml](playbooks/rancher_cluster_health_report.yml) | [inputs/rancher-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/rancher-capability-profile.yml) |
-| Minikube | [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml) | [inputs/minikube-capability-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/minikube-capability-profile.yml) |
+| OpenShift, ARO, ROSA, ROSA HCP, SNO | [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml) | [inputs/openshift-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/openshift-cluster-health-profile.yml) |
+| Generic Kubernetes | [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml) | [inputs/kubernetes-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/kubernetes-cluster-health-profile.yml) |
+| Development Kubernetes | [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml) | [inputs/development-k8s-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/development-k8s-cluster-health-profile.yml) |
+| AKS | [playbooks/aks_cluster_health_report.yml](playbooks/aks_cluster_health_report.yml) | [inputs/aks-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/aks-cluster-health-profile.yml) |
+| EKS | [playbooks/eks_cluster_health_report.yml](playbooks/eks_cluster_health_report.yml) | [inputs/eks-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/eks-cluster-health-profile.yml) |
+| GKE | [playbooks/gke_cluster_health_report.yml](playbooks/gke_cluster_health_report.yml) | [inputs/gke-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/gke-cluster-health-profile.yml) |
+| Rancher-managed Kubernetes | [playbooks/rancher_cluster_health_report.yml](playbooks/rancher_cluster_health_report.yml) | [inputs/rancher-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/rancher-cluster-health-profile.yml) |
+| Minikube | [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml) | [inputs/minikube-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/minikube-cluster-health-profile.yml) |
 
 Capability evidence is collected from cluster-local APIs first. OpenShift runs prefer `oc adm must-gather`, `oc adm inspect`, `oc get`, Insights, Prometheus/Thanos, and node diagnostics when available. Kubernetes-family runs use portable `kubectl get` evidence plus optional metrics.
 
@@ -492,7 +533,7 @@ This section maps the main report signals to their reason for inclusion and the 
   Rancher Kubernetes playbook.
 - [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml)
   Minikube playbook.
-- [DESIGN-PRINCIPLE.md](DESIGN-PRINCIPLE.md)
+- [DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md)
   Design notes and the reasoning behind the checks.
 - [roles/preflight_openshift/tasks/main.yml](roles/preflight_openshift/tasks/main.yml)
   Login and access checks.
@@ -528,8 +569,6 @@ This section maps the main report signals to their reason for inclusion and the 
   Collected-state OpenShift report rendering entrypoint.
 - [templates/openshift_cluster_health_report.md.j2](templates/openshift_cluster_health_report.md.j2)
   OpenShift Markdown report template.
-- [templates/openshift_supportability_report.md.j2](templates/openshift_supportability_report.md.j2)
-  Collected-state OpenShift Markdown renderer built on the same shared payload model.
 - [scripts/parse_must_gather.py](scripts/parse_must_gather.py)
   Must-gather summary parser.
 - [scripts/parse_inspect.py](scripts/parse_inspect.py)

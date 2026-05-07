@@ -9,20 +9,18 @@ CI_JSON="${ROOT_DIR}/reports/ci-cluster-report.json"
 python3 "${ROOT_DIR}/scripts/validate_openshift_report_template.py" \
   "${ROOT_DIR}/templates/openshift_cluster_health_report.md.j2"
 
-python3 "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
-  "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
-  "${ROOT_DIR}/inputs/openshift-capability-profile.yml"
+python3 "${ROOT_DIR}/scripts/validate_cluster_health_profile.py" \
+  "${ROOT_DIR}/inputs/openshift-cluster-health-profile.yml"
 
 for capability_profile in \
-  "${ROOT_DIR}/inputs/kubernetes-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/development-k8s-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/aks-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/eks-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/gke-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/rancher-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/minikube-capability-profile.yml"; do
+  "${ROOT_DIR}/inputs/kubernetes-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/development-k8s-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/aks-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/eks-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/gke-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/rancher-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/minikube-cluster-health-profile.yml"; do
   python3 "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
-    "${ROOT_DIR}/playbooks/k8s_cluster_health_report.yml" \
     "${capability_profile}" \
     kubernetes_report_capability_profile
 done
@@ -57,11 +55,11 @@ python3 "${ROOT_DIR}/scripts/validate_openshift_report_output.py" \
   "${CI_JSON}"
 
 rg -q '^# ' "${CI_MD}"
-rg -q '^## Summary' "${CI_MD}"
+rg -q '^## Cluster Health Overview' "${CI_MD}"
 rg -q '^## Node Health And Capacity' "${CI_MD}"
-rg -q '^## Upgrade And Lifecycle Risk' "${CI_MD}"
+rg -q '^## Platform Architecture And Lifecycle' "${CI_MD}"
 rg -q '^## Evidence And Supportability' "${CI_MD}"
-rg -q '^## Reference Compliance' "${CI_MD}" || rg -q '^### Reference Compliance' "${CI_MD}"
-rg -q '^## Evidence Hygiene' "${CI_MD}" || rg -q '^### Evidence Hygiene' "${CI_MD}"
+rg -q '^## Day 2 Production Readiness' "${CI_MD}"
+rg -q '^### Individual Capability Sections' "${CI_MD}"
 
 printf 'ci fixture report ok\nmd=%s\njson=%s\n' "${CI_MD}" "${CI_JSON}"

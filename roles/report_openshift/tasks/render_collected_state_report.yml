@@ -12,6 +12,81 @@
     supportability_report_md_path: "{{ report_output_dir }}/{{ supportability_report_name }}.md"
     supportability_report_json_path: "{{ report_output_dir }}/{{ supportability_report_name }}.json"
 
+- name: Define collected-state report timestamps
+  ansible.builtin.set_fact:
+    report_generated_at: "{{ report_generated_at | default(ansible_date_time.iso8601) }}"
+    report_completed_at: "{{ report_completed_at | default(ansible_date_time.iso8601) }}"
+
+- name: Define collected-state cluster health report defaults
+  vars:
+    collected_health_status: "{{ health_summary.status | default('UNKNOWN') | string | upper }}"
+    collected_supportability_summary: "{{ supportability_summary | default({}) }}"
+    collected_cluster_health_score: >-
+      {{
+        25
+        if collected_health_status in ['CRITICAL', 'BLOCKED', 'UNSUPPORTED-RISK']
+        else (
+          60
+          if collected_health_status in ['WARNING', 'WARN', 'REVIEW-REQUIRED']
+          else (
+            80
+            if collected_health_status in ['INFO', 'PARTIAL']
+            else (
+              100
+              if collected_health_status in ['HEALTHY', 'READY', 'SUPPORTED', 'OK']
+              else 0
+            )
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    cluster_health_score: "{{ collected_cluster_health_score }}"
+    cluster_health_score_label: >-
+      {{
+        'Excellent'
+        if (collected_cluster_health_score | int) >= 95
+        else (
+          'Good'
+          if (collected_cluster_health_score | int) >= 85
+          else (
+            'Fair'
+            if (collected_cluster_health_score | int) >= 70
+            else (
+              'Poor'
+              if (collected_cluster_health_score | int) >= 50
+              else 'Critical'
+            )
+          )
+        )
+      }}
+    cluster_health_score_legend:
+      - min: 95
+        max: 100
+        label: Excellent
+        meaning: Stable cluster with no material health risks detected.
+      - min: 85
+        max: 94.9
+        label: Good
+        meaning: Healthy overall with only limited warnings or hygiene issues.
+      - min: 70
+        max: 84.9
+        label: Fair
+        meaning: Noticeable operational debt or warning signals that should be scheduled for remediation.
+      - min: 50
+        max: 69.9
+        label: Poor
+        meaning: Multiple risks or degraded areas that require active remediation.
+      - min: 0
+        max: 49.9
+        label: Critical
+        meaning: Serious cluster health problems or blocking risks are present.
+    report_collection_failures: "{{ report_collection_failures | default([]) }}"
+    report_collection_skipped_optional_commands: "{{ report_collection_skipped_optional_commands | default([]) }}"
+    report_collection_success_rate_pct: "{{ report_collection_success_rate_pct | default(0) }}"
+    report_confidence: "{{ report_confidence | default(collected_supportability_summary.evidence_confidence | default('medium')) }}"
+    report_confidence_detail: "{{ report_confidence_detail | default('collected-state report rendered from provided evidence artifacts') }}"
+    suggested_next_steps: "{{ suggested_next_steps | default([]) }}"
+
 - name: Ensure report output directory exists
   ansible.builtin.file:
     path: "{{ report_output_dir }}"
@@ -42,6 +117,17 @@
   ansible.builtin.set_fact:
     supportability_report_payload: "{{ openshift_report_payload_common | combine(openshift_report_payload_mode_extras | default({}), recursive=True) }}"
 
+- name: Define collected-state report metadata compatibility facts
+  vars:
+    collected_metadata: "{{ supportability_report_payload.metadata | default({}) }}"
+  ansible.builtin.set_fact:
+    oc_context_cmd:
+      stdout: "{{ collected_metadata.context | default('not-collected') }}"
+    oc_server_cmd:
+      stdout: "{{ collected_metadata.api_server | default('not-collected') }}"
+    oc_user_cmd:
+      stdout: "{{ collected_metadata.user | default('not-collected') }}"
+
 - name: Write collected-state JSON report
   ansible.builtin.copy:
     dest: "{{ supportability_report_json_path }}"
@@ -50,7 +136,7 @@
 
 - name: Render collected-state Markdown report
   ansible.builtin.template:
-    src: "{{ playbook_dir }}/../templates/openshift_supportability_report.md.j2"
+    src: "{{ playbook_dir }}/../templates/openshift_cluster_health_report.md.j2"
     dest: "{{ supportability_report_md_path }}"
     mode: "0644"
 

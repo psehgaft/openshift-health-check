@@ -19,15 +19,14 @@ EXPECTED_CLUSTER_SECTIONS = [
     "Platform Health",
     "Node Health And Capacity",
     "Backup And Disaster Recovery",
-    "Networking Architecture And Application Access",
+    "Application Access And Network Isolation",
     "Observability",
     "Security And Governance",
     "Workload Health",
     "Platform Architecture And Lifecycle",
-    "Cluster Capacity Snapshot",
-    "Operations Maturity",
+    "Capacity Planning Snapshot",
+    "Declarative Operations",
     "Container Platform Adoption And Release Engineering",
-    "Workload Capability Extensions",
     "Day 2 Production Readiness",
 ]
 
@@ -54,6 +53,16 @@ RUNTIME_SIGNAL_OUTPUT_MARKERS = [
 REQUIRED_DAY2_MARKERS = [
     "### Individual Capability Sections",
 ]
+
+FORBIDDEN_CAPABILITY_ACTION_PATTERNS = (
+    "Collect or review the expected evidence for this capability and remediate any gaps.",
+    "Review the expected evidence for this capability.",
+)
+FORBIDDEN_CAPABILITY_DETAIL_PATTERNS = (
+    "when this capability is in scope",
+    "when this posture is in scope",
+    "configured when this capability is in scope",
+)
 
 FORBIDDEN_JSON_PATTERNS = [
     (r"\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN)\b", "JSON payload must not contain misspelled or uppercase unknown labels"),
@@ -134,6 +143,21 @@ def validate_markdown(path: Path) -> None:
             fail(f"{path}: missing required Day 2 capability marker {marker!r}")
 
 
+def validate_markdown_matches_json(markdown_path: Path, json_path: Path) -> None:
+    markdown = markdown_path.read_text(encoding="utf-8")
+    payload = read_json(json_path)
+    day2_domain = (
+        ((payload.get("domains") or {}).get("production_day2_readiness") or {})
+        or (((payload.get("audit_report") or {}).get("domains") or {}).get("production_day2_readiness") or {})
+    )
+    assessment_state = str(day2_domain.get("capability_assessment_state") or "").strip().lower()
+    if assessment_state == "completed":
+        if "Capability assessment did not complete cleanly in this run" in markdown:
+            fail(f"{markdown_path}: markdown still renders fallback Day 2 assessment text even though JSON reports completed capability assessment")
+        if "| Capability assessment state | `completed` |" not in markdown:
+            fail(f"{markdown_path}: markdown must show completed Day 2 capability assessment state")
+
+
 def validate_json(path: Path) -> None:
     payload = read_json(path)
     text = json.dumps(payload, sort_keys=True)
@@ -145,12 +169,20 @@ def validate_json(path: Path) -> None:
     if metadata.get("platform_family") != "openshift":
         fail(f"{path}: metadata.platform_family must be openshift")
 
-    capability_sections = (
-        (((payload.get("audit_report") or {}).get("domains") or {}).get("production_day2_readiness") or {}).get("capability_sections")
-        or []
+    day2_domain = (
+        ((payload.get("domains") or {}).get("production_day2_readiness") or {})
+        or (((payload.get("audit_report") or {}).get("domains") or {}).get("production_day2_readiness") or {})
     )
+    capability_sections = day2_domain.get("capability_sections") or []
     if not isinstance(capability_sections, list) or len(capability_sections) == 0:
         fail(f"{path}: production_day2_readiness.capability_sections must be present and non-empty")
+
+    assessment_state = str(day2_domain.get("capability_assessment_state") or "").strip().lower()
+    if assessment_state != "completed":
+        fail(
+            f"{path}: production_day2_readiness.capability_assessment_state must be completed "
+            f"(got {day2_domain.get('capability_assessment_state')!r})"
+        )
 
     capability_keys = [
         str((item or {}).get("key") or "").strip()
@@ -162,21 +194,61 @@ def validate_json(path: Path) -> None:
     if len(set(capability_keys)) != len(capability_keys):
         fail(f"{path}: capability section keys must be unique")
 
-    profile_path = Path(__file__).resolve().parent.parent / "inputs" / "openshift-capability-profile.yml"
+    profile_path = Path(__file__).resolve().parent.parent / "inputs" / "openshift-cluster-health-profile.yml"
     profile_payload = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
-    expected_keys = {
+    enabled_keys = {
         str(key).strip()
-        for key, value in ((profile_payload.get("openshift_report_capability_profile") or {}).items())
-        if str(key).strip() and isinstance(value, dict) and bool(value.get("required", False))
+        for key, value in (((profile_payload.get("cluster_health_profile") or {}).get("capabilities") or {}).items())
+        if str(key).strip() and isinstance(value, dict) and bool(value.get("enabled", False))
     }
-    if not expected_keys:
-        fail(f"{profile_path}: openshift_report_capability_profile must be present for validation")
-    missing = sorted(expected_keys - set(capability_keys))
-    extra = sorted(set(capability_keys) - expected_keys)
+    required_keys = {
+        str(key).strip()
+        for key, value in (((profile_payload.get("cluster_health_profile") or {}).get("capabilities") or {}).items())
+        if str(key).strip() and isinstance(value, dict) and bool(value.get("enabled", False)) and bool(value.get("required", False))
+    }
+    if not required_keys:
+        fail(f"{profile_path}: cluster_health_profile.capabilities must be present for validation")
+    missing = sorted(required_keys - set(capability_keys))
+    extra = sorted(set(capability_keys) - enabled_keys)
     if missing:
         fail(f"{path}: missing capability sections for {', '.join(missing)}")
     if extra:
         fail(f"{path}: unexpected capability sections for {', '.join(extra)}")
+
+    for section in capability_sections:
+        key = str((section or {}).get("key") or "").strip()
+        docs = section.get("docs") or []
+        verification = section.get("verification") or []
+        recommended_action = str(section.get("recommended_action") or "").strip()
+        top_detail = str(section.get("top_detail") or "").strip()
+        owner = str(section.get("owner") or "").strip()
+        status = str(section.get("status") or "").strip().upper()
+        check_count = int(section.get("check_count") or 0)
+
+        if not recommended_action:
+            fail(f"{path}: capability section {key} must define a non-empty recommended_action")
+        if recommended_action in FORBIDDEN_CAPABILITY_ACTION_PATTERNS:
+            fail(f"{path}: capability section {key} must not use a generic fallback recommended_action")
+        if not top_detail:
+            fail(f"{path}: capability section {key} must define a non-empty top_detail")
+        if not owner:
+            fail(f"{path}: capability section {key} must define a non-empty owner")
+        if not isinstance(docs, list) or not docs or any(not str(item).strip() for item in docs):
+            fail(f"{path}: capability section {key} must define non-empty docs")
+        if not isinstance(verification, list) or not verification or any(not str(item).strip() for item in verification):
+            fail(f"{path}: capability section {key} must define non-empty verification")
+        lowered_detail = top_detail.lower()
+        lowered_action = recommended_action.lower()
+        lowered_verification = " ".join(str(item).strip().lower() for item in verification)
+        for pattern in FORBIDDEN_CAPABILITY_DETAIL_PATTERNS:
+            if pattern in lowered_detail:
+                fail(f"{path}: capability section {key} top_detail uses vague placeholder wording: {pattern!r}")
+            if pattern in lowered_action:
+                fail(f"{path}: capability section {key} recommended_action uses vague placeholder wording: {pattern!r}")
+            if pattern in lowered_verification:
+                fail(f"{path}: capability section {key} verification uses vague placeholder wording: {pattern!r}")
+        if status in {"OK", "HEALTHY", "WARNING", "WARN", "CRITICAL", "FAILED", "FAIL", "ERROR", "BLOCKED"} and check_count == 0:
+            fail(f"{path}: capability section {key} must include at least one mapped check for status {status}")
 
 
 def main() -> int:
@@ -187,6 +259,7 @@ def main() -> int:
     json_path = Path(sys.argv[2])
     validate_markdown(markdown_path)
     validate_json(json_path)
+    validate_markdown_matches_json(markdown_path, json_path)
     print(f"{markdown_path}: rendered report validation ok")
     print(f"{json_path}: rendered JSON validation ok")
     return 0

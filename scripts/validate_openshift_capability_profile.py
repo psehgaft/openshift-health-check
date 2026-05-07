@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate OpenShift capability profile defaults and customer input files."""
+"""Validate Kubernetes-family cluster health profile input files."""
 
 from __future__ import annotations
 
@@ -73,18 +73,6 @@ def profile_from_file(path: Path, profile_var: str) -> dict[str, Any]:
     return profile
 
 
-def profile_from_playbook(path: Path, profile_var: str) -> dict[str, Any]:
-    data = load_yaml(path)
-    plays = data if isinstance(data, list) else []
-    if not plays:
-        fail(f"{path}: expected an Ansible playbook list")
-    vars_block = plays[0].get("vars", {})
-    profile = vars_block.get(profile_var)
-    if not isinstance(profile, dict):
-        fail(f"{path}: missing vars.{profile_var} mapping")
-    return profile
-
-
 def validate_profile(path: Path, profile: dict[str, Any]) -> None:
     for name, spec in sorted(profile.items()):
         if not isinstance(spec, dict):
@@ -128,28 +116,15 @@ def validate_profile(path: Path, profile: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) not in [3, 4]:
-        fail("usage: validate_openshift_capability_profile.py <playbook> <profile-input> [profile-var]")
+    if len(sys.argv) not in [2, 3]:
+        fail("usage: validate_openshift_capability_profile.py <profile-input> [profile-var]")
 
-    playbook_path = Path(sys.argv[1])
-    input_path = Path(sys.argv[2])
-    profile_var = sys.argv[3] if len(sys.argv) == 4 else "openshift_report_capability_profile"
-    playbook_profile = profile_from_playbook(playbook_path, profile_var)
+    input_path = Path(sys.argv[1])
+    profile_var = sys.argv[2] if len(sys.argv) == 3 else "kubernetes_report_capability_profile"
     input_profile = profile_from_file(input_path, profile_var)
-
-    validate_profile(playbook_path, playbook_profile)
     validate_profile(input_path, input_profile)
 
-    playbook_keys = set(playbook_profile)
-    input_keys = set(input_profile)
-    if playbook_keys != input_keys:
-        fail(
-            "profile keys differ between playbook and input file: "
-            f"missing_from_input={sorted(playbook_keys - input_keys)}, "
-            f"extra_in_input={sorted(input_keys - playbook_keys)}"
-        )
-
-    print(f"{input_path}: capability profile validation ok ({len(input_keys)} capabilities)")
+    print(f"{input_path}: capability profile validation ok ({len(input_profile)} capabilities)")
     return 0
 
 

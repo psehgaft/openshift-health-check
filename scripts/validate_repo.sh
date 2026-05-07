@@ -8,8 +8,14 @@ TIMESTAMP="$(date '+%Y%m%dT%H%M%S')"
 CLUSTER_TYPE_LABEL="${1:-repo}"
 SANITIZED_CLUSTER_TYPE_LABEL="$(printf '%s' "${CLUSTER_TYPE_LABEL}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
 LOG_FILE="${LOG_DIR}/${SANITIZED_CLUSTER_TYPE_LABEL}-run-${TIMESTAMP}.log"
+ANSIBLE_PLAYBOOK_BIN="${ROOT_DIR}/.venv/bin/ansible-playbook"
 
 mkdir -p "${LOG_DIR}"
+
+if [[ ! -x "${ANSIBLE_PLAYBOOK_BIN}" ]]; then
+  echo "validate_repo.sh requires ${ANSIBLE_PLAYBOOK_BIN}. Run scripts/setup-ansible-venv.sh first." >&2
+  exit 1
+fi
 
 if [[ "${VALIDATE_REPO_TEE_ACTIVE:-0}" != "1" ]]; then
   export VALIDATE_REPO_TEE_ACTIVE=1
@@ -66,7 +72,7 @@ PY
 
 log "Running Ansible playbook syntax checks"
 while IFS= read -r playbook; do
-  ansible-playbook --syntax-check "${playbook}"
+  "${ANSIBLE_PLAYBOOK_BIN}" --syntax-check "${playbook}"
 done < <(find "${ROOT_DIR}/playbooks" -type f -name '*.yml' | sort)
 
 log "Compiling Python sources"
@@ -101,21 +107,31 @@ log "Validating report template"
 python3 "${ROOT_DIR}/scripts/validate_openshift_report_template.py" \
   "${ROOT_DIR}/templates/openshift_cluster_health_report.md.j2"
 
-log "Validating capability profiles"
-python3 "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
-  "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
-  "${ROOT_DIR}/inputs/openshift-capability-profile.yml"
+log "Validating cluster health profile"
+python3 "${ROOT_DIR}/scripts/validate_cluster_health_profile.py" \
+  "${ROOT_DIR}/inputs/openshift-cluster-health-profile.yml"
+
+log "Validating vendor-managed telemetry detection"
+python3 "${ROOT_DIR}/scripts/validate_vendor_managed_telemetry.py" \
+  "${ROOT_DIR}/tests/fixtures/vendor-managed-telemetry/mock-vendor-managed-telemetry.json"
+
+log "Running OpenShift CI report fixture"
+bash "${ROOT_DIR}/tests/run_ci_report_fixture.sh"
+
+log "Validating rendered OpenShift report output"
+python3 "${ROOT_DIR}/scripts/validate_openshift_report_output.py" \
+  "${ROOT_DIR}/reports/ci-cluster-report.md" \
+  "${ROOT_DIR}/reports/ci-cluster-report.json"
 
 for capability_profile in \
-  "${ROOT_DIR}/inputs/kubernetes-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/development-k8s-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/aks-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/eks-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/gke-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/rancher-capability-profile.yml" \
-  "${ROOT_DIR}/inputs/minikube-capability-profile.yml"; do
+  "${ROOT_DIR}/inputs/kubernetes-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/development-k8s-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/aks-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/eks-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/gke-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/rancher-cluster-health-profile.yml" \
+  "${ROOT_DIR}/inputs/minikube-cluster-health-profile.yml"; do
   python3 "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
-    "${ROOT_DIR}/playbooks/k8s_cluster_health_report.yml" \
     "${capability_profile}" \
     kubernetes_report_capability_profile
 done

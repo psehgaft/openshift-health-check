@@ -1,7 +1,7 @@
 ---
-# AKS production capability profile.
+# Generic Kubernetes production capability profile.
 # Use with:
-#   ansible-playbook playbooks/aks_cluster_health_report.yml -e @inputs/aks-capability-profile.yml
+#   ansible-playbook playbooks/k8s_cluster_health_report.yml -e @inputs/kubernetes-cluster-health-profile.yml
 kubernetes_report_capability_profile:
   backup_and_restore_readiness:
     required: true
@@ -9,7 +9,7 @@ kubernetes_report_capability_profile:
     expected_state: healthy
     owner: operations
     evidence_required: [kubectl-get]
-    notes: "Production AKS clusters should have backup and restore evidence."
+    notes: "Production clusters should have backup and restore evidence."
     docs: "https://velero.io/docs/latest/"
   namespace_network_policy_baseline:
     required: true
@@ -17,7 +17,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: security
     evidence_required: [kubectl-get]
-    notes: "AKS production namespaces should have NetworkPolicy coverage or an approved Azure network segmentation alternative."
+    notes: "Production namespaces should have NetworkPolicy coverage unless an approved alternate segmentation control exists."
     docs: "https://kubernetes.io/docs/concepts/services-networking/network-policies/"
   namespace_resource_quota_governance:
     required: true
@@ -49,7 +49,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: storage
     evidence_required: [kubectl-get]
-    notes: "Production AKS clusters normally use Azure Disk, Azure Files, or another CSI-backed provider."
+    notes: "Production clusters normally need external persistent storage."
     docs: "https://kubernetes.io/docs/concepts/storage/storage-classes/"
   deprecated_api_upgrade_review:
     required: true
@@ -57,7 +57,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: platform
     evidence_required: [kubectl-get]
-    notes: "Deprecated APIs should be reviewed before AKS upgrades."
+    notes: "Deprecated APIs should be reviewed before upgrades."
     docs: "https://kubernetes.io/docs/reference/using-api/deprecation-guide/"
   external_log_forwarding:
     required: true
@@ -73,7 +73,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: observability
     evidence_required: [kubectl-get, metrics]
-    notes: "Monitoring and alerting should be configured through Azure Monitor, Prometheus, or another supported platform."
+    notes: "Monitoring and alerting should be configured for production operations."
     docs: "https://prometheus-operator.dev/docs/developer/getting-started/"
   user_workload_metrics_monitoring:
     required: true
@@ -129,7 +129,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: observability
     evidence_required: [kubectl-get, metrics]
-    notes: "Require when Dynatrace-managed observability components are expected on the cluster."
+    notes: "Require when Dynatrace Operator, DynaKube, OneAgent, ActiveGate, or related Dynatrace-managed observability components are expected on the cluster."
     docs: "https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s"
   qualys_scanning_agents:
     required: false
@@ -161,7 +161,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: observability
     evidence_required: [kubectl-get, metrics]
-    notes: "Require when Splunk-managed telemetry components are expected on the cluster."
+    notes: "Require when Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, or other Splunk-managed telemetry components are expected on the cluster."
     docs: "https://help.splunk.com/en/splunk-enterprise/get-started/get-data-in/9.2/get-other-kinds-of-data-in/overview-of-the-splunk-opentelemetry-collector-for-kubernetes"
   loki_stack_logging:
     required: false
@@ -169,7 +169,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: observability
     evidence_required: [kubectl-get]
-    notes: "Require when Loki-based in-cluster log storage is expected on the cluster."
+    notes: "Require when LokiStack or Loki-based in-cluster log storage is expected on the cluster."
     docs: "https://grafana.com/docs/loki/latest/setup/install/"
   datadog_observability:
     required: false
@@ -177,7 +177,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: observability
     evidence_required: [kubectl-get, metrics]
-    notes: "Require when Datadog-managed telemetry components are expected on the cluster."
+    notes: "Require when Datadog Operator, DatadogAgent custom resources, or Datadog agents are expected to collect cluster telemetry."
     docs: "https://docs.datadoghq.com/containers/kubernetes/installation/"
   appdynamics_observability:
     required: false
@@ -196,12 +196,12 @@ kubernetes_report_capability_profile:
     notes: "Require when workloads are expected to pull application images from an external private registry."
     docs: "https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/"
   workload_autoscaling:
-    required: true
+    required: false
     criticality: medium
     expected_state: configured
     owner: platform
     evidence_required: [kubectl-get, metrics]
-    notes: "Most production AKS clusters should use HPA, cluster autoscaler, KEDA, or an approved fixed-capacity model."
+    notes: "Require when workload or node autoscaling is expected."
     docs: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/"
   admission_policy_engine:
     required: false
@@ -209,7 +209,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: security
     evidence_required: [kubectl-get]
-    notes: "Require when Azure Policy, Gatekeeper, Kyverno, or another admission policy engine is part of the baseline."
+    notes: "Require when admission policy-as-code is part of the baseline."
     docs: "https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/"
   external_or_sealed_secrets_management:
     required: false
@@ -217,7 +217,7 @@ kubernetes_report_capability_profile:
     expected_state: present
     owner: security
     evidence_required: [kubectl-get]
-    notes: "Require when Azure Key Vault integration, external-secrets, or sealed secrets are expected."
+    notes: "Require when external or sealed secret workflows are expected."
     docs: "https://external-secrets.io/latest/"
   cluster_hosted_cicd_runners:
     required: false
@@ -233,7 +233,7 @@ kubernetes_report_capability_profile:
     expected_state: configured
     owner: platform
     evidence_required: [kubectl-get, provider-api]
-    notes: "AKS node-pool, zone, and provider labels should be available for resilience review."
+    notes: "Node-pool, zone, and provider metadata should be available for resilience review."
     docs: "https://kubernetes.io/docs/reference/labels-annotations-taints/"
   service_mesh_control_plane:
     required: false
