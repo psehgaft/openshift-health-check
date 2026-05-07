@@ -1,6 +1,7 @@
 ---
 - name: Resolve live support artifact root
   ansible.builtin.set_fact:
+    collect_live_support_artifacts_resolved: "{{ collect_live_support_artifacts | default(true) | bool }}"
     live_support_artifact_root: >-
       {{
         (live_support_artifact_output_dir | default('') | trim)
@@ -38,7 +39,7 @@
     path: "{{ live_support_artifact_root }}"
     state: directory
     mode: "0755"
-  when: collect_live_support_artifacts | bool
+  when: collect_live_support_artifacts_resolved | bool
 
 - name: Normalize OpenShift collector capability source
   ansible.builtin.set_fact:
@@ -52,21 +53,21 @@
         applicable: "{{ openshift_scan_collectors.must_gather.applicable | default(true) | bool }}"
         tool_available: "{{ openshift_scan_collectors.must_gather.tool_available | default(false) | bool }}"
         configured: "{{ openshift_scan_collectors.must_gather.configured | default(true) | bool }}"
-        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_must_gather | default(false) | bool)) }}"
+        requested: "{{ collect_live_support_artifacts_resolved | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_must_gather | default(false) | bool)) }}"
         requirement_summary: "{{ openshift_scan_collectors.must_gather.requirement_summary | default('Requires oc access to the cluster and the ability to run must-gather pods.') }}"
       inspect:
         category: "{{ openshift_scan_collectors.inspect.category | default('oc-native') }}"
         applicable: "{{ openshift_scan_collectors.inspect.applicable | default(true) | bool }}"
         tool_available: "{{ openshift_scan_collectors.inspect.tool_available | default(false) | bool }}"
         configured: "{{ openshift_scan_collectors.inspect.configured | default(true) | bool }}"
-        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_inspect | default(false) | bool)) }}"
+        requested: "{{ collect_live_support_artifacts_resolved | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_inspect | default(false) | bool)) }}"
         requirement_summary: "{{ openshift_scan_collectors.inspect.requirement_summary | default('Requires oc access to inspect cluster resources.') }}"
       cluster-compare:
         category: "{{ openshift_scan_collectors.cluster_compare.category | default('oc-plugin') }}"
         applicable: "{{ openshift_scan_collectors.cluster_compare.applicable | default(true) | bool }}"
         tool_available: "{{ openshift_scan_collectors.cluster_compare.tool_available | default(false) | bool }}"
         configured: "{{ openshift_scan_collectors.cluster_compare.configured | default(true) | bool }}"
-        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_cluster_compare | default(false) | bool)) }}"
+        requested: "{{ collect_live_support_artifacts_resolved | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_cluster_compare | default(false) | bool)) }}"
         requirement_summary: "{{ openshift_scan_collectors.cluster_compare.requirement_summary | default('Requires the oc cluster-compare plugin plus a configured reference command.') }}"
       managed-gates:
         category: "{{ openshift_scan_collectors.managed_gates.category | default('provider-api') }}"
@@ -78,7 +79,7 @@
             | default(((live_support_managed_gates_command_argv | default([])) | length > 0))
             | bool
           }}
-        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_managed_gates | default(false) | bool)) }}"
+        requested: "{{ collect_live_support_artifacts_resolved | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_managed_gates | default(false) | bool)) }}"
         requirement_summary: "{{ openshift_scan_collectors.managed_gates.requirement_summary | default('Requires provider-side tooling or an explicit managed-gates command for managed OpenShift offerings.') }}"
       advisor-export:
         category: "{{ openshift_scan_collectors.advisor_export.category | default('external-service') }}"
@@ -90,21 +91,21 @@
             | default(((live_support_advisor_export_command_argv | default([])) | length > 0))
             | bool
           }}
-        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_advisor_export | default(false) | bool)) }}"
+        requested: "{{ collect_live_support_artifacts_resolved | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_advisor_export | default(false) | bool)) }}"
         requirement_summary: "{{ openshift_scan_collectors.advisor_export.requirement_summary | default('Requires an explicit Advisor or Insights export command.') }}"
       insights-archive:
         category: "{{ openshift_scan_collectors.insights_archive.category | default('oc-native') }}"
         applicable: "{{ openshift_scan_collectors.insights_archive.applicable | default(true) | bool }}"
         tool_available: "{{ openshift_scan_collectors.insights_archive.tool_available | default(false) | bool }}"
         configured: "{{ openshift_scan_collectors.insights_archive.configured | default(true) | bool }}"
-        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_insights_archive | default(false) | bool)) }}"
+        requested: "{{ collect_live_support_artifacts_resolved | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_insights_archive | default(false) | bool)) }}"
         requirement_summary: "{{ openshift_scan_collectors.insights_archive.requirement_summary | default('Uses oc to copy the Insights Operator archive from a running pod.') }}"
       sosreport:
         category: "{{ openshift_scan_collectors.sosreport.category | default('node-level') }}"
         applicable: "{{ openshift_scan_collectors.sosreport.applicable | default(true) | bool }}"
         tool_available: "{{ openshift_scan_collectors.sosreport.tool_available | default(false) | bool }}"
         configured: "{{ openshift_scan_collectors.sosreport.configured | default(true) | bool }}"
-        requested: "{{ collect_live_support_artifacts | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_sosreport | default(false) | bool)) }}"
+        requested: "{{ collect_live_support_artifacts_resolved | bool and (((live_support_collection_profile | default('all')) == 'all') or (collect_live_sosreport | default(false) | bool)) }}"
         access_path: "{{ openshift_scan_collectors.sosreport.access_path | default('oc-debug-node') }}"
         requirement_summary: "{{ openshift_scan_collectors.sosreport.requirement_summary | default('Requires node-level access through oc debug node/<node> or SSH, then toolbox/sosreport collection.') }}"
 
@@ -197,7 +198,7 @@
                   ),
                   'status': (
                     'disabled'
-                    if not (collect_live_support_artifacts | bool)
+                    if not (collect_live_support_artifacts_resolved | bool)
                     else (
                       'not-applicable'
                       if not (item.value.applicable | bool)
@@ -240,7 +241,7 @@
                   ),
                   'detail': (
                     'Collector execution is disabled for this run.'
-                    if not (collect_live_support_artifacts | bool)
+                    if not (collect_live_support_artifacts_resolved | bool)
                     else (
                       'This collector does not apply to the current cluster or provider profile.'
                       if not (item.value.applicable | bool)
@@ -383,7 +384,7 @@
     dest: "{{ live_support_artifact_root }}/collector-spec.json"
     mode: "0644"
     content: "{{ {'parallelism': (effective_live_support_artifact_parallelism | default(live_support_artifact_parallelism) | int), 'collectors': live_support_collectors} | to_nice_json }}"
-  when: collect_live_support_artifacts | bool
+  when: collect_live_support_artifacts_resolved | bool
 
 - name: Run live support collectors in parallel
   ansible.builtin.command:
@@ -394,7 +395,7 @@
   register: live_support_collectors_cmd
   changed_when: false
   failed_when: false
-  when: collect_live_support_artifacts | bool
+  when: collect_live_support_artifacts_resolved | bool
 
 - name: Normalize live support collector results
   ansible.builtin.set_fact:
@@ -402,7 +403,7 @@
       {{
         (live_support_collectors_cmd.stdout | from_json)
         if (
-          (collect_live_support_artifacts | bool)
+          (collect_live_support_artifacts_resolved | bool)
           and (live_support_collectors_cmd.rc | default(1)) == 0
           and (live_support_collectors_cmd.stdout | default('') | length > 0)
         )
@@ -469,7 +470,7 @@
   register: live_support_bundle_cmd
   changed_when: false
   failed_when: false
-  when: collect_live_support_artifacts | bool
+  when: collect_live_support_artifacts_resolved | bool
 
 - name: Collect live control-plane backup evidence
   ansible.builtin.command:
@@ -495,7 +496,7 @@
   changed_when: false
   failed_when: false
   when:
-    - collect_live_support_artifacts | bool
+    - collect_live_support_artifacts_resolved | bool
     - not (cluster_profile.is_hosted_control_plane | default(false) | bool)
 
 - name: Normalize live support bundle payload
@@ -504,7 +505,7 @@
       {{
         (live_support_bundle_cmd.stdout | from_json)
         if (
-          (collect_live_support_artifacts | bool)
+          (collect_live_support_artifacts_resolved | bool)
           and (live_support_bundle_cmd.rc | default(1)) == 0
           and (live_support_bundle_cmd.stdout | default('') | length > 0)
         )
@@ -521,13 +522,13 @@
     - { key: "advisor-export", path: "{{ live_support_advisor_export_path }}" }
     - { key: "insights-archive", path: "{{ live_support_insights_archive_path }}" }
   register: live_support_known_output_stats
-  when: collect_live_support_artifacts | bool
+  when: collect_live_support_artifacts_resolved | bool
 
 - name: Build known live support collector output map
   ansible.builtin.set_fact:
     live_support_known_output_map: "{{ live_support_known_output_map | default({}) | combine({item.item.key: item.stat}) }}"
   loop: "{{ (live_support_known_output_stats.results | default([])) }}"
-  when: collect_live_support_artifacts | bool
+  when: collect_live_support_artifacts_resolved | bool
 
 - name: Resolve discovered live support artifact paths
   ansible.builtin.set_fact:
@@ -759,7 +760,7 @@
         else {}
       }}
     live_support_artifact_summary:
-      enabled: "{{ collect_live_support_artifacts | bool }}"
+      enabled: "{{ collect_live_support_artifacts_resolved | bool }}"
       root: "{{ live_support_artifact_root }}"
       node_debug_target_nodes: "{{ node_debug_target_nodes | default([]) }}"
       node_debug_target_reason_map: "{{ node_debug_target_reason_map | default({}) }}"

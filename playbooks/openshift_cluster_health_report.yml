@@ -320,10 +320,27 @@
             run_checkpoint_stage: "{{ report_resume_last_resume_next_stage or 'collection' }}"
             run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage or 'collection' }}"
             run_checkpoint_status: failed
+            run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
+            run_checkpoint_failed_message: >-
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise live workflow failure
           ansible.builtin.fail:
-            msg: "Live OpenShift workflow failed. Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint."
+            msg: >-
+              Live OpenShift workflow failed in task
+              '{{ ansible_failed_task.name | default("unknown-task") }}'.
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
+              Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint.
       always:
         - name: Ensure temporary collection artifacts are removed
           ansible.builtin.file:
@@ -331,7 +348,7 @@
             state: absent
           when:
             - report_mode_resolved == 'live'
-            - not (keep_collection_artifacts | bool)
+            - not (keep_collection_artifacts | default(false) | bool)
             - collection_run_metadata is defined
             - collection_run_metadata.results_path | default('') | length > 0
           failed_when: false
@@ -384,10 +401,27 @@
             run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
             run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
             run_checkpoint_status: failed
+            run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
+            run_checkpoint_failed_message: >-
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise resumed live workflow failure
           ansible.builtin.fail:
-            msg: "Resumed live OpenShift workflow failed again. Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart."
+            msg: >-
+              Resumed live OpenShift workflow failed again in task
+              '{{ ansible_failed_task.name | default("unknown-task") }}'.
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
+              Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart.
 
     - name: Run collected-state OpenShift evidence workflow
       when:
@@ -457,10 +491,27 @@
             run_checkpoint_stage: "{{ report_resume_last_resume_next_stage or 'analysis' }}"
             run_checkpoint_resume_next_stage: "{{ report_resume_last_resume_next_stage or 'analysis' }}"
             run_checkpoint_status: failed
+            run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
+            run_checkpoint_failed_message: >-
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise collected workflow failure
           ansible.builtin.fail:
-            msg: "Collected-state OpenShift workflow failed. Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint."
+            msg: >-
+              Collected-state OpenShift workflow failed in task
+              '{{ ansible_failed_task.name | default("unknown-task") }}'.
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
+              Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint.
 
     - name: Resume collected-state OpenShift workflow from checkpoint
       when:
@@ -520,7 +571,24 @@
             run_checkpoint_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
             run_checkpoint_resume_next_stage: "{{ report_resume_manifest.resume_next_stage or 'report' }}"
             run_checkpoint_status: failed
+            run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
+            run_checkpoint_failed_message: >-
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise resumed collected workflow failure
           ansible.builtin.fail:
-            msg: "Resumed collected-state OpenShift workflow failed again. Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart."
+            msg: >-
+              Resumed collected-state OpenShift workflow failed again in task
+              '{{ ansible_failed_task.name | default("unknown-task") }}'.
+              {{
+                ansible_failed_result.msg
+                | default(ansible_failed_result.stderr)
+                | default(ansible_failed_result.stdout)
+                | default(ansible_failed_result | string)
+              }}
+              Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart.
