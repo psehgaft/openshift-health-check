@@ -37,11 +37,33 @@
       {{
         (collect_live_support_artifacts | default(true) | bool)
         and (
-          ((live_support_collection_profile | default('all')) == 'all')
+          ((live_support_collection_profile | default('read_only')) == 'all')
           or (collect_live_sosreport | default(false) | bool)
         )
       }}
   changed_when: false
+
+- name: Fail when mutating live collectors are requested without explicit opt-in
+  vars:
+    mutating_live_collectors_requested: >-
+      {{
+        (collect_live_support_artifacts | default(false) | bool)
+        and (
+          ((live_support_collection_profile | default('read_only')) == 'all')
+          or (collect_live_must_gather | default(false) | bool)
+          or (collect_live_sosreport | default(false) | bool)
+        )
+      }}
+  ansible.builtin.fail:
+    msg: >-
+      This playbook is running in production-safe read-only mode. The requested live support collectors would mutate cluster state
+      by creating and cleaning up temporary resources (`oc adm must-gather` and/or `oc debug node`).
+      To allow that explicitly, rerun with `-e allow_mutating_live_collectors=true`.
+      Otherwise keep `collect_live_support_artifacts=false` or enable only read-only evidence paths such as offline `must_gather_path`,
+      `inspect_path`, or collected-state inputs.
+  when:
+    - mutating_live_collectors_requested | bool
+    - not (allow_mutating_live_collectors | default(false) | bool)
 
 - name: Verify service account authorization matrix
   vars:

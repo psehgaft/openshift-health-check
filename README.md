@@ -57,7 +57,7 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml
 
 For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
 
-For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and now defaults to a live support collection profile of `all`. The scan builds a collector plan from the cluster type, installed tools, configured commands, and available access, then runs the collectors that actually apply.
+For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and defaults to the full live support collection profile. That includes API and metric evidence, live `inspect`, Insights archive copy, optional `cluster-compare`, `must-gather`, and node diagnostics when they apply.
 
 Example live OpenShift run:
 
@@ -825,6 +825,12 @@ Important runtime settings:
   Service account name used by the OpenShift preflight `oc auth can-i` matrix. Default: `health-check-runner`
 - `rbac_check_fail_on_gap`
   If `true`, fail preflight when the target service account is missing any required permission for the planned scan. Default: `true`
+- `collect_live_support_artifacts`
+  Enable live support collectors such as `must-gather`, `inspect`, Insights archive copy, `cluster-compare`, and node diagnostics. Default: `true`
+- `live_support_collection_profile`
+  Support collector profile. Default: `all`
+- `allow_mutating_live_collectors`
+  Allow live collectors that create and later clean up temporary cluster resources, such as `oc adm must-gather` and `oc debug node`. Default: `true`
 - `collection_command_timeout_seconds`
   Timeout for each collection command. Default: `300`
 - `live_support_artifact_timeout_seconds`
@@ -847,6 +853,15 @@ Before the playbook starts, the tool validates the current CLI session and acces
 
 - OpenShift path: `oc whoami` must work and the playbook runs a generated `oc auth can-i` matrix against the configured target service account for the planned collection and analysis steps
 - Kubernetes path: `kubectl auth whoami` or `kubectl config current-context` must work, and `kubectl auth can-i '*' '*' --all-namespaces` must return `yes`
+
+On OpenShift, the default live scan enables the full live collector set. The mutating collectors in this repo are limited to temporary resources created as part of `oc adm must-gather` and `oc debug node/<node>`. The repo code does not issue delete operations against pre-existing cluster resources.
+
+If you want to disable the live support collectors and keep the scan read-only, set:
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e collect_live_support_artifacts=false
+```
 
 ## Namespace Scope
 
@@ -981,7 +996,7 @@ These parameters work across the playbooks:
 - `sosreport_paths`
   One or more extracted `sosreport` directories or archives, typically collected through `oc debug node/<node>` when host-level node diagnostics are required
 - `collect_live_sosreport`
-  Enable or disable live `oc debug node/<node>` sosreport collection; defaults to `true` for OpenShift live scans
+  Enable or disable live `oc debug node/<node>` sosreport collection
 - `live_support_sosreport_nodes`
   Optional explicit node list for live sosreport collection; when empty, the scan uses derived symptom nodes
 - `live_support_sosreport_node_limit`
