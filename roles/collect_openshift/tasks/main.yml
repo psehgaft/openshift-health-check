@@ -398,7 +398,9 @@
   ansible.builtin.shell: |
     python3 - <<'PY'
     import json
+    import os
     import subprocess
+    import tempfile
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     commands = json.loads(r'''{{ openshift_collection_commands | to_json }}''')
@@ -451,22 +453,66 @@
             result = future.result()
             results[result["name"]] = result
 
-    print(json.dumps(results))
+    output_dir = tempfile.mkdtemp(prefix="cluster-health-collect-openshift-")
+    output_path = os.path.join(output_dir, "collected-commands.json")
+    status_path = os.path.join(output_dir, "collected-command-status.json")
+    with open(output_path, "w", encoding="utf-8") as handle:
+        json.dump(results, handle)
+    with open(status_path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                name: {
+                    "rc": result.get("rc", 1),
+                    "stderr": result.get("stderr", ""),
+                    "timed_out": result.get("timed_out", False),
+                }
+                for name, result in results.items()
+            },
+            handle,
+        )
+    print(json.dumps({
+        "results_path": output_path,
+        "status_path": status_path,
+        "command_count": len(commands),
+        "max_workers": max_workers,
+        "timeout_seconds": timeout_seconds
+    }))
     PY
   register: openshift_collected_commands_cmd
   changed_when: false
   failed_when: false
 
-- name: Normalize OpenShift-specific command results
+- name: Normalize OpenShift-specific collection metadata
   ansible.builtin.set_fact:
-    openshift_collected_commands: "{{ openshift_collected_commands_cmd.stdout | from_json if (openshift_collected_commands_cmd.rc == 0 and (openshift_collected_commands_cmd.stdout | default('') | length > 0)) else {} }}"
+    openshift_collection_run_metadata: "{{ openshift_collected_commands_cmd.stdout | from_json if (openshift_collected_commands_cmd.rc == 0 and (openshift_collected_commands_cmd.stdout | default('') | length > 0)) else {} }}"
+
+- name: Load OpenShift-specific command results
+  ansible.builtin.set_fact:
+    openshift_collected_commands: "{{ lookup('file', openshift_collection_run_metadata.results_path) | from_json if (openshift_collection_run_metadata.results_path | default('') | length > 0) else {} }}"
+
+- name: Load OpenShift-specific command status
+  ansible.builtin.set_fact:
+    openshift_collected_command_status: "{{ lookup('file', openshift_collection_run_metadata.status_path) | from_json if (openshift_collection_run_metadata.status_path | default('') | length > 0) else {} }}"
 
 - name: Capture OpenShift optional collection skips
   ansible.builtin.set_fact:
-    assessment_collection_skipped_optional_commands: "{{ (assessment_collection_skipped_optional_commands | default([])) + [collection_skip_entry] }}"
-  loop: "{{ openshift_collected_commands | default({}) | dict2items }}"
+    assessment_collection_skipped_optional_commands: "{{ existing_optional_skip_entries + [collection_skip_entry] }}"
+  loop: "{{ openshift_collected_command_status | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
   vars:
-    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    existing_optional_skip_entries: >-
+      {{
+        assessment_collection_skipped_optional_commands
+        if (
+          assessment_collection_skipped_optional_commands is defined
+          and assessment_collection_skipped_optional_commands is sequence
+          and assessment_collection_skipped_optional_commands is not string
+        )
+        else []
+      }}
+    collection_result: "{{ item.value if (item.value is mapping) else {} }}"
+    collection_failure_stderr: "{{ collection_result.stderr | default('') | trim }}"
     collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
     optional_missing_resource_failure: >-
       {{
@@ -488,20 +534,23 @@
       }}
     collection_skip_entry:
       name: "{{ item.key }}"
-      rc: "{{ item.value.rc | default(1) }}"
+      rc: "{{ collection_result.rc | default(1) }}"
       category: "{{ 'optional-api-missing' if optional_missing_resource_failure else ('optional-object-missing' if optional_missing_object_failure else 'optional-access-denied') }}"
       detail: "{{ collection_failure_stderr }}"
   when:
-    - (item.value.rc | default(1) | int) != 0
+    - (collection_result.rc | default(1) | int) != 0
     - optional_missing_resource_failure or optional_missing_object_failure or optional_forbidden_failure
   changed_when: false
 
 - name: Merge OpenShift-specific collection failures
   ansible.builtin.set_fact:
     assessment_collection_failures: "{{ (assessment_collection_failures | default([])) + [collection_failure_entry] }}"
-  loop: "{{ openshift_collected_commands | default({}) | dict2items }}"
+  loop: "{{ openshift_collected_command_status | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
   vars:
-    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    collection_result: "{{ item.value if (item.value is mapping) else {} }}"
+    collection_failure_stderr: "{{ collection_result.stderr | default('') | trim }}"
     collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
     optional_missing_resource_failure: >-
       {{
@@ -523,11 +572,11 @@
       }}
     collection_failure_entry:
       name: "{{ item.key }}"
-      rc: "{{ item.value.rc | default(1) }}"
-      timed_out: "{{ item.value.timed_out | default(false) }}"
+      rc: "{{ collection_result.rc | default(1) }}"
+      timed_out: "{{ collection_result.timed_out | default(false) }}"
       stderr: "{{ collection_failure_stderr }}"
   when:
-    - (item.value.rc | default(1) | int) != 0
+    - (collection_result.rc | default(1) | int) != 0
     - not optional_missing_resource_failure
     - not optional_missing_object_failure
     - not optional_forbidden_failure

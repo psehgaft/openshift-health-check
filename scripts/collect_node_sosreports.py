@@ -196,10 +196,21 @@ def main():
             "requested_node_count": len(nodes),
             "collected_count": sum(1 for item in results if item["collected"]),
             "failed_count": sum(1 for item in results if not item["collected"]),
+            "status": (
+                "completed"
+                if all(item["collected"] for item in results)
+                else (
+                    "partial"
+                    if any(item["collected"] for item in results)
+                    else "failed"
+                )
+            ),
         },
     }
     print(json.dumps(payload))
-    return 0 if payload["summary"]["failed_count"] == 0 else 2
+    # Per-node collection failures should degrade to partial evidence, not abort the
+    # whole health check workflow. The payload still records failed_count and status.
+    return 0
 
 
 if __name__ == "__main__":

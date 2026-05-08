@@ -776,6 +776,19 @@ Optional OpenShift helper tools:
 
 The live OpenShift scan also collects the Insights Operator archive directly from the cluster through `oc` when support collectors are enabled, so no extra binary is needed for that source.
 
+Non-`cluster-admin` live mode:
+
+- There is no single built-in non-`cluster-admin` role that covers this repo end to end in live mode.
+- The closest supported split is:
+  - `cluster-reader` for the broad `oc get` inventory sweep
+  - `cluster-monitoring-view` for Thanos and Prometheus-backed checks
+  - a custom support-collector role for `oc adm must-gather`, `oc adm inspect`, and `/readyz`
+  - a namespace-scoped Insights reader in `openshift-insights`
+  - an additional optional node-debug role plus privileged SCC use if you want `collect_live_sosreport=true`
+- The built-in `cluster-reader` and `cluster-monitoring-view` ClusterRoles can be combined with custom support-collector and optional node-debug RBAC.
+- See [docs/openshift-rbac-guide.md](docs/openshift-rbac-guide.md) for the recommended role split and example manifests you can adapt for your cluster.
+- Then log in as the `health-check-runner` service account or mint a token for it before running the playbook.
+
 For `omc`, the playbook will use, in this order:
 
 - `-e omc_binary_path=/path/to/omc` if you set it
@@ -806,6 +819,12 @@ Important runtime settings:
 - `collection_parallelism`
   Requested number of cluster read commands to run at the same time. Default: `4`
   The runtime now auto-caps this for smaller machines based on local CPU and memory. The default budget targets are `50%` of local CPU and `50%` of local memory. On a 4 vCPU / 8 GiB VM, the effective cap is `2`.
+- `rbac_check_service_account_namespace`
+  Service account namespace used by the OpenShift preflight `oc auth can-i` matrix. Default: `openshift-health-check`
+- `rbac_check_service_account_name`
+  Service account name used by the OpenShift preflight `oc auth can-i` matrix. Default: `health-check-runner`
+- `rbac_check_fail_on_gap`
+  If `true`, fail preflight when the target service account is missing any required permission for the planned scan. Default: `true`
 - `collection_command_timeout_seconds`
   Timeout for each collection command. Default: `300`
 - `live_support_artifact_timeout_seconds`
@@ -824,9 +843,9 @@ Important runtime settings:
 - `warn_on_ingress_without_class`
   If `true`, `Ingress` objects with no explicit class are reported. Default: `false`
 
-Before the playbook starts, the tool validates the current CLI session and broad cluster access:
+Before the playbook starts, the tool validates the current CLI session and access:
 
-- OpenShift path: `oc whoami` must work and `oc auth can-i '*' '*' --all-namespaces` must return `yes`
+- OpenShift path: `oc whoami` must work and the playbook runs a generated `oc auth can-i` matrix against the configured target service account for the planned collection and analysis steps
 - Kubernetes path: `kubectl auth whoami` or `kubectl config current-context` must work, and `kubectl auth can-i '*' '*' --all-namespaces` must return `yes`
 
 ## Namespace Scope

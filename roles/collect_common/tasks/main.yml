@@ -151,10 +151,24 @@
 
     output_dir = tempfile.mkdtemp(prefix="cluster-health-collect-common-")
     output_path = os.path.join(output_dir, "collected-commands.json")
+    status_path = os.path.join(output_dir, "collected-command-status.json")
     with open(output_path, "w", encoding="utf-8") as handle:
         json.dump(results, handle)
+    with open(status_path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                name: {
+                    "rc": result.get("rc", 1),
+                    "stderr": result.get("stderr", ""),
+                    "timed_out": result.get("timed_out", False),
+                }
+                for name, result in results.items()
+            },
+            handle,
+        )
     print(json.dumps({
         "results_path": output_path,
+        "status_path": status_path,
         "command_count": len(commands),
         "max_workers": max_workers,
         "timeout_seconds": timeout_seconds
@@ -187,6 +201,10 @@
   ansible.builtin.set_fact:
     collected_commands: "{{ lookup('file', collection_run_metadata.results_path) | from_json if (collection_run_metadata.results_path | default('') | length > 0) else {} }}"
 
+- name: Load common collected command status
+  ansible.builtin.set_fact:
+    collected_command_status: "{{ lookup('file', collection_run_metadata.status_path) | from_json if (collection_run_metadata.status_path | default('') | length > 0) else {} }}"
+
 - name: Seed common collection failures with wrapper failure
   ansible.builtin.set_fact:
     assessment_collection_failures: "{{ [collection_wrapper_failure] }}"
@@ -195,9 +213,12 @@
 - name: Build common collection failure list
   ansible.builtin.set_fact:
     assessment_collection_failures: "{{ (assessment_collection_failures | default([])) + [collection_failure_entry] }}"
-  loop: "{{ collected_commands | default({}) | dict2items }}"
+  loop: "{{ collected_command_status | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
   vars:
-    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    collection_result: "{{ item.value if (item.value is mapping) else {} }}"
+    collection_failure_stderr: "{{ collection_result.stderr | default('') | trim }}"
     collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
     optional_forbidden_failure: >-
       {{
@@ -218,21 +239,34 @@
       }}
     collection_failure_entry:
       name: "{{ item.key }}"
-      rc: "{{ item.value.rc | default(1) }}"
-      timed_out: "{{ item.value.timed_out | default(false) }}"
+      rc: "{{ collection_result.rc | default(1) }}"
+      timed_out: "{{ collection_result.timed_out | default(false) }}"
       stderr: "{{ collection_failure_stderr }}"
   when:
-    - (item.value.rc | default(1) | int) != 0
+    - (collection_result.rc | default(1) | int) != 0
     - not optional_forbidden_failure
     - not optional_missing_resource_failure
   changed_when: false
 
 - name: Capture common optional permission skips
   ansible.builtin.set_fact:
-    assessment_collection_skipped_optional_commands: "{{ (assessment_collection_skipped_optional_commands | default([])) + [collection_skip_entry] }}"
-  loop: "{{ collected_commands | default({}) | dict2items }}"
+    assessment_collection_skipped_optional_commands: "{{ existing_optional_skip_entries + [collection_skip_entry] }}"
+  loop: "{{ collected_command_status | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
   vars:
-    collection_failure_stderr: "{{ item.value.stderr | default('') | trim }}"
+    existing_optional_skip_entries: >-
+      {{
+        assessment_collection_skipped_optional_commands
+        if (
+          assessment_collection_skipped_optional_commands is defined
+          and assessment_collection_skipped_optional_commands is sequence
+          and assessment_collection_skipped_optional_commands is not string
+        )
+        else []
+      }}
+    collection_result: "{{ item.value if (item.value is mapping) else {} }}"
+    collection_failure_stderr: "{{ collection_result.stderr | default('') | trim }}"
     collection_failure_stderr_lower: "{{ collection_failure_stderr | lower }}"
     optional_forbidden_failure: >-
       {{
@@ -253,11 +287,11 @@
       }}
     collection_skip_entry:
       name: "{{ item.key }}"
-      rc: "{{ item.value.rc | default(1) }}"
+      rc: "{{ collection_result.rc | default(1) }}"
       category: "{{ 'optional-not-installed' if optional_missing_resource_failure else 'optional-access-denied' }}"
       detail: "{{ collection_failure_stderr }}"
   when:
-    - (item.value.rc | default(1) | int) != 0
+    - (collection_result.rc | default(1) | int) != 0
     - optional_forbidden_failure or optional_missing_resource_failure
   changed_when: false
 

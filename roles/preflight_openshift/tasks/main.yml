@@ -29,6 +29,98 @@
   changed_when: false
   failed_when: false
 
+- name: Resolve RBAC verification subject
+  ansible.builtin.set_fact:
+    openshift_rbac_check_subject: "system:serviceaccount:{{ rbac_check_service_account_namespace | default('openshift-health-check') }}:{{ rbac_check_service_account_name | default('health-check-runner') }}"
+    openshift_rbac_check_include_live_support: "{{ collect_live_support_artifacts | default(true) | bool }}"
+    openshift_rbac_check_include_sosreport: >-
+      {{
+        (collect_live_support_artifacts | default(true) | bool)
+        and (
+          ((live_support_collection_profile | default('all')) == 'all')
+          or (collect_live_sosreport | default(false) | bool)
+        )
+      }}
+  changed_when: false
+
+- name: Verify service account authorization matrix
+  vars:
+    openshift_rbac_check_argv: >-
+      {{
+        [
+          'python3',
+          playbook_dir ~ '/../scripts/verify_openshift_rbac.py',
+          '--repo-root',
+          playbook_dir ~ '/..',
+          '--kube-cli',
+          'oc',
+          '--subject',
+          openshift_rbac_check_subject,
+          '--current-user',
+          (oc_user_cmd.stdout | default('') | trim)
+        ]
+        + (['--include-live-support'] if (openshift_rbac_check_include_live_support | bool) else [])
+        + (['--include-sosreport'] if (openshift_rbac_check_include_sosreport | bool) else [])
+      }}
+  ansible.builtin.command:
+    argv: "{{ openshift_rbac_check_argv }}"
+  register: openshift_rbac_check_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize service account authorization matrix
+  ansible.builtin.set_fact:
+    openshift_rbac_check_result: >-
+      {{
+        (openshift_rbac_check_cmd.stdout | from_json)
+        if (
+          (openshift_rbac_check_cmd.rc | default(1) | int) == 0
+          and (openshift_rbac_check_cmd.stdout | default('') | trim | length > 0)
+        )
+        else {
+          'subject': openshift_rbac_check_subject,
+          'checks': [],
+          'summary': {
+            'check_count': 0,
+            'passed_count': 0,
+            'failed_count': 1,
+            'failed_labels': ['rbac-verification-script']
+          },
+          'error': (openshift_rbac_check_cmd.stderr | default('RBAC verification script failed.'))
+        }
+      }}
+  changed_when: false
+
+- name: Publish OpenShift authorization capability facts
+  ansible.builtin.set_fact:
+    openshift_scan_capabilities: >-
+      {{
+        (openshift_scan_capabilities | default({}))
+        | combine({
+            'authorization': {
+              'subject': openshift_rbac_check_result.subject | default(openshift_rbac_check_subject),
+              'check_count': ((openshift_rbac_check_result.summary | default({})).get('check_count', 0) | int),
+              'passed_count': ((openshift_rbac_check_result.summary | default({})).get('passed_count', 0) | int),
+              'failed_count': ((openshift_rbac_check_result.summary | default({})).get('failed_count', 0) | int),
+              'failed_labels': ((openshift_rbac_check_result.summary | default({})).get('failed_labels', [])),
+              'include_live_support': openshift_rbac_check_include_live_support | bool,
+              'include_sosreport': openshift_rbac_check_include_sosreport | bool
+            }
+          }, recursive=True)
+      }}
+  changed_when: false
+
+- name: Fail when the target service account is missing required permissions
+  ansible.builtin.fail:
+    msg: >-
+      The target OpenShift service account {{ openshift_rbac_check_subject }} is missing required permissions for this scan.
+      Failed checks: {{ ((openshift_rbac_check_result.summary | default({})).get('failed_labels', [])) | join(', ') }}.
+      Run the RBAC guide examples in docs/openshift-rbac-guide.md, then verify with
+      `oc auth can-i --as={{ openshift_rbac_check_subject }} <verb> <resource>`.
+  when:
+    - rbac_check_fail_on_gap | default(true) | bool
+    - ((openshift_rbac_check_result.summary | default({})).get('failed_count', 0) | int) > 0
+
 - name: Detect optional local collector tools
   ansible.builtin.command:
     argv:
@@ -69,68 +161,88 @@
       omc:
         available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'omc') | map(attribute='rc') | first | default(1) | int) == 0 }}"
         path: "{{ openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'omc') | map(attribute='stdout') | first | default('') | trim }}"
-    openshift_scan_capabilities:
-      tools:
-        oc:
-          available: "{{ oc_session_check.rc == 0 }}"
-          context: "{{ oc_context_cmd.stdout | default('') | trim }}"
-        python3:
-          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'python3') | map(attribute='rc') | first | default(1) | int) == 0 }}"
-        podman:
-          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'podman') | map(attribute='rc') | first | default(1) | int) == 0 }}"
-        rosa:
-          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='rc') | first | default(1) | int) == 0 }}"
-        omc:
-          available: "{{ (openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'omc') | map(attribute='rc') | first | default(1) | int) == 0 }}"
-        oc_cluster_compare:
-          available: "{{ (openshift_cluster_compare_plugin_check.rc | default(1) | int) == 0 }}"
-      collectors:
-        must_gather:
-          category: oc-native
-          applicable: true
-          tool_available: "{{ oc_session_check.rc == 0 }}"
-          configured: true
-          access_path: oc
-          requirement_summary: "Requires oc access to the cluster and the ability to run must-gather pods."
-        inspect:
-          category: oc-native
-          applicable: true
-          tool_available: "{{ oc_session_check.rc == 0 }}"
-          configured: true
-          access_path: oc
-          requirement_summary: "Requires oc access to inspect cluster resources."
-        cluster_compare:
-          category: oc-plugin
-          applicable: true
-          tool_available: "{{ (openshift_cluster_compare_plugin_check.rc | default(1) | int) == 0 }}"
-          configured: "{{ (live_support_cluster_compare_command_argv | default([]) | length) > 0 }}"
-          access_path: oc-plugin
-          requirement_summary: "Requires the oc cluster-compare plugin plus a configured reference/baseline command."
-        managed_gates:
-          category: provider-api
-          applicable: "{{ (provider_family | default('generic')) in ['rosa', 'aro', 'osd'] or (live_support_managed_gates_command_argv | default([]) | length) > 0 }}"
-          tool_available: "{{ ((openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='rc') | first | default(1) | int) == 0) or ((live_support_managed_gates_command_argv | default([]) | length) > 0) }}"
-          configured: "{{ (live_support_managed_gates_command_argv | default([]) | length) > 0 }}"
-          access_path: provider-api
-          requirement_summary: "Requires provider-side tooling or an explicit managed-gates command for managed OpenShift offerings."
-        advisor_export:
-          category: external-service
-          applicable: true
-          tool_available: "{{ (live_support_advisor_export_command_argv | default([]) | length) > 0 }}"
-          configured: "{{ (live_support_advisor_export_command_argv | default([]) | length) > 0 }}"
-          access_path: external-service
-          requirement_summary: "Requires an explicit Advisor or Insights export command."
-        insights_archive:
-          category: oc-native
-          applicable: true
-          tool_available: "{{ oc_session_check.rc == 0 }}"
-          configured: true
-          access_path: oc
-          requirement_summary: "Uses oc to copy the Insights Operator archive from a running pod in openshift-insights."
-        sosreport:
-          category: node-level
-          applicable: true
-          tool_available: "{{ (oc_session_check.rc | default(1) | int) == 0 or (live_support_sosreport_command_argv | default([]) | length) > 0 }}"
-          configured: true
-          access_path: oc-debug-node
-          requirement_summary: "Requires node-level access through oc debug node/<node> or SSH, then toolbox/sosreport collection."
+    openshift_scan_capabilities: >-
+      {{
+        (openshift_scan_capabilities | default({}))
+        | combine({
+            'tools': {
+              'oc': {
+                'available': (oc_session_check.rc == 0),
+                'context': (oc_context_cmd.stdout | default('') | trim)
+              },
+              'python3': {
+                'available': ((openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'python3') | map(attribute='rc') | first | default(1) | int) == 0)
+              },
+              'podman': {
+                'available': ((openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'podman') | map(attribute='rc') | first | default(1) | int) == 0)
+              },
+              'rosa': {
+                'available': ((openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='rc') | first | default(1) | int) == 0)
+              },
+              'omc': {
+                'available': ((openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'omc') | map(attribute='rc') | first | default(1) | int) == 0)
+              },
+              'oc_cluster_compare': {
+                'available': ((openshift_cluster_compare_plugin_check.rc | default(1) | int) == 0)
+              }
+            },
+            'collectors': {
+              'must_gather': {
+                'category': 'oc-native',
+                'applicable': True,
+                'tool_available': (oc_session_check.rc == 0),
+                'configured': True,
+                'access_path': 'oc',
+                'requirement_summary': 'Requires oc access to the cluster and the ability to run must-gather pods.'
+              },
+              'inspect': {
+                'category': 'oc-native',
+                'applicable': True,
+                'tool_available': (oc_session_check.rc == 0),
+                'configured': True,
+                'access_path': 'oc',
+                'requirement_summary': 'Requires oc access to inspect cluster resources.'
+              },
+              'cluster_compare': {
+                'category': 'oc-plugin',
+                'applicable': True,
+                'tool_available': ((openshift_cluster_compare_plugin_check.rc | default(1) | int) == 0),
+                'configured': ((live_support_cluster_compare_command_argv | default([]) | length) > 0),
+                'access_path': 'oc-plugin',
+                'requirement_summary': 'Requires the oc cluster-compare plugin plus a configured reference/baseline command.'
+              },
+              'managed_gates': {
+                'category': 'provider-api',
+                'applicable': ((provider_family | default('generic')) in ['rosa', 'aro', 'osd'] or (live_support_managed_gates_command_argv | default([]) | length) > 0),
+                'tool_available': (((openshift_optional_tool_checks.results | selectattr('item', 'equalto', 'rosa') | map(attribute='rc') | first | default(1) | int) == 0) or ((live_support_managed_gates_command_argv | default([]) | length) > 0)),
+                'configured': ((live_support_managed_gates_command_argv | default([]) | length) > 0),
+                'access_path': 'provider-api',
+                'requirement_summary': 'Requires provider-side tooling or an explicit managed-gates command for managed OpenShift offerings.'
+              },
+              'advisor_export': {
+                'category': 'external-service',
+                'applicable': True,
+                'tool_available': ((live_support_advisor_export_command_argv | default([]) | length) > 0),
+                'configured': ((live_support_advisor_export_command_argv | default([]) | length) > 0),
+                'access_path': 'external-service',
+                'requirement_summary': 'Requires an explicit Advisor or Insights export command.'
+              },
+              'insights_archive': {
+                'category': 'oc-native',
+                'applicable': True,
+                'tool_available': (oc_session_check.rc == 0),
+                'configured': True,
+                'access_path': 'oc',
+                'requirement_summary': 'Uses oc to copy the Insights Operator archive from a running pod in openshift-insights.'
+              },
+              'sosreport': {
+                'category': 'node-level',
+                'applicable': True,
+                'tool_available': ((oc_session_check.rc | default(1) | int) == 0 or (live_support_sosreport_command_argv | default([]) | length) > 0),
+                'configured': True,
+                'access_path': 'oc-debug-node',
+                'requirement_summary': 'Requires node-level access through oc debug node/<node> or SSH, then toolbox/sosreport collection.'
+              }
+            }
+          }, recursive=True)
+      }}
