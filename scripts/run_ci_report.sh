@@ -19,8 +19,14 @@ SANITIZED_CLUSTER_TYPE_LABEL="$(printf '%s' "${CLUSTER_TYPE_LABEL}" | tr '[:uppe
 LOG_DIR="${ROOT_DIR}/.logs"
 TIMESTAMP="$(date '+%Y%m%dT%H%M%S')"
 LOG_FILE="${LOG_DIR}/${SANITIZED_CLUSTER_TYPE_LABEL}-run-${TIMESTAMP}.log"
+ANSIBLE_PLAYBOOK_BIN="${ROOT_DIR}/.venv/bin/ansible-playbook"
 
 mkdir -p "${LOG_DIR}"
+
+if [[ ! -x "${ANSIBLE_PLAYBOOK_BIN}" ]]; then
+  echo "run_ci_report.sh requires ${ANSIBLE_PLAYBOOK_BIN}. Run scripts/setup-ansible-venv.sh first." >&2
+  exit 1
+fi
 
 if [[ "${OHC_CI_TEE_ACTIVE:-0}" != "1" ]]; then
   export OHC_CI_TEE_ACTIVE=1
@@ -38,7 +44,7 @@ trap 'rm -rf "${TEMP_REPORT_DIR}"' EXIT
 ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
 ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
 OHC_FORCE_TASK_PROGRESS=1 \
-ansible-playbook "${PLAYBOOK}" \
+"${ANSIBLE_PLAYBOOK_BIN}" "${PLAYBOOK}" \
   -e report_output_dir="${TEMP_REPORT_DIR}" \
   "$@"
 

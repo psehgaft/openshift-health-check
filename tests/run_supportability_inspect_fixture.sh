@@ -6,12 +6,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSPECT_PATH="${ROOT_DIR}/tests/fixtures/inspect.mock"
 REPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/supportability-inspect-reports.XXXXXX")"
 LOG_PATH="${TMPDIR:-/tmp}/supportability-inspect-fixture.log"
+ANSIBLE_PLAYBOOK_BIN="${ROOT_DIR}/.venv/bin/ansible-playbook"
+VENV_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 trap 'rm -rf "${REPORT_DIR}"' EXIT
 
 ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
 ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
 ANSIBLE_STDOUT_CALLBACK=minimal \
-ansible-playbook "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
+"${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_output_dir="${REPORT_DIR}" \
   -e report_basename=cluster-supportability \
   -e evidence_mode=inspect \
@@ -27,7 +29,7 @@ if [[ -z "${report_json}" || -z "${report_md}" ]]; then
   exit 1
 fi
 
-python3 - "${report_json}" <<'PY'
+"${VENV_PYTHON_BIN}" - "${report_json}" <<'PY'
 import json
 import sys
 from pathlib import Path

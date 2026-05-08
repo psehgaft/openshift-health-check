@@ -12,12 +12,14 @@ MANAGED_GATES_PATH="${ROOT_DIR}/tests/fixtures/managed-gates/mock-rosa-gates.jso
 OMC_PATH="${ROOT_DIR}/tests/fixtures/bin/omc"
 REPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/supportability-fixture-reports.XXXXXX")"
 LOG_PATH="${TMPDIR:-/tmp}/supportability-fixture.log"
+ANSIBLE_PLAYBOOK_BIN="${ROOT_DIR}/.venv/bin/ansible-playbook"
+VENV_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 trap 'rm -rf "${REPORT_DIR}"' EXIT
 
 ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
 ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
 ANSIBLE_STDOUT_CALLBACK=minimal \
-ansible-playbook "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
+"${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_output_dir="${REPORT_DIR}" \
   -e report_basename=cluster-supportability \
   -e must_gather_path="${FIXTURE_PATH}" \
@@ -38,7 +40,7 @@ if [[ -z "${report_json}" || -z "${report_md}" ]]; then
   exit 1
 fi
 
-python3 - "${report_json}" <<'PY'
+"${VENV_PYTHON_BIN}" - "${report_json}" <<'PY'
 import json
 import sys
 from pathlib import Path

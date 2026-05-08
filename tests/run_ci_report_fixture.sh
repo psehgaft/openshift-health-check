@@ -5,11 +5,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CI_MD="${ROOT_DIR}/reports/ci-cluster-report.md"
 CI_JSON="${ROOT_DIR}/reports/ci-cluster-report.json"
+VENV_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 
-python3 "${ROOT_DIR}/scripts/validate_openshift_report_template.py" \
+"${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_openshift_report_template.py" \
   "${ROOT_DIR}/templates/openshift_cluster_health_report.md.j2"
 
-python3 "${ROOT_DIR}/scripts/validate_cluster_health_profile.py" \
+"${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_cluster_health_profile.py" \
   "${ROOT_DIR}/inputs/openshift-cluster-health-profile.yml"
 
 for capability_profile in \
@@ -20,7 +21,7 @@ for capability_profile in \
   "${ROOT_DIR}/inputs/gke-cluster-health-profile.yml" \
   "${ROOT_DIR}/inputs/rancher-cluster-health-profile.yml" \
   "${ROOT_DIR}/inputs/minikube-cluster-health-profile.yml"; do
-  python3 "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
+  "${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_openshift_capability_profile.py" \
     "${capability_profile}" \
     kubernetes_report_capability_profile
 done
@@ -30,7 +31,7 @@ done
   -e report_basename=cluster-supportability \
   -e case_bundle_path="${ROOT_DIR}/tests/fixtures"
 
-python3 - "${CI_JSON}" <<'PY'
+"${VENV_PYTHON_BIN}" - "${CI_JSON}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -50,7 +51,7 @@ assert len(payload["findings"]["assessment_health"]) > 0
 print(path)
 PY
 
-python3 "${ROOT_DIR}/scripts/validate_openshift_report_output.py" \
+"${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_openshift_report_output.py" \
   "${CI_MD}" \
   "${CI_JSON}"
 

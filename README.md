@@ -699,7 +699,7 @@ Resume-mode note:
 
 Install these programs first:
 
-- `python3`
+- `python3` or `python3.12`
 - `openssl`
 
 ## Python Virtual Environment
@@ -716,11 +716,17 @@ Or manually:
 
 ```bash
 python3 -m venv .venv
+# or: python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 mkdir -p .ansible/tmp
 ```
+
+`requirements.txt` pins the supported runtime:
+
+- `python3` or `python3.12`
+- `ansible-core>=2.16.3,<2.17`
 
 After activation, use the repo-local Ansible:
 
@@ -728,6 +734,8 @@ After activation, use the repo-local Ansible:
 source .venv/bin/activate
 ansible-playbook --version
 ```
+
+If your bastion host already provides `ansible-core 2.16.3`, that version is within the supported range for this repo. Using the repo-local `.venv/bin/ansible-playbook` is still preferred so the runtime stays isolated and reproducible.
 
 You also need one working cluster CLI session:
 
@@ -747,6 +755,7 @@ Kubernetes playbooks:
 For Ansible:
 
 - install Python dependencies from `requirements.txt` into `.venv`
+- supported runtime: `ansible-core` `>=2.16.3,<2.17`
 - no extra Ansible collections are required
 - no extra Ansible modules are required
 - the playbook uses only `ansible.builtin` modules
