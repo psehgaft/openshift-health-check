@@ -54,7 +54,8 @@ cluster_health_profile:
         expected.
       includes:
       - machine_health_check_remediation
-      satisfied_by_all: []
+      satisfied_by_all:
+      - node_tuning_operator
     backup_and_disaster_recovery:
       enabled: true
       required: true
@@ -69,8 +70,8 @@ cluster_health_profile:
       - Successful backup and restore evidence is present.
       - Control-plane backup evidence is present when the cluster is self-managed.
       includes:
-      - application_backup_and_restore_readiness
       - control_plane_backup_and_recovery_readiness
+      - openshift_data_foundation
       satisfied_by_all: []
     application_access_and_network_isolation:
       enabled: true
@@ -109,11 +110,8 @@ cluster_health_profile:
       - cluster_log_forwarding
       - external_alert_delivery
       - user_workload_metrics_monitoring
-      - persistent_monitoring_storage
       satisfied_by_all:
       - dynatrace_observability
-      - datadog_observability
-      - splunk_observability
     security_and_governance:
       enabled: true
       required: true
@@ -133,6 +131,8 @@ cluster_health_profile:
       - etcd_encryption
       - image_registry_policy_governance
       - multi_tenant_namespace_governance
+      - cyberark_conjur_secrets_management
+      - advanced_cluster_security
       satisfied_by_all: []
     workload_health:
       enabled: true
@@ -182,10 +182,11 @@ cluster_health_profile:
         and memory values.
       - Sizing decisions no longer depend on partial or not-derived capacity values.
       includes: []
-      satisfied_by_all: []
+      satisfied_by_all:
+      - cost_management_operator
     declarative_operations:
       enabled: true
-      required: true
+      required: false
       owner: operations
       notes: Confirm the intended declarative operating model, especially Git-backed
         reconciliation for cluster and platform changes, so change control and recovery
@@ -199,10 +200,11 @@ cluster_health_profile:
       - Critical platform changes are represented in the declared reconciliation model.
       includes:
       - declarative_gitops_operations
+      - advanced_cluster_management
       satisfied_by_all: []
     container_platform_adoption_and_release_engineering:
-      enabled: true
-      required: true
+      enabled: false
+      required: false
       owner: release
       notes: Confirm that cluster-hosted delivery tooling, pipeline execution, and
         build ownership are stable enough for repeatable releases and controlled change
@@ -231,8 +233,8 @@ cluster_health_profile:
       satisfied_by_all: []
   capabilities:
     application_backup_and_restore_readiness:
-      enabled: true
-      required: true
+      enabled: false
+      required: false
       criticality: critical
       expected_state: healthy
       owner: operations
@@ -271,9 +273,9 @@ cluster_health_profile:
       - A control-plane recovery procedure is documented or tested for the cluster.
     declarative_gitops_operations:
       enabled: true
-      required: true
+      required: false
       criticality: high
-      expected_state: healthy
+      expected_state: present
       owner: operations
       evidence_required:
       - must-gather
@@ -325,7 +327,7 @@ cluster_health_profile:
       - A test alert reaches the intended destination.
     user_workload_metrics_monitoring:
       enabled: true
-      required: true
+      required: false
       criticality: high
       expected_state: configured
       owner: observability
@@ -342,8 +344,8 @@ cluster_health_profile:
       - Prometheus or an approved alternate monitoring path covers the workload metrics
         the operating model depends on.
     persistent_monitoring_storage:
-      enabled: true
-      required: true
+      enabled: false
+      required: false
       criticality: high
       expected_state: healthy
       owner: observability
@@ -414,9 +416,9 @@ cluster_health_profile:
       - The encryption rollout is complete across reporting API server components.
     image_registry_policy_governance:
       enabled: true
-      required: true
+      required: false
       criticality: medium
-      expected_state: healthy
+      expected_state: configured
       owner: security
       evidence_required:
       - must-gather
@@ -432,9 +434,9 @@ cluster_health_profile:
         model.
     namespace_network_policy_baseline:
       enabled: true
-      required: true
+      required: false
       criticality: medium
-      expected_state: healthy
+      expected_state: configured
       owner: network
       evidence_required:
       - must-gather
@@ -467,8 +469,8 @@ cluster_health_profile:
       - Baseline tenant guardrails such as NetworkPolicy, ResourceQuota, and LimitRange
         are present or documented as exceptions.
     dynatrace_observability:
-      enabled: false
-      required: false
+      enabled: true
+      required: true
       criticality: medium
       expected_state: present
       owner: observability
@@ -563,8 +565,8 @@ cluster_health_profile:
       - LokiStack resources or managed Loki workloads are present.
       - Expected log streams are forwarded to Loki through the intended path.
     advanced_cluster_management:
-      enabled: false
-      required: false
+      enabled: true
+      required: true
       criticality: low
       expected_state: present
       owner: operations
@@ -583,9 +585,9 @@ cluster_health_profile:
       - Expected ACM governance or fleet-management workflows are configured for the
         clusters and teams that depend on them.
     openshift_data_foundation:
-      enabled: false
-      required: false
-      criticality: low
+      enabled: true
+      required: true
+      criticality: medium
       expected_state: present
       owner: storage
       evidence_required:
@@ -645,9 +647,9 @@ cluster_health_profile:
       - The intended external secret synchronization path is configured for the namespaces
         or teams that depend on it.
     cyberark_conjur_secrets_management:
-      enabled: false
-      required: false
-      criticality: info
+      enabled: true
+      required: true
+      criticality: medium
       expected_state: present
       owner: security
       evidence_required:
@@ -726,7 +728,7 @@ cluster_health_profile:
       - Expected Issuer, ClusterIssuer, Certificate, or CertificateRequest resources
         are configured and certificate renewal is healthy for dependent workloads.
     advanced_cluster_security:
-      enabled: false
+      enabled: true
       required: false
       criticality: info
       expected_state: present
@@ -986,7 +988,7 @@ cluster_health_profile:
       - The expected sandboxed workload path is configured for the workloads that
         require stronger isolation.
     node_tuning_operator:
-      enabled: false
+      enabled: true
       required: false
       criticality: info
       expected_state: present
@@ -1046,7 +1048,7 @@ cluster_health_profile:
       - Expected descheduler profiles and execution mode are configured for the workloads
         or node pools that depend on pod rebalancing.
     cost_management_operator:
-      enabled: false
+      enabled: true
       required: false
       criticality: info
       expected_state: present
