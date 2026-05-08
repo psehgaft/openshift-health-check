@@ -2496,6 +2496,34 @@
         if item and item not in requested_compliance_standards[:index]
     ]
 
+    def compliance_standard_supported(standard_name, summary):
+        if standard_name == "FIPS":
+            return str(summary.get("runtime_status") or "unknown") == "enabled"
+        return str(summary.get("verdict") or "not-configured") == "supported"
+
+    def compliance_standard_status(standard_name, summary):
+        if compliance_standard_supported(standard_name, summary):
+            return "OK"
+        return "WARN" if cap_required("compliance_requirements_validation") else "INFO"
+
+    def compliance_standard_detail(standard_name, summary):
+        verdict = str(summary.get("verdict") or "not-configured")
+        runtime_status = str(summary.get("runtime_status") or "not-applicable")
+        detail = str(summary.get("detail") or "").strip()
+        if standard_name == "FIPS":
+            return (
+                f"runtime={runtime_status} verdict={verdict}"
+                + (f" detail={detail}" if detail else "")
+            )
+        return (
+            f"verdict={verdict} configured={bool(summary.get('configured'))} "
+            f"active={bool(summary.get('active_enabled'))} "
+            f"scans={int(summary.get('scan_count') or 0)} "
+            f"failedScans={int(summary.get('failing_scan_count') or 0)} "
+            f"failedChecks={int(summary.get('failed_check_count') or 0)}"
+            + (f" detail={detail}" if detail else "")
+        )
+
     compliance_present = bool(compliance_operator_summary.get("present") or len(compliancesuites) > 0)
     compliance_scan_config_present = bool(
         int(compliance_operator_summary.get("scan_setting_binding_count") or 0) > 0
@@ -2509,10 +2537,23 @@
     )
     requested_compliance_standard_gaps = []
     requested_compliance_standard_status = []
+    requested_compliance_failed_scan_count = 0
+    requested_compliance_failed_check_count = 0
     for standard_name in requested_compliance_standards:
         summary = compliance_standards_by_name.get(standard_name) or {}
         verdict = str(summary.get("verdict") or "not-configured")
         runtime_status = str(summary.get("runtime_status") or "not-applicable")
+        requested_compliance_failed_scan_count += int(summary.get("failing_scan_count") or 0)
+        requested_compliance_failed_check_count += int(summary.get("failed_check_count") or 0)
+        add_check(
+            f"Compliance standard {standard_name}",
+            compliance_standard_status(standard_name, summary),
+            compliance_standard_detail(standard_name, summary),
+            "compliance requirements validation evidence",
+            level=compliance_level,
+            scored=False,
+            capability_key="",
+        )
         requested_compliance_standard_status.append(
             f"{standard_name}={runtime_status if standard_name == 'FIPS' else verdict}"
         )
@@ -2548,7 +2589,10 @@
                 ),
             })
     compliance_healthy = (
-        len(requested_compliance_standard_gaps) == 0
+        (
+            len(requested_compliance_standard_gaps) == 0
+            and int(compliance_operator_summary.get("invalid_profilebundle_count") or 0) == 0
+        )
         if requested_compliance_standards
         else compliance_operator_healthy
     )
@@ -2560,8 +2604,9 @@
             f"suites={int(compliance_operator_summary.get('suite_count') or len(compliancesuites))} "
             f"scans={int(compliance_operator_summary.get('scan_count') or 0)} "
             f"bindings={int(compliance_operator_summary.get('scan_setting_binding_count') or 0)} "
-            f"failedChecks={int(compliance_operator_summary.get('failed_check_count') or 0)} "
-            f"failingScans={int(compliance_operator_summary.get('failing_scan_count') or 0)} "
+            f"failedChecks={requested_compliance_failed_check_count if requested_compliance_standards else int(compliance_operator_summary.get('failed_check_count') or 0)} "
+            f"failingScans={requested_compliance_failed_scan_count if requested_compliance_standards else int(compliance_operator_summary.get('failing_scan_count') or 0)} "
+            f"invalidProfileBundles={int(compliance_operator_summary.get('invalid_profilebundle_count') or 0)} "
             f"standards={';'.join(requested_compliance_standard_status) or 'not-requested'}"
         ),
         "compliance requirements validation evidence",
@@ -2579,6 +2624,16 @@
             "prod-day2-compliance-requirements-missing",
             "requested compliance standards are not fully satisfied: "
             + "; ".join(f"{item['standard']}: {item['detail']}" for item in requested_compliance_standard_gaps),
+            severity=cap_failure_severity("compliance_requirements_validation"),
+            source="compliance requirements validation evidence",
+        )
+    elif cap_required("compliance_requirements_validation") and requested_compliance_standards and int(compliance_operator_summary.get("invalid_profilebundle_count") or 0) > 0:
+        add_finding(
+            "prod-day2-compliance-requirements-missing",
+            (
+                "requested compliance standards cannot be trusted because Compliance Operator profile bundles are invalid: "
+                f"invalidProfileBundles={int(compliance_operator_summary.get('invalid_profilebundle_count') or 0)}"
+            ),
             severity=cap_failure_severity("compliance_requirements_validation"),
             source="compliance requirements validation evidence",
         )
@@ -3918,8 +3973,6 @@
             continue
         cap_checks = [item for item in checks if item.get("capability_key") == cap_key]
         cap_findings = [item for item in findings if item.get("capability") == cap_key]
-        if not bool(cap_value.get("required", False)) and not cap_checks and not cap_findings:
-            continue
         finding_severities = [str(item.get("severity") or "info").lower() for item in cap_findings]
         check_statuses = [str(item.get("status") or "unknown").upper() for item in cap_checks]
         if any(item == "critical" for item in finding_severities):
@@ -3932,15 +3985,25 @@
             overall_status = "OK"
         elif any(item == "info" for item in finding_severities) or "INFO" in check_statuses:
             overall_status = "INFO"
-        else:
+        elif bool(cap_value.get("required", False)):
             overall_status = "UNKNOWN"
+        elif cap_checks or cap_findings:
+            overall_status = "UNKNOWN"
+        elif str(cap_value.get("expected_state") or "present").strip().lower() == "not_applicable":
+            overall_status = "INFO"
+        else:
+            overall_status = "INFO"
         recommended_action = (
             cap_findings[0].get("recommended_action")
             if cap_findings
             else (
                 "No remediation is currently required for this capability posture."
                 if overall_status == "OK"
-                else ("Collect or review the expected evidence for this capability and remediate any gaps." if overall_status in {"WARNING", "CRITICAL", "UNKNOWN"} else "Review this capability as informational context.")
+                else (
+                    "Collect or review the expected evidence for this capability and remediate any gaps."
+                    if overall_status in {"WARNING", "CRITICAL", "UNKNOWN"}
+                    else "Review this capability as informational context."
+                )
             )
         )
         capability_sections.append({
@@ -3971,7 +4034,18 @@
             "top_detail": (
                 cap_findings[0].get("detail")
                 if cap_findings
-                else (cap_checks[0].get("detail") if cap_checks else "No collected check detail was mapped for this capability.")
+                else (
+                    cap_checks[0].get("detail")
+                    if cap_checks
+                    else (
+                        "This capability is enabled in the cluster health profile, but the current analyzer did not map a specific collected check or finding to it yet."
+                    )
+                )
+            ),
+            "accounting_state": (
+                "assessed"
+                if (cap_checks or cap_findings)
+                else "profile-enabled-no-direct-check"
             ),
         })
 

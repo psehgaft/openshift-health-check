@@ -765,6 +765,31 @@
 
 - name: Build security and compliance posture summary
   vars:
+    requested_compliance_standards: >-
+      {{
+        (
+          (
+            (
+              (cluster_health_profile | default({})).capabilities
+              | default({})
+            ).compliance_requirements_validation
+            | default({})
+          ).standards
+          | default([])
+        )
+        | map('string')
+        | list
+      }}
+    compliance_standards_for_security_summary: >-
+      {{
+        (
+          compliance_standards_summary | default([])
+          | selectattr('standard', 'in', requested_compliance_standards)
+          | list
+        )
+        if (requested_compliance_standards | length) > 0
+        else (compliance_standards_summary | default([]))
+      }}
     privileged_access_count: >-
       {{
         (privileged_serviceaccount_access | default([]) | length)
@@ -773,7 +798,7 @@
       }}
     active_non_supported_standards: >-
       {{
-        compliance_standards_summary | default([])
+        compliance_standards_for_security_summary
         | selectattr('active_enabled', 'equalto', true)
         | rejectattr('verdict', 'equalto', 'supported')
         | list
@@ -796,7 +821,7 @@
       }}
     configured_but_inactive_standards: >-
       {{
-        compliance_standards_summary | default([])
+        compliance_standards_for_security_summary
         | selectattr('configured', 'equalto', true)
         | rejectattr('active_enabled', 'equalto', true)
         | list
@@ -821,6 +846,7 @@
             or (image_registry_findings | default([]) | length) > 0
             or (compliance_suite_findings | default([]) | length) > 0
             or (active_non_supported_standards | length) > 0
+            or (configured_but_inactive_standards | length) > 0
             or (compliance_operator_summary.invalid_profilebundle_count | default(0) | int) > 0
             or (expiring_certificates_warning | default([]) | length) > 0
           )
@@ -839,6 +865,7 @@
           + (['image registry policy findings=' ~ ((image_registry_findings | default([]) | length) | string)] if (image_registry_findings | default([]) | length) > 0 else [])
           + (['warning certificate expiry=' ~ ((expiring_certificates_warning | default([]) | length) | string)] if (expiring_certificates_warning | default([]) | length) > 0 else [])
           + (['active compliance standards needing review=' ~ ((active_non_supported_standards | length) | string)] if (active_non_supported_standards | length) > 0 else [])
+          + (['configured but inactive compliance standards=' ~ ((configured_but_inactive_standards | length) | string)] if (configured_but_inactive_standards | length) > 0 else [])
           + (['compliance suite findings=' ~ ((compliance_suite_findings | default([]) | length) | string)] if (compliance_suite_findings | default([]) | length) > 0 else [])
           + (['invalid compliance profile bundles=' ~ ((compliance_operator_summary.invalid_profilebundle_count | default(0) | int) | string)] if (compliance_operator_summary.invalid_profilebundle_count | default(0) | int) > 0 else [])
         ) | join('; ')

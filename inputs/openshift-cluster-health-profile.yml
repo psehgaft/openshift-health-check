@@ -81,7 +81,7 @@ cluster_health_profile:
         with the intended access design.
       docs:
       - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-routes
-      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/network_security/network-policy
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/network_security/network-policy
       verification:
       - The next report run shows clean route and ingress health.
       - Proxy exclusions and namespace isolation controls align with the intended
@@ -97,7 +97,7 @@ cluster_health_profile:
         native stack or an approved alternate observability platform.
       docs:
       - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/monitoring/index
-      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/4.21/html/configuring_user_workload_monitoring/index
+      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/latest/html/configuring_user_workload_monitoring/index
       - https://docs.redhat.com/en/documentation/red_hat_openshift_logging/6.4/html/configuring_logging/configuring-log-forwarding
       - https://docs.dynatrace.com/docs/ingest-from/setup-on-k8s
       - https://docs.datadoghq.com/containers/datadog_operator/
@@ -121,8 +121,8 @@ cluster_health_profile:
       docs:
       - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/security_and_compliance/index
       - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/authentication_and_authorization/configuring-identity-providers
-      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html-single/etcd/etcd#enabling-etcd-encryption_encrypting-etcd
-      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/building_applications/projects
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/etcd/etcd#enabling-etcd-encryption_encrypting-etcd
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/building_applications/projects
       verification:
       - The next report run shows identity, encryption, registry, and tenant-governance
         findings reduced to accepted or healthy state.
@@ -192,7 +192,6 @@ cluster_health_profile:
         reconciliation for cluster and platform changes, so change control and recovery
         are repeatable.
       docs:
-      - https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.20/html/declarative_cluster_configuration/index
       - https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/latest
       verification:
       - The next report run shows the intended GitOps operating model present with
@@ -271,9 +270,48 @@ cluster_health_profile:
       - Recurring etcd snapshot evidence is present.
       - Static pod resource backup evidence is present and retained as intended.
       - A control-plane recovery procedure is documented or tested for the cluster.
+    secondary_site_disaster_recovery:
+      enabled: true
+      required: true
+      criticality: high
+      expected_state: healthy
+      owner: operations
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to participate in a
+        secondary-site disaster-recovery design with replicated storage, topology-aware
+        placement, and protected workload failover paths.
+      docs:
+      - https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.21
+      verification:
+      - Disaster-recovery resources such as DRPolicy, DRCluster, or replication objects
+        are present when this capability is enabled.
+      - Topology, replication, and protected-workload evidence support the intended
+        secondary-site recovery design.
+    acm_multicluster_disaster_recovery:
+      enabled: false
+      required: true
+      criticality: high
+      expected_state: healthy
+      owner: operations
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when Red Hat Advanced Cluster Management is expected
+        to coordinate multicluster disaster recovery across registered clusters and
+        protected application placements.
+      docs:
+      - https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/latest/html/clusters/index
+      - https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.21
+      verification:
+      - ACM registration evidence and multicluster DR resources are present when
+        this capability is enabled.
+      - The intended multicluster DR topology, replication, and protected-workload
+        coverage are healthy enough for the expected recovery path.
     declarative_gitops_operations:
       enabled: true
-      required: false
+      required: true
       criticality: high
       expected_state: present
       owner: operations
@@ -292,8 +330,8 @@ cluster_health_profile:
       - Application sync and health are acceptable for the declared GitOps operating
         model.
     cluster_log_forwarding:
-      enabled: true
-      required: true
+      enabled: false
+      required: false
       criticality: high
       expected_state: healthy
       owner: observability
@@ -326,8 +364,8 @@ cluster_health_profile:
       - Alert routing references those receivers.
       - A test alert reaches the intended destination.
     user_workload_metrics_monitoring:
-      enabled: true
-      required: false
+      enabled: false
+      required: true
       criticality: high
       expected_state: configured
       owner: observability
@@ -338,14 +376,14 @@ cluster_health_profile:
         either through OpenShift user workload monitoring or an approved alternate
         monitoring implementation.
       docs:
-      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/4.21/html/configuring_user_workload_monitoring/index
+      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/latest/html/configuring_user_workload_monitoring/index
       verification:
       - A workload-metrics path is enabled for tenant or application workloads.
       - Prometheus or an approved alternate monitoring path covers the workload metrics
         the operating model depends on.
     persistent_monitoring_storage:
       enabled: false
-      required: false
+      required: true
       criticality: high
       expected_state: healthy
       owner: observability
@@ -356,12 +394,51 @@ cluster_health_profile:
         response should use persistent storage where required, so metrics and alerting
         state survive routine restarts and disruption events.
       docs:
-      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/4.21/html-single/configuring_core_platform_monitoring/configuring_core_platform_monitoring
+      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/latest/html-single/configuring_core_platform_monitoring/configuring_core_platform_monitoring
       verification:
       - Prometheus and Alertmanager persistence are configured where required by the
         operating model.
       - Thanos Ruler persistence is configured when the deployment topology requires
         it.
+    grafana_metrics_dashboards:
+      enabled: false
+      required: false
+      criticality: low
+      expected_state: present
+      owner: observability
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when Grafana dashboards are part of the intended
+        operational workflow for cluster or workload metric visibility.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.13/html/monitoring/reviewing-monitoring-dashboards
+      verification:
+      - Grafana dashboard resources or equivalent dashboard inventory are present
+        when this capability is enabled.
+      - The expected dashboard path exists for the teams that depend on Grafana-based
+        metric visualization.
+    cluster_metrics_remote_write:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: configured
+      owner: observability
+      evidence_required:
+      - must-gather
+      - oc-get
+      - prometheus
+      notes: Use this capability when cluster metrics are expected to leave the cluster
+        through Prometheus remote write or an approved vendor forwarding path for
+        external retention, alerting, or analytics.
+      docs:
+      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/latest/html-single/configuring_core_platform_monitoring/configuring_core_platform_monitoring
+      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/latest/html/configuring_user_workload_monitoring/index
+      verification:
+      - Cluster metrics remote-write configuration or an equivalent vendor forwarding
+        path is present when this capability is enabled.
+      - The intended external metrics destination is configured for the operating
+        model that depends on it.
     oauth_external_identity_provider:
       enabled: true
       required: true
@@ -380,6 +457,43 @@ cluster_health_profile:
       - At least one external OAuth identity provider is configured.
       - The cluster is not relying solely on local identity providers or emergency
         fallback credentials for normal access.
+    cluster_proxy_configuration:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: configured
+      owner: network
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to operate behind an
+        HTTP or HTTPS proxy and therefore needs an intentional proxy configuration
+        with complete internal no-proxy coverage.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/enable-cluster-wide-proxy
+      verification:
+      - Cluster proxy settings are configured when this capability is enabled.
+      - Internal no-proxy coverage includes the service and cluster-local domains
+        the platform depends on.
+    custom_ca_trust_bundle:
+      enabled: true
+      required: true
+      criticality: medium
+      expected_state: configured
+      owner: security
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to trust an additional
+        certificate authority bundle for outbound access, mirrored registries, or
+        internal enterprise TLS paths.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html-single/security_and_compliance/security_and_compliance
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/images/image-configuration-classic
+      verification:
+      - Additional trusted CA configuration is present when this capability is enabled.
+      - The intended enterprise trust bundle path is configured for the workloads
+        and platform components that depend on it.
     machine_health_check_remediation:
       enabled: true
       required: true
@@ -397,6 +511,24 @@ cluster_health_profile:
       verification:
       - MachineHealthCheck resources are configured for Machine API-managed worker
         pools, or a documented exception explains why they are intentionally not used.
+    cluster_autoscaler_configuration:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: configured
+      owner: platform
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to scale Machine API-managed
+        worker pools automatically through ClusterAutoscaler and MachineAutoscaler
+        resources.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/machine_management/index
+      verification:
+      - Cluster autoscaler resources are present when this capability is enabled.
+      - The intended autoscaling path is healthy for the worker pools that depend
+        on it.
     etcd_encryption:
       enabled: true
       required: true
@@ -414,8 +546,25 @@ cluster_health_profile:
       verification:
       - etcd encryption is enabled.
       - The encryption rollout is complete across reporting API server components.
-    image_registry_policy_governance:
+    ovn_ipsec_encryption:
       enabled: true
+      required: true
+      criticality: medium
+      expected_state: configured
+      owner: network
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to protect pod-network
+        traffic with OVN-Kubernetes IPsec encryption between nodes.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html/network_security/configuring-ipsec-ovn
+      verification:
+      - OVN IPsec configuration is enabled when this capability is expected.
+      - The cluster reports the intended network-encryption path for inter-node pod
+        traffic.
+    image_registry_policy_governance:
+      enabled: false
       required: false
       criticality: medium
       expected_state: configured
@@ -432,9 +581,65 @@ cluster_health_profile:
       - Registry exposure, trust settings, and import behavior are intentionally governed.
       - There are no unresolved registry-policy findings for the current operating
         model.
+    cluster_image_mirror_configuration:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: configured
+      owner: operations
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to manage image mirrors
+        intentionally through ImageDigestMirrorSet, ImageTagMirrorSet, or equivalent
+        cluster-wide mirror resources.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/images/image-configuration-classic
+      verification:
+      - Mirror configuration resources are present when this capability is enabled.
+      - The configured mirror targets align with the intended registry and image-supply
+        path.
+    disconnected_cluster_image_sources:
+      enabled: false
+      required: false
+      criticality: high
+      expected_state: healthy
+      owner: operations
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to operate in a disconnected
+        or mirrored-image model, including mirrored release images and operator catalog
+        sources.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/disconnected_environments/updating-a-cluster-in-a-disconnected-environment
+      verification:
+      - Mirror resources and operator source configuration are present when this capability
+        is enabled.
+      - Release-image and operator-source evidence supports the intended disconnected
+        operating model.
+    workloads_using_external_private_registries:
+      enabled: true
+      required: true
+      criticality: medium
+      expected_state: configured
+      owner: security
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when workloads are expected to pull from external
+        private registries and therefore depend on intentional pull-secret, mirror,
+        and trust-bundle management.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/images/image-configuration-classic
+      verification:
+      - Workloads that depend on external private registries have the required pull-secret
+        or mirrored-image path.
+      - The intended private-registry access path is configured for the namespaces
+        or workloads that depend on it.
     namespace_network_policy_baseline:
       enabled: true
-      required: false
+      required: true
       criticality: medium
       expected_state: configured
       owner: network
@@ -449,6 +654,23 @@ cluster_health_profile:
       verification:
       - Observed user namespaces have baseline NetworkPolicy coverage, or documented
         exceptions exist for namespaces that intentionally do not use it.
+    namespace_egress_controls:
+      enabled: true
+      required: true
+      criticality: medium
+      expected_state: configured
+      owner: network
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to enforce namespace-level
+        egress restrictions through EgressFirewall or equivalent policy controls.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/network_security/egress-firewall
+      verification:
+      - Namespace egress-control resources are present when this capability is enabled.
+      - The intended egress-restriction model is configured for the namespaces that
+        depend on it.
     multi_tenant_namespace_governance:
       enabled: true
       required: true
@@ -519,7 +741,8 @@ cluster_health_profile:
       - oc-get
       - prometheus
       notes: Use this capability when Splunk is expected to provide the cluster's
-        primary observability path for metrics, alerts, and logs.
+        primary observability path for metrics and alerts, and for logs when the
+        OpenTelemetry Collector path is the intended log-delivery implementation.
       docs:
       - https://help.splunk.com/en/splunk-observability-cloud/manage-data/splunk-distribution-of-the-opentelemetry-collector/get-started-with-the-splunk-distribution-of-the-opentelemetry-collector/collector-for-kubernetes
       - https://help.splunk.com/en/splunk-observability-cloud/manage-data/splunk-distribution-of-the-opentelemetry-collector/get-started-with-the-splunk-distribution-of-the-opentelemetry-collector/collector-for-kubernetes/configure-logs-and-events
@@ -567,7 +790,7 @@ cluster_health_profile:
     advanced_cluster_management:
       enabled: true
       required: true
-      criticality: low
+      criticality: medium
       expected_state: present
       owner: operations
       evidence_required:
@@ -578,7 +801,7 @@ cluster_health_profile:
         operations.
       docs:
       - https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/latest
-      - https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.15/html/clusters/index
+      - https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/latest/html/clusters/index
       verification:
       - Managed-cluster registration evidence such as Klusterlet or ACM agent namespaces
         is present.
@@ -587,7 +810,7 @@ cluster_health_profile:
     openshift_data_foundation:
       enabled: true
       required: true
-      criticality: medium
+      criticality: high
       expected_state: present
       owner: storage
       evidence_required:
@@ -671,11 +894,20 @@ cluster_health_profile:
         Conjur-backed SecretProviderClass resources, or equivalent application-facing
         secret delivery for the namespaces that depend on it.
     compliance_requirements_validation:
-      enabled: false
-      required: false
-      criticality: low
+      enabled: true
+      required: true
+      criticality: critical
       expected_state: present
       owner: security
+      standards:
+      - FIPS
+      # - FedRAMP
+      # - HIPAA
+      # - PCI-DSS
+      # - SOC
+      # - SOX
+      # - NIST
+      # - CIS
       evidence_required:
       - must-gather
       - oc-get
@@ -709,6 +941,24 @@ cluster_health_profile:
         are present when this capability is enabled.
       - Expected cluster-hosted pipeline workflows complete successfully for the teams
         or applications that use them.
+    cluster_hosted_cicd_runners:
+      enabled: false
+      required: false
+      criticality: info
+      expected_state: present
+      owner: release
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to host CI or CD runner
+        workloads directly for build, test, or promotion automation.
+      docs:
+      - https://docs.redhat.com/en/documentation/red_hat_openshift_pipelines/latest
+      verification:
+      - Cluster-hosted CI or CD runner footprint is present when this capability
+        is enabled.
+      - The intended runner path is configured for the teams or delivery workflows
+        that depend on it.
     cert_manager_operator:
       enabled: false
       required: false
@@ -727,10 +977,28 @@ cluster_health_profile:
       - cert-manager operator footprint is present when this capability is enabled.
       - Expected Issuer, ClusterIssuer, Certificate, or CertificateRequest resources
         are configured and certificate renewal is healthy for dependent workloads.
+    workload_vulnerability_scanning:
+      enabled: true
+      required: true
+      criticality: high
+      expected_state: present
+      owner: security
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when workloads are expected to be covered by a vulnerability
+        or runtime scanning platform such as RHACS, Qualys, Prisma Cloud, or Aqua.
+      docs:
+      - https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes
+      verification:
+      - At least one intended workload-scanning platform footprint is present when
+        this capability is enabled.
+      - The expected scanner coverage path is configured for the namespaces, nodes,
+        or workloads in scope.
     advanced_cluster_security:
       enabled: true
       required: false
-      criticality: info
+      criticality: high
       expected_state: present
       owner: security
       evidence_required:
@@ -783,7 +1051,6 @@ cluster_health_profile:
         Console integration can reduce runtime protection and workload-policy visibility
         for protected namespaces or nodes.
       docs:
-      - https://docs.prismacloud.io/en/compute-edition/34
       - https://docs.prismacloud.io/en/compute-edition/admin-guide
       verification:
       - Prisma Cloud Compute or Twistlock Defender footprint is present when this
@@ -829,7 +1096,7 @@ cluster_health_profile:
         that depend on it.
     openshift_custom_metrics_autoscaler:
       enabled: false
-      required: false
+      required: true
       criticality: info
       expected_state: present
       owner: operations
@@ -841,7 +1108,7 @@ cluster_health_profile:
         authentication can prevent workloads from scaling on the business or platform
         events they depend on.
       docs:
-      - https://keda.sh/docs/2.19/concepts/scaling-deployments/
+      - https://keda.sh/docs/latest/concepts/scaling-deployments/
       - https://keda.sh/docs/latest/scalers/
       verification:
       - KEDA controller footprint or scaling custom resources are present when this
@@ -988,7 +1255,7 @@ cluster_health_profile:
       - The expected sandboxed workload path is configured for the workloads that
         require stronger isolation.
     node_tuning_operator:
-      enabled: true
+      enabled: false
       required: false
       criticality: info
       expected_state: present
@@ -1048,8 +1315,8 @@ cluster_health_profile:
       - Expected descheduler profiles and execution mode are configured for the workloads
         or node pools that depend on pod rebalancing.
     cost_management_operator:
-      enabled: true
-      required: false
+      enabled: false
+      required: true
       criticality: info
       expected_state: present
       owner: capacity

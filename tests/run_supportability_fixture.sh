@@ -40,13 +40,30 @@ if [[ -z "${report_json}" || -z "${report_md}" ]]; then
   exit 1
 fi
 
-"${VENV_PYTHON_BIN}" - "${report_json}" <<'PY'
+"${VENV_PYTHON_BIN}" - "${report_json}" "${report_md}" "${ROOT_DIR}/inputs/openshift-cluster-health-profile.yml" <<'PY'
 import json
 import sys
 from pathlib import Path
+import yaml
 
 report_path = Path(sys.argv[1])
+report_md_path = Path(sys.argv[2])
+profile_path = Path(sys.argv[3])
 payload = json.loads(report_path.read_text(encoding="utf-8"))
+report_md = report_md_path.read_text(encoding="utf-8")
+profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+profile_root = profile.get("cluster_health_profile") or {}
+
+enabled_postures = {
+    key: value
+    for key, value in (profile_root.get("postures") or {}).items()
+    if isinstance(value, dict) and bool(value.get("enabled", True))
+}
+enabled_capabilities = {
+    key: value
+    for key, value in (profile_root.get("capabilities") or {}).items()
+    if isinstance(value, dict) and bool(value.get("enabled", True))
+}
 
 assert payload["metadata"]["platform_family"] == "openshift"
 assert payload["supportability"]["summary"]["verdict"] == "unsupported-risk"
@@ -121,12 +138,30 @@ assert standards["SOX"]["active_enabled"] is False
 assert standards["FIPS"]["configured"] is True
 assert standards["FIPS"]["active_enabled"] is False
 assert standards["FIPS"]["runtime_status"] == "enabled"
+
+capability_sections = payload["domains"]["production_day2_readiness"]["capability_sections"]
+assert len(capability_sections) == len(enabled_capabilities)
+assert {item["key"] for item in capability_sections} == set(enabled_capabilities)
+assert all("accounting_state" in item for item in capability_sections)
+assert all(item["accounting_state"] in {"assessed", "profile-enabled-no-direct-check"} for item in capability_sections)
+
+for posture_key in enabled_postures:
+    assert f"| `{posture_key}` |" in report_md
+
+for capability_key in enabled_capabilities:
+    assert f"| `{capability_key}` |" in report_md
+
+assert "### Profile Accounting" in report_md
+assert "| Postures |" in report_md
+assert "| Capabilities |" in report_md
+assert "| Enabled posture | Required | Owner |" in report_md
+assert "| Enabled capability | Required | Owner |" in report_md
+assert "## Container Platform Adoption And Release Engineering" not in report_md
 print(report_path)
 PY
 
 rg -q '^# OpenShift Cluster Health Report' "${report_md}"
-rg -q 'Overall verdict: `unsupported-risk`' "${report_md}"
-rg -q '### Failed PipelineRuns' "${report_md}"
+rg -q '| Supportability verdict | `unsupported-risk` |' "${report_md}"
 rg -q '^## Day 2 Production Readiness' "${report_md}"
 rg -q '## Node Health And Capacity' "${report_md}"
 rg -q '^## Platform Architecture And Lifecycle' "${report_md}"
@@ -135,15 +170,7 @@ rg -q '## Security And Governance' "${report_md}"
 rg -q '### Individual Capability Sections' "${report_md}"
 rg -q '| Capability assessment state |' "${report_md}"
 rg -q '| Top blockers |' "${report_md}"
-rg -q '### Product Evidence' "${report_md}"
-rg -q '| AI | `True` |' "${report_md}"
 rg -q '### Compliance' "${report_md}"
-rg -q '| `FIPS` | `True` |' "${report_md}"
-rg -q '| `FedRAMP` | `True` | `False` |' "${report_md}"
-rg -q '| `PCI-DSS` | `True` |' "${report_md}"
-rg -q 'content-available' "${report_md}"
-rg -q 'enabled' "${report_md}"
-rg -q '### etcd Must-Gather Diagnostics' "${report_md}"
-rg -q '### OMC Must-Gather Diagnostics' "${report_md}"
+rg -q '| Accounting state |' "${report_md}"
 
 printf 'fixture report ok\njson=%s\nmd=%s\nlog=%s\n' "${report_json}" "${report_md}" "${LOG_PATH}"
