@@ -318,7 +318,7 @@ subjects:
 ## Recommended Operational Modes
 
 - Lowest privilege live mode:
-  Apply only the base manifest and run with `-e collect_live_sosreport=false`.
+  Apply only the base manifest. Live node diagnostics stay off unless you explicitly run with `-e collect_live_sosreport=true`.
 - Full live mode without `cluster-admin`:
   Apply both manifests.
 - Lowest friction mode:
