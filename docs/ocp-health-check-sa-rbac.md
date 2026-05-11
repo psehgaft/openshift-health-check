@@ -70,11 +70,13 @@ oc whoami --show-server
 
 Then run the playbook with that service-account-backed session.
 
-## Optional Manifest: Allow A User To Mint A Token Only For `health-check-runner`
+## Optional Manifest: Allow Namespace Users To Mint A Token Only For `health-check-runner`
 
-If an operator needs to run `oc create token health-check-runner` but does not have elevated namespace admin rights, grant only the `serviceaccounts/token` create permission for that single service account.
+If a set of operators needs to run `oc create token health-check-runner` but does not have elevated namespace admin rights, grant only the `serviceaccounts/token` create permission for that single service account.
 
-Replace `<your-username>` with the real OpenShift user name:
+Bind the role to a group that represents the users you want to allow in this namespace. Replace `<your-group-name>` with the real OpenShift group.
+
+If you truly want every authenticated user to be able to mint a token for this service account, you could bind `system:authenticated`, but that is usually broader than intended.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -94,6 +96,9 @@ metadata:
   name: health-check-runner-token-creator
   namespace: openshift-health-check
 subjects:
+  - kind: Group
+    name: <your-group-name>
+    apiGroup: rbac.authorization.k8s.io
   - kind: User
     name: <your-username>
     apiGroup: rbac.authorization.k8s.io
