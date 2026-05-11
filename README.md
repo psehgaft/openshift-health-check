@@ -824,7 +824,7 @@ Important runtime settings:
 - `rbac_check_service_account_name`
   Service account name used by the OpenShift preflight `oc auth can-i` matrix. Default: `health-check-runner`
 - `rbac_check_fail_on_gap`
-  If `true`, fail preflight when the target service account is missing any required permission for the planned scan. Default: `true`
+  If `true`, fail preflight when the target service account is missing any required permission for the planned scan. Default: `false`
 - `collect_live_support_artifacts`
   Enable live support collectors such as `must-gather`, `inspect`, Insights archive copy, `cluster-compare`, and node diagnostics. Default: `true`
 - `live_support_collection_profile`
