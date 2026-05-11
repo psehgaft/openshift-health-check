@@ -10,22 +10,20 @@ from typing import Any
 import yaml
 
 
-EXPECTED_CLUSTER_SECTIONS = [
-    "Report Context",
-    "Cluster Health Overview",
-    "Evidence And Supportability",
-    "Platform Health",
-    "Node Health And Capacity",
-    "Backup And Disaster Recovery",
-    "Application Access And Network Isolation",
-    "Observability",
-    "Security And Governance",
-    "Workload Health",
-    "Platform Architecture And Lifecycle",
-    "Capacity Planning Snapshot",
-    "Declarative Operations",
-    "Container Platform Adoption And Release Engineering",
-    "Day 2 Production Readiness",
+POSTURE_SECTION_TITLES = [
+    ("evidence_and_supportability", "Evidence And Supportability"),
+    ("platform_health", "Platform Health"),
+    ("node_health_and_capacity", "Node Health And Capacity"),
+    ("backup_and_disaster_recovery", "Backup And Disaster Recovery"),
+    ("application_access_and_network_isolation", "Application Access And Network Isolation"),
+    ("observability", "Observability"),
+    ("security_and_governance", "Security And Governance"),
+    ("workload_health", "Workload Health"),
+    ("platform_architecture_and_lifecycle", "Platform Architecture And Lifecycle"),
+    ("capacity_planning_snapshot", "Capacity Planning Snapshot"),
+    ("declarative_operations", "Declarative Operations"),
+    ("container_platform_adoption_and_release_engineering", "Container Platform Adoption And Release Engineering"),
+    ("day2_production_readiness", "Day 2 Production Readiness"),
 ]
 
 REQUIRED_CLUSTER_SUBSECTIONS = [
@@ -84,6 +82,18 @@ def read_json(path: Path) -> dict:
     return payload
 
 
+def expected_cluster_sections() -> list:
+    profile_path = Path(__file__).resolve().parent.parent / "inputs" / "openshift-cluster-health-profile.yml"
+    profile_payload = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    posture_profile = ((profile_payload.get("cluster_health_profile") or {}).get("postures") or {})
+    titles = ["Report Context", "Cluster Health Overview"]
+    for key, title in POSTURE_SECTION_TITLES:
+        value = posture_profile.get(key, {})
+        if not isinstance(value, dict) or bool(value.get("enabled", True)):
+            titles.append(title)
+    return titles
+
+
 def validate_cluster_posture_sections(markdown: str) -> None:
     lines = markdown.splitlines()
     sections = []  # type: list
@@ -96,8 +106,9 @@ def validate_cluster_posture_sections(markdown: str) -> None:
         for line_no, title in sections
         if not title.startswith("Appendix:")
     ]
+    expected_sections = expected_cluster_sections()
     titles = [title for _, title in non_appendix_sections]
-    if titles != EXPECTED_CLUSTER_SECTIONS:
+    if titles != expected_sections:
         fail("unexpected cluster section order: " + ", ".join(titles))
 
     for idx, (start, title) in enumerate(sections):
@@ -199,14 +210,9 @@ def validate_json(path: Path) -> None:
         for key, value in (((profile_payload.get("cluster_health_profile") or {}).get("capabilities") or {}).items())
         if str(key).strip() and isinstance(value, dict) and bool(value.get("enabled", False))
     }
-    required_keys = {
-        str(key).strip()
-        for key, value in (((profile_payload.get("cluster_health_profile") or {}).get("capabilities") or {}).items())
-        if str(key).strip() and isinstance(value, dict) and bool(value.get("enabled", False)) and bool(value.get("required", False))
-    }
-    if not required_keys:
+    if not enabled_keys:
         fail(f"{profile_path}: cluster_health_profile.capabilities must be present for validation")
-    missing = sorted(required_keys - set(capability_keys))
+    missing = sorted(enabled_keys - set(capability_keys))
     extra = sorted(set(capability_keys) - enabled_keys)
     if missing:
         fail(f"{path}: missing capability sections for {', '.join(missing)}")

@@ -33,6 +33,9 @@ REQUIRED_CAPABILITY_FIELDS = {
     "docs",
     "verification",
 }
+OPTIONAL_CAPABILITY_FIELDS = {
+    "standards",
+}
 VALID_CRITICALITY = {"critical", "high", "medium", "low", "info"}
 VALID_EXPECTED_STATE = {"present", "absent", "configured", "healthy", "not_applicable"}
 VALID_OWNERS = {
@@ -211,7 +214,7 @@ def validate_profile_mapping(
         if not isinstance(spec, dict):
             fail(f"{path}: capability {name} must be a mapping")
         missing = REQUIRED_CAPABILITY_FIELDS - set(spec) if strict else set()
-        extra = set(spec) - REQUIRED_CAPABILITY_FIELDS
+        extra = set(spec) - (REQUIRED_CAPABILITY_FIELDS | OPTIONAL_CAPABILITY_FIELDS)
         if strict and missing:
             fail(f"{path}: capability {name} missing fields: {', '.join(sorted(missing))}")
         if extra:
