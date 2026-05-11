@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Validate Kubernetes-family cluster health profile input files."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 from typing import Any
@@ -63,7 +61,7 @@ def load_yaml(path: Path) -> Any:
     return data
 
 
-def profile_from_file(path: Path, profile_var: str) -> dict[str, Any]:
+def profile_from_file(path: Path, profile_var: str) -> dict:
     data = load_yaml(path)
     if not isinstance(data, dict):
         fail(f"{path}: expected a YAML mapping")
@@ -73,7 +71,7 @@ def profile_from_file(path: Path, profile_var: str) -> dict[str, Any]:
     return profile
 
 
-def validate_profile(path: Path, profile: dict[str, Any]) -> None:
+def validate_profile(path: Path, profile: dict) -> None:
     for name, spec in sorted(profile.items()):
         if not isinstance(spec, dict):
             fail(f"{path}: {name} must be a mapping")

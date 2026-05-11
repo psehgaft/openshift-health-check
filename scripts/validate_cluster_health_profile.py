@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Validate unified cluster health profile files and optional override files."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Set
 
 try:
     import yaml
@@ -90,7 +88,7 @@ def load_yaml(path: Path) -> Any:
     return data
 
 
-def normalize_string_list(value: Any, path: str) -> list[str]:
+def normalize_string_list(value: Any, path: str) -> List[str]:
     if not isinstance(value, list) or not value:
         fail(f"{path} must be a non-empty list")
     items = [str(item).strip() for item in value if str(item).strip()]
@@ -99,7 +97,7 @@ def normalize_string_list(value: Any, path: str) -> list[str]:
     return items
 
 
-def validate_override_string_list(value: Any, path: str) -> list[str]:
+def validate_override_string_list(value: Any, path: str) -> List[str]:
     if not isinstance(value, list):
         fail(f"{path} must be a list")
     items = [str(item).strip() for item in value if str(item).strip()]
@@ -122,18 +120,18 @@ def validate_quality_text(value: str, path: str, *, min_words: int) -> None:
             fail(f"{path} uses vague placeholder wording: {fragment!r}")
 
 
-def validate_quality_list(values: list[str], path: str, *, min_words: int) -> None:
+def validate_quality_list(values: List[str], path: str, *, min_words: int) -> None:
     for idx, item in enumerate(values, 1):
         validate_quality_text(item, f"{path}[{idx}]", min_words=min_words)
 
 
 def validate_profile_mapping(
     path: Path,
-    profile: dict[str, Any],
+    profile: Dict[str, Any],
     *,
     strict: bool,
-    reference_capabilities: set[str] | None = None,
-) -> set[str]:
+    reference_capabilities: Optional[Set[str]] = None,
+) -> Set[str]:
     if not isinstance(profile, dict):
         fail(f"{path}: cluster_health_profile must be a mapping")
     postures = profile.get("postures", {})
@@ -154,7 +152,7 @@ def validate_profile_mapping(
     known_capabilities = set(capabilities)
     if reference_capabilities:
         known_capabilities |= set(reference_capabilities)
-    assignments: dict[str, list[str]] = {}
+    assignments = {}  # type: Dict[str, List[str]]
 
     for name, spec in sorted(postures.items()):
         if not isinstance(spec, dict):
@@ -271,7 +269,7 @@ def main() -> int:
     if len(sys.argv) < 2:
         fail("usage: validate_cluster_health_profile.py <profile.yml> [<profile.yml> ...]")
 
-    defaults_capabilities: set[str] | None = None
+    defaults_capabilities = None  # type: Optional[Set[str]]
     for index, raw_path in enumerate(sys.argv[1:], 1):
         path = Path(raw_path)
         payload = load_yaml(path)

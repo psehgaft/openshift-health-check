@@ -205,7 +205,7 @@ SKIP_RESOURCE_STEMS = {
 }
 
 
-def source_rank(name: str) -> tuple[int, str]:
+def source_rank(name: str):
     normalized = str(name or "").strip().lower()
     return (SOURCE_PRIORITY.get(normalized, 99), normalized)
 

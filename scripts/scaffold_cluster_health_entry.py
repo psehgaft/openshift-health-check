@@ -5,11 +5,10 @@ This helper prints YAML snippets to stdout so maintainers can paste them into
 the unified cluster health profile without hand-building every field.
 """
 
-from __future__ import annotations
-
 import argparse
 import sys
 from textwrap import dedent
+from typing import List, Optional
 
 
 VALID_OWNERS = [
@@ -50,12 +49,12 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def yaml_list(items: list[str], indent: int) -> str:
+def yaml_list(items: List[str], indent: int) -> str:
     prefix = " " * indent
     return "\n".join(f'{prefix}- "{item}"' for item in items)
 
 
-def parse_csv(value: str | None) -> list[str]:
+def parse_csv(value: Optional[str]) -> List[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]

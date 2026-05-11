@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Validate vendor-managed telemetry detection behavior."""
 
-from __future__ import annotations
-
 import json
 import subprocess
 import sys

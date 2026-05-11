@@ -12,6 +12,12 @@ from pathlib import Path
 from statistics import median
 
 
+def strip_suffix(value, suffix):
+    if suffix and value.endswith(suffix):
+        return value[:-len(suffix)]
+    return value
+
+
 def extract_json_objects(text: str) -> json.loads:
     """Find JSON objects in text, and yield the decoded JSON data
 
@@ -241,7 +247,7 @@ def compare(errors_list: list) -> None:
             print()
 
 
-def get_dirs(mg_path: str, pod_glob: str) -> list[str]:
+def get_dirs(mg_path: str, pod_glob: str) -> list:
     """Returns the directory for etcd pods"""
     input_dir = Path(mg_path)
     pod_list = list(input_dir.rglob(pod_glob))
@@ -335,15 +341,15 @@ def calc_etcd_stats(error_txt: str, file, etcd_pod_name: str, rotated: bool) -> 
                 took_time = result["took"]
                 expected_time = result["expected-duration"]
                 if "ms" in took_time:
-                    etcd_error_stats.append(float(took_time.removesuffix("ms")))
+                    etcd_error_stats.append(float(strip_suffix(took_time, "ms")))
                 elif "m" in took_time:
                     took_min, took_sec = took_time.split("m")
-                    took_sec = took_sec.removesuffix("s")
+                    took_sec = strip_suffix(took_sec, "s")
                     etcd_error_stats.append(
                         ((float(took_min) * 60000) + (float(took_sec) * 1000))
                     )
                 elif "s" in took_time:
-                    etcd_error_stats.append(float(took_time.removesuffix("s")) * 1000)
+                    etcd_error_stats.append(float(strip_suffix(took_time, "s")) * 1000)
 
     print_stats(
         error_txt,

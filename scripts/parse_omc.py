@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Parse selected omc must-gather diagnostics into a small JSON summary."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -12,9 +10,10 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 
-def resolve_omc_binary(explicit_path: str | None) -> str | None:
+def resolve_omc_binary(explicit_path: Optional[str]) -> Optional[str]:
     if explicit_path:
         candidate = Path(explicit_path)
         if candidate.exists() and os.access(candidate, os.X_OK):
@@ -28,7 +27,7 @@ def resolve_omc_binary(explicit_path: str | None) -> str | None:
     return shutil.which("omc")
 
 
-def run_omc_command(omc_bin: str, must_gather_path: Path, args: list[str]) -> dict:
+def run_omc_command(omc_bin: str, must_gather_path: Path, args: List[str]) -> Dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="omc-context.") as tmpdir:
         env = os.environ.copy()
         env["HOME"] = tmpdir
@@ -70,7 +69,7 @@ def run_omc_command(omc_bin: str, must_gather_path: Path, args: list[str]) -> di
         }
 
 
-def run_omc_command_candidates(omc_bin: str, must_gather_path: Path, command_sets: list[list[str]]) -> dict:
+def run_omc_command_candidates(omc_bin: str, must_gather_path: Path, command_sets: List[List[str]]) -> Dict[str, Any]:
     attempts = []
     for args in command_sets:
         result = run_omc_command(omc_bin, must_gather_path, args)
@@ -94,14 +93,14 @@ def run_omc_command_candidates(omc_bin: str, must_gather_path: Path, command_set
     }
 
 
-def parse_pipe_table(output: str) -> list[dict[str, str]]:
+def parse_pipe_table(output: str) -> List[Dict[str, str]]:
     lines = [line.rstrip() for line in output.splitlines() if line.strip()]
     table_lines = [line for line in lines if line.lstrip().startswith("|") and line.rstrip().endswith("|")]
     if len(table_lines) < 2:
         return []
 
     headers = [cell.strip().lower().replace(" ", "_").replace("/", "_") for cell in table_lines[0].strip("|").split("|")]
-    rows: list[dict[str, str]] = []
+    rows = []  # type: List[Dict[str, str]]
     for line in table_lines[1:]:
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         if len(cells) != len(headers):
@@ -110,10 +109,10 @@ def parse_pipe_table(output: str) -> list[dict[str, str]]:
     return rows
 
 
-def parse_prom_rules(output: str) -> dict:
+def parse_prom_rules(output: str) -> Dict[str, Any]:
     firing = 0
     pending = 0
-    sample_rules: list[str] = []
+    sample_rules = []  # type: List[str]
 
     for raw_line in output.splitlines():
         line = raw_line.strip()
@@ -138,7 +137,7 @@ def parse_prom_rules(output: str) -> dict:
     }
 
 
-def build_payload(must_gather_path: Path, omc_bin: str | None) -> dict:
+def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, Any]:
     if omc_bin is None:
         return {
             "summary": {

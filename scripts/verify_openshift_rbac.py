@@ -7,13 +7,12 @@ Insights archive copy, `oc adm inspect`, `oc adm must-gather`, and optional
 `oc debug node/<node>` support.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Dict, List, Set, Tuple
 
 import yaml
 
@@ -43,7 +42,7 @@ def normalize_resource_token(token: str):
     return resource, name
 
 
-def parse_get_command(argv: list[str], source: str):
+def parse_get_command(argv: List[str], source: str):
     if len(argv) < 3 or argv[1] != "get":
         return None
     if argv[2] == "--raw=/readyz?verbose":
@@ -58,7 +57,7 @@ def parse_get_command(argv: list[str], source: str):
 
     namespace = ""
     all_namespaces = False
-    positionals: list[str] = []
+    positionals = []  # type: List[str]
     i = 2
     while i < len(argv):
         token = argv[i]
@@ -104,7 +103,7 @@ def parse_get_command(argv: list[str], source: str):
     }
 
 
-def add_unique(checks: list[dict], seen: set[tuple], check: dict):
+def add_unique(checks: List[dict], seen: Set[Tuple], check: dict):
     key = (
         check.get("kind"),
         check.get("verb"),
@@ -120,8 +119,8 @@ def add_unique(checks: list[dict], seen: set[tuple], check: dict):
 
 
 def build_checks(repo_root: Path, include_live_support: bool, include_sosreport: bool):
-    checks: list[dict] = []
-    seen: set[tuple] = set()
+    checks = []  # type: List[dict]
+    seen = set()  # type: Set[Tuple]
 
     for rel_path in (
         "roles/collect_common/tasks/main.yml",

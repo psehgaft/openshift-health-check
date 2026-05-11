@@ -70,6 +70,51 @@ oc whoami --show-server
 
 Then run the playbook with that service-account-backed session.
 
+## Optional Manifest: Allow A User To Mint A Token Only For `health-check-runner`
+
+If an operator needs to run `oc create token health-check-runner` but does not have elevated namespace admin rights, grant only the `serviceaccounts/token` create permission for that single service account.
+
+Replace `<your-username>` with the real OpenShift user name:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: health-check-runner-token-creator
+  namespace: openshift-health-check
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["health-check-runner"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: health-check-runner-token-creator
+  namespace: openshift-health-check
+subjects:
+  - kind: User
+    name: <your-username>
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: health-check-runner-token-creator
+```
+
+Verify the permission:
+
+```bash
+oc auth can-i create serviceaccounts/token -n openshift-health-check --resource-name=health-check-runner
+```
+
+Then mint the token:
+
+```bash
+oc -n openshift-health-check create token health-check-runner --duration=8h
+```
+
 ## Example Manifest: Base Live Scan
 
 ```yaml

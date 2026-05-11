@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """Summarize cluster-hosted CI/CD runner and agent workload signals."""
 
-from __future__ import annotations
-
 import json
 import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List
 
 
 SYSTEM_NAMESPACE_RE = re.compile(r"^(kube-|openshift-|default$)")
 
 
-def items(graph: dict[str, Any], key: str) -> list[dict[str, Any]]:
+def items(graph: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
     value = graph.get(key, {})
     if isinstance(value, dict):
         raw_items = value.get("items", [])
@@ -22,7 +20,7 @@ def items(graph: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return []
 
 
-def metadata_text(resource: dict[str, Any]) -> str:
+def metadata_text(resource: Dict[str, Any]) -> str:
     metadata = resource.get("metadata", {}) or {}
     labels = metadata.get("labels", {}) or {}
     annotations = metadata.get("annotations", {}) or {}
@@ -35,11 +33,11 @@ def metadata_text(resource: dict[str, Any]) -> str:
     return " ".join(str(part) for part in parts if part).lower()
 
 
-def lower_list(values: list[str]) -> list[str]:
+def lower_list(values: List[str]) -> List[str]:
     return [str(value or "").strip().lower() for value in values if str(value or "").strip()]
 
 
-def pod_detection_context(pod: dict[str, Any]) -> dict[str, Any]:
+def pod_detection_context(pod: Dict[str, Any]) -> Dict[str, Any]:
     metadata = pod.get("metadata", {}) or {}
     spec = pod.get("spec", {}) or {}
     containers = (spec.get("containers", []) or []) + (spec.get("initContainers", []) or [])
@@ -88,11 +86,11 @@ def pod_detection_context(pod: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def any_contains(values: list[str], needles: list[str]) -> bool:
+def any_contains(values: List[str], needles: List[str]) -> bool:
     return any(needle in value for value in values for needle in needles)
 
 
-def detect_pod_provider(pod: dict[str, Any]) -> str:
+def detect_pod_provider(pod: Dict[str, Any]) -> str:
     ctx = pod_detection_context(pod)
 
     if (
@@ -139,7 +137,7 @@ def detect_pod_provider(pod: dict[str, Any]) -> str:
     return ""
 
 
-def detect_controller_provider(resource: dict[str, Any]) -> str:
+def detect_controller_provider(resource: Dict[str, Any]) -> str:
     text = metadata_text(resource)
     if "gitlab-runner" in text:
         return "gitlab-runner"
@@ -154,19 +152,19 @@ def detect_controller_provider(resource: dict[str, Any]) -> str:
     return ""
 
 
-def pod_ready(pod: dict[str, Any]) -> bool:
+def pod_ready(pod: Dict[str, Any]) -> bool:
     statuses = ((pod.get("status", {}) or {}).get("containerStatuses", []) or [])
     if not statuses:
         return False
     return all(bool(status.get("ready")) for status in statuses)
 
 
-def pod_restarts(pod: dict[str, Any]) -> int:
+def pod_restarts(pod: Dict[str, Any]) -> int:
     statuses = ((pod.get("status", {}) or {}).get("containerStatuses", []) or [])
     return sum(int(status.get("restartCount") or 0) for status in statuses)
 
 
-def waiting_reasons(pod: dict[str, Any]) -> list[str]:
+def waiting_reasons(pod: Dict[str, Any]) -> List[str]:
     statuses = ((pod.get("status", {}) or {}).get("containerStatuses", []) or [])
     reasons = []
     for status in statuses:
@@ -177,7 +175,7 @@ def waiting_reasons(pod: dict[str, Any]) -> list[str]:
     return reasons
 
 
-def pod_unschedulable(pod: dict[str, Any]) -> bool:
+def pod_unschedulable(pod: Dict[str, Any]) -> bool:
     if ((pod.get("status", {}) or {}).get("phase") or "") != "Pending":
         return False
     for condition in ((pod.get("status", {}) or {}).get("conditions", []) or []):
@@ -188,7 +186,7 @@ def pod_unschedulable(pod: dict[str, Any]) -> bool:
     return False
 
 
-def pod_privileged(pod: dict[str, Any]) -> bool:
+def pod_privileged(pod: Dict[str, Any]) -> bool:
     spec = pod.get("spec", {}) or {}
     containers = (spec.get("containers", []) or []) + (spec.get("initContainers", []) or [])
     for container in containers:
@@ -198,7 +196,7 @@ def pod_privileged(pod: dict[str, Any]) -> bool:
     return False
 
 
-def pod_has_requests(pod: dict[str, Any]) -> bool:
+def pod_has_requests(pod: Dict[str, Any]) -> bool:
     spec = pod.get("spec", {}) or {}
     containers = spec.get("containers", []) or []
     if not containers:
@@ -210,7 +208,7 @@ def pod_has_requests(pod: dict[str, Any]) -> bool:
     return True
 
 
-def pod_summary(pod: dict[str, Any], provider: str) -> dict[str, Any]:
+def pod_summary(pod: Dict[str, Any], provider: str) -> Dict[str, Any]:
     metadata = pod.get("metadata", {}) or {}
     status = pod.get("status", {}) or {}
     phase = status.get("phase") or "not-assessed"
@@ -230,8 +228,8 @@ def pod_summary(pod: dict[str, Any], provider: str) -> dict[str, Any]:
     }
 
 
-def detect_controller_resources(graph: dict[str, Any]) -> dict[str, int]:
-    counts: Counter[str] = Counter()
+def detect_controller_resources(graph: Dict[str, Any]) -> Dict[str, int]:
+    counts = Counter()
     for key in ("deployments", "statefulsets", "daemonsets", "replicasets"):
         for resource in items(graph, key):
             provider = detect_controller_provider(resource)

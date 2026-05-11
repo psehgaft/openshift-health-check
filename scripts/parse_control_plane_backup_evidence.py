@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Load normalized control-plane backup artifact evidence."""
 
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path

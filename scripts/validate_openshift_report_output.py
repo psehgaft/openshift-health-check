@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Validate rendered OpenShift report artifacts for common regressions."""
 
-from __future__ import annotations
-
 import json
 import re
 import sys
@@ -76,7 +74,7 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def read_json(path: Path) -> dict[str, Any]:
+def read_json(path: Path) -> dict:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -88,7 +86,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def validate_cluster_posture_sections(markdown: str) -> None:
     lines = markdown.splitlines()
-    sections: list[tuple[int, str]] = []
+    sections = []  # type: list
     for line_no, line in enumerate(lines, 1):
         if line.startswith("## "):
             sections.append((line_no, line[3:].strip()))

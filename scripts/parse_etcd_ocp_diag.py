@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Parse etcd must-gather logs into a JSON summary using the vendored etcd-ocp-diag helpers."""
 
-from __future__ import annotations
-
 import importlib.util
 import json
 import re
@@ -10,6 +8,13 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import median
+from typing import Any, Dict, List, Optional
+
+
+def _strip_suffix(value, suffix):
+    if suffix and value.endswith(suffix):
+        return value[:-len(suffix)]
+    return value
 
 
 def load_vendor_module(script_path: Path):
@@ -21,29 +26,29 @@ def load_vendor_module(script_path: Path):
     return module
 
 
-def parse_duration_ms(value: str) -> float | None:
+def parse_duration_ms(value: str) -> Optional[float]:
     if not value:
         return None
     if value.endswith("ms"):
         try:
-            return float(value.removesuffix("ms"))
+            return float(_strip_suffix(value, "ms"))
         except ValueError:
             return None
     if value.endswith("s") and "m" not in value:
         try:
-            return float(value.removesuffix("s")) * 1000
+            return float(_strip_suffix(value, "s")) * 1000
         except ValueError:
             return None
     if "m" in value and value.endswith("s"):
         try:
             mins, secs = value.split("m", 1)
-            return (float(mins) * 60000) + (float(secs.removesuffix("s")) * 1000)
+            return (float(mins) * 60000) + (float(_strip_suffix(secs, "s")) * 1000)
         except ValueError:
             return None
     return None
 
 
-def summarize_metric(values: list[float]) -> dict:
+def summarize_metric(values: List[float]) -> Dict[str, Any]:
     if not values:
         return {"count": 0, "max_ms": 0, "median_ms": 0, "min_ms": 0}
     ordered = sorted(values)
@@ -98,9 +103,9 @@ def main() -> int:
         return 0
 
     pattern_counts = Counter()
-    pod_pattern_counts: dict[str, Counter] = defaultdict(Counter)
-    apply_took_too_long_ms: list[float] = []
-    slow_fsync_ms: list[float] = []
+    pod_pattern_counts = defaultdict(Counter)
+    apply_took_too_long_ms = []  # type: List[float]
+    slow_fsync_ms = []  # type: List[float]
     pod_summaries = []
     total_log_files = 0
     total_rotated_logs = 0

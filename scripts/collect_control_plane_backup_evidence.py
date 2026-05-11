@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Collect control-plane backup artifact evidence through oc debug node."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import re
@@ -11,12 +9,13 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 
 PUBLIC_REGISTRY_HINTS = ("quay.io", "registry.redhat.io", "registry.access.redhat.com")
 
 
-def run(argv: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+def run(argv: List[str], timeout: int):
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
 
 
@@ -46,13 +45,13 @@ def parse_timestamp_from_name(path: str) -> str:
     return ""
 
 
-def iso_from_epoch(value: float | int | None) -> str:
+def iso_from_epoch(value: Optional[Union[float, int]]) -> str:
     if value is None:
         return ""
     return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
 
 
-def collect_node_files(kube_cli: str, node: str, search_paths: list[str], timeout: int) -> dict:
+def collect_node_files(kube_cli: str, node: str, search_paths: List[str], timeout: int) -> Dict[str, Any]:
     quoted_paths = " ".join(shlex.quote(p) for p in search_paths)
     remote_script = f"""
 for dir in {quoted_paths}; do
@@ -87,7 +86,7 @@ done
     if result.returncode != 0:
         return node_payload
 
-    by_timestamp: dict[str, dict[str, dict]] = {}
+    by_timestamp = {}  # type: Dict[str, Dict[str, Dict[str, Any]]]
     for raw_line in (result.stdout or "").splitlines():
         parts = raw_line.split("\t", 2)
         if len(parts) != 3 or parts[0] != "FILE":
@@ -123,7 +122,7 @@ done
     return node_payload
 
 
-def newest_pair_age_hours(nodes: list[dict]) -> float | None:
+def newest_pair_age_hours(nodes: List[Dict[str, Any]]) -> Optional[float]:
     latest = None
     for node in nodes:
         for pair in node.get("matching_pairs", []):

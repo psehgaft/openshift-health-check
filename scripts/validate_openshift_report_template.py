@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Guard the OpenShift health report template structure."""
 
-from __future__ import annotations
-
 import re
 import sys
 from pathlib import Path
@@ -79,7 +77,7 @@ def main() -> int:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    sections: list[tuple[int, str]] = []
+    sections = []  # type: list
     for line_no, line in enumerate(lines, 1):
         if line.startswith("## "):
             sections.append((line_no, line[3:].strip()))

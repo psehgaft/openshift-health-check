@@ -6,6 +6,12 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+def _strip_prefix(value, prefix):
+    if prefix and value.startswith(prefix):
+        return value[len(prefix):]
+    return value
+
+
 def run_expiry(timeout_seconds, item):
     cert_b64 = item.get("tls_crt", "")
     if not cert_b64:
@@ -29,7 +35,7 @@ def run_expiry(timeout_seconds, item):
         not_after = ""
         if proc.returncode == 0:
             line = proc.stdout.decode("utf-8", errors="replace").strip()
-            not_after = line.removeprefix("notAfter=")
+            not_after = _strip_prefix(line, "notAfter=")
         return {
             "namespace": item.get("namespace", ""),
             "name": item.get("name", ""),

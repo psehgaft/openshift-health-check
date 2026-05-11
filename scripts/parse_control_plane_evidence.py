@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Parse offline control-plane evidence from must-gather artifacts."""
 
-from __future__ import annotations
-
 import gzip
 import json
 import re
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 
 def read_json(path: Path):
@@ -17,7 +16,7 @@ def read_json(path: Path):
         return None
 
 
-def find_first(root: Path, pattern: str) -> Path | None:
+def find_first(root: Path, pattern: str) -> Optional[Path]:
     matches = sorted(root.rglob(pattern))
     return matches[0] if matches else None
 
@@ -29,7 +28,7 @@ def read_text_maybe_gzip(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def parse_int(value) -> int | None:
+def parse_int(value) -> Optional[int]:
     try:
         return int(value)
     except Exception:
@@ -89,7 +88,7 @@ def main() -> int:
 
     readyz_failed_checks = 0
     readyz_shutdown_failed_checks = 0
-    readyz_sample_lines: list[str] = []
+    readyz_sample_lines = []  # type: List[str]
     for path in termination_logs:
         try:
             text = read_text_maybe_gzip(path)
