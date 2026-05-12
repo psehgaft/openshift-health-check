@@ -2116,6 +2116,8 @@
       'machineconfigpools': graph.machineconfigpools | default({'items': []}),
       'ingresscontrollers': (graph.ingresscontrollers | default({})).get('items', []),
       'services': (graph.services | default({})).get('items', []),
+      'configmaps': (graph.configmaps | default({})).get('items', []),
+      'secrets': (graph.secrets | default({})).get('items', []),
       'node_pod_counts': node_pod_counts | default({}),
       'node_cpu_utilization_results': node_cpu_utilization_results | default([]),
       'node_memory_utilization_results': node_memory_utilization_results | default([]),
@@ -2161,6 +2163,52 @@
 - name: Normalize cluster current state
   vars:
     graph: "{{ analysis_graph | default({}) }}"
+    fallback_cluster_networks: "{{ cluster_profile.cluster_networks | default([]) }}"
+    fallback_node_count: "{{ (graph.nodes | default({})).get('items', []) | length }}"
+    fallback_total_node_slots: >-
+      {%- set ns = namespace(total=0) -%}
+      {%- for item in fallback_cluster_networks -%}
+      {%- set cidr_text = ((item.cidr | default(item.CIDR | default(''))) if (item is mapping) else (item | string)) -%}
+      {%- set host_prefix_text = ((item.hostPrefix | string) if (item is mapping and item.hostPrefix is defined and item.hostPrefix is not none) else '') -%}
+      {%- set network_prefix_text = (cidr_text | regex_replace('^.*/', '')) -%}
+      {%- if (cidr_text | length) > 0 and (host_prefix_text | length) > 0 and network_prefix_text != cidr_text -%}
+      {%- set host_prefix_int = host_prefix_text | int(-1) -%}
+      {%- set network_prefix_int = network_prefix_text | int(-1) -%}
+      {%- if host_prefix_int >= network_prefix_int and network_prefix_int >= 0 -%}
+      {%- set ns.total = ns.total + (2 ** (host_prefix_int - network_prefix_int)) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.total }}
+    fallback_additional_nodes_by_pod_network: >-
+      {{
+        ([((fallback_total_node_slots | int) - (fallback_node_count | int)), 0] | max)
+        if (fallback_total_node_slots | int) > 0
+        else 'unknown'
+      }}
+    fallback_pod_network_headroom_pct: >-
+      {{
+        (((([((fallback_total_node_slots | int) - (fallback_node_count | int)), 0] | max) / (fallback_total_node_slots | float)) * 100) | round(1))
+        if (fallback_total_node_slots | int) > 0
+        else 'unknown'
+      }}
+    fallback_node_ips_available: "{{ node_ip_capacity_summary.available_ips | default('unknown') }}"
+    fallback_effective_additional_nodes: >-
+      {{
+        ([(fallback_additional_nodes_by_pod_network | int), (fallback_node_ips_available | int)] | min)
+        if (
+          (fallback_total_node_slots | int) > 0
+          and (fallback_node_ips_available is number or ((fallback_node_ips_available | string) is match('^[0-9]+$')))
+        )
+        else (
+          (fallback_node_ips_available | int)
+          if (
+            (fallback_total_node_slots | int) == 0
+            and (fallback_node_ips_available is number or ((fallback_node_ips_available | string) is match('^[0-9]+$')))
+          )
+          else fallback_additional_nodes_by_pod_network
+        )
+      }}
     insights_status_fallback: >-
       {{
         'unknown'
@@ -2244,15 +2292,31 @@
         pods: "{{ pod_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"
         nodes: "{{ node_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"
       node_growth_capacity:
-        current_nodes: "{{ (graph.nodes | default({})).get('items', []) | length }}"
-        max_nodes_by_pod_network: unknown
-        additional_nodes_by_pod_network: unknown
-        pod_network_headroom_pct: unknown
+        current_nodes: "{{ fallback_node_count | int }}"
+        max_nodes_by_pod_network: "{{ (fallback_total_node_slots | int) if (fallback_total_node_slots | int) > 0 else 'unknown' }}"
+        additional_nodes_by_pod_network: "{{ fallback_additional_nodes_by_pod_network }}"
+        pod_network_headroom_pct: "{{ fallback_pod_network_headroom_pct }}"
         node_ip_ranges: "{{ node_ip_capacity_summary.range_list | default([]) }}"
         node_ips_taken: "{{ node_ip_capacity_summary.taken_ips | default(0) }}"
-        node_ips_available: "{{ node_ip_capacity_summary.available_ips | default('unknown') }}"
-        effective_additional_nodes: unknown
-        network_slot_details: []
+        node_ips_available: "{{ fallback_node_ips_available }}"
+        effective_additional_nodes: "{{ fallback_effective_additional_nodes }}"
+        network_slot_details: >-
+          {%- set rows = [] -%}
+          {%- for item in fallback_cluster_networks -%}
+          {%- set cidr_text = ((item.cidr | default(item.CIDR | default(''))) if (item is mapping) else (item | string)) -%}
+          {%- set host_prefix_value = ((item.hostPrefix) if (item is mapping and item.hostPrefix is defined and item.hostPrefix is not none) else 'unknown') -%}
+          {%- set network_prefix_text = (cidr_text | regex_replace('^.*/', '')) -%}
+          {%- set node_slots = 'unknown' -%}
+          {%- if (host_prefix_value | string) != 'unknown' and network_prefix_text != cidr_text -%}
+          {%- set host_prefix_int = (host_prefix_value | string) | int(-1) -%}
+          {%- set network_prefix_int = network_prefix_text | int(-1) -%}
+          {%- if host_prefix_int >= network_prefix_int and network_prefix_int >= 0 -%}
+          {%- set node_slots = (2 ** (host_prefix_int - network_prefix_int)) -%}
+          {%- endif -%}
+          {%- endif -%}
+          {%- set rows = rows + [{'cidr': cidr_text, 'host_prefix': host_prefix_value, 'node_slots': node_slots}] -%}
+          {%- endfor -%}
+          {{ rows }}
       node_architectures: []
       instance_types: []
       node_shapes: []

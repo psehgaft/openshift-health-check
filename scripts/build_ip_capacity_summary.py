@@ -3,6 +3,8 @@ import ipaddress
 import json
 import sys
 
+from openshift_network_extract import dedupe_preserve_order, extract_install_config_networks, normalize_cidrs
+
 
 def infer_network_from_ips(ip_texts):
     ip_objects = []
@@ -31,32 +33,6 @@ def infer_network_from_ips(ip_texts):
         network_int = min_int & ~((1 << (max_prefixlen - prefixlen)) - 1) if prefixlen < max_prefixlen else min_int
         inferred.append(str(ipaddress.ip_network((network_int, prefixlen), strict=False)))
     return inferred
-
-
-def dedupe_preserve_order(values):
-    seen = set()
-    result = []
-    for value in values:
-        text = str(value)
-        if text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
-
-
-def normalize_cidrs(raw):
-    cidrs = []
-    for item in raw or []:
-        if isinstance(item, str):
-            value = item
-        elif isinstance(item, dict):
-            value = item.get("cidr") or item.get("CIDR")
-        else:
-            value = None
-        if value:
-            cidrs.append(str(value))
-    return cidrs
 
 
 def collect_cidrs_by_keys(raw, key_names):
@@ -126,6 +102,13 @@ def extract_node_cidrs(data):
     cluster_profile_cidrs = normalize_cidrs(cluster_profile.get("machine_networks", []))
     if cluster_profile_cidrs:
         return dedupe_preserve_order(cluster_profile_cidrs), "cluster_profile.machine_networks"
+
+    install_config_networks = extract_install_config_networks(
+        [data.get("configmaps", []), data.get("secrets", [])]
+    )
+    install_config_machine_networks = normalize_cidrs(install_config_networks.get("machine_networks", []))
+    if install_config_machine_networks:
+        return dedupe_preserve_order(install_config_machine_networks), "install-config.machine_networks"
 
     key_names = {"machinenetwork", "machinenetworks", "machinecidr", "machinecidrs"}
     for source_name in ("infrastructure", "network_config", "machinesets", "configmaps", "secrets"):
@@ -200,13 +183,25 @@ def main() -> int:
     with open(sys.argv[1], "r", encoding="utf-8") as handle:
         data = json.load(handle)
 
-    service_cidrs = normalize_cidrs((data.get("cluster_profile", {}) or {}).get("service_networks", []))
-    pod_cidrs = normalize_cidrs((data.get("cluster_profile", {}) or {}).get("cluster_networks", []))
+    install_config_networks = extract_install_config_networks(
+        [data.get("configmaps", []), data.get("secrets", [])]
+    )
+    cluster_profile = data.get("cluster_profile", {}) or {}
+    service_cidrs = normalize_cidrs(cluster_profile.get("service_networks", []))
+    service_cidr_source = "cluster_profile.service_networks"
+    if not service_cidrs:
+        service_cidrs = normalize_cidrs(install_config_networks.get("service_networks", []))
+        service_cidr_source = "install-config.service_networks"
+    pod_cidrs = normalize_cidrs(cluster_profile.get("cluster_networks", []))
+    pod_cidr_source = "cluster_profile.cluster_networks"
+    if not pod_cidrs:
+        pod_cidrs = normalize_cidrs(install_config_networks.get("cluster_networks", []))
+        pod_cidr_source = "install-config.cluster_networks"
     node_cidrs, node_cidr_source = extract_node_cidrs(data)
 
     result = {
-        "service_ip_capacity_summary": summarize(service_cidrs, unique_service_ips(data.get("services", [])), source="cluster_profile.service_networks"),
-        "pod_ip_capacity_summary": summarize(pod_cidrs, unique_pod_ips(data.get("pods", [])), source="cluster_profile.cluster_networks"),
+        "service_ip_capacity_summary": summarize(service_cidrs, unique_service_ips(data.get("services", [])), source=service_cidr_source),
+        "pod_ip_capacity_summary": summarize(pod_cidrs, unique_pod_ips(data.get("pods", [])), source=pod_cidr_source),
         "node_ip_capacity_summary": summarize(node_cidrs, unique_node_internal_ips(data.get("nodes", [])), source=node_cidr_source),
     }
     print(json.dumps(result))

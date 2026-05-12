@@ -5,7 +5,7 @@
   vars:
     platform_family: openshift
     provider_family: generic
-    cluster_profile_mode: production
+    cluster_profile_mode: auto
     kube_cli: oc
     report_mode: auto
     report_output_dir: "{{ playbook_dir }}/../reports"
@@ -158,6 +158,29 @@
         that:
           - report_mode_resolved in ['live', 'collected']
         fail_msg: "Set report_mode to auto, live, collected, or offline."
+
+    - name: Validate OpenShift API surface
+      ansible.builtin.command:
+        argv:
+          - "{{ kube_cli }}"
+          - get
+          - clusterversion
+          - version
+          - -o
+          - name
+      register: openshift_api_probe
+      changed_when: false
+      failed_when: false
+      when: report_mode_resolved == 'live'
+
+    - name: Fail when the OpenShift playbook is pointed at a non-OpenShift live cluster
+      ansible.builtin.fail:
+        msg: >-
+          This playbook requires OpenShift cluster APIs and the OpenShift report contract.
+          The current live cluster did not expose `clusterversion/version`, so use the matching Kubernetes or provider playbook under `playbooks/` instead.
+      when:
+        - report_mode_resolved == 'live'
+        - (openshift_api_probe.rc | default(1) | int) != 0
 
     - name: Define run checkpoint paths
       ansible.builtin.set_fact:

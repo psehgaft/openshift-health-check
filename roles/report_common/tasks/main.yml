@@ -1,10 +1,36 @@
 ---
 - name: Define common report paths
   ansible.builtin.set_fact:
-    report_cluster_type: "{{ resolved_provider_family if (resolved_provider_family | default(provider_family | default('generic'))) != 'generic' else (platform_family | default('kubernetes')) }}"
+    report_cluster_type: >-
+      {{
+        cluster_profile.cluster_classification_label
+        if (cluster_profile.cluster_classification_label | default('') | trim) not in ['', 'unknown']
+        else (
+          cluster_profile.deployment_type
+          if (cluster_profile.deployment_type | default('') | trim) not in ['', 'unknown']
+          else (
+            resolved_provider_family
+            if (resolved_provider_family | default(provider_family | default('generic'))) != 'generic'
+            else (platform_family | default('kubernetes'))
+          )
+        )
+      }}
+    report_cluster_type_detection_source: >-
+      {{
+        cluster_profile.cluster_classification_source
+        if (cluster_profile.cluster_classification_source | default('') | trim) not in ['', 'unknown']
+        else (
+          cluster_profile.deployment_type_source
+          if (cluster_profile.deployment_type_source | default('') | trim) not in ['', 'unknown']
+          else (cluster_type_detection_source | default('not-applicable'))
+        )
+      }}
+
+- name: Define common report naming paths
+  ansible.builtin.set_fact:
     report_cluster_name_source: "{{ cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim)) }}"
     report_cluster_name: "{{ ((cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim))) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
-    report_file_prefix: "{{ report_basename }}-{{ (resolved_provider_family if (resolved_provider_family | default(provider_family | default('generic'))) != 'generic' else (platform_family | default('kubernetes'))) }}-{{ ((cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim))) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
+    report_file_prefix: "{{ report_basename }}-{{ report_cluster_type }}-{{ ((cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim))) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
 
 - name: Define common report output files
   ansible.builtin.set_fact:
@@ -208,7 +234,7 @@
         platform_family: "{{ platform_family | default('kubernetes') }}"
         provider_family: "{{ resolved_provider_family | default(provider_family | default('generic')) }}"
         cluster_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('production')) }}"
-        cluster_type_detection_source: "{{ cluster_type_detection_source | default('not-applicable') }}"
+        cluster_type_detection_source: "{{ report_cluster_type_detection_source | default(cluster_type_detection_source | default('not-applicable')) }}"
         checkpoint:
           manifest_path: "{{ report_resume_manifest_path | default('') }}"
           last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"

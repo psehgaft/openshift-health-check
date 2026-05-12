@@ -5,6 +5,8 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
+from openshift_network_extract import extract_install_config_networks
+
 
 def parse_cpu(value):
     if value in (None, ""):
@@ -322,8 +324,10 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
     return rows[:50]
 
 
-def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity):
+def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity, fallback_cluster_networks=None):
     cluster_networks = (cluster_profile or {}).get("cluster_networks", []) or []
+    if not cluster_networks:
+        cluster_networks = fallback_cluster_networks or []
     network_slot_details = []
     total_node_slots = 0
 
@@ -698,10 +702,14 @@ def main():
         )
     mcp_summary.sort(key=lambda item: str(item.get("name", "unknown")))
 
+    install_config_networks = extract_install_config_networks(
+        [data.get("configmaps", []), data.get("secrets", [])]
+    )
     node_growth_capacity = build_node_growth_capacity(
         data.get("cluster_profile") or {},
         len(data.get("nodes", [])),
         data.get("node_ip_capacity_summary") or {},
+        install_config_networks.get("cluster_networks", []),
     )
     node_resource_rows.sort(
         key=lambda item: (

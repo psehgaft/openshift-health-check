@@ -94,6 +94,17 @@ def expected_cluster_sections() -> list:
     return titles
 
 
+def expected_enabled_capability_titles() -> list:
+    profile_path = Path(__file__).resolve().parent.parent / "inputs" / "openshift-cluster-health-profile.yml"
+    profile_payload = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    capability_profile = ((profile_payload.get("cluster_health_profile") or {}).get("capabilities") or {})
+    return [
+        str(key).replace("_", " ").strip().title()
+        for key, value in capability_profile.items()
+        if str(key).strip() and isinstance(value, dict) and bool(value.get("enabled", False))
+    ]
+
+
 def validate_cluster_posture_sections(markdown: str) -> None:
     lines = markdown.splitlines()
     sections = []  # type: list
@@ -121,6 +132,37 @@ def validate_cluster_posture_sections(markdown: str) -> None:
             fail(f"{title!r} at line {start} missing {', '.join(missing)}")
 
 
+def validate_day2_capability_markdown_sections(markdown: str) -> None:
+    lines = markdown.splitlines()
+    start_idx = None
+    end_idx = None
+    for idx, line in enumerate(lines):
+        if line.strip() == "### Individual Capability Sections":
+            start_idx = idx + 1
+            continue
+        if start_idx is not None and line.startswith("### Findings"):
+            end_idx = idx
+            break
+    if start_idx is None:
+        fail("missing Day 2 capability section marker")
+    block = lines[start_idx:end_idx]
+    rendered_titles = [line[5:].strip() for line in block if line.startswith("#### ")]
+    expected_titles = expected_enabled_capability_titles()
+    missing = sorted(set(expected_titles) - set(rendered_titles))
+    extra = sorted(set(rendered_titles) - set(expected_titles))
+    if missing or extra:
+        fail(
+            "unexpected Day 2 capability section set: "
+            + (
+                ("missing=" + ", ".join(missing)) if missing else ""
+            )
+            + (
+                ("; " if missing and extra else "")
+                + ("extra=" + ", ".join(extra) if extra else "")
+            )
+        )
+
+
 def validate_markdown_tables(markdown: str) -> None:
     lines = markdown.splitlines()
     for idx, line in enumerate(lines):
@@ -142,6 +184,7 @@ def validate_markdown(path: Path) -> None:
 
     if "## Report Context" in markdown:
         validate_cluster_posture_sections(markdown)
+        validate_day2_capability_markdown_sections(markdown)
 
     for marker in RUNTIME_SIGNAL_OUTPUT_MARKERS:
         if marker not in markdown:

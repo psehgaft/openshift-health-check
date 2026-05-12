@@ -299,14 +299,26 @@
         notes: "Managed or provider-backed clusters should expose enough node-pool, zone, and provider metadata for capacity and resilience review."
         docs: "https://kubernetes.io/docs/reference/labels-annotations-taints/"
   tasks:
-    - name: Load canonical Kubernetes cluster health profile
-      ansible.builtin.include_vars:
-        file: "{{ kubernetes_cluster_health_profile_source_path }}"
-        name: canonical_kubernetes_cluster_health_profile
+    - name: Detect whether the current cluster exposes OpenShift APIs
+      ansible.builtin.command:
+        argv:
+          - "{{ kube_cli }}"
+          - get
+          - clusterversion
+          - version
+          - -o
+          - name
+      register: openshift_cluster_probe
+      changed_when: false
+      failed_when: false
 
-    - name: Apply canonical Kubernetes cluster health profile
-      ansible.builtin.set_fact:
-        kubernetes_report_capability_profile: "{{ canonical_kubernetes_cluster_health_profile.kubernetes_report_capability_profile }}"
+    - name: Fail when the Kubernetes playbook is pointed at an OpenShift cluster
+      ansible.builtin.fail:
+        msg: >-
+          The current cluster exposes OpenShift APIs, but this playbook renders the generic Kubernetes report shape and
+          will omit enabled OpenShift posture and capability sections. Use
+          `playbooks/openshift_cluster_health_report.yml` for OpenShift clusters.
+      when: (openshift_cluster_probe.rc | default(1) | int) == 0
 
     - name: Run Kubernetes cluster health report scaffold
       block:
@@ -406,6 +418,26 @@
               ansible.builtin.include_role:
                 name: collect_kubernetes
 
+            - name: Validate Kubernetes playbook provider contract
+              ansible.builtin.assert:
+                that:
+                  - (provider_family | default('generic')) == 'generic' or ((observed_provider_family | default('generic')) == (provider_family | default('generic')))
+                  - (provider_family | default('generic')) != 'generic' or ((observed_provider_family | default('generic')) == 'generic')
+                fail_msg: >-
+                  This playbook wrapper does not match the observed cluster family.
+                  Requested wrapper family: `{{ provider_family | default('generic') }}`.
+                  Observed cluster family: `{{ observed_provider_family | default('generic') }}` from `{{ observed_cluster_type_detection_source | default('fallback') }}`.
+                  Use the playbook that matches the observed cluster family under `playbooks/` so the correct input profile and report format are used.
+
+            - name: Load canonical Kubernetes cluster health profile
+              ansible.builtin.include_vars:
+                file: "{{ kubernetes_cluster_health_profile_source_path }}"
+                name: canonical_kubernetes_cluster_health_profile
+
+            - name: Apply canonical Kubernetes cluster health profile
+              ansible.builtin.set_fact:
+                kubernetes_report_capability_profile: "{{ canonical_kubernetes_cluster_health_profile.kubernetes_report_capability_profile }}"
+
             - name: Save Kubernetes collection checkpoint
               ansible.builtin.include_role:
                 name: report_common
@@ -484,6 +516,15 @@
             - name: Resume Kubernetes analysis and report stages
               when: (report_resume_manifest.resume_next_stage | default('')) == 'analysis'
               block:
+                - name: Reload canonical Kubernetes cluster health profile
+                  ansible.builtin.include_vars:
+                    file: "{{ kubernetes_cluster_health_profile_source_path }}"
+                    name: canonical_kubernetes_cluster_health_profile
+
+                - name: Re-apply canonical Kubernetes cluster health profile
+                  ansible.builtin.set_fact:
+                    kubernetes_report_capability_profile: "{{ canonical_kubernetes_cluster_health_profile.kubernetes_report_capability_profile }}"
+
                 - name: Run common analysis
                   ansible.builtin.include_role:
                     name: analyze_common

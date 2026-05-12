@@ -2649,7 +2649,15 @@ Cluster update history was not returned.
 {% set day2_backup_status = day2_readiness_summary.backup_recovery_status | default('not-derived') %}
 {% set day2_security_status = day2_readiness_summary.security_compliance_status | default('not-derived') %}
 {% set day2_operations_status = day2_readiness_summary.declarative_operations_status | default('not-derived') %}
-{% set day2_capability_sections = audit_report.domains.production_day2_readiness.capability_sections | default((collected_report_payload.domains | default({})).production_day2_readiness.capability_sections | default([])) %}
+{% set day2_capability_sections_raw = audit_report.domains.production_day2_readiness.capability_sections | default((collected_report_payload.domains | default({})).production_day2_readiness.capability_sections | default([])) %}
+{% set ns_day2_filter = namespace(sections=[]) %}
+{% for section in day2_capability_sections_raw %}
+{% set section_key = section.key | default('') | string | trim %}
+{% if section_key and capability_profile.get(section_key, {}).get('enabled', false) %}
+{% set _ = ns_day2_filter.sections.append(section) %}
+{% endif %}
+{% endfor %}
+{% set day2_capability_sections = ns_day2_filter.sections %}
 {% set day2_capability_assessment_state = audit_report.domains.production_day2_readiness.capability_assessment_state | default((collected_report_payload.domains | default({})).production_day2_readiness.capability_assessment_state | default(day2_readiness_summary.capability_assessment_state | default('unknown'))) %}
 {% set day2_capability_assessment_error = audit_report.domains.production_day2_readiness.capability_assessment_error | default((collected_report_payload.domains | default({})).production_day2_readiness.capability_assessment_error | default(day2_readiness_summary.capability_assessment_error | default(''))) %}
 {% set day2_critical_blocker_present = day2_upgrade_status == 'BLOCKED' or day2_observability_status == 'CRITICAL' or day2_backup_status == 'CRITICAL' or day2_security_status == 'CRITICAL' %}

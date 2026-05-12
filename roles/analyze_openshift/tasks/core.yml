@@ -815,6 +815,40 @@
   ansible.builtin.set_fact:
     cluster_profile: "{{ cluster_profile | combine({'platform_category': (openshift_cluster_classification.platform_category | default('unknown')), 'public_cloud': (openshift_cluster_classification.public_cloud | default(false) | bool), 'service_model': (openshift_cluster_classification.service_model | default('unknown')), 'service_model_source': (openshift_cluster_classification.service_model_source | default('not-derived')), 'service_model_confidence': (openshift_cluster_classification.service_model_confidence | default('low')), 'service_variant': (openshift_cluster_classification.service_variant | default('unknown')), 'install_model': (openshift_cluster_classification.install_model | default('unknown')), 'install_model_source': (openshift_cluster_classification.install_model_source | default('not-derived')), 'install_model_confidence': (openshift_cluster_classification.install_model_confidence | default('low')), 'control_plane_model': (openshift_cluster_classification.control_plane_model | default('unknown')), 'control_plane_model_source': (openshift_cluster_classification.control_plane_model_source | default('not-derived')), 'control_plane_model_confidence': (openshift_cluster_classification.control_plane_model_confidence | default('low')), 'cluster_classification_label': (openshift_cluster_classification.cluster_classification_label | default('openshift')), 'cluster_classification_source': (openshift_cluster_classification.cluster_classification_source | default('default-openshift-fallback')), 'cluster_classification_confidence': (openshift_cluster_classification.cluster_classification_confidence | default('low')), 'deployment_type': (openshift_cluster_classification.deployment_type | default('openshift')), 'deployment_type_source': (openshift_cluster_classification.deployment_type_source | default('default-openshift-fallback')), 'deployment_type_confidence': (openshift_cluster_classification.deployment_type_confidence | default('low')), 'is_sno': (openshift_cluster_classification.is_sno | default(false) | bool), 'is_hosted_control_plane': (openshift_cluster_classification.is_hosted_control_plane | default(false) | bool), 'machine_api_worker_pool_count': (openshift_cluster_classification.machine_api_worker_pool_count | default(0) | int), 'machine_api_managed_worker_pools': (openshift_cluster_classification.machine_api_managed_worker_pools | default(false) | bool), 'control_plane_node_count': (openshift_cluster_classification.control_plane_node_count | default(openshift_control_plane_node_count | int) | int), 'worker_node_count': (openshift_cluster_classification.worker_node_count | default(openshift_worker_node_count | int) | int), 'infra_node_count': (openshift_cluster_classification.infra_node_count | default(openshift_infra_node_count | int) | int)}, recursive=True) }}"
 
+- name: Resolve OpenShift cluster profile mode
+  vars:
+    openshift_mode_signal_text: >-
+      {{
+        (
+          (cluster_profile.infrastructure_name | default(''))
+          ~ ' '
+          ~ (cluster_profile.base_domain | default(''))
+          ~ ' '
+          ~ (oc_context_cmd.stdout | default(''))
+        ) | lower
+      }}
+  ansible.builtin.set_fact:
+    resolved_cluster_profile_mode: >-
+      {{
+        cluster_profile_mode
+        if (cluster_profile_mode | default('auto')) in ['production', 'development', 'lightweight']
+        else (
+          'development'
+          if (openshift_mode_signal_text | regex_search('(^|[^a-z0-9])(dev|development|lab|sandbox|demo|poc|test|qa|nonprod|non-prod)([^a-z0-9]|$)'))
+          else 'production'
+        )
+      }}
+    resolved_cluster_profile_mode_source: >-
+      {{
+        'manual-override'
+        if (cluster_profile_mode | default('auto')) in ['production', 'development', 'lightweight']
+        else (
+          'name-context-keyword-heuristic'
+          if (openshift_mode_signal_text | regex_search('(^|[^a-z0-9])(dev|development|lab|sandbox|demo|poc|test|qa|nonprod|non-prod)([^a-z0-9]|$)'))
+          else 'default-production'
+        )
+      }}
+
 - name: Initialize MCP facts
   ansible.builtin.set_fact:
     degraded_mcps: []
