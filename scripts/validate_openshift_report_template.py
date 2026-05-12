@@ -53,6 +53,7 @@ FORBIDDEN_PATTERNS = [
     (r"\baro-gitops\b", "customer report must not mention aro-gitops"),
     (r"\baro-classic-terraform/", "customer report must not mention aro-classic-terraform"),
     (r"Collection notes:\s*\|", "collection notes must not collapse into an inline table"),
+    (r"Operating model note:\s+\S", "operating model note must not collapse into an inline line"),
 ]
 
 REQUIRED_RUNTIME_SIGNAL_MARKERS = [

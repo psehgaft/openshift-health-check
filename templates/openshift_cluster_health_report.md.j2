@@ -296,13 +296,46 @@ The condition is either confirmed healthy or intentionally accepted with documen
 {%- endif -%}
 {%- endmacro %}
 
+{% macro docs_url_items(keys) -%}
+{%- set refs = {
+  'supportability': [('Gathering cluster data', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/support/gathering-cluster-data'), ('RBAC', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/authentication_and_authorization/using-rbac')],
+  'collection': [('Gathering cluster data', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/support/gathering-cluster-data'), ('RBAC', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/authentication_and_authorization/using-rbac')],
+  'platform': [('Operators', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/operators/index'), ('etcd', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/etcd/index')],
+  'nodes': [('Nodes', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/nodes/nodes'), ('Machine management', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/machine_management/index')],
+  'backup': [('OADP application backup and restore', 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/backup_and_restore/oadp-application-backup-and-restore'), ('etcd backup and restore', 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/etcd/backing-up-and-restoring-etcd-data')],
+  'network': [('Routes', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-routes'), ('Network policy', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/network_security/network-policy')],
+  'observability': [('Monitoring', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/monitoring/index'), ('User workload monitoring', 'https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/latest/html/configuring_user_workload_monitoring/index')],
+  'security': [('Security and compliance', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/security_and_compliance/index'), ('Identity providers', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/authentication_and_authorization/configuring-identity-providers')],
+  'workload': [('Deployments', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/building_applications/deployments'), ('Resource management', 'https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/')],
+  'lifecycle': [('Updating clusters', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/updating_clusters/index'), ('Postinstallation configuration', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/postinstallation_configuration/index')],
+  'capacity': [('Scalability and performance', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/scalability_and_performance/scalability-and-performance-overview'), ('Resource management', 'https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/')],
+  'operations': [('OpenShift GitOps declarative cluster configuration', 'https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.20/html/declarative_cluster_configuration/index'), ('Argo CD applications', 'https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.20/html/argo_cd_applications/index')],
+  'release': [('OpenShift Pipelines', 'https://docs.redhat.com/en/documentation/red_hat_openshift_pipelines/latest'), ('BuildConfigs', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/builds_using_buildconfig/index'), ('imagePullSecrets', 'https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/')],
+  'extensions': [('OpenShift Virtualization', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/virtualization'), ('OpenShift AI', 'https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/latest')],
+  'day2': [('Postinstallation configuration', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html-single/postinstallation_configuration/index'), ('Monitoring', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/monitoring/index'), ('etcd encryption', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/security_and_compliance/encrypting-etcd'), ('OVN-Kubernetes IPsec', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/network_security/configuring-ipsec-ovn'), ('FIPS cryptography', 'https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/installation_overview/installing-fips')]
+} -%}
+{%- set ns = namespace(items=[]) -%}
+{%- for key in keys -%}
+{%- for item in refs.get(key, []) -%}
+{%- set ns.items = ns.items + [item[1]] -%}
+{%- endfor -%}
+{%- endfor -%}
+{{ ns.items | unique | join('\n') }}
+{%- endmacro %}
+
+{% macro explicit_docs_url_items(value) -%}
+{%- set docs = profile_text(value) | trim -%}
+{%- if docs -%}
+{{ docs.split(';') | map('trim') | reject('equalto', '') | list | join('\n') }}
+{%- endif -%}
+{%- endmacro %}
+
 {% macro recommended_action_with_docs(action, severity, keys) -%}
 {{ action }}{{ docs_links(keys) }}
 {%- endmacro %}
 
 {% macro recommended_action_with_capability_docs(action, section) -%}
-{%- set docs = profile_text(section.docs | default([])) | trim -%}
-{{ action }}{% if docs %} Reference: {{ docs }}.{% elif section.key | default('') %}{{ docs_links([section.key]) }}{% endif %}
+{{ action }}
 {%- endmacro %}
 
 {% macro likely_owner_label(value) -%}
@@ -366,12 +399,21 @@ Platform engineering and SRE
 {%- endmacro %}
 
 {% macro recommended_action_with_posture_docs(action, severity, keys, posture_key) -%}
-{%- set entry = (posture_profile | default({})).get(posture_key, {}) -%}
-{%- set docs = profile_text(entry.get('docs') or '') | trim -%}
-{{ action }}{% if docs %} Reference: {{ docs }}.{% else %}{{ docs_links(keys) }}{% endif %}
+{{ action }}
 {%- endmacro %}
 
-{% macro operating_questions(gap, why, action, owner, done, notes='') -%}
+{% macro posture_reference_urls(keys, posture_key) -%}
+{%- set entry = (posture_profile | default({})).get(posture_key, {}) -%}
+{%- set docs = explicit_docs_url_items(entry.get('docs') or '') | trim -%}
+{{ docs if docs else docs_url_items(keys) }}
+{%- endmacro %}
+
+{% macro capability_reference_urls(section) -%}
+{%- set docs = explicit_docs_url_items(section.docs | default([])) | trim -%}
+{{ docs if docs else docs_url_items([section.key | default('')]) }}
+{%- endmacro %}
+
+{% macro operating_questions(gap, why, action, owner, done, references='', notes='') -%}
 1. **What is the gap?**
 
    {{ gap | replace('\n', ' ') | replace('|', '\\|') }}
@@ -382,9 +424,17 @@ Platform engineering and SRE
 
 3. **What should be done?**
 
-   {{ action | replace('\n', ' ') | replace('|', '\\|') }}{% if notes | default('') | trim | length > 0 %}
+   {{ action | replace('\n', ' ') | replace('|', '\\|') }}{% if references | default('') | trim | length > 0 %}<br>
 
-   Operating model note: {{ notes | replace('\n', ' ') | replace('|', '\\|') }}{% endif %}
+    **Reference**
+
+{% for ref in references.split('\n') if ref | trim %}
+      - {{ ref | trim | replace('|', '\\|') }}
+{% endfor %}{% endif %}{% if notes | default('') | trim | length > 0 %}<br>
+
+    **Operating model note**
+
+    {{ notes | replace('\n', ' ') | replace('|', '\\|') }}{% endif %}
 
 4. **Who likely owns the action?**
 
@@ -740,6 +790,7 @@ Every major posture section below follows the same operating model: define the g
   (recommended_action_with_posture_docs('Resolve the named unsupported, review-required, or incomplete supportability conditions before using lower-priority sections for final sign-off.', 'WARNING', ['supportability', 'collection'], 'evidence_and_supportability') if supportability_needs_review else recommended_action_with_posture_docs('No supportability remediation is required for this posture.', 'OK', ['supportability', 'collection'], 'evidence_and_supportability')),
   posture_owner('evidence_and_supportability', 'supportability'),
   posture_verification('evidence_and_supportability', gap_done_when('CRITICAL' if supportability_verdict in ['unsupported-risk', 'critical'] else ('WARNING' if supportability_needs_review else ('OK' if supportability_verdict in ['supported', 'healthy'] else 'UNKNOWN')))),
+  posture_reference_urls(['supportability', 'collection'], 'evidence_and_supportability'),
   posture_notes('evidence_and_supportability')
 ) }}
 
@@ -789,6 +840,7 @@ Every major posture section below follows the same operating model: define the g
   (recommended_action_with_posture_docs('Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.', 'CRITICAL' if platform_status == 'CRITICAL' else ('WARNING' if platform_status == 'WARNING' else 'OK'), ['core', 'nodes'], 'platform_health') if platform_runtime_has_findings or (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 else recommended_action_with_posture_docs('No platform-health remediation is required for this posture.', 'OK', ['core'], 'platform_health')),
   posture_owner('platform_health', 'platform'),
   posture_verification('platform_health', gap_done_when('CRITICAL' if platform_status == 'CRITICAL' else ('WARNING' if platform_status == 'WARNING' else ('OK' if platform_status == 'HEALTHY' else 'UNKNOWN')))),
+  posture_reference_urls(['core', 'nodes'], 'platform_health'),
   posture_notes('platform_health')
 ) }}
 
@@ -871,6 +923,7 @@ Every major posture section below follows the same operating model: define the g
   recommended_action_with_posture_docs('Review node readiness, pressure, pod density, quotas, utilization hotspots, and targeted node diagnostics before treating node capacity as healthy.', 'WARNING' if (node_has_actionable_capacity_findings or node_has_diagnostics_gap) else 'OK', ['nodes', 'capacity', 'collection'], 'node_health_and_capacity'),
   posture_owner('node_health_and_capacity', 'node'),
   posture_verification('node_health_and_capacity', gap_done_when('CRITICAL' if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 else ('WARNING' if (node_has_actionable_capacity_findings or node_has_diagnostics_gap) else 'OK'))),
+  posture_reference_urls(['nodes', 'capacity', 'collection'], 'node_health_and_capacity'),
   posture_notes('node_health_and_capacity')
 ) }}
 
@@ -1013,6 +1066,7 @@ Every major posture section below follows the same operating model: define the g
   recommended_action_with_posture_docs('Validate OADP tooling, usable backup locations, active schedules, successful backups, restore drills, and control-plane backup evidence before treating disaster recovery as credible.', 'CRITICAL' if backup_recovery_has_findings else 'OK', ['backup'], 'backup_and_disaster_recovery'),
   posture_owner('backup_and_disaster_recovery', 'backup'),
   posture_verification('backup_and_disaster_recovery', gap_done_when('CRITICAL' if not (backup_recovery_summary.backup_tooling_detected | default(false)) or (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 else ('WARNING' if backup_recovery_has_findings else 'OK'))),
+  posture_reference_urls(['backup'], 'backup_and_disaster_recovery'),
   posture_notes('backup_and_disaster_recovery')
 ) }}
 
@@ -1221,6 +1275,7 @@ Every major posture section below follows the same operating model: define the g
   recommended_action_with_posture_docs('Repair route, ingress, host-ownership, service-endpoint, and proxy `noProxy` issues before treating application access as healthy.', 'WARNING' if network_has_actionable_findings else ('INFO' if network_has_policy_context else 'OK'), ['network', 'security'], 'application_access_and_network_isolation'),
   posture_owner('application_access_and_network_isolation', 'network'),
   posture_verification('application_access_and_network_isolation', gap_done_when('WARNING' if network_has_actionable_findings else ('INFO' if network_has_policy_context else 'OK'))),
+  posture_reference_urls(['network', 'security'], 'application_access_and_network_isolation'),
   posture_notes('application_access_and_network_isolation')
 ) }}
 
@@ -1353,6 +1408,7 @@ Every major posture section below follows the same operating model: define the g
   recommended_action_with_posture_docs('Stabilize the monitoring path, then verify log forwarding, metrics forwarding, and external alert delivery to the intended destinations.', 'CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARNING' if observability_has_findings else 'OK'), ['observability', 'supportability'], 'observability'),
   posture_owner('observability', 'observability'),
   posture_verification('observability', gap_done_when('CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARNING' if observability_has_findings else 'OK'))),
+  posture_reference_urls(['observability', 'supportability'], 'observability'),
   posture_notes('observability')
 ) }}
 
@@ -1503,6 +1559,7 @@ Every major posture section below follows the same operating model: define the g
   recommended_action_with_posture_docs('Close identity, privileged-access, SCC, pod-security, registry, certificate, and compliance gaps in order of business risk and expiry urgency.', 'CRITICAL' if (security_governance_summary.expiring_certificates_critical | default(0) | int) > 0 else ('WARNING' if security_actionable else 'OK'), ['security'], 'security_and_governance'),
   posture_owner('security_and_governance', 'security'),
   posture_verification('security_and_governance', gap_done_when('CRITICAL' if (security_governance_summary.expiring_certificates_critical | default(0) | int) > 0 else ('WARNING' if security_actionable else 'OK'))),
+  posture_reference_urls(['security'], 'security_and_governance'),
   posture_notes('security_and_governance')
 ) }}
 
@@ -1821,6 +1878,7 @@ Every major posture section below follows the same operating model: define the g
   recommended_action_with_posture_docs('Stabilize unhealthy pods and rollouts first, then fix probe, resource, ownership, and rightsizing hygiene with application owners.', 'CRITICAL' if (workload_runtime_issue_count | int) > 0 else ('WARNING' if (workload_has_remediation or (workload_summary.high_restart_pod_count | default(0) | int) > 0) else 'OK'), ['workloads'], 'workload_health'),
   posture_owner('workload_health', 'workload'),
   posture_verification('workload_health', gap_done_when('CRITICAL' if (workload_runtime_issue_count | int) > 0 else ('WARNING' if workload_has_remediation else 'OK'))),
+  posture_reference_urls(['workloads'], 'workload_health'),
   posture_notes('workload_health')
 ) }}
 
@@ -2010,6 +2068,7 @@ Showing up to the top 100 pods from the available memory signal.
   recommended_action_with_posture_docs('Verify support status, clear upgrade blockers, address conditional update guidance, and correct topology or boundary assumptions before the next maintenance window.', 'CRITICAL' if upgrade_blockers > 0 else ('WARNING' if lifecycle_needs_review else 'OK'), ['lifecycle'], 'platform_architecture_and_lifecycle'),
   posture_owner('platform_architecture_and_lifecycle', 'lifecycle'),
   posture_verification('platform_architecture_and_lifecycle', gap_done_when('CRITICAL' if upgrade_blockers > 0 else ('WARNING' if lifecycle_needs_review else 'OK'))),
+  posture_reference_urls(['lifecycle'], 'platform_architecture_and_lifecycle'),
   posture_notes('platform_architecture_and_lifecycle')
 ) }}
 
@@ -2231,6 +2290,7 @@ Cluster update history was not returned.
   recommended_action_with_posture_docs('Use this section for sizing only when node inventory and allocatable CPU and memory are fully derived; otherwise rerun collection or confirm node allocatable facts before using it for planning.', 'INFO' if capacity_node_inventory_missing or capacity_resource_partial else 'OK', ['capacity'], 'capacity_planning_snapshot'),
   posture_owner('capacity_planning_snapshot', 'capacity'),
   posture_verification('capacity_planning_snapshot', gap_done_when('INFO' if capacity_node_inventory_missing or capacity_resource_partial else 'OK')),
+  posture_reference_urls(['capacity'], 'capacity_planning_snapshot'),
   posture_notes('capacity_planning_snapshot')
 ) }}
 
@@ -2511,6 +2571,7 @@ Cluster update history was not returned.
   recommended_action_with_posture_docs('Establish or complete the GitOps operating model, then use the owning posture sections for backup, identity, remediation, and fleet-management follow-through.', 'WARNING' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'), ['operations'], 'declarative_operations'),
   posture_owner('declarative_operations', 'operations'),
   posture_verification('declarative_operations', gap_done_when('WARNING' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))),
+  posture_reference_urls(['operations'], 'declarative_operations'),
   posture_notes('declarative_operations')
 ) }}
 
@@ -2564,6 +2625,7 @@ Cluster update history was not returned.
   recommended_action_with_posture_docs('Stabilize failed pipelines and runner pods first, then close trigger-ownership and build-automation gaps with the delivery engineering team.', 'WARNING' if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 or (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | int) > 0 or (cicd_runner_present and ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 or (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 or (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0)) else ('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else 'INFO'), ['release'], 'container_platform_adoption_and_release_engineering'),
   posture_owner('container_platform_adoption_and_release_engineering', 'release'),
   posture_verification('container_platform_adoption_and_release_engineering', gap_done_when('WARNING' if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 or (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | int) > 0 or (cicd_runner_present and ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 or (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 or (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0)) else ('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else 'INFO'))),
+  posture_reference_urls(['release'], 'container_platform_adoption_and_release_engineering'),
   posture_notes('container_platform_adoption_and_release_engineering')
 ) }}
 
@@ -2720,6 +2782,7 @@ Cluster update history was not returned.
   recommended_action_with_posture_docs('Use the owning posture sections and capability sections below as the remediation queue, and rerun the assessment when blockers or incomplete evidence are cleared.', 'CRITICAL' if day2_critical_blocker_present else ('WARNING' if day2_warning_blocker_present or day2_top_blockers | length > 0 or day2_capability_assessment_state != 'completed' else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN')), ['day2'], 'day2_production_readiness'),
   posture_owner('day2_production_readiness', 'operations'),
   posture_verification('day2_production_readiness', gap_done_when('CRITICAL' if day2_critical_blocker_present else ('WARNING' if day2_warning_blocker_present or day2_top_blockers | length > 0 or day2_capability_assessment_state != 'completed' else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN')))),
+  posture_reference_urls(['day2'], 'day2_production_readiness'),
   posture_notes('day2_production_readiness')
 ) }}
 
@@ -2750,9 +2813,13 @@ Capability assessment note: collected capability analysis did not complete clean
 {% for section in day2_capability_sections %}
 #### {{ section.title | default(section.key | replace('_', ' ')) | title }}
 
-Leadership view: {{ capability_outcome_phrase(section) }}
+Leadership view
 
-Technical focus: {{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}
+{{ capability_outcome_phrase(section) }}
+
+Technical focus
+
+{{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}
 
 ##### Assessment Summary
 
@@ -2762,6 +2829,7 @@ Technical focus: {{ section.recommended_action | default('Review the expected ev
   recommended_action_with_capability_docs(section.recommended_action | default('Review the expected evidence for this capability.'), section),
   likely_owner_label(section.owner | default('platform')),
   capability_success_signal(section),
+  capability_reference_urls(section),
   section.notes | default('')
 ) }}
 
@@ -2783,11 +2851,18 @@ Technical focus: {{ section.recommended_action | default('Review the expected ev
 | Done when | `{{ capability_success_signal(section) | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
 | Reference | `{{ profile_text(section.docs | default('not-declared')) | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
 
-{% if section.notes | default('') %}
-Expected operating model: {{ section.notes | replace('|', '\\|') }}
+{% if (section.notes | default('') | trim | length > 0) or (profile_text(section.docs | default('')) | trim | length > 0) %}
+Expected operating model
+
+{% if section.notes | default('') | trim | length > 0 %}
+{{ section.notes | replace('|', '\\|') }}
 {% endif %}
+
 {% if profile_text(section.docs | default('')) | trim | length > 0 %}
-Implementation reference: {{ profile_text(section.docs | default('')) }}
+Implementation reference
+
+{{ profile_text(section.docs | default('')) }}
+{% endif %}
 {% endif %}
 
 {% if section.checks | default([]) | length > 0 %}
