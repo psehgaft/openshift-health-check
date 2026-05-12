@@ -55,7 +55,7 @@ source .venv/bin/activate
 ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
 
-For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
+If you are trying the repo for the first time, start with OpenShift. OpenShift is the original cluster type this solution was designed around, and `playbooks/openshift_cluster_health_report.yml` remains the primary entrypoint and deepest report path in the repo.
 
 For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and defaults to the full live support collection profile. That includes API and metric evidence, live `inspect`, Insights archive copy, optional `cluster-compare`, `must-gather`, and node diagnostics when they apply.
 
@@ -64,6 +64,8 @@ Example live OpenShift run:
 ```bash
 ansible-playbook playbooks/openshift_cluster_health_report.yml
 ```
+
+For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
 
 Common OpenShift command variants:
 

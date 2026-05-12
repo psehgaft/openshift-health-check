@@ -101,6 +101,40 @@ Files that currently enforce this contract:
 
 When changing any of those files, verify the other two still agree.
 
+## Extending Postures And Capabilities
+
+Users must be able to extend this repo with additional OpenShift postures or capabilities. Support that workflow deliberately instead of hard-coding today's list in only one place.
+
+When adding a new OpenShift posture:
+
+- Add it to `inputs/openshift-cluster-health-profile.yml` under `cluster_health_profile.postures`.
+- Add the matching section title mapping to `scripts/validate_openshift_report_output.py` in `POSTURE_SECTION_TITLES`.
+- Add or extend the section in `templates/openshift_cluster_health_report.md.j2`.
+- Preserve the five-question section contract from the design notes:
+  - what is the gap
+  - why it matters
+  - what should be done
+  - who owns it
+  - how to tell it is fixed
+- Make sure the new posture obeys `.enabled` gating in the final report.
+
+When adding a new OpenShift capability:
+
+- Add it to `inputs/openshift-cluster-health-profile.yml` under `cluster_health_profile.capabilities`.
+- Make sure `roles/analyze_openshift/tasks/day2.yml` can account for it in either:
+  - collected assessment output, or
+  - the fallback capability-section builder
+- Make sure `templates/openshift_cluster_health_report.md.j2` renders it through the profile-gated Day 2 capability section path.
+- Make sure `scripts/validate_openshift_report_output.py` still passes with the new enabled capability set.
+- Provide non-empty `docs`, `verification`, `owner`, `recommended_action`, and `top_detail` semantics for rendered validation.
+
+Extension rules:
+
+- New postures and capabilities should default to profile-driven inclusion, not template-only inclusion.
+- Do not add a posture or capability in analysis code without also updating the profile and validator contract.
+- Do not add a validator expectation for a posture or capability that cannot be enabled or disabled from the profile.
+- Preserve backward compatibility for existing profiles unless the task explicitly asks for a contract change.
+
 ## OpenShift Live Vs Collected Mode
 
 The OpenShift playbook supports:
@@ -211,6 +245,34 @@ If a change affects only a narrow path, targeted checks are still expected befor
 ansible-playbook --syntax-check playbooks/openshift_cluster_health_report.yml
 python3 -m py_compile scripts/validate_openshift_report_output.py
 ```
+
+Be mindful about verification. Code edits are not complete until the changed area has been checked at the right level.
+
+- Always do syntax or compile validation for the files you changed when such checks exist.
+- Run runtime validation when it makes sense for the touched path.
+- Prefer proving the behavior with the nearest real execution path instead of relying only on static inspection.
+- If a full runtime check is too expensive, run the narrowest realistic fixture, validator, or playbook path that exercises the changed behavior.
+- If you cannot run an expected validation step, say so explicitly and state what remains unverified.
+
+Expected verification by change type:
+
+- Playbooks or Ansible task files:
+  - run `ansible-playbook --syntax-check` for affected playbooks
+  - run the relevant fixture or `scripts/validate_repo.sh` when behavior changed
+- Python scripts:
+  - run `python3 -m py_compile` on touched scripts
+  - run the owning validator, helper, or fixture when behavior changed
+- Report templates:
+  - run template validation
+  - run rendered-report validation through the relevant fixture when section content or gating changed
+- Input profiles:
+  - run profile validation
+  - run rendered-report validation if posture or capability presence changed
+- Shell scripts:
+  - run `bash -n`
+  - run the script or the narrowest safe invocation if behavior changed
+
+The goal is not just “syntax clean”. The goal is “unlikely to break the latest working repo behavior”.
 
 ## Change Discipline
 
