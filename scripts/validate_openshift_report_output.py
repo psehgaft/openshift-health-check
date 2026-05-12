@@ -47,7 +47,7 @@ RUNTIME_SIGNAL_OUTPUT_MARKERS = [
 ]
 
 REQUIRED_DAY2_MARKERS = [
-    "### Individual Capability Sections",
+    "### Capability Assessments",
 ]
 
 FORBIDDEN_CAPABILITY_ACTION_PATTERNS = (
@@ -137,7 +137,7 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
     start_idx = None
     end_idx = None
     for idx, line in enumerate(lines):
-        if line.strip() == "### Individual Capability Sections":
+        if line.strip() == "### Capability Assessments":
             start_idx = idx + 1
             continue
         if start_idx is not None and line.startswith("### Findings"):

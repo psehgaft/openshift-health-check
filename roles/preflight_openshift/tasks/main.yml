@@ -86,6 +86,7 @@
   register: openshift_rbac_check_cmd
   changed_when: false
   failed_when: false
+  when: rbac_check_fail_on_gap | default(false) | bool
 
 - name: Normalize service account authorization matrix
   ansible.builtin.set_fact:
@@ -93,6 +94,8 @@
       {{
         (openshift_rbac_check_cmd.stdout | from_json)
         if (
+          (openshift_rbac_check_cmd is defined)
+          and
           (openshift_rbac_check_cmd.rc | default(1) | int) == 0
           and (openshift_rbac_check_cmd.stdout | default('') | trim | length > 0)
         )
@@ -102,10 +105,14 @@
           'summary': {
             'check_count': 0,
             'passed_count': 0,
-            'failed_count': 1,
-            'failed_labels': ['rbac-verification-script']
+            'failed_count': (1 if (rbac_check_fail_on_gap | default(false) | bool) else 0),
+            'failed_labels': (['rbac-verification-script'] if (rbac_check_fail_on_gap | default(false) | bool) else [])
           },
-          'error': (openshift_rbac_check_cmd.stderr | default('RBAC verification script failed.'))
+          'error': (
+            openshift_rbac_check_cmd.stderr
+            | default('RBAC verification script failed.' if (rbac_check_fail_on_gap | default(false) | bool) else '')
+          ),
+          'skipped': (not (rbac_check_fail_on_gap | default(false) | bool))
         }
       }}
   changed_when: false

@@ -17,6 +17,9 @@ from typing import Dict, List, Set, Tuple
 import yaml
 
 
+AUTH_CAN_I_TIMEOUT_SECONDS = 15
+
+
 def load_yaml(path: Path):
     with path.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle)
@@ -367,12 +370,50 @@ def run_can_i(kube_cli: str, subject: str, current_user: str, check: dict):
         elif check.get("namespace"):
             argv.extend(["-n", check["namespace"]])
 
-    proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=AUTH_CAN_I_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "label": check["label"],
+            "command": argv,
+            "ok": False,
+            "rc": 124,
+            "stdout": "",
+            "stderr": f"timed out after {AUTH_CAN_I_TIMEOUT_SECONDS} seconds",
+            "source": check.get("source", ""),
+            "required": bool(check.get("required", True)),
+            "used_impersonation": use_impersonation,
+        }
     # If the current user is already the target service account, retry without --as
     # because some clusters deny SAR impersonation even for self-checks.
     if use_impersonation and current_user == subject and proc.returncode != 0:
         argv = [part for part in argv if part not in {"--as", subject}]
-        proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+        try:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=AUTH_CAN_I_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "label": check["label"],
+                "command": argv,
+                "ok": False,
+                "rc": 124,
+                "stdout": "",
+                "stderr": f"timed out after {AUTH_CAN_I_TIMEOUT_SECONDS} seconds",
+                "source": check.get("source", ""),
+                "required": bool(check.get("required", True)),
+                "used_impersonation": False,
+            }
         use_impersonation = False
 
     stdout = (proc.stdout or "").strip().lower()
