@@ -715,10 +715,7 @@
     ]
     grafana_present = any_keyword(["grafana"], all_workload_blobs) or "grafana" in namespace_names
     grafana_dashboard_crd_present = crd_has("grafanadashboards", "grafana.integreatly.org", "grafana.com")
-    grafana_dashboard_present = bool(
-        len(dashboard_configmaps) > 0
-        or grafana_dashboard_crd_present
-    )
+    grafana_dashboard_present = bool(len(dashboard_configmaps) > 0)
     workload_vulnerability_report_crd_present = crd_has("aquasecurity.github.io", "vulnerabilityreports")
     workload_scanner_subscription_present = any(
         package in subscription_packages
@@ -763,13 +760,14 @@
             "qualys-agent",
         }
     )
-    workload_scanner_present = bool(
+    workload_scanner_context_present = bool(
         workload_scanner_subscription_present
         or
         workload_vulnerability_report_crd_present
         or workload_scanner_workload_present
         or workload_scanner_namespace_present
     )
+    workload_scanner_present = bool(workload_scanner_workload_present)
     dynatrace_operator_subscription_present = "dynatrace-operator" in subscription_packages
     dynatrace_namespace_present = "dynatrace" in namespace_names
     dynatrace_crd_present = crd_has("dynakube.dynatrace.com", "edgeconnects.dynatrace.com")
@@ -1756,6 +1754,7 @@
             "prod-day2-compliance-requirements-missing": "compliance_requirements_validation",
             "prod-day2-identity-provider-missing": "oauth_external_identity_provider",
             "prod-day2-machinehealthcheck-missing": "machine_health_check_remediation",
+            "prod-day2-machinehealthcheck-coverage-incomplete": "machine_health_check_remediation",
             "prod-day2-cluster-autoscaler-missing": "cluster_autoscaler_configuration",
             "prod-day2-cluster-image-mirror-configuration-missing": "cluster_image_mirror_configuration",
             "prod-day2-cluster-image-mirror-configuration-legacy-icsp-only": "cluster_image_mirror_configuration",
@@ -2052,7 +2051,7 @@
         add_finding(
             "prod-day2-grafana-dashboards-missing",
             (
-                "no in-cluster Grafana dashboard inventory was detected from dashboard ConfigMaps or Grafana dashboard CRDs"
+                "no in-cluster Grafana dashboard inventory was detected from dashboard ConfigMaps"
                 + (", and no Grafana workload footprint was found" if not grafana_present else "")
             ),
             severity=cap_failure_severity("grafana_metrics_dashboards"),
@@ -2748,7 +2747,7 @@
         )
     elif (mhc_expected or cap_required("machine_health_check_remediation")) and not mhc_healthy:
         add_finding(
-            "prod-day2-machinehealthcheck-missing",
+            "prod-day2-machinehealthcheck-coverage-incomplete",
             (
                 "MachineHealthCheck coverage is incomplete for Machine API-managed worker pools: "
                 f"usableMachineHealthChecks={len(mhc_usable)}, "
@@ -3096,6 +3095,7 @@
         cap_status_for_presence("workload_vulnerability_scanning", workload_scanner_present),
         (
             f"scanner_present={workload_scanner_present} "
+            f"scanner_context_present={workload_scanner_context_present} "
             f"scanner_subscription_present={workload_scanner_subscription_present} "
             f"report_crd_present={workload_vulnerability_report_crd_present} "
             f"scanner_workload_present={workload_scanner_workload_present} "
@@ -3108,7 +3108,11 @@
     if not workload_scanner_present and cap_required("workload_vulnerability_scanning"):
         add_finding(
             "prod-day2-workload-vulnerability-scanner-missing",
-            "no live workload vulnerability or security scanner agent, operator, or vulnerability report signal was detected",
+            (
+                "no live workload vulnerability or security scanner workload footprint was detected"
+                if not workload_scanner_context_present
+                else "scanner context was detected from namespace, subscription, or CRD evidence, but no live workload vulnerability or security scanner workload footprint was found"
+            ),
             severity=cap_failure_severity("workload_vulnerability_scanning"),
             source="live workload scanner operator, agent, and report inventory",
         )

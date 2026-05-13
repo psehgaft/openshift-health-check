@@ -40,7 +40,18 @@
         + ([{'severity': 'warning', 'area': 'nodes', 'detail': 'Nodes under pressure: ' ~ ((pressure_nodes | default([]) | map(attribute='name') | list) | join(', '))}] if (pressure_nodes | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'mcp', 'detail': 'Degraded MCPs: ' ~ (degraded_mcps | join(', '))}] if (degraded_mcps | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'routes', 'detail': 'Routes without admitted status: ' ~ ((assessment_route_issues | length) | string)}] if (assessment_route_issues | length > 0) else [])
-        + ([{'severity': 'warning', 'area': 'auth', 'detail': 'OAuth cluster has no configured identity provider.'}] if (auth_findings | default([]) | length > 0) else [])
+        + ([{
+              'severity': 'warning',
+              'area': 'auth',
+              'detail': (
+                'OAuth identity posture requires review: '
+                ~ (
+                    auth_posture_summary.reason_summary
+                    | default((auth_findings | default([]) | map(attribute='detail') | first), true)
+                    | default('identity provider or kubeadmin posture requires review', true)
+                  )
+              )
+            }] if (auth_findings | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'workloads', 'detail': 'Unhealthy workloads: ' ~ ((workload_health_issues | default([]) | length) | string)}] if (workload_health_issues | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'pods', 'detail': 'Unhealthy user pods: ' ~ ((unhealthy_user_pods | default([]) | length) | string)}] if (unhealthy_user_pods | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'pods', 'detail': 'High-restart user pods: ' ~ (((pod_restart_hotspots | default([]) | map(attribute='restarts') | map('int') | select('ge', 5) | list) | length) | string)}] if ((pod_restart_hotspots | default([]) | map(attribute='restarts') | map('int') | select('ge', 5) | list | length) > 0) else [])
