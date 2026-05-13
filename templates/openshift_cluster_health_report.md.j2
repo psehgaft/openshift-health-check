@@ -2897,37 +2897,22 @@ Findings
 | `Readiness blocker count` | `{% if day2_top_blockers | length > 0 %}WARNING{% elif day2_status == 'HEALTHY' %}OK{% else %}UNKNOWN{% endif %}` | `{{ day2_top_blockers | length }} blockers` | `Production sign-off should be based on unresolved lifecycle, recovery, security, observability, and operations blockers.` | `blockers={{ day2_top_blockers | join('; ') or 'none' }}` | `{% if day2_top_blockers | length > 0 %}Resolve the named readiness blockers in the owning posture sections before production sign-off.{% elif day2_status == 'HEALTHY' %}No readiness-blocker remediation is required for this posture.{% else %}Verify incomplete readiness inputs before using this roll-up as a final decision.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('WARNING' if day2_top_blockers | length > 0 else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN')) }}` |
 
 {% endif %}
-## Appendix: Detailed Evidence Samples
-
 {% set has_supporting_evidence =
   (top_namespace_issue_summary | default([]) | length > 0)
   or (report_collection_failures_list | length > 0)
   or (pv_issues | default([]) | length > 0)
   or (pvc_issues | default([]) | length > 0)
 %}
+{% if has_supporting_evidence %}
+## Appendix: Supporting Evidence Samples
 
-### Health Score
-
-| Signal | Value | Status |
-| --- | --- | --- |
-| Supporting evidence present | `{{ has_supporting_evidence }}` | {{ status_badge('INFO' if has_supporting_evidence else 'OK') }} |
-| Namespace evidence samples | `{{ top_namespace_issue_summary | default([]) | length }}` | {{ status_badge('INFO' if (top_namespace_issue_summary | default([]) | length) > 0 else 'OK') }} |
-| Storage issue samples | `{{ (top_pv_issues | default([]) | length | int) + (top_pvc_issues | default([]) | length | int) }}` | {{ status_badge('INFO' if (((top_pv_issues | default([]) | length | int) + (top_pvc_issues | default([]) | length | int)) > 0) else 'OK') }} |
-
-### Recommendations
-
-**Findings Summary**
-- this appendix contains lower-level evidence samples that support the main domain conclusions when namespace state, storage issues, or collection failures need extra detail.
-
-### Findings
-{% if not has_supporting_evidence %}
-| Check | Result | Detail |
-| --- | --- | --- |
-| `Supporting evidence appendix` | `not needed` | `No additional supporting evidence tables were needed for this run.` |
-{% else %}
+This appendix contains lower-level evidence samples that support the main domain conclusions when namespace state, storage issues, or collection failures need extra detail.
 
 {% if top_namespace_issue_summary | default([]) | length > 0 %}
-#### Non-Active Namespaces
+#### Namespace State Samples
+
+Showing up to the top {{ top_namespace_issue_summary | length }} namespaces that were flagged for follow-up or incomplete state classification.
+
 | Namespace | Phase |
 | --- | --- |
 {% for item in top_namespace_issue_summary %}
@@ -2938,8 +2923,23 @@ Findings
 {% endif %}
 {% endif %}
 
+{% if report_collection_failures_list | length > 0 %}
+#### Collection Failures
+
+Showing up to the top 10 collection failures that can affect confidence in the report.
+
+| Command | Status | Detail |
+| --- | --- | --- |
+{% for item in (report_collection_failures_list | default([]))[:10] %}
+| `{{ item.name | default('unknown') }}` | `{{ 'timed-out' if (item.timed_out | default(false)) else 'failed' }}` | `{{ item.stderr | default(item.detail | default('No error detail captured.')) | replace('|', '\\|') }}` |
+{% endfor %}
+{% if (report_collection_failures_list | length) > 10 %}
+| `additional failures omitted` | `{{ (report_collection_failures_list | length) - 10 }}` | `See collection summary for full failure accounting.` |
+{% endif %}
+{% endif %}
+
 {% if pvc_issues | default([]) | length > 0 %}
-#### Top 25 PVCs with Issues
+#### Top PVC Samples With Issues
 
 Showing up to the top 25 PVCs with detected issues.
 
@@ -2954,7 +2954,8 @@ Showing up to the top 25 PVCs with detected issues.
 {% endif %}
 
 {% if pv_issues | default([]) | length > 0 %}
-#### PV Issues
+#### Top PV Samples With Issues
+
 | PV | Phase | StorageClass | Claim |
 | --- | --- | --- | --- |
 {% for pv in top_pv_issues %}
