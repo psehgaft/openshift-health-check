@@ -368,7 +368,7 @@
       operators_progressing_high_impact: "{{ high_impact_progressing_operators | length }}"
       operators_unavailable: "{{ unavailable_operators | default([]) | length }}"
       operator_version_mismatches: "{{ cluster_operator_version_mismatches | default([]) | length }}"
-      nodes_total: "{{ (graph.nodes | default({})).get('items', []) | length }}"
+      nodes_total: "{{ openshift_node_items | default((graph.nodes | default({})).get('items', [])) | length }}"
       nodes_not_ready: "{{ not_ready_nodes | default([]) | length }}"
       node_pressure_count: "{{ pressure_nodes | default([]) | length }}"
       mcps_degraded: "{{ degraded_mcps | default([]) | length }}"
@@ -548,6 +548,8 @@
         or ((etcd_peer_rtt_p99_ms | default('') | string | length > 0) and ((etcd_peer_rtt_p99_ms | float) > (etcd_peer_rtt_p99_warn_ms | default(50) | float)))
         or ((etcd_leader_changes_5m | default('') | string | length > 0) and ((etcd_leader_changes_5m | float) > 0))
       }}
+    platform_etcd_diag_verdict: "{{ etcd_ocp_diag_summary.verdict | default('not-collected') }}"
+    platform_omc_diag_verdict: "{{ omc_summary.verdict | default('not-collected') }}"
     core_platform_critical: >-
       {{
         cv_failing == 'True'
@@ -565,6 +567,8 @@
         or (apiservice_issues | default([]) | length > 0)
         or apiserver_readyz_failed
         or etcd_leader_unhealthy
+        or platform_etcd_diag_verdict == 'unsupported-risk'
+        or platform_omc_diag_verdict == 'unsupported-risk'
       }}
     core_platform_warning: >-
       {{
@@ -574,6 +578,8 @@
         or (pressure_nodes | default([]) | length > 0)
         or apiserver_runtime_degraded
         or etcd_runtime_degraded
+        or platform_etcd_diag_verdict == 'review-required'
+        or platform_omc_diag_verdict == 'review-required'
         or (platform_pod_issues | default([]) | length > 0)
         or (image_registry_findings | default([]) | length > 0)
       }}
@@ -593,6 +599,8 @@
           + (['API runtime degraded'] if apiserver_runtime_degraded else [])
           + (['etcd leader unhealthy'] if etcd_leader_unhealthy else [])
           + (['etcd runtime degraded'] if etcd_runtime_degraded else [])
+          + (['etcd diagnostics verdict: ' ~ platform_etcd_diag_verdict] if platform_etcd_diag_verdict in ['unsupported-risk', 'review-required'] else [])
+          + (['OMC diagnostics verdict: ' ~ platform_omc_diag_verdict] if platform_omc_diag_verdict in ['unsupported-risk', 'review-required'] else [])
           + (['platform pod issues'] if (platform_pod_issues | default([]) | length > 0) else [])
           + (['image registry findings'] if (image_registry_findings | default([]) | length > 0) else [])
           + (['high-impact operators progressing: ' ~ (high_impact_progressing_operators | join(', '))] if (high_impact_progressing_operators | length > 0) else [])
@@ -611,11 +619,15 @@
         + ([{'severity': 'critical', 'area': 'apiservices', 'detail': 'Unavailable aggregated API services: ' ~ ((apiservice_issues | default([]) | length) | string)}] if (apiservice_issues | default([]) | length > 0) else [])
         + ([{'severity': 'critical', 'area': 'api-readyz', 'detail': 'API /readyz failed or reported failed checks.'}] if apiserver_readyz_failed else [])
         + ([{'severity': 'critical', 'area': 'etcd', 'detail': 'etcd leader count is not healthy.'}] if etcd_leader_unhealthy else [])
+        + ([{'severity': 'critical', 'area': 'etcd-diagnostics', 'detail': 'etcd diagnostics verdict: ' ~ platform_etcd_diag_verdict}] if platform_etcd_diag_verdict == 'unsupported-risk' else [])
+        + ([{'severity': 'critical', 'area': 'omc-diagnostics', 'detail': 'OMC diagnostics verdict: ' ~ platform_omc_diag_verdict}] if platform_omc_diag_verdict == 'unsupported-risk' else [])
         + ([{'severity': 'warning', 'area': 'cluster-version', 'detail': 'ClusterVersion is progressing or availability is unknown.'}] if (cv_progressing == 'True' or cv_available == 'Unknown') else [])
         + ([{'severity': 'warning', 'area': 'operators', 'detail': 'High-impact operators progressing: ' ~ (high_impact_progressing_operators | join(', '))}] if (high_impact_progressing_operators | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'nodes', 'detail': 'Nodes under pressure: ' ~ ((pressure_nodes | default([]) | map(attribute='name') | list) | join(', '))}] if (pressure_nodes | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'api-runtime', 'detail': 'API request errors or latency exceeded warning thresholds.'}] if apiserver_runtime_degraded else [])
         + ([{'severity': 'warning', 'area': 'etcd-runtime', 'detail': 'etcd latency or leader-change metrics exceeded warning thresholds.'}] if etcd_runtime_degraded else [])
+        + ([{'severity': 'warning', 'area': 'etcd-diagnostics', 'detail': 'etcd diagnostics verdict: ' ~ platform_etcd_diag_verdict}] if platform_etcd_diag_verdict == 'review-required' else [])
+        + ([{'severity': 'warning', 'area': 'omc-diagnostics', 'detail': 'OMC diagnostics verdict: ' ~ platform_omc_diag_verdict}] if platform_omc_diag_verdict == 'review-required' else [])
         + ([{'severity': 'warning', 'area': 'platform-pods', 'detail': 'Platform namespace pod issues: ' ~ ((platform_pod_issues | default([]) | length) | string)}] if (platform_pod_issues | default([]) | length > 0) else [])
         + ([{'severity': 'warning', 'area': 'image-registry', 'detail': 'Image registry findings: ' ~ ((image_registry_findings | default([]) | length) | string)}] if (image_registry_findings | default([]) | length > 0) else [])
       }}
@@ -1041,6 +1053,10 @@
       vendor_managed_observability_present: "{{ vendor_managed_observability_present }}"
       vendor_managed_observability_configured: "{{ vendor_managed_observability_configured }}"
       vendor_managed_observability_vendors: "{{ ((observability_forwarding_summary.metrics_forwarding_vendor_names | default([])) + (observability_forwarding_summary.log_forwarding_vendor_names | default([]))) | unique }}"
+      vendor_managed_log_forwarding_present: "{{ observability_forwarding_summary.vendor_managed_log_forwarding_present | default(false) }}"
+      vendor_managed_metrics_forwarding_present: "{{ observability_forwarding_summary.vendor_managed_metrics_forwarding_present | default(false) }}"
+      log_forwarding_vendor_names: "{{ observability_forwarding_summary.log_forwarding_vendor_names | default([]) }}"
+      metrics_forwarding_vendor_names: "{{ observability_forwarding_summary.metrics_forwarding_vendor_names | default([]) }}"
       firing_alert_count: "{{ firing_alerts | default([]) | length }}"
       firing_critical_alert_count: "{{ firing_critical_alert_count }}"
       firing_noncritical_alert_count: "{{ firing_warning_alert_count }}"
@@ -2336,10 +2352,78 @@
 - name: Build cluster current state sanity findings
   vars:
     graph: "{{ analysis_graph | default({}) }}"
+    graph_object_counts:
+      namespaces: "{{ (graph.namespaces | default({})).get('items', []) | length }}"
+      pods: "{{ (graph.pods | default({})).get('items', []) | length }}"
+      running_pods: "{{ (graph.pods | default({})).get('items', []) | selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+      deployments: "{{ (graph.deployments | default({})).get('items', []) | length }}"
+      statefulsets: "{{ (graph.statefulsets | default({})).get('items', []) | length }}"
+      daemonsets: "{{ (graph.daemonsets | default({})).get('items', []) | length }}"
+      routes: "{{ (graph.routes | default({})).get('items', []) | length }}"
+      ingresses: "{{ (graph.ingresses | default({})).get('items', []) | length }}"
+      storageclasses: "{{ (graph.storageclasses | default({})).get('items', []) | length }}"
+    cluster_current_state_needs_object_count_reconcile: >-
+      {{
+        (
+          (cluster_current_state.object_counts | default({})).pods | default(0) | int == 0
+          and (graph_object_counts.pods | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).deployments | default(0) | int == 0
+          and (graph_object_counts.deployments | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).daemonsets | default(0) | int == 0
+          and (graph_object_counts.daemonsets | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).routes | default(0) | int == 0
+          and (graph_object_counts.routes | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).ingresses | default(0) | int == 0
+          and (graph_object_counts.ingresses | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).storageclasses | default(0) | int == 0
+          and (graph_object_counts.storageclasses | int) > 0
+        )
+      }}
+  ansible.builtin.set_fact:
+    cluster_current_state: >-
+      {{
+        cluster_current_state
+        | combine({
+            'object_counts': (
+              (cluster_current_state.object_counts | default({}))
+              | combine(graph_object_counts, recursive=True)
+            ),
+            'resources': (
+              (cluster_current_state.resources | default({}))
+              | combine({
+                  'average_pods_per_node': (
+                    (((graph_object_counts.pods | int) / ([1, (cluster_current_state.node_counts.total | default(0) | int)] | max)) | round(1))
+                    if (graph_object_counts.pods | int) > 0
+                    else ((cluster_current_state.resources | default({})).average_pods_per_node | default('unknown'))
+                  )
+                }, recursive=True)
+            )
+          }, recursive=True)
+        if cluster_current_state_needs_object_count_reconcile
+        else cluster_current_state
+      }}
+
+- name: Build cluster current state sanity findings
+  vars:
+    graph: "{{ analysis_graph | default({}) }}"
   ansible.builtin.set_fact:
     cluster_current_state_sanity_findings: >-
       {{
         ([] +
+        ([{
+          'area': 'object-count-reconcile',
+          'detail': 'cluster current state object counts were reconciled from collected graph data because one or more synthesized counts were zero while collected objects were present'
+        }] if (cluster_current_state_needs_object_count_reconcile | default(false) | bool) else []) +
         ([{
           'area': 'ip-capacity-services',
           'detail': 'services were collected but no service CIDR ranges were derived'
@@ -2424,3 +2508,118 @@
 - name: Normalize OpenShift topology resilience summary
   ansible.builtin.set_fact:
     topology_resilience: "{{ topology_resilience_cmd.stdout | from_json if (topology_resilience_cmd.rc == 0 and (topology_resilience_cmd.stdout | default('') | length > 0)) else {'worker_failure_domains_observed': [], 'worker_zone_counts': [], 'worker_nodes_without_zone_label': 0, 'single_zone_worker_pools': [], 'single_zone_worker_pool_count': 0, 'worker_zone_spread_unbalanced': false, 'machineset_summary': [], 'machine_set_failure_domains_observed': [], 'machine_set_zone_counts': [], 'machinesets_without_zone_label': 0, 'machineset_replica_unbalanced': false} }}"
+
+- name: Refresh platform architecture and lifecycle summary with topology evidence
+  vars:
+    refreshed_topology_warning_count: >-
+      {{
+        (1 if (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) else 0)
+        + (1 if (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience.machineset_replica_unbalanced | default(false) | bool) else 0)
+      }}
+    refreshed_topology_reason_summary: >-
+      {{
+        (
+          []
+          + (['worker pools limited to one zone'] if (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 else [])
+          + (['worker nodes missing zone labels'] if (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 else [])
+          + (['worker zone spread is imbalanced'] if (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) else [])
+          + (['machine API worker pools missing zone labels'] if (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 else [])
+          + (['machine API worker-pool replicas are imbalanced'] if (topology_resilience.machineset_replica_unbalanced | default(false) | bool) else [])
+        ) | join('; ')
+      }}
+    refreshed_deployment_type_confidence_warning: "{{ architecture_lifecycle_summary.deployment_type_confidence_warning | default(false) | bool }}"
+    refreshed_machine_networks_evidence_gap: "{{ architecture_lifecycle_summary.machine_networks_evidence_gap | default(false) | bool }}"
+    refreshed_lifecycle_support_status: "{{ architecture_lifecycle_summary.support_status | default('unknown') }}"
+    refreshed_architecture_lifecycle_status: >-
+      {{
+        'CRITICAL'
+        if refreshed_lifecycle_support_status == 'unsupported'
+        else (
+          'WARNING'
+          if (
+            refreshed_lifecycle_support_status == 'eus-optional'
+            or (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0
+            or (refreshed_topology_warning_count | int) > 0
+            or refreshed_deployment_type_confidence_warning
+            or refreshed_machine_networks_evidence_gap
+          )
+          else (
+            'not-assessed'
+            if refreshed_lifecycle_support_status == 'unknown'
+            else 'HEALTHY'
+          )
+        )
+      }}
+    refreshed_architecture_lifecycle_recommendation: >-
+      {{
+        (
+          'Upgrade planning is urgent: this OpenShift minor release is outside base support. Move to a currently supported minor immediately, and do not treat conditional update or topology cleanup as a substitute for a supported lifecycle state.'
+          if refreshed_lifecycle_support_status == 'unsupported'
+          else (
+            'Base maintenance support has ended for this EUS-capable minor. Confirm Extended Update Support entitlement and coverage immediately, or upgrade to a fully supported minor before treating the platform as lifecycle-stable.'
+            if refreshed_lifecycle_support_status == 'eus-optional'
+            else (
+              'Tighten architecture and lifecycle posture next: resolve conditional update risks, improve failure-domain spread and zone labeling, and verify deployment topology assumptions before treating the cluster architecture as production-ready.'
+              if (
+                (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0
+                or (refreshed_topology_warning_count | int) > 0
+              )
+              else (
+                'Architecture and lifecycle posture are acceptable for this run. Keep the cluster on a supported release, preserve multi-zone worker spread where expected, and continue normal upgrade readiness review.'
+                if (
+                  refreshed_lifecycle_support_status == 'supported'
+                  and not refreshed_deployment_type_confidence_warning
+                  and not refreshed_machine_networks_evidence_gap
+                )
+                else 'Architecture and lifecycle evidence is incomplete for this run. Verify cluster classification assumptions and machine-network design explicitly before relying on this posture as a full architecture review.'
+              )
+            )
+          )
+        )
+      }}
+    refreshed_architecture_lifecycle_reason_summary: >-
+      {{
+        (
+          []
+          + (
+            ['support status=' ~ refreshed_lifecycle_support_status ~ ' phase=' ~ (architecture_lifecycle_summary.support_phase | default('unknown'))]
+            if refreshed_lifecycle_support_status != 'supported'
+            else []
+          )
+          + (
+            ['conditional update risks: ' ~ ((architecture_lifecycle_summary.conditional_update_risk_names | default([]))[:3] | join(', '))]
+            if ((architecture_lifecycle_summary.conditional_update_risk_names | default([])) | length) > 0
+            else []
+          )
+          + (
+            [refreshed_topology_reason_summary]
+            if (refreshed_topology_reason_summary | length) > 0
+            else []
+          )
+          + (
+            ['cluster classification confidence=' ~ (architecture_lifecycle_summary.cluster_classification_confidence | default('low'))]
+            if refreshed_deployment_type_confidence_warning
+            else []
+          )
+          + (
+            ['machine-network design was not exposed by collected cluster API data']
+            if refreshed_machine_networks_evidence_gap
+            else []
+          )
+        ) | join('; ')
+      }}
+  ansible.builtin.set_fact:
+    architecture_lifecycle_summary: >-
+      {{
+        architecture_lifecycle_summary
+        | combine({
+            'status': refreshed_architecture_lifecycle_status,
+            'topology_warning_count': (refreshed_topology_warning_count | int),
+            'topology_reason_summary': refreshed_topology_reason_summary,
+            'reason_summary': refreshed_architecture_lifecycle_reason_summary,
+            'recommendation': refreshed_architecture_lifecycle_recommendation
+          }, recursive=True)
+      }}

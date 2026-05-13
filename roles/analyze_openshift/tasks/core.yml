@@ -412,6 +412,15 @@
 
 - name: Initialize node facts
   ansible.builtin.set_fact:
+    openshift_node_items: >-
+      {{
+        ((analysis_graph.nodes | default({})).get('items', []))
+        | selectattr('status.conditions', 'defined')
+        | selectattr('status.addresses', 'defined')
+        | selectattr('metadata.name', 'defined')
+        | selectattr('status.nodeInfo', 'defined')
+        | list
+      }}
     not_ready_nodes: []
     pressure_nodes: []
     primary_node_role_counts: {}
@@ -470,6 +479,16 @@
             "user_running": 0,
         }
 
+        def node_name_aliases(raw):
+            text = str(raw or "").strip()
+            if not text:
+                return []
+            aliases = [text]
+            short = text.split(".", 1)[0]
+            if short and short not in aliases:
+                aliases.append(short)
+            return aliases
+
         for item in data.get("pods") or []:
             status = item.get("status") or {}
             spec = item.get("spec") or {}
@@ -481,7 +500,8 @@
             is_user_namespace = not exclude_re.search(namespace_name or "")
 
             pod_phase_counts[phase] = pod_phase_counts.get(phase, 0) + 1
-            node_pod_counts[node_name] = node_pod_counts.get(node_name, 0) + 1
+            for node_alias in node_name_aliases(node_name):
+                node_pod_counts[node_alias] = node_pod_counts.get(node_alias, 0) + 1
             namespace_pod_counts[namespace_name] = namespace_pod_counts.get(namespace_name, 0) + 1
 
             pod_object_counts["total"] += 1
@@ -545,7 +565,7 @@
     openshift_control_plane_node_count: "{{ (openshift_control_plane_node_count | int) + (1 if primary_node_role in ['master', 'control-plane'] else 0) }}"
     openshift_worker_node_count: "{{ (openshift_worker_node_count | int) + (1 if primary_node_role == 'worker' else 0) }}"
     openshift_infra_node_count: "{{ (openshift_infra_node_count | int) + (1 if primary_node_role == 'infra' else 0) }}"
-  loop: "{{ (analysis_graph.nodes | default({'items': []})).get('items', []) }}"
+  loop: "{{ openshift_node_items | default([]) }}"
   vars:
     ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
     node_is_ready: "{{ (ready_status | string | lower) in ['true', 'ready'] }}"
@@ -605,7 +625,7 @@
       "openshift_install_manifests_data": (openshift_install_manifests_map.data | default({})),
       "namespace_names": ((analysis_graph.namespaces | default({})).get('items', []) | map(attribute='metadata.name') | list),
       "machineset_count": ((analysis_graph.machinesets | default({})).get('items', []) | length),
-      "node_count": ((analysis_graph.nodes | default({})).get('items', []) | length),
+      "node_count": (openshift_node_items | default([]) | length),
       "control_plane_node_count": (openshift_control_plane_node_count | int),
       "worker_node_count": (openshift_worker_node_count | int),
       "infra_node_count": (openshift_infra_node_count | int)
@@ -1061,7 +1081,7 @@
 - name: Build node capacity summary
   ansible.builtin.set_fact:
     node_capacity_summary: "{{ node_capacity_summary | default([]) + [node_capacity_entry] }}"
-  loop: "{{ (analysis_graph.nodes | default({})).get('items', []) }}"
+  loop: "{{ openshift_node_items | default([]) }}"
   vars:
     cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
     pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"

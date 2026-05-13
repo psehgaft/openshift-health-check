@@ -30,7 +30,26 @@ def main():
                     return True
         return False
 
-    dynatrace_present = bool((data.get("dynakubes") or []) or (data.get("edgeconnects") or []))
+    dynatrace_present = bool(
+        (data.get("dynakubes") or [])
+        or (data.get("edgeconnects") or [])
+        or crd_has("dynatrace.com")
+        or namespace_has("dynatrace")
+        or workload_has_any(
+            [
+                "dynatrace-operator",
+                "dynakube",
+                "oneagent",
+                "activegate",
+                "dynatrace-webhook",
+                "dynatrace-otel-collector",
+                "dynatrace-logmonitoring",
+                "dynatrace-extension-controller",
+                "dynatrace-extensions-collector",
+                "dynatrace-node-config-collector",
+            ]
+        )
+    )
     datadog_present = bool((data.get("datadogagents") or []) or crd_has("datadoghq.com") or namespace_has("datadog") or workload_has_any(["datadog"]))
     appdynamics_present = bool((data.get("clusteragents") or []) or (data.get("infravizs") or []) or crd_has("appdynamics.com") or namespace_has("appdynamics"))
     splunk_present = bool(crd_has("enterprise.splunk.com") or crd_has("monitoring.splunk.com") or namespace_has("splunk") or workload_has_any(["splunk-otel-collector", "splunk-connect-for-kubernetes", "splunk-cluster-receiver", "splunk-kubernetes-objects", "splunk-enterprise", "splunk-indexer", "splunk-search-head"]))

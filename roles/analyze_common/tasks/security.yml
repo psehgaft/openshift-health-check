@@ -73,11 +73,12 @@
   ansible.builtin.set_fact:
     security_findings: "{{ security_findings | default([]) + security_entries }}"
     workload_practice_findings: "{{ workload_practice_findings | default([]) + practice_entries }}"
-    node_cpu_request_millicores: "{{ (node_cpu_request_millicores | default({})) | combine({node_name: (((node_cpu_request_millicores | default({}))[node_name] | default(0)) + cpu_request_total_millicores)}, recursive=True) }}"
+    node_cpu_request_millicores: "{{ node_cpu_request_millicores_updated }}"
   loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     node_name: "{{ item.spec.nodeName | default('unscheduled') }}"
+    node_name_short: "{{ (node_name | string).split('.', 1)[0] if (node_name | string | length) > 0 else 'unscheduled' }}"
     pod_key: "{{ ns_name ~ '/' ~ (item.metadata.name | default('')) }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
     containers: "{{ (item.spec.containers | default([])) + (item.spec.initContainers | default([])) }}"
@@ -87,6 +88,26 @@
     containers_without_requests: "{{ containers | rejectattr('resources.requests', 'defined') | map(attribute='name') | list }}"
     containers_without_limits: "{{ containers | rejectattr('resources.limits', 'defined') | map(attribute='name') | list }}"
     cpu_request_total_millicores: "{{ pod_cpu_request_map[pod_key] | default(0) | float }}"
+    node_cpu_request_millicores_base: "{{ node_cpu_request_millicores | default({}) }}"
+    node_cpu_request_millicores_updated: >-
+      {{
+        node_cpu_request_millicores_base
+        | combine({
+            node_name: ((node_cpu_request_millicores_base[node_name] | default(0)) + cpu_request_total_millicores)
+          }, recursive=True)
+        | combine({
+            node_name_short: (((
+              node_cpu_request_millicores_base[node_name_short] | default(0)
+            ) + cpu_request_total_millicores))
+          }, recursive=True)
+        if (node_name_short != node_name)
+        else (
+          node_cpu_request_millicores_base
+          | combine({
+              node_name: ((node_cpu_request_millicores_base[node_name] | default(0)) + cpu_request_total_millicores)
+            }, recursive=True)
+        )
+      }}
     security_entries: >-
       {{
         ([] +
