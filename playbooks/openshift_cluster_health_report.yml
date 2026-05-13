@@ -314,6 +314,30 @@
             run_checkpoint_resume_next_stage: analysis
             run_checkpoint_status: completed
             run_checkpoint_write_snapshot: true
+            run_checkpoint_snapshot_payload:
+              platform_family: "{{ platform_family }}"
+              provider_family: "{{ provider_family }}"
+              kube_cli: "{{ kube_cli }}"
+              report_mode_resolved: "{{ report_mode_resolved }}"
+              report_run_mode: "{{ report_run_mode | default('fresh') }}"
+              report_output_dir: "{{ report_output_dir }}"
+              report_basename: "{{ report_basename }}"
+              report_generate_html: "{{ report_generate_html | default(false) }}"
+              report_generate_pdf: "{{ report_generate_pdf | default(false) }}"
+              report_timestamp: "{{ report_timestamp | default('') }}"
+              report_generated_at: "{{ report_generated_at | default('') }}"
+              cluster_profile_mode: "{{ cluster_profile_mode | default('auto') }}"
+              cluster_health_profile: "{{ cluster_health_profile | default({}) }}"
+              cluster_profile: "{{ cluster_profile | default({}) }}"
+              resolved_cluster_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('auto')) }}"
+              oc_context_cmd: "{{ oc_context_cmd | default({}) }}"
+              oc_server_cmd: "{{ oc_server_cmd | default({}) }}"
+              oc_user_cmd: "{{ oc_user_cmd | default({}) }}"
+              assessment_collection_summary: "{{ assessment_collection_summary | default({}) }}"
+              assessment_collection_failures: "{{ assessment_collection_failures | default([]) }}"
+              assessment_collection_skipped_optional_commands: "{{ assessment_collection_skipped_optional_commands | default([]) }}"
+              collected_resource_graph: "{{ collected_resource_graph | default({}) }}"
+              live_support_data: "{{ live_support_data | default({}) }}"
 
         - name: Run common analysis
           ansible.builtin.include_role:
@@ -329,9 +353,9 @@
             tasks_from: save_run_checkpoint.yml
           vars:
             run_checkpoint_stage: analysis
-            run_checkpoint_resume_next_stage: report
+            run_checkpoint_resume_next_stage: analysis
             run_checkpoint_status: completed
-            run_checkpoint_write_snapshot: true
+            run_checkpoint_write_snapshot: false
 
         - name: Build live OpenShift report
           ansible.builtin.include_role:
@@ -395,6 +419,14 @@
         - name: Resume live analysis and report stages
           when: (report_resume_manifest.resume_next_stage | default('')) == 'analysis'
           block:
+            - name: Rebuild preliminary OpenShift analysis graph from checkpointed collection state
+              ansible.builtin.include_role:
+                name: analyze_openshift
+                tasks_from: build_analysis_graph.yml
+            - name: Re-project preliminary OpenShift analysis graph from checkpointed collection state
+              ansible.builtin.include_role:
+                name: analyze_openshift
+                tasks_from: project_analysis_graph.yml
             - name: Run common analysis
               ansible.builtin.include_role:
                 name: analyze_common
@@ -407,9 +439,9 @@
                 tasks_from: save_run_checkpoint.yml
               vars:
                 run_checkpoint_stage: analysis
-                run_checkpoint_resume_next_stage: report
+                run_checkpoint_resume_next_stage: analysis
                 run_checkpoint_status: completed
-                run_checkpoint_write_snapshot: true
+                run_checkpoint_write_snapshot: false
             - name: Build live OpenShift report
               ansible.builtin.include_role:
                 name: report_openshift
@@ -499,9 +531,27 @@
             tasks_from: save_run_checkpoint.yml
           vars:
             run_checkpoint_stage: analysis
-            run_checkpoint_resume_next_stage: report
+            run_checkpoint_resume_next_stage: analysis
             run_checkpoint_status: completed
             run_checkpoint_write_snapshot: true
+            run_checkpoint_snapshot_payload:
+              platform_family: "{{ platform_family }}"
+              provider_family: "{{ provider_family }}"
+              kube_cli: "{{ kube_cli }}"
+              report_mode_resolved: "{{ report_mode_resolved }}"
+              report_run_mode: "{{ report_run_mode | default('fresh') }}"
+              report_output_dir: "{{ report_output_dir }}"
+              report_basename: "{{ report_basename }}"
+              report_generate_html: "{{ report_generate_html | default(false) }}"
+              report_generate_pdf: "{{ report_generate_pdf | default(false) }}"
+              report_timestamp: "{{ report_timestamp | default('') }}"
+              report_generated_at: "{{ report_generated_at | default('') }}"
+              cluster_profile_mode: "{{ cluster_profile_mode | default('auto') }}"
+              cluster_health_profile: "{{ cluster_health_profile | default({}) }}"
+              cluster_profile: "{{ cluster_profile | default({}) }}"
+              resolved_cluster_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('auto')) }}"
+              collected_resource_graph: "{{ collected_resource_graph | default({}) }}"
+              live_support_data: "{{ live_support_data | default({}) }}"
 
         - name: Build collected-state OpenShift report
           ansible.builtin.include_role:
@@ -555,6 +605,10 @@
         - name: Resume collected analysis and report stages
           when: (report_resume_manifest.resume_next_stage | default('')) == 'analysis'
           block:
+            - name: Re-prepare collected-state OpenShift analysis from checkpointed collection state
+              ansible.builtin.include_role:
+                name: analyze_openshift
+                tasks_from: prepare_collected_state.yml
             - name: Run common analysis against collected-state inputs
               ansible.builtin.include_role:
                 name: analyze_common
@@ -575,9 +629,27 @@
                 tasks_from: save_run_checkpoint.yml
               vars:
                 run_checkpoint_stage: analysis
-                run_checkpoint_resume_next_stage: report
+                run_checkpoint_resume_next_stage: analysis
                 run_checkpoint_status: completed
                 run_checkpoint_write_snapshot: true
+                run_checkpoint_snapshot_payload:
+                  platform_family: "{{ platform_family }}"
+                  provider_family: "{{ provider_family }}"
+                  kube_cli: "{{ kube_cli }}"
+                  report_mode_resolved: "{{ report_mode_resolved }}"
+                  report_run_mode: "{{ report_run_mode | default('fresh') }}"
+                  report_output_dir: "{{ report_output_dir }}"
+                  report_basename: "{{ report_basename }}"
+                  report_generate_html: "{{ report_generate_html | default(false) }}"
+                  report_generate_pdf: "{{ report_generate_pdf | default(false) }}"
+                  report_timestamp: "{{ report_timestamp | default('') }}"
+                  report_generated_at: "{{ report_generated_at | default('') }}"
+                  cluster_profile_mode: "{{ cluster_profile_mode | default('auto') }}"
+                  cluster_health_profile: "{{ cluster_health_profile | default({}) }}"
+                  cluster_profile: "{{ cluster_profile | default({}) }}"
+                  resolved_cluster_profile_mode: "{{ resolved_cluster_profile_mode | default(cluster_profile_mode | default('auto')) }}"
+                  collected_resource_graph: "{{ collected_resource_graph | default({}) }}"
+                  live_support_data: "{{ live_support_data | default({}) }}"
             - name: Build collected-state OpenShift report
               ansible.builtin.include_role:
                 name: report_openshift

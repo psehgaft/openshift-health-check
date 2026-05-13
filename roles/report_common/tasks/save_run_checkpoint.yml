@@ -10,24 +10,38 @@
     run_checkpoint_snapshot_path: "{{ report_resume_state_dir }}/{{ report_mode_resolved | default('live') }}-{{ run_checkpoint_stage }}.json"
   when: run_checkpoint_write_snapshot | default(true) | bool
 
-- name: Build filtered checkpoint context
-  ansible.builtin.set_fact:
-    run_checkpoint_context_filtered: >-
-      {{
-        (
-          vars
-          | dict2items
-          | rejectattr('key', 'match', '^(hostvars|groups|group_names|inventory_|play_hosts|playbook_dir|role_path|ansible_play_|omit|run_checkpoint_|report_resume_)')
-          | items2dict
-        )
-      }}
-  when: run_checkpoint_write_snapshot | default(true) | bool
-
 - name: Write run checkpoint snapshot
   ansible.builtin.copy:
     dest: "{{ run_checkpoint_snapshot_path }}"
     mode: "0644"
-    content: "{{ run_checkpoint_context_filtered | to_nice_json }}"
+    content: >-
+      {{
+        (
+          run_checkpoint_snapshot_payload
+          if (run_checkpoint_snapshot_payload is defined)
+          else (
+            vars
+            | dict2items
+            | rejectattr('key', 'match', '^(ansible_|hostvars|groups|group_names|inventory_|play_|playbook_dir|role_path|omit|environment$|vars$|lookup$|query$|q$|now$|undef$|run_checkpoint_|report_resume_)')
+            | rejectattr('key', 'match', '.*_(cmd|raw|stat|probe|parse|manifest|result|results)$')
+            | rejectattr('key', 'in', [
+                'collection_commands',
+                'collection_core_command_names',
+                'collection_run_metadata',
+                'collected_commands',
+                'collected_command_status',
+                'openshift_collection_commands',
+                'openshift_collection_core_command_names',
+                'openshift_collection_run_metadata',
+                'openshift_collected_commands',
+                'report_tool_detection_payload',
+                'run_checkpoint_context_filtered'
+              ])
+            | items2dict
+          )
+          | to_nice_json
+        )
+      }}
   when: run_checkpoint_write_snapshot | default(true) | bool
 
 - name: Update in-memory checkpoint pointers
