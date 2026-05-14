@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from typing import Iterable
 
 import yaml
@@ -40,6 +41,7 @@ class CallbackModule(DefaultCallbackModule):
         self._current_task_name = ""
         self._current_play_name = ""
         self._progress_drawn = False
+        self._progress_started_at = time.monotonic()
 
     def _task_key(self, task) -> str:
         return str(getattr(task, "_uuid", "") or "")
@@ -121,6 +123,14 @@ class CallbackModule(DefaultCallbackModule):
             return text[:max_len]
         return text[: max_len - 3] + "..."
 
+    def _format_elapsed(self) -> str:
+        elapsed_seconds = max(0, int(time.monotonic() - self._progress_started_at))
+        hours, remainder = divmod(elapsed_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
     def _progress_line(self) -> str:
         total = max(self._progress_total, 0)
         completed = min(self._progress_completed, total) if total > 0 else 0
@@ -128,7 +138,7 @@ class CallbackModule(DefaultCallbackModule):
         width = 24
         filled = min(width, int((completed / total) * width)) if total > 0 else 0
         bar = "#" * filled + "-" * (width - filled)
-        segments = [f"[{bar}] {percent:3d}% ({completed}/{total})"]
+        segments = [f"[{bar}] {percent:3d}% ({completed}/{total})", f"elapsed={self._format_elapsed()}"]
         if self._current_play_name:
             segments.append(f"play={self._truncate(self._current_play_name, 28)}")
         if self._current_task_name:
