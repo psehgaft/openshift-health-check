@@ -259,6 +259,17 @@
         report_resume_snapshot: "{{ (report_resume_snapshot_raw.content | b64decode) | ohc_parse_checkpoint_json_unsafe }}"
       when: report_run_mode | default('fresh') == 'resume_last_failure'
 
+    - name: Extract safe resume naming facts from checkpoint snapshot
+      vars:
+        report_resume_snapshot_text: "{{ report_resume_snapshot_raw.content | b64decode }}"
+      ansible.builtin.set_fact:
+        report_resume_cluster_infrastructure_name: "{{ report_resume_snapshot_text | ohc_checkpoint_get('cluster_profile.infrastructure_name', '') }}"
+        report_resume_cluster_classification_label: "{{ report_resume_snapshot_text | ohc_checkpoint_get('cluster_profile.cluster_classification_label', '') }}"
+        report_resume_cluster_classification_source: "{{ report_resume_snapshot_text | ohc_checkpoint_get('cluster_profile.cluster_classification_source', '') }}"
+        report_resume_cluster_deployment_type: "{{ report_resume_snapshot_text | ohc_checkpoint_get('cluster_profile.deployment_type', '') }}"
+        report_resume_cluster_deployment_type_source: "{{ report_resume_snapshot_text | ohc_checkpoint_get('cluster_profile.deployment_type_source', '') }}"
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
     - name: Restore resume checkpoint snapshot facts
       ansible.builtin.set_fact: "{{ report_resume_snapshot }}"
       when: report_run_mode | default('fresh') == 'resume_last_failure'
