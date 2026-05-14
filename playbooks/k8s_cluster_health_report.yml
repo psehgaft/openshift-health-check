@@ -491,10 +491,11 @@
                 run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
                 run_checkpoint_failed_message: >-
                   {{
-                    ansible_failed_result.msg
-                    | default(ansible_failed_result.stderr)
-                    | default(ansible_failed_result.stdout)
-                    | default(ansible_failed_result | string)
+                    'Task failed during Kubernetes workflow. '
+                    ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                    ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
+                    ~ ', stderr_lines=' ~ (((ansible_failed_result.stderr_lines | default([])) | length) | string)
+                    ~ ', stdout_lines=' ~ (((ansible_failed_result.stdout_lines | default([])) | length) | string)
                   }}
                 run_checkpoint_write_snapshot: false
             - name: Re-raise fresh Kubernetes workflow failure
@@ -503,10 +504,9 @@
                   Kubernetes workflow failed in task
                   '{{ ansible_failed_task.name | default("unknown-task") }}'.
                   {{
-                    ansible_failed_result.msg
-                    | default(ansible_failed_result.stderr)
-                    | default(ansible_failed_result.stdout)
-                    | default(ansible_failed_result | string)
+                    'Raw failure output was omitted from the rescue message because collected cluster data can contain literal template markers. '
+                    ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                    ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
                   }}
                   Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint.
 
@@ -573,10 +573,11 @@
                 run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
                 run_checkpoint_failed_message: >-
                   {{
-                    ansible_failed_result.msg
-                    | default(ansible_failed_result.stderr)
-                    | default(ansible_failed_result.stdout)
-                    | default(ansible_failed_result | string)
+                    'Task failed during resumed Kubernetes workflow. '
+                    ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                    ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
+                    ~ ', stderr_lines=' ~ (((ansible_failed_result.stderr_lines | default([])) | length) | string)
+                    ~ ', stdout_lines=' ~ (((ansible_failed_result.stdout_lines | default([])) | length) | string)
                   }}
                 run_checkpoint_write_snapshot: false
             - name: Re-raise resumed Kubernetes workflow failure
@@ -585,10 +586,9 @@
                   Resumed Kubernetes workflow failed again in task
                   '{{ ansible_failed_task.name | default("unknown-task") }}'.
                   {{
-                    ansible_failed_result.msg
-                    | default(ansible_failed_result.stderr)
-                    | default(ansible_failed_result.stdout)
-                    | default(ansible_failed_result | string)
+                    'Raw failure output was omitted from the rescue message because collected cluster data can contain literal template markers. '
+                    ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                    ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
                   }}
                   Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart.
 

@@ -248,9 +248,19 @@
         fail_msg: "The last saved checkpoint is not resumable for this report mode. Use report_run_mode=fresh."
       when: report_run_mode | default('fresh') == 'resume_last_failure'
 
-    - name: Load resume checkpoint snapshot
-      ansible.builtin.include_vars:
-        file: "{{ report_resume_manifest.snapshot_path }}"
+    - name: Read resume checkpoint snapshot
+      ansible.builtin.slurp:
+        src: "{{ report_resume_manifest.snapshot_path }}"
+      register: report_resume_snapshot_raw
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Parse resume checkpoint snapshot as unsafe data
+      ansible.builtin.set_fact:
+        report_resume_snapshot: "{{ (report_resume_snapshot_raw.content | b64decode) | ohc_parse_checkpoint_json_unsafe }}"
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Restore resume checkpoint snapshot facts
+      ansible.builtin.set_fact: "{{ report_resume_snapshot }}"
       when: report_run_mode | default('fresh') == 'resume_last_failure'
 
     - name: Restore checkpoint pointers from manifest
@@ -381,10 +391,11 @@
             run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
             run_checkpoint_failed_message: >-
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Task failed during collection stage. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
+                ~ ', stderr_lines=' ~ (((ansible_failed_result.stderr_lines | default([])) | length) | string)
+                ~ ', stdout_lines=' ~ (((ansible_failed_result.stdout_lines | default([])) | length) | string)
               }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise live workflow failure
@@ -393,10 +404,9 @@
               Live OpenShift workflow failed in task
               '{{ ansible_failed_task.name | default("unknown-task") }}'.
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Raw failure output was omitted from the rescue message because collected cluster data can contain literal template markers. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
               }}
               Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint.
       always:
@@ -470,10 +480,11 @@
             run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
             run_checkpoint_failed_message: >-
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Task failed during resumed live analysis or render stage. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
+                ~ ', stderr_lines=' ~ (((ansible_failed_result.stderr_lines | default([])) | length) | string)
+                ~ ', stdout_lines=' ~ (((ansible_failed_result.stdout_lines | default([])) | length) | string)
               }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise resumed live workflow failure
@@ -482,10 +493,9 @@
               Resumed live OpenShift workflow failed again in task
               '{{ ansible_failed_task.name | default("unknown-task") }}'.
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Raw failure output was omitted from the rescue message because collected cluster data can contain literal template markers. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
               }}
               Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart.
 
@@ -578,10 +588,11 @@
             run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
             run_checkpoint_failed_message: >-
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Task failed during collected-state analysis stage. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
+                ~ ', stderr_lines=' ~ (((ansible_failed_result.stderr_lines | default([])) | length) | string)
+                ~ ', stdout_lines=' ~ (((ansible_failed_result.stdout_lines | default([])) | length) | string)
               }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise collected workflow failure
@@ -590,10 +601,9 @@
               Collected-state OpenShift workflow failed in task
               '{{ ansible_failed_task.name | default("unknown-task") }}'.
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Raw failure output was omitted from the rescue message because collected cluster data can contain literal template markers. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
               }}
               Re-run with report_run_mode=resume_last_failure to continue from the last saved checkpoint.
 
@@ -680,10 +690,11 @@
             run_checkpoint_failed_task: "{{ ansible_failed_task.name | default('unknown-task') }}"
             run_checkpoint_failed_message: >-
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Task failed during resumed collected-state render stage. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
+                ~ ', stderr_lines=' ~ (((ansible_failed_result.stderr_lines | default([])) | length) | string)
+                ~ ', stdout_lines=' ~ (((ansible_failed_result.stdout_lines | default([])) | length) | string)
               }}
             run_checkpoint_write_snapshot: false
         - name: Re-raise resumed collected workflow failure
@@ -692,9 +703,8 @@
               Resumed collected-state OpenShift workflow failed again in task
               '{{ ansible_failed_task.name | default("unknown-task") }}'.
               {{
-                ansible_failed_result.msg
-                | default(ansible_failed_result.stderr)
-                | default(ansible_failed_result.stdout)
-                | default(ansible_failed_result | string)
+                'Raw failure output was omitted from the rescue message because collected cluster data can contain literal template markers. '
+                ~ 'rc=' ~ ((ansible_failed_result.rc | default('unknown')) | string)
+                ~ ', changed=' ~ ((ansible_failed_result.changed | default(false)) | string)
               }}
               Fix the reported issue and rerun with report_run_mode=resume_last_failure or use report_run_mode=fresh for a clean restart.
