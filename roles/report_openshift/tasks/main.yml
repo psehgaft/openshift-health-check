@@ -1,10 +1,56 @@
 ---
 - name: Define report paths
   ansible.builtin.set_fact:
-    report_cluster_type: "{{ cluster_profile.cluster_classification_label | default(cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift')))) }}"
-    report_cluster_name_source: "{{ cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim) }}"
-    report_cluster_name: "{{ ((cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim)) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
-    report_file_prefix: "{{ report_basename }}-{{ (cluster_profile.cluster_classification_label | default(cluster_profile.deployment_type | default(provider_family if (provider_family | default('generic')) != 'generic' else (platform_family | default('openshift'))))) }}-{{ ((cluster_profile.infrastructure_name if (cluster_profile.infrastructure_name | default('') not in ['', 'unknown']) else (oc_context_cmd.stdout | default('cluster') | trim)) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
+    report_cluster_type: >-
+      {{
+        report_render_cluster_type
+        if (report_render_cluster_type is defined)
+        else (
+          ((cluster_profile | default({})).get('cluster_classification_label', ''))
+          if (((cluster_profile | default({})).get('cluster_classification_label', '') | trim) not in ['', 'unknown'])
+          else (
+            ((cluster_profile | default({})).get('deployment_type', ''))
+            if (((cluster_profile | default({})).get('deployment_type', '') | trim) not in ['', 'unknown'])
+            else (
+              provider_family
+              if (provider_family | default('generic')) != 'generic'
+              else (platform_family | default('openshift'))
+            )
+          )
+        )
+      }}
+    report_cluster_name_source: >-
+      {{
+        report_render_cluster_name_source
+        if (report_render_cluster_name_source is defined)
+        else (
+          ((cluster_profile | default({})).get('infrastructure_name', ''))
+          if (((cluster_profile | default({})).get('infrastructure_name', '') | trim) not in ['', 'unknown'])
+          else (oc_context_cmd.stdout | default('cluster') | trim)
+        )
+      }}
+    report_cluster_name: >-
+      {{
+        report_render_cluster_name
+        if (report_render_cluster_name is defined)
+        else (
+          (
+            (
+              ((cluster_profile | default({})).get('infrastructure_name', ''))
+              if (((cluster_profile | default({})).get('infrastructure_name', '') | trim) not in ['', 'unknown'])
+              else (oc_context_cmd.stdout | default('cluster') | trim)
+            )
+            | lower
+            | regex_replace('[^a-z0-9._-]+', '-')
+            | regex_replace('^-+', '')
+            | regex_replace('-+$', '')
+          ) or 'cluster'
+        )
+      }}
+
+- name: Define report file prefix
+  ansible.builtin.set_fact:
+    report_file_prefix: "{{ report_render_file_prefix if (report_render_file_prefix is defined) else (report_basename ~ '-' ~ report_cluster_type ~ '-' ~ report_cluster_name ~ '-' ~ report_timestamp) }}"
 
 - name: Define report output files
   ansible.builtin.set_fact:
@@ -20,10 +66,28 @@
     tasks_from: build_live_openshift_execution_stats.yml
 
 - name: Build audit rubric
-  vars:
-    scored_workload_practice_findings_resolved: "{{ workload_practice_findings | default([]) | rejectattr('issue', 'equalto', 'missing-pod-disruption-budget') | list }}"
   ansible.builtin.set_fact:
-    scored_workload_practice_findings: "{{ scored_workload_practice_findings_resolved }}"
+    scored_workload_practice_findings_count: 0
+    audit_checks:
+      - id: resumed_report_summary
+        title: Resumed Report Summary
+        severity: "{{ 'critical' if (health_summary.status | default('UNKNOWN')) == 'CRITICAL' else ('warning' if (health_summary.status | default('UNKNOWN')) == 'WARNING' else 'pass') }}"
+        score: "{{ 0 if (health_summary.status | default('UNKNOWN')) == 'CRITICAL' else (6 if (health_summary.status | default('UNKNOWN')) == 'WARNING' else 10) }}"
+        max_score: 10
+        findings_count: "{{ report_collection.failed_commands | default(0) }}"
+      - id: collection_completeness
+        title: Data Collection Completeness
+        severity: "{{ 'critical' if (report_collection.core_failed_commands | default(0) | int > 0) else ('warning' if (report_collection.failed_commands | default(0) | int > 0) else 'pass') }}"
+        score: "{{ 0 if (report_collection.core_failed_commands | default(0) | int > 0) else (4 if (report_collection.failed_commands | default(0) | int > 0) else 8) }}"
+        max_score: 8
+        findings_count: "{{ report_collection.failed_commands | default(0) }}"
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Build audit rubric
+  vars:
+    scored_workload_practice_findings_count_resolved: "{{ workload_practice_findings | default([]) | rejectattr('issue', 'equalto', 'missing-pod-disruption-budget') | list | length }}"
+  ansible.builtin.set_fact:
+    scored_workload_practice_findings_count: "{{ scored_workload_practice_findings_count_resolved }}"
     audit_checks:
       - id: cluster_version
         title: Cluster Version State
@@ -57,10 +121,10 @@
         findings_count: "{{ (route_issues | default([]) | length) + (ingress_issues | default([]) | length) + (route_host_conflicts | default([]) | length) + (ingress_host_conflicts | default([]) | length) }}"
       - id: security_practices
         title: Security And Best Practices
-        severity: "{{ 'warning' if (auth_findings | default([]) | length > 0 or security_findings | default([]) | length > 0 or privileged_serviceaccount_access | default([]) | length > 0 or privileged_user_access | default([]) | length > 0 or privileged_group_access | default([]) | length > 0 or scored_workload_practice_findings | default([]) | length > 0 or namespaces_without_networkpolicy | default([]) | length > 0 or namespaces_missing_ingress_policies | default([]) | length > 0 or namespaces_missing_egress_policies | default([]) | length > 0 or namespaces_without_resourcequota | default([]) | length > 0 or namespaces_without_limitrange | default([]) | length > 0 or image_registry_findings | default([]) | length > 0 or feature_findings | default([]) | length > 0) else 'pass' }}"
-        score: "{{ 6 if (auth_findings | default([]) | length > 0 or security_findings | default([]) | length > 0 or privileged_serviceaccount_access | default([]) | length > 0 or privileged_user_access | default([]) | length > 0 or privileged_group_access | default([]) | length > 0 or scored_workload_practice_findings | default([]) | length > 0 or namespaces_without_networkpolicy | default([]) | length > 0 or namespaces_missing_ingress_policies | default([]) | length > 0 or namespaces_missing_egress_policies | default([]) | length > 0 or namespaces_without_resourcequota | default([]) | length > 0 or namespaces_without_limitrange | default([]) | length > 0 or image_registry_findings | default([]) | length > 0 or feature_findings | default([]) | length > 0) else 14 }}"
+        severity: "{{ 'warning' if (auth_findings | default([]) | length > 0 or security_findings | default([]) | length > 0 or privileged_serviceaccount_access | default([]) | length > 0 or privileged_user_access | default([]) | length > 0 or privileged_group_access | default([]) | length > 0 or scored_workload_practice_findings_count | default(0) | int > 0 or namespaces_without_networkpolicy | default([]) | length > 0 or namespaces_missing_ingress_policies | default([]) | length > 0 or namespaces_missing_egress_policies | default([]) | length > 0 or namespaces_without_resourcequota | default([]) | length > 0 or namespaces_without_limitrange | default([]) | length > 0 or image_registry_findings | default([]) | length > 0 or feature_findings | default([]) | length > 0) else 'pass' }}"
+        score: "{{ 6 if (auth_findings | default([]) | length > 0 or security_findings | default([]) | length > 0 or privileged_serviceaccount_access | default([]) | length > 0 or privileged_user_access | default([]) | length > 0 or privileged_group_access | default([]) | length > 0 or scored_workload_practice_findings_count | default(0) | int > 0 or namespaces_without_networkpolicy | default([]) | length > 0 or namespaces_missing_ingress_policies | default([]) | length > 0 or namespaces_missing_egress_policies | default([]) | length > 0 or namespaces_without_resourcequota | default([]) | length > 0 or namespaces_without_limitrange | default([]) | length > 0 or image_registry_findings | default([]) | length > 0 or feature_findings | default([]) | length > 0) else 14 }}"
         max_score: 14
-        findings_count: "{{ (auth_findings | default([]) | length) + (security_findings | default([]) | length) + (privileged_serviceaccount_access | default([]) | length) + (privileged_user_access | default([]) | length) + (privileged_group_access | default([]) | length) + (scored_workload_practice_findings | default([]) | length) + (namespaces_without_networkpolicy | default([]) | length) + (namespaces_missing_ingress_policies | default([]) | length) + (namespaces_missing_egress_policies | default([]) | length) + (namespaces_without_resourcequota | default([]) | length) + (namespaces_without_limitrange | default([]) | length) + (image_registry_findings | default([]) | length) + (feature_findings | default([]) | length) }}"
+        findings_count: "{{ (auth_findings | default([]) | length) + (security_findings | default([]) | length) + (privileged_serviceaccount_access | default([]) | length) + (privileged_user_access | default([]) | length) + (privileged_group_access | default([]) | length) + (scored_workload_practice_findings_count | default(0) | int) + (namespaces_without_networkpolicy | default([]) | length) + (namespaces_missing_ingress_policies | default([]) | length) + (namespaces_missing_egress_policies | default([]) | length) + (namespaces_without_resourcequota | default([]) | length) + (namespaces_without_limitrange | default([]) | length) + (image_registry_findings | default([]) | length) + (feature_findings | default([]) | length) }}"
       - id: unused_resources
         title: Unused Resource Heuristics
         severity: "{{ 'warning' if (empty_user_namespaces | default([]) | length > 0 or services_without_endpoints | default([]) | length > 0 or likely_unused_serviceaccounts | default([]) | length > 0 or likely_unused_configmaps | default([]) | length > 0 or likely_unused_secrets | default([]) | length > 0 or likely_unused_crds | default([]) | length > 0) else 'pass' }}"
@@ -115,6 +179,7 @@
         score: "{{ 0 if (report_collection.core_failed_commands | default(0) | int > 0) else (4 if (report_collection.failed_commands | default(0) | int > 0) else 8) }}"
         max_score: 8
         findings_count: "{{ report_collection.failed_commands | default(0) }}"
+  when: report_run_mode | default('fresh') != 'resume_last_failure'
 
 - name: Build audit score summary
   ansible.builtin.set_fact:
@@ -348,7 +413,7 @@
       'summary': 'Use the report for hygiene, rightsizing, and policy cleanup.',
       'detail': 'After platform health is stable, review overprovisioned workloads, unused-resource heuristics, privileged RBAC grants, and other security/best-practice findings to reduce risk, waste, and operational drift.'
     }] }}"
-  when: (overprovisioned_pods | default([]) | length > 0) or (empty_user_namespaces | default([]) | length > 0) or (likely_unused_serviceaccounts | default([]) | length > 0) or (likely_unused_configmaps | default([]) | length > 0) or (likely_unused_secrets | default([]) | length > 0) or (likely_unused_crds | default([]) | length > 0) or (security_findings | default([]) | length > 0) or (privileged_serviceaccount_access | default([]) | length > 0) or (privileged_user_access | default([]) | length > 0) or (privileged_group_access | default([]) | length > 0) or (scored_workload_practice_findings | default([]) | length > 0)
+  when: (overprovisioned_pods | default([]) | length > 0) or (empty_user_namespaces | default([]) | length > 0) or (likely_unused_serviceaccounts | default([]) | length > 0) or (likely_unused_configmaps | default([]) | length > 0) or (likely_unused_secrets | default([]) | length > 0) or (likely_unused_crds | default([]) | length > 0) or (security_findings | default([]) | length > 0) or (privileged_serviceaccount_access | default([]) | length > 0) or (privileged_user_access | default([]) | length > 0) or (privileged_group_access | default([]) | length > 0) or (scored_workload_practice_findings_count | default(0) | int > 0)
 
 - name: Add suggested next step for SCC and delivery posture
   ansible.builtin.set_fact:
@@ -438,7 +503,7 @@
     - (likely_unused_secrets | default([]) | length) == 0
     - (likely_unused_crds | default([]) | length) == 0
     - (security_findings | default([]) | length) == 0
-    - (scored_workload_practice_findings | default([]) | length) == 0
+    - (scored_workload_practice_findings_count | default(0) | int) == 0
     - (observability_findings | default([]) | length) == 0
 
 - name: Build live evidence and supportability facts

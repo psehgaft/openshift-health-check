@@ -167,10 +167,10 @@
       metadata:
         generated_at: "{{ report_generated_at }}"
         completed_at: "{{ report_generated_at }}"
-        context: "{{ oc_context_cmd.stdout | default('unknown') | trim }}"
-        api_server: "{{ oc_server_cmd.stdout | default('unknown') | trim }}"
-        user: "{{ oc_user_cmd.stdout | default('unknown') | trim }}"
-        cluster_type: "{{ report_cluster_type | default(platform_family | default('openshift')) }}"
+        context: "{{ report_resume_oc_context if (report_run_mode | default('fresh')) == 'resume_last_failure' else (oc_context_cmd.stdout | default('unknown') | trim) }}"
+        api_server: "{{ report_resume_api_server if (report_run_mode | default('fresh')) == 'resume_last_failure' else (oc_server_cmd.stdout | default('unknown') | trim) }}"
+        user: "{{ report_resume_ocp_user if (report_run_mode | default('fresh')) == 'resume_last_failure' else (oc_user_cmd.stdout | default('unknown') | trim) }}"
+        cluster_type: "{{ report_render_cluster_type if (report_run_mode | default('fresh')) == 'resume_last_failure' else (report_cluster_type | default(platform_family | default('openshift'))) }}"
         report_confidence: "{{ report_confidence | default('unknown') }}"
         local_user: "{{ ansible_env.USER | default(ansible_user_id | default('unknown')) }}"
         local_hostname: "{{ ansible_hostname | default('unknown') }}"
@@ -182,7 +182,7 @@
           last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"
           resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
           run_mode: "{{ report_run_mode | default('fresh') }}"
-      cluster_profile: "{{ cluster_profile | default({}) }}"
+      cluster_profile: "{{ report_render_cluster_profile if (report_run_mode | default('fresh')) == 'resume_last_failure' else (cluster_profile | default({})) }}"
       cluster_current_state: "{{ cluster_current_state | default({}) }}"
       health_summary: "{{ health_summary | default({}) }}"
       supportability:

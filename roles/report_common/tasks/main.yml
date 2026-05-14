@@ -1,13 +1,55 @@
 ---
+- name: Resolve safe report naming inputs
+  vars:
+    report_cluster_classification_label_resolved: >-
+      {{
+        report_resume_cluster_classification_label
+        if (report_resume_cluster_classification_label is defined)
+        else ((cluster_profile | default({})).get('cluster_classification_label', ''))
+      }}
+    report_cluster_classification_source_resolved: >-
+      {{
+        report_resume_cluster_classification_source
+        if (report_resume_cluster_classification_source is defined)
+        else ((cluster_profile | default({})).get('cluster_classification_source', ''))
+      }}
+    report_cluster_deployment_type_resolved: >-
+      {{
+        report_resume_cluster_deployment_type
+        if (report_resume_cluster_deployment_type is defined)
+        else ((cluster_profile | default({})).get('deployment_type', ''))
+      }}
+    report_cluster_deployment_type_source_resolved: >-
+      {{
+        report_resume_cluster_deployment_type_source
+        if (report_resume_cluster_deployment_type_source is defined)
+        else ((cluster_profile | default({})).get('deployment_type_source', ''))
+      }}
+    report_cluster_infrastructure_name_resolved: >-
+      {{
+        report_resume_cluster_infrastructure_name
+        if (report_resume_cluster_infrastructure_name is defined)
+        else (
+          ((cluster_profile | default({})).get('infrastructure_name', ''))
+          or (oc_context_cmd.stdout | default('cluster') | trim)
+        )
+      }}
+  ansible.builtin.set_fact:
+    report_cluster_classification_label_resolved: "{{ report_cluster_classification_label_resolved }}"
+    report_cluster_classification_source_resolved: "{{ report_cluster_classification_source_resolved }}"
+    report_cluster_deployment_type_resolved: "{{ report_cluster_deployment_type_resolved }}"
+    report_cluster_deployment_type_source_resolved: "{{ report_cluster_deployment_type_source_resolved }}"
+    report_cluster_infrastructure_name_resolved: "{{ report_cluster_infrastructure_name_resolved }}"
+
 - name: Define common report paths
   ansible.builtin.set_fact:
     report_cluster_type: >-
       {{
-        (report_resume_cluster_classification_label | default(cluster_profile.cluster_classification_label | default('')))
-        if ((report_resume_cluster_classification_label | default(cluster_profile.cluster_classification_label | default(''))) | trim) not in ['', 'unknown']
+        report_cluster_classification_label_resolved
+        if (report_cluster_classification_label_resolved | trim) not in ['', 'unknown']
         else (
-          (report_resume_cluster_deployment_type | default(cluster_profile.deployment_type | default('')))
-          if ((report_resume_cluster_deployment_type | default(cluster_profile.deployment_type | default(''))) | trim) not in ['', 'unknown']
+          report_cluster_deployment_type_resolved
+          if (report_cluster_deployment_type_resolved | trim) not in ['', 'unknown']
           else (
             resolved_provider_family
             if (resolved_provider_family | default(provider_family | default('generic'))) != 'generic'
@@ -17,20 +59,20 @@
       }}
     report_cluster_type_detection_source: >-
       {{
-        (report_resume_cluster_classification_source | default(cluster_profile.cluster_classification_source | default('')))
-        if ((report_resume_cluster_classification_source | default(cluster_profile.cluster_classification_source | default(''))) | trim) not in ['', 'unknown']
+        report_cluster_classification_source_resolved
+        if (report_cluster_classification_source_resolved | trim) not in ['', 'unknown']
         else (
-          (report_resume_cluster_deployment_type_source | default(cluster_profile.deployment_type_source | default('')))
-          if ((report_resume_cluster_deployment_type_source | default(cluster_profile.deployment_type_source | default(''))) | trim) not in ['', 'unknown']
+          report_cluster_deployment_type_source_resolved
+          if (report_cluster_deployment_type_source_resolved | trim) not in ['', 'unknown']
           else (cluster_type_detection_source | default('not-applicable'))
         )
       }}
 
 - name: Define common report naming paths
   ansible.builtin.set_fact:
-    report_cluster_name_source: "{{ report_resume_cluster_infrastructure_name | default(cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim))) }}"
-    report_cluster_name: "{{ ((report_resume_cluster_infrastructure_name | default(cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim)))) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}"
-    report_file_prefix: "{{ report_basename }}-{{ report_cluster_type }}-{{ ((report_resume_cluster_infrastructure_name | default(cluster_profile.infrastructure_name | default((oc_context_cmd.stdout | default('cluster') | trim)))) | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster' }}-{{ report_timestamp }}"
+    report_cluster_name_source: "{{ report_cluster_infrastructure_name_resolved }}"
+    report_cluster_name: "{{ ((report_cluster_infrastructure_name_resolved | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster') }}"
+    report_file_prefix: "{{ report_basename }}-{{ report_cluster_type }}-{{ ((report_cluster_infrastructure_name_resolved | lower | regex_replace('[^a-z0-9._-]+', '-') | regex_replace('^-+', '') | regex_replace('-+$', '')) or 'cluster') }}-{{ report_timestamp }}"
 
 - name: Define common report output files
   ansible.builtin.set_fact:

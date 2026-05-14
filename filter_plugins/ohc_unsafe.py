@@ -14,7 +14,7 @@ def ohc_parse_checkpoint_json_unsafe(value):
 
 
 def ohc_checkpoint_get(value, path, default_value=""):
-    data = json.loads(value)
+    data = json.loads(value) if isinstance(value, (str, bytes, bytearray)) else value
     current = data
     for segment in str(path).split("."):
         if isinstance(current, dict) and segment in current:
