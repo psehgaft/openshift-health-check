@@ -78,12 +78,14 @@
         idps = (((data.get("oauth_config") or {}).get("spec") or {}).get("identityProviders") or [])
         secrets = data.get("secrets") or []
 
-        local_types = {"htpasswd", "basicAuth"}
+        local_types = {"htpasswd", "basicauth"}
+        external_types = {"github", "gitlab", "google", "ldap", "keystone", "openid", "requestheader"}
         generic_keys = {"name", "mappingMethod", "type", "challenge", "login"}
         provider_types = []
         provider_names = []
         external_provider_count = 0
         local_provider_count = 0
+        invalid_provider_count = 0
 
         for item in idps:
             if not isinstance(item, dict):
@@ -91,11 +93,22 @@
             provider_names.append(str(item.get("name") or "unnamed"))
             typed_keys = [key for key in item.keys() if key not in generic_keys and item.get(key) is not None]
             provider_type = typed_keys[0] if typed_keys else str(item.get("type") or "unknown")
-            provider_types.append(provider_type)
-            if provider_type in local_types:
-                local_provider_count += 1
+            provider_type_normalized = provider_type.strip().lower()
+            if provider_type_normalized == "basicauth":
+                provider_type = "basicAuth"
+            elif provider_type_normalized == "openid":
+                provider_type = "openID"
+            elif provider_type_normalized == "requestheader":
+                provider_type = "requestHeader"
             else:
+                provider_type = provider_type.strip()
+            provider_types.append(provider_type)
+            if provider_type_normalized in local_types:
+                local_provider_count += 1
+            elif provider_type_normalized in external_types:
                 external_provider_count += 1
+            else:
+                invalid_provider_count += 1
 
         kubeadmin_secret_present = any(
             ((item.get("metadata") or {}).get("name") == "kubeadmin")
@@ -116,9 +129,22 @@
             detail = "only local identity providers are configured: " + ", ".join(sorted(set(provider_types)))
             if kubeadmin_secret_present:
                 detail += "; kubeadmin secret is still present"
+            if invalid_provider_count > 0:
+                detail += f"; unclassified identity provider entries={invalid_provider_count}"
             findings.append({"issue": "local-only-identity-provider", "detail": detail})
             status = "warning"
             reason_summary = "only local identity providers are configured"
+        elif external_provider_count == 0:
+            detail = (
+                "oauth/cluster does not show a valid external identity provider configuration; "
+                + "provider types observed: "
+                + (", ".join(sorted(set(provider_types))) or "unknown")
+            )
+            if kubeadmin_secret_present:
+                detail += "; kubeadmin secret is still present"
+            findings.append({"issue": "invalid-identity-provider-configuration", "detail": detail})
+            status = "warning"
+            reason_summary = "no valid external identity providers are configured"
         elif kubeadmin_secret_present:
             findings.append({
                 "issue": "kubeadmin-secret-still-present",
@@ -126,6 +152,13 @@
             })
             status = "review"
             reason_summary = "external identity providers are configured, but kubeadmin fallback is still present"
+        elif invalid_provider_count > 0:
+            findings.append({
+                "issue": "unclassified-identity-provider-configuration",
+                "detail": "one or more identity provider entries could not be classified as a supported local or external provider type",
+            })
+            status = "review"
+            reason_summary = "external identity providers are configured, but some provider entries are unclassified"
         elif external_provider_count == 1 and len(idps) == 1:
             status = "healthy"
             reason_summary = "single external identity provider configured"
@@ -142,6 +175,7 @@
                 "provider_types": provider_types,
                 "external_identity_provider_count": external_provider_count,
                 "local_identity_provider_count": local_provider_count,
+                "invalid_identity_provider_count": invalid_provider_count,
                 "kubeadmin_secret_present": kubeadmin_secret_present,
                 "reason_summary": reason_summary,
             },
@@ -170,8 +204,68 @@
       }}
     auth_fallback_external_identity_provider_count: >-
       {{
+        (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('github', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('gitlab', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('google', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('ldap', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('keystone', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('openID', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('requestHeader', 'defined')
+          | list
+          | length
+        )
+      }}
+    auth_fallback_invalid_identity_provider_count: >-
+      {{
         (auth_fallback_identity_provider_count | int)
         - (auth_fallback_local_identity_provider_count | int)
+        - (auth_fallback_external_identity_provider_count | int)
       }}
     auth_fallback_provider_types: >-
       {%- set provider_types = [] -%}
@@ -215,7 +309,7 @@
         if (auth_fallback_identity_provider_count | int) == 0 or (auth_fallback_external_identity_provider_count | int) == 0
         else (
           'review'
-          if auth_fallback_kubeadmin_secret_present
+          if (auth_fallback_kubeadmin_secret_present or (auth_fallback_invalid_identity_provider_count | int) > 0)
           else 'healthy'
         )
       }}
@@ -225,14 +319,22 @@
         if (auth_fallback_identity_provider_count | int) == 0
         else (
           'only local identity providers are configured'
-          if (auth_fallback_external_identity_provider_count | int) == 0
+          if (auth_fallback_external_identity_provider_count | int) == 0 and (auth_fallback_local_identity_provider_count | int) > 0
           else (
-            'external identity providers are configured, but kubeadmin fallback is still present'
-            if auth_fallback_kubeadmin_secret_present
+            'no valid external identity providers are configured'
+            if (auth_fallback_external_identity_provider_count | int) == 0
             else (
-              'single external identity provider configured'
-              if (auth_fallback_external_identity_provider_count | int) == 1 and (auth_fallback_identity_provider_count | int) == 1
-              else 'external identity providers are configured'
+              'external identity providers are configured, but kubeadmin fallback is still present'
+              if auth_fallback_kubeadmin_secret_present
+              else (
+                'external identity providers are configured, but some provider entries are unclassified'
+                if (auth_fallback_invalid_identity_provider_count | int) > 0
+                else (
+                  'single external identity provider configured'
+                  if (auth_fallback_external_identity_provider_count | int) == 1 and (auth_fallback_identity_provider_count | int) == 1
+                  else 'external identity providers are configured'
+                )
+              )
             )
           )
         )
@@ -242,18 +344,26 @@
         [{'issue': 'missing-identity-provider', 'detail': 'oauth/cluster has no configured identityProviders' ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '')}]
         if (auth_fallback_identity_provider_count | int) == 0
         else (
-          [{'issue': 'local-only-identity-provider', 'detail': 'only local identity providers are configured: ' ~ ((auth_fallback_provider_types | unique | list | join(', ')) or 'unknown') ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '')}]
-          if (auth_fallback_external_identity_provider_count | int) == 0
+          [{'issue': 'local-only-identity-provider', 'detail': 'only local identity providers are configured: ' ~ ((auth_fallback_provider_types | unique | list | join(', ')) or 'unknown') ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '') ~ ('; unclassified identity provider entries=' ~ (auth_fallback_invalid_identity_provider_count | string) if (auth_fallback_invalid_identity_provider_count | int) > 0 else '')}]
+          if (auth_fallback_external_identity_provider_count | int) == 0 and (auth_fallback_local_identity_provider_count | int) > 0
           else (
-            [{'issue': 'kubeadmin-secret-still-present', 'detail': 'kubeadmin secret is still present while identity providers are configured'}]
-            if auth_fallback_kubeadmin_secret_present
-            else []
+            [{'issue': 'invalid-identity-provider-configuration', 'detail': 'oauth/cluster does not show a valid external identity provider configuration; provider types observed: ' ~ ((auth_fallback_provider_types | unique | list | join(', ')) or 'unknown') ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '')}]
+            if (auth_fallback_external_identity_provider_count | int) == 0
+            else (
+              [{'issue': 'kubeadmin-secret-still-present', 'detail': 'kubeadmin secret is still present while identity providers are configured'}]
+              if auth_fallback_kubeadmin_secret_present
+              else (
+                [{'issue': 'unclassified-identity-provider-configuration', 'detail': 'one or more identity provider entries could not be classified as a supported local or external provider type'}]
+                if (auth_fallback_invalid_identity_provider_count | int) > 0
+                else []
+              )
+            )
           )
         )
       }}
   ansible.builtin.set_fact:
     auth_findings: "{{ ((auth_posture_cmd.stdout | from_json).auth_findings) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else auth_fallback_findings }}"
-    auth_posture_summary: "{{ ((auth_posture_cmd.stdout | from_json).auth_posture_summary) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else {'status': auth_fallback_status, 'identity_provider_count': (auth_fallback_identity_provider_count | int), 'provider_names': auth_fallback_provider_names, 'provider_types': auth_fallback_provider_types, 'external_identity_provider_count': (auth_fallback_external_identity_provider_count | int), 'local_identity_provider_count': (auth_fallback_local_identity_provider_count | int), 'kubeadmin_secret_present': auth_fallback_kubeadmin_secret_present, 'reason_summary': auth_fallback_reason_summary} }}"
+    auth_posture_summary: "{{ ((auth_posture_cmd.stdout | from_json).auth_posture_summary) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else {'status': auth_fallback_status, 'identity_provider_count': (auth_fallback_identity_provider_count | int), 'provider_names': auth_fallback_provider_names, 'provider_types': auth_fallback_provider_types, 'external_identity_provider_count': (auth_fallback_external_identity_provider_count | int), 'local_identity_provider_count': (auth_fallback_local_identity_provider_count | int), 'invalid_identity_provider_count': (auth_fallback_invalid_identity_provider_count | int), 'kubeadmin_secret_present': auth_fallback_kubeadmin_secret_present, 'reason_summary': auth_fallback_reason_summary} }}"
 
 - name: Capture cluster version history and updates
   ansible.builtin.set_fact:
@@ -415,6 +525,8 @@
     openshift_node_items: >-
       {{
         ((analysis_graph.nodes | default({})).get('items', []))
+        | selectattr('kind', 'defined')
+        | selectattr('kind', 'equalto', 'Node')
         | selectattr('status.conditions', 'defined')
         | selectattr('status.addresses', 'defined')
         | selectattr('metadata.name', 'defined')
@@ -453,6 +565,7 @@
         mode: "0600"
         content: "{{ {
           'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'nodes': (openshift_node_items | default([])),
           'exclude_regex': (user_namespaces_exclude_regex | default('^$'))
         } | to_json }}"
       changed_when: false
@@ -479,7 +592,7 @@
             "user_running": 0,
         }
 
-        def node_name_aliases(raw):
+        def raw_aliases(raw):
             text = str(raw or "").strip()
             if not text:
                 return []
@@ -489,18 +602,39 @@
                 aliases.append(short)
             return aliases
 
+        node_alias_to_canonical = {}
+        for node in data.get("nodes") or []:
+            metadata = node.get("metadata") or {}
+            status = node.get("status") or {}
+            labels = metadata.get("labels") or {}
+            canonical_name = str(metadata.get("name") or "").strip()
+            if not canonical_name:
+                continue
+            alias_values = []
+            alias_values.extend(raw_aliases(canonical_name))
+            alias_values.extend(raw_aliases(labels.get("kubernetes.io/hostname")))
+            for address in status.get("addresses") or []:
+                alias_values.extend(raw_aliases((address or {}).get("address")))
+            for alias in alias_values:
+                node_alias_to_canonical.setdefault(alias, canonical_name)
+
         for item in data.get("pods") or []:
             status = item.get("status") or {}
             spec = item.get("spec") or {}
             metadata = item.get("metadata") or {}
             phase = str(status.get("phase") or "Unknown")
-            node_name = str(spec.get("nodeName") or "unscheduled")
+            raw_node_name = str(spec.get("nodeName") or "unscheduled")
+            node_name = (
+                node_alias_to_canonical.get(raw_node_name)
+                or node_alias_to_canonical.get(raw_node_name.split(".", 1)[0])
+                or raw_node_name
+            )
             namespace_name = str(metadata.get("namespace") or "")
             pod_name = str(metadata.get("name") or "unknown")
             is_user_namespace = not exclude_re.search(namespace_name or "")
 
             pod_phase_counts[phase] = pod_phase_counts.get(phase, 0) + 1
-            for node_alias in node_name_aliases(node_name):
+            for node_alias in raw_aliases(node_name):
                 node_pod_counts[node_alias] = node_pod_counts.get(node_alias, 0) + 1
             namespace_pod_counts[namespace_name] = namespace_pod_counts.get(namespace_name, 0) + 1
 
@@ -1086,6 +1220,41 @@
     cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
     pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
     cpu_allocatable_millicores: "{{ (cpu_allocatable_raw | regex_replace('m$', '') | int) if (cpu_allocatable_raw | string | regex_search('m$')) else (((cpu_allocatable_raw | float) * 1000) | int) }}"
+    node_address_values: "{{ item.status.addresses | default([]) | map(attribute='address') | list }}"
+    node_hostname_label: "{{ (item.metadata.labels | default({})).get('kubernetes.io/hostname', '') }}"
+    node_lookup_candidates: >-
+      {{
+        (
+          [item.metadata.name | default(''), node_hostname_label]
+          + node_address_values
+        )
+        | reject('equalto', '')
+        | map('string')
+        | map('trim')
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+    node_pod_count_lookup_key: >-
+      {{
+        (
+          node_lookup_candidates
+          | select('in', ((node_pod_counts | default({})).keys() | list))
+          | list
+          | first
+        )
+        | default(item.metadata.name)
+      }}
+    node_cpu_request_lookup_key: >-
+      {{
+        (
+          node_lookup_candidates
+          | select('in', ((node_cpu_request_millicores | default({})).keys() | list))
+          | list
+          | first
+        )
+        | default(item.metadata.name)
+      }}
     node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
     node_role_name: >-
       {{
@@ -1105,7 +1274,7 @@
           )
         )
       }}
-    scheduled_pods: "{{ node_pod_counts[item.metadata.name] | default(0) | int }}"
+    scheduled_pods: "{{ (node_pod_counts | default({}))[node_pod_count_lookup_key] | default(0) | int }}"
     node_capacity_entry:
       name: "{{ item.metadata.name }}"
       role: "{{ node_role_name }}"
@@ -1113,8 +1282,8 @@
       scheduled_pods: "{{ scheduled_pods }}"
       pod_density_pct: "{{ (((scheduled_pods | float) / ((pods_allocatable_raw | int) if (pods_allocatable_raw | int) > 0 else 1)) * 100) | round(1) }}"
       cpu_allocatable_millicores: "{{ cpu_allocatable_millicores | int }}"
-      requested_cpu_millicores: "{{ (node_cpu_request_millicores | default({}))[item.metadata.name] | default(0) | int }}"
-      requested_cpu_pct: "{{ ((((node_cpu_request_millicores | default({}))[item.metadata.name] | default(0) | float) / ((cpu_allocatable_millicores | int) if (cpu_allocatable_millicores | int) > 0 else 1)) * 100) | round(1) }}"
+      requested_cpu_millicores: "{{ (node_cpu_request_millicores | default({}))[node_cpu_request_lookup_key] | default(0) | int }}"
+      requested_cpu_pct: "{{ ((((node_cpu_request_millicores | default({}))[node_cpu_request_lookup_key] | default(0) | float) / ((cpu_allocatable_millicores | int) if (cpu_allocatable_millicores | int) > 0 else 1)) * 100) | round(1) }}"
   changed_when: false
 
 - name: Sort node density summaries

@@ -161,6 +161,45 @@
         managed_gates: "{{ managed_gates_data | default({}) }}"
   when: report_mode_resolved | default('live') == 'collected'
 
+- name: Build shared OpenShift report payload for resumed live reporting
+  ansible.builtin.set_fact:
+    openshift_report_payload_common:
+      metadata:
+        generated_at: "{{ report_resume_report_timestamp | default(report_generated_at | default(ansible_date_time.iso8601)) }}"
+        completed_at: "{{ report_resume_report_timestamp | default(report_generated_at | default(ansible_date_time.iso8601)) }}"
+        context: "{{ report_resume_oc_context | default('unknown') }}"
+        api_server: "{{ report_resume_api_server | default('unknown') }}"
+        user: "{{ report_resume_ocp_user | default('unknown') }}"
+        cluster_type: "{{ report_render_cluster_type | default(platform_family | default('openshift')) }}"
+        report_confidence: "{{ report_confidence | default('unknown') }}"
+        local_user: "{{ (ansible_env | default({})).get('USER', ansible_user_id | default('unknown')) }}"
+        local_hostname: "{{ ansible_hostname | default('unknown') }}"
+        platform_family: "{{ platform_family | default('openshift') }}"
+        provider_family: "{{ resolved_provider_family | default(provider_family | default('generic')) }}"
+        evidence_mode: "live"
+        checkpoint:
+          manifest_path: "{{ report_resume_manifest_path | default('') }}"
+          last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"
+          resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
+          run_mode: "{{ report_run_mode | default('fresh') }}"
+      cluster_profile: {}
+      cluster_current_state: {}
+      health_summary:
+        status: "{{ (health_summary | default({})).get('status', 'UNKNOWN') }}"
+      supportability: {}
+      evidence: {}
+      domains: {}
+      findings: {}
+      metrics:
+        report_collection:
+          failed_commands: "{{ (report_collection | default({})).get('failed_commands', 0) }}"
+          core_failed_commands: "{{ (report_collection | default({})).get('core_failed_commands', 0) }}"
+        report_confidence: "{{ report_confidence | default('unknown') }}"
+      supplemental_artifacts: {}
+  when:
+    - report_mode_resolved | default('live') != 'collected'
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+
 - name: Build shared OpenShift report payload for live reporting
   ansible.builtin.set_fact:
     openshift_report_payload_common:
@@ -331,4 +370,6 @@
         advisor_export: "{{ live_support_data.parsed.advisor_export | default({}) }}"
         insights_archive: "{{ live_support_data.parsed.insights_archive | default({}) }}"
         sosreport: "{{ live_support_data.parsed.sosreport | default({}) }}"
-  when: report_mode_resolved | default('live') != 'collected'
+  when:
+    - report_mode_resolved | default('live') != 'collected'
+    - report_run_mode | default('fresh') != 'resume_last_failure'

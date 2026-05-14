@@ -271,6 +271,18 @@
 - name: Initialize suggested next steps
   ansible.builtin.set_fact:
     suggested_next_steps: []
+  when: report_run_mode | default('fresh') != 'resume_last_failure'
+
+- name: Build suggested next steps for resumed runs
+  ansible.builtin.set_fact:
+    suggested_next_steps:
+      - priority: summary
+        summary: Resume completed from the saved analysis checkpoint.
+        detail: Resume mode reused the saved collection and analysis state to finish report generation. Use a fresh run if you need the full end-to-end collection and scoring path rebuilt from the cluster again.
+      - priority: next
+        summary: Review the report findings and rerun fresh after major remediation.
+        detail: Use this resumed report for current triage, then rerun with `report_run_mode=fresh` after fixes so collection, analysis, and reporting are regenerated from live cluster state.
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
 
 - name: Add suggested next step for collection failures
   ansible.builtin.set_fact:
@@ -279,7 +291,9 @@
       'summary': 'Fix collection failures and rerun the report.',
       'detail': 'Start with failed or timed out commands in Data Collection, confirm `oc` access and permissions, then rerun so later sections reflect complete data.'
     }] }}"
-  when: (report_collection.failed_commands | default(0) | int) > 0
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (report_collection.failed_commands | default(0) | int) > 0
 
 - name: Add suggested next step for access-denied detail collection
   ansible.builtin.set_fact:
@@ -288,7 +302,9 @@
       'summary': 'Rerun with cluster-admin to collect full report detail.',
       'detail': 'Some optional queries were denied by RBAC in this run. The report is still usable, but cluster-admin access is recommended if you want complete identity, SCC, monitoring, GitOps, and other platform-detail sections.'
     }] }}"
-  when: (report_collection_skipped_optional_commands | default([]) | selectattr('category', 'equalto', 'optional-access-denied') | list | length) > 0
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (report_collection_skipped_optional_commands | default([]) | selectattr('category', 'equalto', 'optional-access-denied') | list | length) > 0
 
 - name: Add suggested next step for operator degradation
   ansible.builtin.set_fact:
@@ -297,7 +313,9 @@
       'summary': 'Stabilize degraded, unavailable, or progressing operators first.',
       'detail': 'Review Cluster Operators and related operand namespaces, clear degraded conditions, and wait for operators to return to `Available=True`, `Progressing=False`, and `Degraded=False` before lower-priority cleanup.'
     }] }}"
-  when: (degraded_operators | default([]) | length > 0) or (unavailable_operators | default([]) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (degraded_operators | default([]) | length > 0) or (unavailable_operators | default([]) | length > 0)
 
 - name: Add suggested next step for node readiness or pressure
   ansible.builtin.set_fact:
@@ -306,7 +324,9 @@
       'summary': 'Restore node readiness and remove node pressure.',
       'detail': 'Drain or repair NotReady nodes, investigate kubelet/runtime/storage causes, and clear sustained MemoryPressure, DiskPressure, or PIDPressure before workload changes.'
     }] }}"
-  when: (not_ready_nodes | default([]) | length > 0) or (pressure_nodes | default([]) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (not_ready_nodes | default([]) | length > 0) or (pressure_nodes | default([]) | length > 0)
 
 - name: Add suggested next step for traffic path issues
   ansible.builtin.set_fact:
@@ -315,7 +335,9 @@
       'summary': 'Repair traffic path issues in route, ingress, and service backends.',
       'detail': 'Resolve unadmitted routes, ingress misconfiguration, host conflicts, and missing backend services/endpoints, then verify application reachability from both cluster and external paths.'
     }] }}"
-  when: (route_issues | default([]) | length > 0) or (ingress_issues | default([]) | length > 0) or (route_host_conflicts | default([]) | length > 0) or (ingress_host_conflicts | default([]) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (route_issues | default([]) | length > 0) or (ingress_issues | default([]) | length > 0) or (route_host_conflicts | default([]) | length > 0) or (ingress_host_conflicts | default([]) | length > 0)
 
 - name: Add suggested next step for APIService issues
   ansible.builtin.set_fact:
@@ -324,7 +346,9 @@
       'summary': 'Resolve unavailable APIService registrations.',
       'detail': 'Review aggregated API services that are not reporting `Available=True`, verify their backing services and CA bundles, and restore registration health before relying on dependent platform features.'
     }] }}"
-  when: apiservice_issues | default([]) | length > 0
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - apiservice_issues | default([]) | length > 0
 
 - name: Add suggested next step for certificate or upgrade risks
   ansible.builtin.set_fact:
@@ -333,7 +357,9 @@
       'summary': 'Resolve certificate expiry and upgrade-blocking risks.',
       'detail': 'Renew secrets nearing expiry, review conditional update risks, and confirm the cluster is upgrade-ready before scheduling version changes.'
     }] }}"
-  when: (expiring_certificates_critical | default([]) | length > 0) or (conditional_updates | default([]) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (expiring_certificates_critical | default([]) | length > 0) or (conditional_updates | default([]) | length > 0)
 
 - name: Add suggested next step for topology resilience
   ansible.builtin.set_fact:
@@ -342,7 +368,9 @@
       'summary': 'Review worker topology resilience and correct confirmed zone or MachineSet spread gaps.',
       'detail': 'Validate worker node and MachineSet zone labels, single-zone worker pools, and uneven MachineSet replica counts. Rebalance capacity only when the collected topology evidence confirms that worker placement does not meet the customer failure-domain standard.'
     }] }}"
-  when: (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 or (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 or (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) or (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 or (topology_resilience.machineset_replica_unbalanced | default(false) | bool)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 or (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 or (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) or (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 or (topology_resilience.machineset_replica_unbalanced | default(false) | bool)
 
 - name: Add suggested next step for workload health and probes
   ansible.builtin.set_fact:
@@ -351,7 +379,9 @@
       'summary': 'Harden workload rollout health and probe coverage.',
       'detail': 'Fix rollout gaps, add missing liveness/readiness/startup probes, and investigate restart hotspots so workloads fail fast and recover predictably.'
     }] }}"
-  when: (workload_health_issues | default([]) | length > 0) or (high_replica_workloads | default([]) | length > 0) or (orphan_pods | default([]) | length > 0) or (workload_label_governance_findings | default([]) | length > 0) or (workload_resource_findings | default([]) | length > 0) or (workload_probe_findings | default([]) | length > 0) or (unhealthy_user_pods | default([]) | length > 0) or (high_restart_pods | default([]) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (workload_health_issues | default([]) | length > 0) or (high_replica_workloads | default([]) | length > 0) or (orphan_pods | default([]) | length > 0) or (workload_label_governance_findings | default([]) | length > 0) or (workload_resource_findings | default([]) | length > 0) or (workload_probe_findings | default([]) | length > 0) or (unhealthy_user_pods | default([]) | length > 0) or (high_restart_pods | default([]) | length > 0)
 
 - name: Add suggested next step for storage or quota pressure
   ansible.builtin.set_fact:
@@ -360,7 +390,9 @@
       'summary': 'Review storage health and namespace quota pressure.',
       'detail': 'Resolve PV/PVC phase problems, confirm storage class behavior, and raise or rebalance quotas for namespaces approaching hard limits.'
     }] }}"
-  when: (pv_issues | default([]) | length > 0) or (pvc_issues | default([]) | length > 0) or (quota_pressure_findings | default([]) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (pv_issues | default([]) | length > 0) or (pvc_issues | default([]) | length > 0) or (quota_pressure_findings | default([]) | length > 0)
 
 - name: Add suggested next step for node growth headroom
   ansible.builtin.set_fact:
@@ -369,7 +401,9 @@
       'summary': 'Review node growth headroom before adding more nodes.',
       'detail': 'Check the estimated max nodes from pod-network allocation, remaining node slots, and node IP availability so cluster scaling does not exhaust network space.'
     }] }}"
-  when: (((cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | default('unknown')) != 'unknown') and ((cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | int) <= 3)) or (((cluster_current_state.node_growth_capacity.node_ips_available | default('unknown')) != 'unknown') and ((cluster_current_state.node_growth_capacity.node_ips_available | int) <= 3))
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (((cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | default('unknown')) != 'unknown') and ((cluster_current_state.node_growth_capacity.additional_nodes_by_pod_network | int) <= 3)) or (((cluster_current_state.node_growth_capacity.node_ips_available | default('unknown')) != 'unknown') and ((cluster_current_state.node_growth_capacity.node_ips_available | int) <= 3))
 
 - name: Add suggested next step for external storage provider posture
   ansible.builtin.set_fact:
@@ -378,7 +412,9 @@
       'summary': 'Add or validate an external persistent storage provider.',
       'detail': 'The cluster did not show evidence of external persistent storage from StorageClasses or PV backends. Review whether workloads rely on local hostPath, local PVs, or ephemeral volumes only, and add a supported shared or external storage provider where persistence is required.'
     }] }}"
-  when: (not (storage_posture_summary.has_external_storage_provider | default(false) | bool)) or (storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (not (storage_posture_summary.has_external_storage_provider | default(false) | bool)) or (storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool)
 
 - name: Add suggested next step for backup posture
   ansible.builtin.set_fact:
@@ -387,7 +423,9 @@
       'summary': 'Validate backup freshness and restore evidence.',
       'detail': 'Confirm backup storage locations are available, schedules are active, recent backups are completing successfully, and at least one restore path has been exercised with evidence.'
     }] }}"
-  when: backup_posture_findings | default([]) | length > 0
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - backup_posture_findings | default([]) | length > 0
 
 - name: Add suggested next step for MachineHealthCheck posture
   ansible.builtin.set_fact:
@@ -396,7 +434,9 @@
       'summary': 'Configure or repair MachineHealthCheck remediation.',
       'detail': 'Ensure Machine API-managed worker pools are covered by MachineHealthCheck resources, remove paused remediation where inappropriate, and confirm selectors target the intended worker pools.'
     }] }}"
-  when: machine_healthcheck_findings | default([]) | length > 0
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - machine_healthcheck_findings | default([]) | length > 0
 
 - name: Add suggested next step for production Day 2 posture
   ansible.builtin.set_fact:
@@ -405,7 +445,9 @@
       'summary': 'Close production Day 2 platform gaps.',
       'detail': 'Review the Day 2 posture section for missing GitOps, external secrets integration, monitoring persistence, external telemetry forwarding, autoscaling, backup, compliance, identity, and Insights capabilities expected on a production OpenShift cluster.'
     }] }}"
-  when: scored_day2_posture_findings | default([]) | length > 0
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - scored_day2_posture_findings | default([]) | length > 0
 - name: Add suggested next step for hygiene and policy cleanup
   ansible.builtin.set_fact:
     suggested_next_steps: "{{ suggested_next_steps + [{
@@ -413,7 +455,9 @@
       'summary': 'Use the report for hygiene, rightsizing, and policy cleanup.',
       'detail': 'After platform health is stable, review overprovisioned workloads, unused-resource heuristics, privileged RBAC grants, and other security/best-practice findings to reduce risk, waste, and operational drift.'
     }] }}"
-  when: (overprovisioned_pods | default([]) | length > 0) or (empty_user_namespaces | default([]) | length > 0) or (likely_unused_serviceaccounts | default([]) | length > 0) or (likely_unused_configmaps | default([]) | length > 0) or (likely_unused_secrets | default([]) | length > 0) or (likely_unused_crds | default([]) | length > 0) or (security_findings | default([]) | length > 0) or (privileged_serviceaccount_access | default([]) | length > 0) or (privileged_user_access | default([]) | length > 0) or (privileged_group_access | default([]) | length > 0) or (scored_workload_practice_findings_count | default(0) | int > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (overprovisioned_pods | default([]) | length > 0) or (empty_user_namespaces | default([]) | length > 0) or (likely_unused_serviceaccounts | default([]) | length > 0) or (likely_unused_configmaps | default([]) | length > 0) or (likely_unused_secrets | default([]) | length > 0) or (likely_unused_crds | default([]) | length > 0) or (security_findings | default([]) | length > 0) or (privileged_serviceaccount_access | default([]) | length > 0) or (privileged_user_access | default([]) | length > 0) or (privileged_group_access | default([]) | length > 0) or (scored_workload_practice_findings_count | default(0) | int > 0)
 
 - name: Add suggested next step for SCC and delivery posture
   ansible.builtin.set_fact:
@@ -422,7 +466,9 @@
       'summary': 'Review SCC, image management, and pipeline posture.',
       'detail': 'Inspect high-risk SCC grants, image-registry posture, build configuration triggers, and failed pipeline runs so delivery workflows and admission posture align with platform policy.'
     }] }}"
-  when: (scc_grant_findings | default([]) | length > 0) or (image_registry_findings | default([]) | length > 0) or (failed_pipelineruns | default([]) | length > 0) or (buildconfigs_without_triggers | default([]) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - (scc_grant_findings | default([]) | length > 0) or (image_registry_findings | default([]) | length > 0) or (failed_pipelineruns | default([]) | length > 0) or (buildconfigs_without_triggers | default([]) | length > 0)
 
 - name: Add suggested next step for resilience and compliance tooling
   ansible.builtin.set_fact:
@@ -433,7 +479,9 @@
     }] }}"
   vars:
     graph: "{{ analysis_graph | default({}) }}"
-  when: ((graph.compliancesuites | default({})).get('items', []) | length > 0) or ((graph.volumesnapshotclasses | default({})).get('items', []) | length > 0) or ((graph.dataprotectionapplications | default({})).get('items', []) | length > 0)
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - ((graph.compliancesuites | default({})).get('items', []) | length > 0) or ((graph.volumesnapshotclasses | default({})).get('items', []) | length > 0) or ((graph.dataprotectionapplications | default({})).get('items', []) | length > 0)
 
 - name: Add suggested next step for observability posture
   ansible.builtin.set_fact:
@@ -442,7 +490,9 @@
       'summary': 'Improve observability coverage and external forwarding posture.',
       'detail': 'Confirm monitoring health, log forwarding outputs, and remote-write targets so operational data is retained outside the cluster and available during incidents.'
     }] }}"
-  when: observability_findings | default([]) | length > 0
+  when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+    - observability_findings | default([]) | length > 0
 
 - name: Add suggested next step for steady-state review
   ansible.builtin.set_fact:
@@ -452,6 +502,7 @@
       'detail': 'No major health risks were detected in this run; keep periodic reviews, compare future reports, and investigate meaningful score or signal drift early.'
     }] }}"
   when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
     - (report_collection.failed_commands | default(0) | int) == 0
     - health_summary.status == 'HEALTHY'
     - (cluster_health_score | float) >= 85
@@ -464,6 +515,7 @@
       'detail': 'Use this order of operations: collection completeness, operators, nodes, traffic path, certificates and upgrade blockers, then workload and hygiene remediation.'
     }] }}"
   when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
     - health_summary.status == 'CRITICAL'
     - (report_collection.failed_commands | default(0) | int) == 0
     - (degraded_operators | default([]) | length) == 0
@@ -485,6 +537,7 @@
       'detail': 'The cluster is currently usable, but warning items should be assigned, tracked to closure, and revisited in the next report run.'
     }] }}"
   when:
+    - report_run_mode | default('fresh') != 'resume_last_failure'
     - health_summary.status == 'WARNING'
     - (report_collection.failed_commands | default(0) | int) == 0
     - (workload_health_issues | default([]) | length) == 0
@@ -515,11 +568,6 @@
   ansible.builtin.include_role:
     name: report_common
     tasks_from: build_openshift_domain_payload.yml
-
-- name: Set final checkpoint metadata for rendered report
-  ansible.builtin.set_fact:
-    report_resume_last_completed_stage: render
-    report_resume_last_resume_next_stage: ""
 
 - name: Build shared OpenShift report payload
   ansible.builtin.include_role:
@@ -552,6 +600,11 @@
   ansible.builtin.include_role:
     name: report_common
     tasks_from: update_live_openshift_execution_stats_post_render.yml
+
+- name: Set final checkpoint metadata for rendered report
+  ansible.builtin.set_fact:
+    report_resume_last_completed_stage: render
+    report_resume_last_resume_next_stage: ""
 
 - name: Show live OpenShift report locations
   ansible.builtin.include_role:

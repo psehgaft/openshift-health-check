@@ -269,6 +269,7 @@
         report_resume_cluster_deployment_type: "{{ report_resume_snapshot_text | ohc_checkpoint_get('cluster_profile.deployment_type', '') }}"
         report_resume_cluster_deployment_type_source: "{{ report_resume_snapshot_text | ohc_checkpoint_get('cluster_profile.deployment_type_source', '') }}"
         report_resume_report_timestamp: "{{ report_resume_snapshot_text | ohc_checkpoint_get('report_timestamp', '') }}"
+        report_resume_generated_at: "{{ report_resume_snapshot_text | ohc_checkpoint_get('report_generated_at', '') }}"
         report_resume_ocp_user: "{{ report_resume_snapshot_text | ohc_checkpoint_get('oc_user_cmd.stdout', '') }}"
         report_resume_oc_context: "{{ report_resume_snapshot_text | ohc_checkpoint_get('oc_context_cmd.stdout', '') }}"
         report_resume_api_server: "{{ report_resume_snapshot_text | ohc_checkpoint_get('oc_server_cmd.stdout', '') }}"
@@ -315,6 +316,15 @@
     - name: Precompute safe resume report file prefix
       ansible.builtin.set_fact:
         report_render_file_prefix: "{{ report_basename }}-{{ report_render_cluster_type }}-{{ report_render_cluster_name }}-{{ report_resume_report_timestamp | default(report_timestamp | default('')) }}"
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Seed safe resume report context facts
+      ansible.builtin.set_fact:
+        report_timestamp: "{{ report_resume_report_timestamp | default(ansible_date_time.iso8601_basic_short) }}"
+        report_generated_at: "{{ report_resume_generated_at | default(ansible_date_time.iso8601) }}"
+        report_context: "{{ report_resume_oc_context | default('unknown') }}"
+        report_api_server: "{{ report_resume_api_server | default('unknown') }}"
+        report_user: "{{ report_resume_ocp_user | default('unknown') }}"
       when: report_run_mode | default('fresh') == 'resume_last_failure'
 
     - name: Build minimal safe resume report cluster profile

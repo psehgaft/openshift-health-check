@@ -2656,14 +2656,21 @@
     idp_count = int(data.get("identity_provider_count") or 0)
     external_idp_count = int(auth_posture_summary.get("external_identity_provider_count") or 0)
     local_idp_count = int(auth_posture_summary.get("local_identity_provider_count") or 0)
+    invalid_idp_count = int(auth_posture_summary.get("invalid_identity_provider_count") or 0)
     kubeadmin_secret_present = bool(auth_posture_summary.get("kubeadmin_secret_present"))
+    auth_posture_status = str(auth_posture_summary.get("status") or "unknown").strip().lower()
     add_check(
         "Central identity provider integration",
-        cap_status_for_presence("oauth_external_identity_provider", idp_count > 0, external_idp_count > 0),
+        cap_status_for_presence(
+            "oauth_external_identity_provider",
+            external_idp_count > 0,
+            external_idp_count > 0 and auth_posture_status == "healthy" and not kubeadmin_secret_present and invalid_idp_count == 0,
+        ),
         (
             f"identityProviders={idp_count} "
             f"externalProviders={external_idp_count} "
             f"localProviders={local_idp_count} "
+            f"invalidProviders={invalid_idp_count} "
             f"kubeadminSecretPresent={kubeadmin_secret_present}"
         ),
         "identity provider and production authentication guidance",
@@ -2680,8 +2687,25 @@
         add_finding(
             "prod-day2-identity-provider-missing",
             (
-                f"oauth cluster does not show an external identity provider: "
-                f"identityProviders={idp_count}, localProviders={local_idp_count}, kubeadminSecretPresent={kubeadmin_secret_present}"
+                f"oauth cluster does not show a valid external identity provider: "
+                f"identityProviders={idp_count}, externalProviders={external_idp_count}, localProviders={local_idp_count}, invalidProviders={invalid_idp_count}, kubeadminSecretPresent={kubeadmin_secret_present}"
+            ),
+            severity=cap_failure_severity("oauth_external_identity_provider"),
+            source="identity provider and production authentication guidance",
+        )
+    elif cap_required("oauth_external_identity_provider") and kubeadmin_secret_present:
+        add_finding(
+            "prod-day2-kubeadmin-fallback-still-present",
+            "an external identity provider is configured, but kubeadmin fallback is still present and should be removed or tightly controlled",
+            severity=cap_failure_severity("oauth_external_identity_provider"),
+            source="identity provider and production authentication guidance",
+        )
+    elif cap_required("oauth_external_identity_provider") and invalid_idp_count > 0:
+        add_finding(
+            "prod-day2-identity-provider-configuration-unclassified",
+            (
+                "one or more oauth identity provider entries could not be classified as a supported external provider configuration: "
+                f"identityProviders={idp_count}, externalProviders={external_idp_count}, localProviders={local_idp_count}, invalidProviders={invalid_idp_count}"
             ),
             severity=cap_failure_severity("oauth_external_identity_provider"),
             source="identity provider and production authentication guidance",
@@ -5824,13 +5848,17 @@
           {%- set identity_provider_count = auth_posture_summary.identity_provider_count | default(0) | int -%}
           {%- set external_identity_provider_count = auth_posture_summary.external_identity_provider_count | default(0) | int -%}
           {%- set local_identity_provider_count = auth_posture_summary.local_identity_provider_count | default(0) | int -%}
+          {%- set invalid_identity_provider_count = auth_posture_summary.invalid_identity_provider_count | default(0) | int -%}
           {%- set kubeadmin_secret_present = auth_posture_summary.kubeadmin_secret_present | default(false) -%}
           {%- set auth_reason_summary = auth_posture_summary.reason_summary | default('unknown') -%}
+          {%- set auth_status = auth_posture_summary.status | default('unknown') | string | lower -%}
           {%- set capability_status = (
                 'OK'
                 if (
                   external_identity_provider_count > 0
                   and (not kubeadmin_secret_present)
+                  and invalid_identity_provider_count == 0
+                  and auth_status == 'healthy'
                 )
                 else 'WARNING'
               ) -%}
@@ -5840,12 +5868,21 @@
                 ~ ', idpCount=' ~ (identity_provider_count | string)
                 ~ ', externalIdp=' ~ (external_identity_provider_count | string)
                 ~ ', localIdp=' ~ (local_identity_provider_count | string)
+                ~ ', invalidIdp=' ~ (invalid_identity_provider_count | string)
                 ~ ', kubeadminSecret=' ~ (kubeadmin_secret_present | string)
               ) -%}
           {%- set recommended_action = (
                 'No external-identity-provider remediation is required for this capability.'
                 if capability_status == 'OK'
-                else 'Configure at least one approved external identity provider and remove or protect kubeadmin according to the customer access standard.'
+                else (
+                  'Configure at least one approved external identity provider. Local-only or unclassified OAuth identityProvider entries do not satisfy this capability.'
+                  if external_identity_provider_count == 0
+                  else (
+                    'Remove or tightly control kubeadmin fallback according to the customer access standard.'
+                    if kubeadmin_secret_present
+                    else 'Review and correct unclassified OAuth identityProvider entries so only supported provider configurations remain.'
+                  )
+                )
               ) -%}
           {%- set findings = (
                 [{

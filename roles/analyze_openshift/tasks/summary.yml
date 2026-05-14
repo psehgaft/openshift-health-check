@@ -692,6 +692,7 @@
     exposed_namespaces_without_networkpolicy: "{{ exposed_user_namespaces | intersect(namespaces_without_networkpolicy | default([])) }}"
     exposed_namespaces_missing_ingress_policies: "{{ exposed_user_namespaces | intersect(namespaces_missing_ingress_policies | default([])) }}"
     exposed_namespaces_missing_egress_policies: "{{ exposed_user_namespaces | intersect(namespaces_missing_egress_policies | default([])) }}"
+    network_route_ingress_objects_absent: "{{ (routes_items | default([]) | length == 0) and (ingresses_items | default([]) | length == 0) }}"
     proxy_required_internal_no_proxy_entries:
       - ".svc"
       - ".cluster.local"
@@ -732,6 +733,25 @@
           + (['service endpoint gaps=' ~ ((networking_service_endpoint_gap_count | int) | string)] if (networking_service_endpoint_gap_count | int) > 0 else [])
           + (['exposed namespace policy context=' ~ ((exposed_namespaces_without_networkpolicy | length) | string) ~ ' without NetworkPolicy'] if (exposed_namespaces_without_networkpolicy | length) > 0 else [])
           + (['proxy noProxy gaps=' ~ (proxy_missing_internal_no_proxy_entries | join(', '))] if (proxy_missing_internal_no_proxy_entries | length) > 0 else [])
+          + (
+              ['no Route or Ingress objects were available, so traffic-entry object health was not assessed']
+              if (
+                network_route_ingress_objects_absent
+                and (route_issues | default([]) | length) == 0
+                and (ingress_issues | default([]) | length) == 0
+                and (route_host_conflicts | default([]) | length) == 0
+                and (ingress_host_conflicts | default([]) | length) == 0
+                and (route_ingress_host_conflicts | default([]) | length) == 0
+                and (networking_default_ingresscontroller_issue_count | int) == 0
+                and (networking_nondefault_ingresscontroller_issue_count | int) == 0
+                and (networking_service_endpoint_gap_count | int) == 0
+                and (exposed_namespaces_without_networkpolicy | length) == 0
+                and (exposed_namespaces_missing_ingress_policies | length) == 0
+                and (exposed_namespaces_missing_egress_policies | length) == 0
+                and (proxy_missing_internal_no_proxy_entries | length) == 0
+              )
+              else []
+            )
         ) | join('; ')
       }}
     network_architecture_recommendation: >-
@@ -742,7 +762,11 @@
           else (
             'Reduce networking architecture risk next: fix route or ingress admission problems, repair Services with no ready endpoints, review non-default ingress controller issues, and correct proxy noProxy gaps before treating application access as production-ready.'
             if network_architecture_status == 'WARNING'
-            else 'Networking architecture looks acceptable for this run. Keep route and ingress ownership clean, review namespace isolation requirements for exposed workloads, and maintain proxy or egress settings as designed.'
+            else (
+              'No Route or Ingress objects were in scope for this run, so traffic-entry object health was not assessed. Confirm that absence is expected for this cluster, then maintain namespace isolation and proxy or egress settings as designed.'
+              if network_route_ingress_objects_absent
+              else 'Networking architecture looks acceptable for this run. Keep route and ingress ownership clean, review namespace isolation requirements for exposed workloads, and maintain proxy or egress settings as designed.'
+            )
           )
         )
       }}
@@ -1134,6 +1158,14 @@
         if (((control_plane_backup_evidence_data | default({})).findings | default([]) | length) > 0)
         else 'none'
       }}
+    control_plane_backup_warning: >-
+      {{
+        (control_plane_recovery_applicable | bool)
+        and (
+          not (control_plane_runtime_healthy | bool)
+          or not (control_plane_snapshot_evidence_collected | bool)
+        )
+      }}
     storage_provider_warning: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool }}"
     backup_recovery_status: >-
       {{
@@ -1148,6 +1180,7 @@
             (backup_posture_findings | default([]) | selectattr('issue', 'in', ['backup-schedule-paused', 'successful-backup-has-warnings-or-errors', 'successful-backup-stale', 'restore-evidence-not-demonstrated', 'restore-evidence-has-warnings-or-errors']) | list | length) > 0
             or (machine_healthcheck_findings | default([]) | length) > 0
             or storage_provider_warning
+            or control_plane_backup_warning
           )
           else 'HEALTHY'
         )
@@ -1169,6 +1202,9 @@
           + (['completed restores with warnings/errors=' ~ ((completed_restore_with_issues_count | int) | string)] if (completed_restore_with_issues_count | int) > 0 else [])
           + (['machine remediation findings=' ~ ((machine_healthcheck_findings | default([]) | length) | string)] if ((machine_healthcheck_findings | default([]) | length) > 0) else [])
           + (['storage provider risk=local-or-ephemeral-only'] if storage_provider_warning else [])
+          + (['control plane runtime not healthy for backup validation'] if ((control_plane_recovery_applicable | bool) and not (control_plane_runtime_healthy | bool)) else [])
+          + (['control plane backup evidence not scanned'] if ((control_plane_recovery_applicable | bool) and (control_plane_runtime_healthy | bool) and not (control_plane_backup_evidence_scanned | bool)) else [])
+          + (['control plane matching snapshot evidence=0'] if ((control_plane_recovery_applicable | bool) and (control_plane_runtime_healthy | bool) and (control_plane_backup_evidence_scanned | bool) and not (control_plane_snapshot_evidence_collected | bool)) else [])
         ) | join('; ')
       }}
     backup_recovery_recommendation: >-
@@ -1623,6 +1659,11 @@
 
 - name: Build declarative operations summary
   vars:
+    declarative_identity_provider_count: "{{ auth_posture_summary.identity_provider_count | default(day2_posture_summary.identity_provider_count | default(0)) }}"
+    declarative_backup_schedule_count: "{{ backup_recovery_summary.backup_schedule_count | default(day2_posture_summary.backup_schedule_count | default(0)) }}"
+    declarative_successful_backup_count: "{{ backup_recovery_summary.clean_successful_backup_count | default(backup_recovery_summary.successful_backup_count | default(day2_posture_summary.successful_backup_count | default(0))) }}"
+    declarative_machinehealthcheck_count: "{{ backup_recovery_summary.machine_healthcheck_count | default(day2_posture_summary.machinehealthcheck_count | default(0)) }}"
+    declarative_machinehealthcheck_expected: "{{ day2_posture_summary.machinehealthcheck_expected | default(false) }}"
     declarative_operations_status: >-
       {{
         'WARNING'
@@ -1651,7 +1692,7 @@
           + (['GitOps controller evidence is present but no GitOps Application resources were found'] if ((day2_posture_summary.gitops_present | default(false)) and (day2_posture_summary.gitops_application_count | default(0) | int) == 0) else [])
           + (['GitOps Applications were found but none exposed a Git repository source'] if (((day2_posture_summary.gitops_application_count | default(0) | int) > 0) and not (day2_posture_summary.gitops_operational | default(false))) else [])
           + (['GitOps Applications were found but none showed automated sync'] if (((day2_posture_summary.gitops_application_count | default(0) | int) > 0) and not (day2_posture_summary.gitops_automated_sync_present | default(false))) else [])
-          + (['supporting operations context: identityProviders=' ~ (day2_posture_summary.identity_provider_count | default(0) | string) ~ ', successfulBackups=' ~ (day2_posture_summary.successful_backup_count | default(0) | string) ~ ', machineHealthChecks=' ~ (day2_posture_summary.machinehealthcheck_count | default(0) | string)] if declarative_operations_status != 'WARNING' else [])
+          + (['supporting operations context: identityProviders=' ~ (declarative_identity_provider_count | string) ~ ', successfulBackups=' ~ (declarative_successful_backup_count | string) ~ ', machineHealthChecks=' ~ (declarative_machinehealthcheck_count | string)] if declarative_operations_status != 'WARNING' else [])
         ) | join('; ')
       }}
     declarative_operations_recommendation: >-
@@ -1679,11 +1720,11 @@
       acm_klusterlet_count: "{{ day2_posture_summary.acm_klusterlet_count | default(0) }}"
       acm_managedclusteraddon_count: "{{ day2_posture_summary.acm_managedclusteraddon_count | default(0) }}"
       acm_agent_namespace_count: "{{ day2_posture_summary.acm_agent_namespace_count | default(0) }}"
-      identity_provider_count: "{{ day2_posture_summary.identity_provider_count | default(0) }}"
-      backup_schedule_count: "{{ day2_posture_summary.backup_schedule_count | default(0) }}"
-      successful_backup_count: "{{ day2_posture_summary.successful_backup_count | default(0) }}"
-      machinehealthcheck_count: "{{ day2_posture_summary.machinehealthcheck_count | default(0) }}"
-      machinehealthcheck_expected: "{{ day2_posture_summary.machinehealthcheck_expected | default(false) }}"
+      identity_provider_count: "{{ declarative_identity_provider_count }}"
+      backup_schedule_count: "{{ declarative_backup_schedule_count }}"
+      successful_backup_count: "{{ declarative_successful_backup_count }}"
+      machinehealthcheck_count: "{{ declarative_machinehealthcheck_count }}"
+      machinehealthcheck_expected: "{{ declarative_machinehealthcheck_expected }}"
       clusterautoscaler_count: "{{ day2_posture_summary.clusterautoscaler_count | default(0) }}"
       clusterautoscaler_expected: "{{ day2_posture_summary.clusterautoscaler_expected | default(false) }}"
       insights_healthy: "{{ day2_posture_summary.insights_healthy | default(false) }}"
