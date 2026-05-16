@@ -6,6 +6,7 @@ This repository builds one cluster health report per run. Treat it as a report-c
 
 - Start with [README.md](README.md) for supported cluster types, run modes, commands, and validation flow.
 - Use [docs/DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md) for report design intent and section-order rationale.
+- Use [docs/cluster-health-extension-guide.md](docs/cluster-health-extension-guide.md) for the current extension workflow and repo layout conventions.
 - Preserve the current contract unless the task explicitly asks to change it.
 
 ## Supported Cluster Types
@@ -76,6 +77,50 @@ Current OpenShift report order comes from the design notes and template. Keep it
 12. Container Platform Adoption And Release Engineering
 13. Day 2 Production Readiness
 
+## Current Ownership Pattern
+
+The repo no longer uses one large shared OpenShift analysis owner per concern. Preserve the current ownership split:
+
+- OpenShift posture sections live under dedicated roles:
+  - `roles/posture_<key>/tasks/main.yml`
+  - optional `roles/posture_<key>/tasks/analysis.yml`
+  - `roles/posture_<key>/tasks/builder.yml`
+- OpenShift capability artifacts live under dedicated roles:
+  - `roles/capability_<key>/tasks/main.yml`
+  - `roles/capability_<key>/tasks/builder.yml`
+- Shared artifact plumbing is centralized in:
+  - `roles/posture_artifact_from_builder`
+  - `roles/capability_artifact_from_builder`
+  - `roles/report_common`
+
+Prefer changing the posture or capability role that owns the behavior before touching shared report plumbing.
+
+Current rule of thumb:
+
+- posture-specific synthesis belongs in the matching `roles/posture_<key>/`
+- capability-specific artifact mapping belongs in the matching `roles/capability_<key>/`
+- shared persistence, payload assembly, resume planning, and report rendering belong in `roles/report_common` or `roles/report_openshift`
+- avoid re-centralizing posture or capability business logic back into one shared task file
+
+## Helper Script Pattern
+
+Do not embed Python in Ansible task heredocs.
+
+Current repo pattern:
+
+- keep Python helpers in `scripts/`
+- call them from Ansible with `ansible.builtin.command`
+- validate changed helpers with `python3 -m py_compile`
+
+This rule applies to:
+
+- analysis helpers
+- collected-state parsing helpers
+- supportability/evidence helpers
+- report validators
+
+If logic is non-trivial enough to tempt an inline Python block, it should almost always become a helper script under `scripts/` instead.
+
 ## Profile-Gated Rendering
 
 For OpenShift, the final report must obey `inputs/openshift-cluster-health-profile.yml`.
@@ -110,6 +155,10 @@ When adding a new OpenShift posture:
 - Add it to `inputs/openshift-cluster-health-profile.yml` under `cluster_health_profile.postures`.
 - Add the matching section title mapping to `scripts/validate_openshift_report_output.py` in `POSTURE_SECTION_TITLES`.
 - Add or extend the section in `templates/openshift_cluster_health_report.md.j2`.
+- Create or extend the owning role:
+  - `roles/posture_<key>/tasks/main.yml`
+  - `roles/posture_<key>/tasks/builder.yml`
+  - `roles/posture_<key>/tasks/analysis.yml` when the posture owns synthesis logic
 - Preserve the five-question section contract from the design notes:
   - what is the gap
   - why it matters
@@ -121,6 +170,9 @@ When adding a new OpenShift posture:
 When adding a new OpenShift capability:
 
 - Add it to `inputs/openshift-cluster-health-profile.yml` under `cluster_health_profile.capabilities`.
+- Create or extend the owning role:
+  - `roles/capability_<key>/tasks/main.yml`
+  - `roles/capability_<key>/tasks/builder.yml`
 - Make sure `roles/analyze_openshift/tasks/day2.yml` can account for it in either:
   - collected assessment output, or
   - the fallback capability-section builder
@@ -142,13 +194,73 @@ The OpenShift playbook supports:
 - `report_mode=live`
 - `report_mode=collected`
 - `report_mode=auto`
+- `report_mode=offline` as an alias to `collected`
 
 Rules to preserve:
 
 - `report_mode=auto` resolves to `collected` when collected-state inputs are provided.
+- `report_mode=offline` must resolve to `collected`, not a separate report family.
 - OpenShift API surface validation applies only to live runs.
 - Collected-state fixture and case-bundle runs must not require a live OpenShift API probe.
 - Resume/checkpoint behavior must work for both live and collected runs.
+
+## Selector-Scoped Execution
+
+OpenShift scoped runs are now first-class. Preserve the distinction between:
+
+- requested render scope
+  - `report_requested_postures`
+  - `report_requested_capabilities`
+- effective rendered scope
+  - `report_effective_selected_postures`
+  - `report_effective_selected_capabilities`
+- execution prerequisite scope
+  - `report_execution_selected_postures`
+  - `cluster_health_profile_execution`
+
+Rules to preserve:
+
+- `selected_postures` and `selected_capabilities` control rendered scope, not only collection hints.
+- capability-only runs may auto-include prerequisite posture execution facts, but should not broaden rendered scope beyond the requested capabilities plus any intentional owning posture render contract.
+- selector dependency decisions come from:
+  - `roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml`
+- optional evidence reduction must be driven from that resolver, not from ad hoc `when` conditions scattered through loaders.
+
+If you change selector behavior, verify:
+
+- the scoped profile shape
+- the dependency resolver
+- the rendered report sections
+- the manifest fields persisted by the checkpoint layer
+
+## Artifact Workspace And Resume Contract
+
+OpenShift report runs are artifact-first. The `.run-state` workspace is part of the contract.
+
+Current workspace layout under `report_output_dir`:
+
+- `.run-state/openshift/<mode>-artifacts/shared/`
+- `.run-state/openshift/<mode>-artifacts/postures/`
+- `.run-state/openshift/<mode>-artifacts/capabilities/`
+- `.run-state/openshift/<mode>-artifacts/report/`
+
+Important persisted artifacts include:
+
+- `shared/collection.json`
+- `shared/analysis-graph.json`
+- `report/payload.json`
+- final report Markdown and JSON
+
+Resume behavior is artifact-granular, not just stage-granular. Preserve:
+
+- `roles/report_common/tasks/save_run_checkpoint.yml`
+- `roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml`
+- `roles/report_common/tasks/load_openshift_shared_artifacts.yml`
+- `roles/report_common/tasks/load_openshift_posture_artifacts.yml`
+- `roles/report_common/tasks/load_openshift_capability_artifacts.yml`
+- `roles/report_common/tasks/load_openshift_report_payload_artifact.yml`
+
+When changing artifact metadata or report payload structure, keep the persisted manifest, payload loader, and resume invalidation logic aligned.
 
 Sensitive files for this:
 
@@ -205,6 +317,12 @@ If you change collector failure handling, preserve the distinction between:
 - optional access-denied skips
 - optional not-installed skips
 
+For selector-scoped OpenShift runs, also preserve the current optional-evidence reduction behavior:
+
+- broad optional support inputs should be blanked before parse-time when the dependency resolver says they are out of scope
+- do not force narrow runs to parse `cluster-compare`, `inspect`, `managed-gates`, `advisor`, `insights`, `omc`, or `sosreport` unless the resolved dependency contract actually requires them
+- keep the loader gates aligned with `roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml`
+
 ## Key Sensitive Files
 
 Be careful in these areas because they control top-level behavior:
@@ -213,10 +331,28 @@ Be careful in these areas because they control top-level behavior:
 - `playbooks/k8s_cluster_health_report.yml`
 - `templates/openshift_cluster_health_report.md.j2`
 - `roles/analyze_openshift/tasks/day2.yml`
-- `roles/analyze_openshift/tasks/core.yml`
-- `roles/analyze_openshift/tasks/summary.yml`
+- `roles/analyze_openshift/tasks/core/`
+- `roles/analyze_openshift/tasks/day2/`
+- `roles/analyze_openshift/tasks/observability/`
+- `roles/analyze_openshift/tasks/review_domains/`
+- `roles/analyze_openshift/tasks/summary/`
+- `roles/analyze_openshift/tasks/supportability_evidence/`
+- `roles/analyze_openshift/tasks/collected_state_health/`
+- `roles/analyze_common/tasks/security/`
+- `roles/analyze_common/tasks/workload/`
+- `roles/load_evidence_common/tasks/`
+- `roles/load_evidence_openshift/tasks/`
+- `roles/load_evidence_openshift_products/tasks/`
+- `roles/load_evidence_openshift_product_slices/tasks/`
 - `roles/report_common/tasks/main.yml`
 - `roles/report_common/tasks/build_openshift_report_payload.yml`
+- `roles/report_common/tasks/render_report_artifacts.yml`
+- `roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml`
+- `roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml`
+- `roles/report_common/tasks/load_openshift_report_payload_artifact.yml`
+- `roles/report_openshift/tasks/render_collected_state_report.yml`
+- `roles/posture_*/tasks/`
+- `roles/capability_*/tasks/`
 - `scripts/validate_openshift_report_output.py`
 - `scripts/validate_repo.sh`
 - `inputs/openshift-cluster-health-profile.yml`
@@ -271,6 +407,12 @@ Expected verification by change type:
 - Shell scripts:
   - run `bash -n`
   - run the script or the narrowest safe invocation if behavior changed
+
+For OpenShift runtime validation, prefer the narrowest realistic path first:
+
+- selector-scoped collected-state runs for changed postures or capabilities
+- synthetic resume or payload harnesses for artifact-first report/resume logic
+- full `scripts/validate_repo.sh` before closing out broad contract changes
 
 The goal is not just “syntax clean”. The goal is “unlikely to break the latest working repo behavior”.
 
