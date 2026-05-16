@@ -55,6 +55,16 @@ source .venv/bin/activate
 ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
 ```
 
+If you are preparing a fresh bastion host first, use the OS bootstrap that matches the host:
+
+```bash
+# Ubuntu
+sudo bash scripts/setup-bastion-ubuntu.sh
+
+# CentOS / RHEL-compatible
+sudo bash scripts/setup-bastion-centos.sh
+```
+
 If you are trying the repo for the first time, start with OpenShift. OpenShift is the original cluster type this solution was designed around, and `playbooks/openshift_cluster_health_report.yml` remains the primary entrypoint and deepest report path in the repo.
 
 For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and defaults to the full live support collection profile. That includes API and metric evidence, live `inspect`, Insights archive copy, optional `cluster-compare`, `must-gather`, and node diagnostics when they apply.
@@ -692,6 +702,10 @@ The repo no longer relies on a few large monolithic task files for the OpenShift
   Local `etcd-ocp-diag` wrapper for must-gather analysis.
 - [scripts/parse_omc.py](scripts/parse_omc.py)
   Optional `omc` wrapper for must-gather etcd and alert/rule diagnostics.
+- [scripts/setup-bastion-ubuntu.sh](scripts/setup-bastion-ubuntu.sh)
+  Ubuntu bastion bootstrap for the repo runtime and cluster CLI tools.
+- [scripts/setup-bastion-centos.sh](scripts/setup-bastion-centos.sh)
+  CentOS or RHEL-compatible bastion bootstrap for the repo runtime and cluster CLI tools.
 - [tests/run_supportability_fixture.sh](tests/run_supportability_fixture.sh)
   Main OpenShift collected-state fixture.
 - [tests/run_supportability_inspect_fixture.sh](tests/run_supportability_inspect_fixture.sh)
@@ -755,6 +769,26 @@ Install these programs first:
 
 - `python3` or `python3.12`
 - `openssl`
+
+If you want the repo to prepare a bastion host for you, use:
+
+- Ubuntu:
+  `sudo bash scripts/setup-bastion-ubuntu.sh`
+- CentOS or RHEL-compatible:
+  `sudo bash scripts/setup-bastion-centos.sh`
+
+Those scripts install the common runtime tools used by this repo, including:
+
+- `python3`
+- `git`
+- `jq`
+- `openssl`
+- `oc`
+- `kubectl`
+- `pandoc`
+- `wkhtmltopdf`
+
+They also call `scripts/setup-ansible-venv.sh` so the repo-local `.venv` is ready when the script is run from the checked-out repository.
 
 ## Python Virtual Environment
 
