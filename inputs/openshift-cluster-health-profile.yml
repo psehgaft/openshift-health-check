@@ -89,6 +89,7 @@ cluster_health_profile:
       - Proxy exclusions and namespace isolation controls align with the intended
         access design.
       includes:
+      - ingress_controller_topology_and_sharding
       - namespace_network_policy_baseline
       - namespace_egress_controls
       satisfied_by_all: []
@@ -111,8 +112,10 @@ cluster_health_profile:
       - The chosen observability platform is receiving cluster telemetry.
       includes:
       - cluster_log_forwarding
+      - cluster_network_observability
       - external_alert_delivery
       - user_workload_metrics_monitoring
+      - user_workload_alerting_and_slos
       - persistent_monitoring_storage
       - openshift_custom_metrics_autoscaler
       satisfied_by_all:
@@ -142,8 +145,10 @@ cluster_health_profile:
       - multi_tenant_namespace_governance
       - cyberark_conjur_secrets_management
       - advanced_cluster_security
+      - api_server_audit_and_log_retention
       - compliance_requirements_validation
       - custom_ca_trust_bundle
+      - image_signature_and_admission_policy
       - ovn_ipsec_encryption
       - workload_vulnerability_scanning
       - workloads_using_external_private_registries
@@ -460,6 +465,27 @@ cluster_health_profile:
         path is present when this capability is enabled.
       - The intended external metrics destination is configured for the operating
         model that depends on it.
+    cluster_network_observability:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: healthy
+      owner: observability
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the operating model depends on intentional
+        network-flow, DNS, or service-path visibility for troubleshooting and service
+        assurance, whether through OpenShift Network Observability or another approved
+        network-observability path.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/network_observability/network_observability_overview
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/ingress_and_load_balancing
+      verification:
+      - Network-observability resources or an equivalent approved implementation
+        are present when this capability is enabled.
+      - The expected network-flow or DNS-path visibility is available for the teams
+        that depend on network observability during incident response.
     oauth_external_identity_provider:
       enabled: true
       required: true
@@ -584,6 +610,27 @@ cluster_health_profile:
       - OVN IPsec configuration is enabled when this capability is expected.
       - The cluster reports the intended network-encryption path for inter-node pod
         traffic.
+    ingress_controller_topology_and_sharding:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: configured
+      owner: network
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to run a deliberate
+        ingress-controller topology such as dedicated ingress domains, shard-specific
+        routes, infrastructure-only ingress, or topology-aware separation for different
+        workloads or tenants.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-ingress-cluster-traffic
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/ingress-sharding
+      verification:
+      - IngressController resources show the intended domain, placement, and sharding
+        design when this capability is enabled.
+      - Routes that depend on dedicated or sharded ingress placement match the intended
+        ingress topology.
     image_registry_policy_governance:
       enabled: false
       required: false
@@ -620,6 +667,26 @@ cluster_health_profile:
       - Mirror configuration resources are present when this capability is enabled.
       - The configured mirror targets align with the intended registry and image-supply
         path.
+    image_signature_and_admission_policy:
+      enabled: false
+      required: false
+      criticality: high
+      expected_state: configured
+      owner: security
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to enforce image-signature
+        verification, admission policy, or equivalent trusted-image controls before
+        workloads are allowed to run.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/images/image-configuration
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/security_and_compliance/admission-plug-ins
+      verification:
+      - Signature policy, image-policy, or equivalent admission-enforcement resources
+        are configured when this capability is enabled.
+      - Workload admission depends on the intended trusted-image policy rather than
+        unrestricted image pulls.
     disconnected_cluster_image_sources:
       enabled: false
       required: false
@@ -942,6 +1009,27 @@ cluster_health_profile:
         resources are present when this capability is enabled.
       - Expected scans complete with reviewable results, and remediation or exception
         decisions are tracked for non-compliant findings.
+    api_server_audit_and_log_retention:
+      enabled: false
+      required: false
+      criticality: high
+      expected_state: configured
+      owner: security
+      evidence_required:
+      - must-gather
+      - inspect
+      - oc-get
+      notes: Use this capability when the operating model depends on API audit logging
+        and intentional retention of audit records for investigation, governance,
+        or compliance use cases.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/security_and_compliance/audit-log-view
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/security_and_compliance/configuring-audit-logs
+      verification:
+      - API audit logging is configured for the intended audit profile when this
+        capability is enabled.
+      - The expected audit-log retention or forwarding path exists for the teams
+        that depend on those records.
     openshift_pipeline_workflows:
       enabled: false
       required: false
@@ -1136,6 +1224,27 @@ cluster_health_profile:
         capability is enabled.
       - Expected ScaledObject, ScaledJob, and trigger definitions are configured and
         event-driven scaling works for the workloads that depend on it.
+    user_workload_alerting_and_slos:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: configured
+      owner: observability
+      evidence_required:
+      - must-gather
+      - oc-get
+      - prometheus
+      notes: Use this capability when tenant or application teams are expected to
+        define workload alert rules, ServiceMonitor or PodMonitor targets, and service-level
+        objectives that are actionable through the cluster observability stack.
+      docs:
+      - https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/latest/html/configuring_user_workload_monitoring/index
+      - https://prometheus.io/docs/practices/alerting/
+      verification:
+      - User-workload alert rules or an equivalent workload-alerting implementation
+        are present when this capability is enabled.
+      - The expected service-level indicators, alerts, or SLO evidence exists for
+        the workloads that depend on user-workload observability.
     openshift_virtualization:
       enabled: false
       required: false

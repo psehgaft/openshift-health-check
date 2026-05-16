@@ -3,6 +3,8 @@ import json
 import re
 import sys
 
+from workload_noise_filters import is_operator_managed_object
+
 
 def raw_aliases(raw):
     text = str(raw or "").strip()
@@ -32,6 +34,7 @@ def main() -> int:
     }
 
     node_alias_to_canonical = {}
+    operator_managed_namespace_names = data.get("operator_managed_namespace_names") or []
     for node in data.get("nodes") or []:
         metadata = node.get("metadata") or {}
         status = node.get("status") or {}
@@ -61,6 +64,8 @@ def main() -> int:
         namespace_name = str(metadata.get("namespace") or "")
         pod_name = str(metadata.get("name") or "unknown")
         is_user_namespace = not exclude_re.search(namespace_name or "")
+        is_operator_managed_pod = is_operator_managed_object(item, operator_managed_namespace_names)
+        is_user_workload_pod = is_user_namespace and not is_operator_managed_pod
 
         pod_phase_counts[phase] = pod_phase_counts.get(phase, 0) + 1
         for node_alias in raw_aliases(node_name):
@@ -70,7 +75,7 @@ def main() -> int:
         pod_object_counts["total"] += 1
         if phase == "Running":
             pod_object_counts["running"] += 1
-        if is_user_namespace:
+        if is_user_workload_pod:
             pod_object_counts["user_total"] += 1
             if phase == "Running":
                 pod_object_counts["user_running"] += 1
@@ -83,7 +88,7 @@ def main() -> int:
             int(container.get("restartCount") or 0)
             for container in (status.get("initContainerStatuses") or [])
         )
-        if is_user_namespace and restart_count > 0:
+        if is_user_workload_pod and restart_count > 0:
             pod_restart_hotspots.append(
                 {
                     "namespace": namespace_name,

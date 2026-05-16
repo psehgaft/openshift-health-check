@@ -107,6 +107,16 @@ def runtime_signal_rows(data, result_key, signal_name):
     return value if isinstance(value, list) else []
 
 
+def normalize_items(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        items = value.get("items")
+        if isinstance(items, list):
+            return items
+    return []
+
+
 def signal_kind(entry, observed_label="utilization", derived_label="requested-pressure"):
     if (entry or {}).get("status") == "observed":
         return observed_label
@@ -395,6 +405,22 @@ def main():
     with open(sys.argv[1], "r", encoding="utf-8") as fh:
         data = json.load(fh)
 
+    pod_items = normalize_items(data.get("pods"))
+    resourcequota_items = normalize_items(data.get("resourcequotas"))
+    node_pod_count_map = dict(data.get("node_pod_counts") or {})
+    derived_node_pod_counts = Counter()
+    for pod in pod_items:
+        node_name = (((pod.get("spec", {}) or {}).get("nodeName")) or "").strip()
+        if node_name:
+            derived_node_pod_counts[node_name] += 1
+    for node_name, count in derived_node_pod_counts.items():
+        node_pod_count_map[node_name] = max(int(node_pod_count_map.get(node_name, 0) or 0), int(count))
+
+    pod_total_count = len(pod_items)
+    running_pod_count = sum(
+        1 for pod in pod_items if (((pod.get("status", {}) or {}).get("phase")) == "Running")
+    )
+
     node_cpu_signal = runtime_signal_entry(data, "node_cpu_utilization")
     node_memory_signal = runtime_signal_entry(data, "node_memory_utilization")
     node_disk_signal = runtime_signal_entry(data, "node_disk_utilization")
@@ -531,7 +557,8 @@ def main():
         memory_bytes = parse_binary_bytes(allocatable.get("memory", "0"))
         total_memory_bytes += memory_bytes
         total_disk_bytes += parse_binary_bytes(allocatable.get("ephemeral-storage", "0"))
-        total_pods_scheduled += int((data.get("node_pod_counts") or {}).get(node_name, 0) or 0)
+        scheduled_pods = int(node_pod_count_map.get(node_name, 0) or 0)
+        total_pods_scheduled += scheduled_pods
         cpu_util_pct = cpu_util_by_node.get(node_name)
         memory_util_pct = mem_util_by_node.get(node_name)
         cpu_available_millicores = None
@@ -568,7 +595,7 @@ def main():
                 "disk_signal_method": node_disk_signal.get("method", "not-collected"),
                 "disk_signal_kind": signal_kind(node_disk_signal),
                 "disk_is_approximation": bool(node_disk_signal.get("is_approximation", False)),
-                "pod_count": int((data.get("node_pod_counts") or {}).get(node_name, 0) or 0),
+                "pod_count": scheduled_pods,
                 "pod_density_pct": round(pod_density_pct, 1) if pod_density_pct is not None else None,
                 "pod_density_signal_status": pod_density_signal.get("status", "not-collected"),
                 "pod_density_signal_source": pod_density_signal.get("source", "unavailable"),
@@ -730,7 +757,10 @@ def main():
     average_disk_utilization_pct = avg(
         [item.get("disk_utilization_pct") for item in node_resource_rows if item.get("disk_utilization_pct") not in (None, "")]
     )
-    namespace_resource_rows = build_namespace_resource_summary(data, total_cpu_cores, total_memory_bytes)
+    namespace_data = dict(data)
+    namespace_data["pods"] = pod_items
+    namespace_data["resourcequotas"] = resourcequota_items
+    namespace_resource_rows = build_namespace_resource_summary(namespace_data, total_cpu_cores, total_memory_bytes)
 
     result = {
         "ocp_version": (((cv.get("status", {}) or {}).get("desired", {}) or {}).get("version", "unknown")),
@@ -772,8 +802,8 @@ def main():
         },
         "object_counts": {
             "namespaces": int(data.get("namespace_count", 0) or 0),
-            "pods": int((data.get("pod_object_counts") or {}).get("total", 0) or 0),
-            "running_pods": int((data.get("pod_object_counts") or {}).get("running", 0) or 0),
+            "pods": max(int((data.get("pod_object_counts") or {}).get("total", 0) or 0), pod_total_count),
+            "running_pods": max(int((data.get("pod_object_counts") or {}).get("running", 0) or 0), running_pod_count),
             "deployments": int(data.get("deployment_count", 0) or 0),
             "statefulsets": int(data.get("statefulset_count", 0) or 0),
             "daemonsets": int(data.get("daemonset_count", 0) or 0),

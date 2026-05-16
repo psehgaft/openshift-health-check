@@ -3,16 +3,28 @@
   ansible.builtin.set_fact:
     degraded_mcps: []
     updating_mcps: []
+    assessment_mcp_summary: []
   when: report_scope_requires_core_mcp_analysis | default(true) | bool
 
 - name: Build MCP facts
   ansible.builtin.set_fact:
     degraded_mcps: "{{ degraded_mcps + ([item.metadata.name] if degraded_status == 'True' else []) }}"
     updating_mcps: "{{ updating_mcps + ([item.metadata.name] if updating_status == 'True' else []) }}"
+    assessment_mcp_summary: "{{ (assessment_mcp_summary | default([])) + [assessment_mcp_item] }}"
   loop: "{{ (analysis_graph.machineconfigpools | default({'items': []})).get('items', []) }}"
   vars:
     degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
     updating_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) }}"
+    updated_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default('Unknown')) }}"
+    assessment_mcp_item:
+      name: "{{ item.metadata.name | default('unknown') }}"
+      degraded: "{{ degraded_status }}"
+      updating: "{{ updating_status }}"
+      updated: "{{ updated_status }}"
+      machine_count: "{{ item.status.machineCount | default(0) }}"
+      ready_machine_count: "{{ item.status.readyMachineCount | default(0) }}"
+      updated_machine_count: "{{ item.status.updatedMachineCount | default(0) }}"
+      degraded_machine_count: "{{ item.status.degradedMachineCount | default(0) }}"
   changed_when: false
   when: report_scope_requires_core_mcp_analysis | default(true) | bool
 

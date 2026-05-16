@@ -32,6 +32,28 @@
     ns_name: "{{ item.metadata.namespace | default('') }}"
     phase: "{{ item.status.phase | default('Unknown') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    pod_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
+    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_operator_managed_pod: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in pod_name_lower)
+        or ('operator-' in pod_name_lower)
+        or ('controller-manager' in pod_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+      }}
     ready_container_count: "{{ item.status.containerStatuses | default([]) | selectattr('ready', 'equalto', true) | list | length | int }}"
     total_container_count: "{{ item.status.containerStatuses | default([]) | length | int }}"
     pod_issue: >-
@@ -44,6 +66,7 @@
         }]
         if (
           (is_user_namespace | bool)
+          and not (is_operator_managed_pod | bool)
           and (phase not in ['Running', 'Succeeded', 'Completed'])
         ) else []
       }}
@@ -54,11 +77,34 @@
     deployment_issues: "{{ deployment_issues | default([]) + issue_entry }}"
   loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
   vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    workload_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
+    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_operator_managed_workload: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in workload_name_lower)
+        or ('operator-' in workload_name_lower)
+        or ('controller-manager' in workload_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+      }}
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.availableReplicas | default(0) | int }}"
     ready: "{{ item.status.readyReplicas | default(0) | int }}"
     updated: "{{ item.status.updatedReplicas | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'Deployment', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((available | int) < (desired | int) or (ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
+    issue_entry: "{{ [{'kind': 'Deployment', 'namespace': ns_name, 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and not (is_operator_managed_workload | bool) and ((available | int) < (desired | int) or (ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
   changed_when: false
 
 - name: Build statefulset health findings
@@ -66,11 +112,34 @@
     statefulset_issues: "{{ statefulset_issues | default([]) + issue_entry }}"
   loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
   vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    workload_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
+    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_operator_managed_workload: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in workload_name_lower)
+        or ('operator-' in workload_name_lower)
+        or ('controller-manager' in workload_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+      }}
     desired: "{{ item.spec.replicas | default(1) | int }}"
     available: "{{ item.status.currentReplicas | default(0) | int }}"
     ready: "{{ item.status.readyReplicas | default(0) | int }}"
     updated: "{{ item.status.updatedReplicas | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'StatefulSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
+    issue_entry: "{{ [{'kind': 'StatefulSet', 'namespace': ns_name, 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (ready | int), 'updated': (updated | int)}] if (desired | int) > 0 and not (is_operator_managed_workload | bool) and ((ready | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
   changed_when: false
 
 - name: Build daemonset health findings
@@ -78,10 +147,33 @@
     daemonset_issues: "{{ daemonset_issues | default([]) + issue_entry }}"
   loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
   vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    workload_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
+    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_operator_managed_workload: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in workload_name_lower)
+        or ('operator-' in workload_name_lower)
+        or ('controller-manager' in workload_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+      }}
     desired: "{{ item.status.desiredNumberScheduled | default(0) | int }}"
     available: "{{ item.status.numberReady | default(0) | int }}"
     updated: "{{ item.status.updatedNumberScheduled | default(0) | int }}"
-    issue_entry: "{{ [{'kind': 'DaemonSet', 'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (available | int), 'updated': (updated | int)}] if (desired | int) > 0 and ((available | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
+    issue_entry: "{{ [{'kind': 'DaemonSet', 'namespace': ns_name, 'name': item.metadata.name, 'desired': (desired | int), 'available': (available | int), 'ready': (available | int), 'updated': (updated | int)}] if (desired | int) > 0 and not (is_operator_managed_workload | bool) and ((available | int) < (desired | int) or (updated | int) < (desired | int)) else [] }}"
   changed_when: false
 
 - name: Combine workload health findings
@@ -95,6 +187,28 @@
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    workload_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
+    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_operator_managed_workload: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in workload_name_lower)
+        or ('operator-' in workload_name_lower)
+        or ('controller-manager' in workload_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+      }}
     kind_name: "{{ item.kind | default('Workload') }}"
     desired_replicas: "{{ item.spec.replicas | default(1) | int }}"
     replica_review_entry: >-
@@ -105,7 +219,7 @@
           'name': item.metadata.name | default('unknown'),
           'replicas': desired_replicas
         }]
-        if ((is_user_namespace | bool) and (desired_replicas | int) > 10) else []
+        if ((is_user_namespace | bool) and not (is_operator_managed_workload | bool) and (desired_replicas | int) > 10) else []
       }}
   changed_when: false
 
@@ -127,7 +241,8 @@
           'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
           'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
           'poddisruptionbudgets': ((analysis_graph.poddisruptionbudgets | default({})).get('items', [])),
-          'exclude_regex': (user_namespaces_exclude_regex | default('^$'))
+          'exclude_regex': (user_namespaces_exclude_regex | default('^$')),
+          'operator_managed_namespace_names': (operator_managed_namespace_names | default([]))
         } | to_json }}"
       changed_when: false
 

@@ -4,6 +4,8 @@ import re
 import sys
 from collections import defaultdict
 
+from workload_noise_filters import is_operator_managed_object
+
 
 WORKLOAD_OWNER_LABEL_KEYS = [
     "team",
@@ -81,6 +83,7 @@ def main() -> int:
         data = json.load(handle)
 
     exclude_regex = str(data.get("user_namespaces_exclude_regex") or "")
+    operator_managed_namespace_names = data.get("operator_managed_namespace_names") or []
     namespace_map = {}
     namespace_objects = defaultdict(list)
 
@@ -110,6 +113,8 @@ def main() -> int:
     for pod in data.get("pods") or []:
         ns_name = namespace_of(pod)
         if not ns_name or re.match(exclude_regex, ns_name):
+            continue
+        if is_operator_managed_object(pod, operator_managed_namespace_names):
             continue
 
         pod_phase = str((((pod.get("status") or {}).get("phase")) or "Unknown")).strip()

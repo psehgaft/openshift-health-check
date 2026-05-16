@@ -1,4 +1,46 @@
 ---
+- name: Resolve effective secret inventory facts for security posture
+  vars:
+    security_secret_items_from_analysis: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
+    security_secret_items_from_collection: "{{ (collected_resource_graph.secrets | default({})).get('items', []) }}"
+    security_secret_items_from_top_level: >-
+      {{
+        (secrets | default({})).get('items', [])
+        if (secrets | default({})) is mapping
+        else (secrets | default([]))
+      }}
+  ansible.builtin.set_fact:
+    security_secret_inventory_items: >-
+      {{
+        security_secret_items_from_analysis
+        if (security_secret_items_from_analysis | length) > 0
+        else (
+          security_secret_items_from_collection
+          if (security_secret_items_from_collection | length) > 0
+          else security_secret_items_from_top_level
+        )
+      }}
+    security_secret_type_counts_effective: >-
+      {%- if (secret_type_counts | default({}) | length) > 0 -%}
+      {{ secret_type_counts | default({}) }}
+      {%- else -%}
+      {%- set ns = namespace(counts={}) -%}
+      {%- for item in (
+            security_secret_items_from_analysis
+            if (security_secret_items_from_analysis | length) > 0
+            else (
+              security_secret_items_from_collection
+              if (security_secret_items_from_collection | length) > 0
+              else security_secret_items_from_top_level
+            )
+          ) -%}
+      {%- set secret_type = item.type | default('unknown') -%}
+      {%- set _ = ns.counts.update({secret_type: (ns.counts.get(secret_type, 0) + 1)}) -%}
+      {%- endfor -%}
+      {{ ns.counts }}
+      {%- endif -%}
+  changed_when: false
+
 - name: Build security and governance posture artifact facts
   ansible.builtin.set_fact:
     posture_artifact_key: security_and_governance
@@ -33,7 +75,8 @@
       scc_grant_findings: "{{ top_scc_grant_findings | default(scc_grant_findings | default([])) }}"
       scc_item_count: "{{ (securitycontextconstraints_items | default([])) | length }}"
       likely_unused_secrets: "{{ likely_unused_secrets | default([]) }}"
-      secret_type_counts: "{{ secret_type_counts | default({}) }}"
+      secret_total_count: "{{ security_secret_inventory_items | default([]) | length }}"
+      secret_type_counts: "{{ security_secret_type_counts_effective | default(secret_type_counts | default({})) }}"
       expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) }}"
       expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) }}"
       image_registry_findings: "{{ top_image_registry_findings | default(image_registry_findings | default([])) }}"
@@ -89,7 +132,8 @@
         stale_groups: "{{ top_stale_access_review_groups | default(stale_access_review_groups | default([])) }}"
       secret_inventory:
         likely_unused_secrets: "{{ likely_unused_secrets | default([]) }}"
-        secret_type_counts: "{{ secret_type_counts | default({}) }}"
+        secret_total_count: "{{ security_secret_inventory_items | default([]) | length }}"
+        secret_type_counts: "{{ security_secret_type_counts_effective | default(secret_type_counts | default({})) }}"
         expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) }}"
         expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) }}"
       image_registry:

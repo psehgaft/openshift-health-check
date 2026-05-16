@@ -250,16 +250,40 @@
 - name: Reconcile cluster current state object counts when needed
   vars:
     graph: "{{ analysis_graph | default({}) }}"
+    graph_pod_items: "{{ (graph.pods | default({})).get('items', []) }}"
+    collected_pod_items: "{{ ((pods | default({})).get('items', []) if ((pods | default({})) is mapping) else ((pods | default([])) if ((pods | default([])) is sequence and (pods | default([])) is not string) else [])) }}"
+    graph_deployment_items: "{{ (graph.deployments | default({})).get('items', []) }}"
+    collected_deployment_items: "{{ ((deployments | default({})).get('items', []) if ((deployments | default({})) is mapping) else ((deployments | default([])) if ((deployments | default([])) is sequence and (deployments | default([])) is not string) else [])) }}"
+    graph_statefulset_items: "{{ (graph.statefulsets | default({})).get('items', []) }}"
+    collected_statefulset_items: "{{ ((statefulsets | default({})).get('items', []) if ((statefulsets | default({})) is mapping) else ((statefulsets | default([])) if ((statefulsets | default([])) is sequence and (statefulsets | default([])) is not string) else [])) }}"
+    graph_daemonset_items: "{{ (graph.daemonsets | default({})).get('items', []) }}"
+    collected_daemonset_items: "{{ ((daemonsets | default({})).get('items', []) if ((daemonsets | default({})) is mapping) else ((daemonsets | default([])) if ((daemonsets | default([])) is sequence and (daemonsets | default([])) is not string) else [])) }}"
+    graph_route_items: "{{ (graph.routes | default({})).get('items', []) }}"
+    collected_route_items: "{{ ((routes | default({})).get('items', []) if ((routes | default({})) is mapping) else ((routes | default([])) if ((routes | default([])) is sequence and (routes | default([])) is not string) else [])) }}"
+    graph_ingress_items: "{{ (graph.ingresses | default({})).get('items', []) }}"
+    collected_ingress_items: "{{ ((ingresses | default({})).get('items', []) if ((ingresses | default({})) is mapping) else ((ingresses | default([])) if ((ingresses | default([])) is sequence and (ingresses | default([])) is not string) else [])) }}"
+    graph_namespace_items: "{{ (graph.namespaces | default({})).get('items', []) }}"
+    collected_namespace_items: "{{ ((namespaces | default({})).get('items', []) if ((namespaces | default({})) is mapping) else ((namespaces | default([])) if ((namespaces | default([])) is sequence and (namespaces | default([])) is not string) else [])) }}"
+    graph_storageclass_items: "{{ (graph.storageclasses | default({})).get('items', []) }}"
+    collected_storageclass_items: "{{ ((storageclasses | default({})).get('items', []) if ((storageclasses | default({})) is mapping) else ((storageclasses | default([])) if ((storageclasses | default([])) is sequence and (storageclasses | default([])) is not string) else [])) }}"
+    effective_pod_items: "{{ graph_pod_items if (graph_pod_items | length) > 0 else collected_pod_items }}"
+    effective_deployment_items: "{{ graph_deployment_items if (graph_deployment_items | length) > 0 else collected_deployment_items }}"
+    effective_statefulset_items: "{{ graph_statefulset_items if (graph_statefulset_items | length) > 0 else collected_statefulset_items }}"
+    effective_daemonset_items: "{{ graph_daemonset_items if (graph_daemonset_items | length) > 0 else collected_daemonset_items }}"
+    effective_route_items: "{{ graph_route_items if (graph_route_items | length) > 0 else collected_route_items }}"
+    effective_ingress_items: "{{ graph_ingress_items if (graph_ingress_items | length) > 0 else collected_ingress_items }}"
+    effective_namespace_items: "{{ graph_namespace_items if (graph_namespace_items | length) > 0 else collected_namespace_items }}"
+    effective_storageclass_items: "{{ graph_storageclass_items if (graph_storageclass_items | length) > 0 else collected_storageclass_items }}"
     graph_object_counts:
-      namespaces: "{{ (graph.namespaces | default({})).get('items', []) | length }}"
-      pods: "{{ (graph.pods | default({})).get('items', []) | length }}"
-      running_pods: "{{ (graph.pods | default({})).get('items', []) | selectattr('status.phase', 'equalto', 'Running') | list | length }}"
-      deployments: "{{ (graph.deployments | default({})).get('items', []) | length }}"
-      statefulsets: "{{ (graph.statefulsets | default({})).get('items', []) | length }}"
-      daemonsets: "{{ (graph.daemonsets | default({})).get('items', []) | length }}"
-      routes: "{{ (graph.routes | default({})).get('items', []) | length }}"
-      ingresses: "{{ (graph.ingresses | default({})).get('items', []) | length }}"
-      storageclasses: "{{ (graph.storageclasses | default({})).get('items', []) | length }}"
+      namespaces: "{{ effective_namespace_items | length }}"
+      pods: "{{ effective_pod_items | length }}"
+      running_pods: "{{ effective_pod_items | selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+      deployments: "{{ effective_deployment_items | length }}"
+      statefulsets: "{{ effective_statefulset_items | length }}"
+      daemonsets: "{{ effective_daemonset_items | length }}"
+      routes: "{{ effective_route_items | length }}"
+      ingresses: "{{ effective_ingress_items | length }}"
+      storageclasses: "{{ effective_storageclass_items | length }}"
     cluster_current_state_needs_object_count_reconcile: >-
       {{
         (
@@ -267,8 +291,16 @@
           and (graph_object_counts.pods | int) > 0
         )
         or (
+          (cluster_current_state.object_counts | default({})).running_pods | default(0) | int == 0
+          and (graph_object_counts.running_pods | int) > 0
+        )
+        or (
           (cluster_current_state.object_counts | default({})).deployments | default(0) | int == 0
           and (graph_object_counts.deployments | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).statefulsets | default(0) | int == 0
+          and (graph_object_counts.statefulsets | int) > 0
         )
         or (
           (cluster_current_state.object_counts | default({})).daemonsets | default(0) | int == 0
@@ -285,6 +317,10 @@
         or (
           (cluster_current_state.object_counts | default({})).storageclasses | default(0) | int == 0
           and (graph_object_counts.storageclasses | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).namespaces | default(0) | int == 0
+          and (graph_object_counts.namespaces | int) > 0
         )
       }}
   ansible.builtin.set_fact:

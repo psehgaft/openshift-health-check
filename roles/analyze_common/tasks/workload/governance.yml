@@ -7,7 +7,70 @@
     ns_name: "{{ item.metadata.namespace | default('') }}"
     phase: "{{ item.status.phase | default('Unknown') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    pod_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    app_label_lower: "{{ (labels.get('app', '') | string | lower) }}"
+    service_account_lower: "{{ (item.spec.serviceAccountName | default('') | string | lower) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
     owner_references: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_csv_owner: "{{ (owner_references | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_runner_noise_pod: >-
+      {{
+        ('gitlab-runner' in pod_name_lower)
+        or ('github-runner' in pod_name_lower)
+        or ('actions-runner' in pod_name_lower)
+        or ('azure-pipelines-agent' in pod_name_lower)
+        or ('azp-agent' in pod_name_lower)
+        or ('jenkins-agent' in pod_name_lower)
+        or ('jenkins-inbound-agent' in pod_name_lower)
+        or ('tekton-task' in pod_name_lower)
+        or ('buildkite-agent' in pod_name_lower)
+        or ('gitlab-runner' in app_name_lower)
+        or ('gitlab-runner' in app_label_lower)
+        or ('github-runner' in app_name_lower)
+        or ('github-runner' in app_label_lower)
+        or ('actions-runner' in app_name_lower)
+        or ('actions-runner' in app_label_lower)
+        or ('azure-pipelines-agent' in app_name_lower)
+        or ('azure-pipelines-agent' in app_label_lower)
+        or ('azp-agent' in app_name_lower)
+        or ('azp-agent' in app_label_lower)
+        or ('jenkins-agent' in app_name_lower)
+        or ('jenkins-agent' in app_label_lower)
+        or ('jenkins-inbound-agent' in app_name_lower)
+        or ('jenkins-inbound-agent' in app_label_lower)
+        or ('tekton-task' in app_name_lower)
+        or ('tekton-task' in app_label_lower)
+        or ('buildkite-agent' in app_name_lower)
+        or ('buildkite-agent' in app_label_lower)
+        or ('gitlab-runner' in service_account_lower)
+        or ('github-runner' in service_account_lower)
+        or ('actions-runner' in service_account_lower)
+        or ('azure-pipelines-agent' in service_account_lower)
+        or ('azp-agent' in service_account_lower)
+        or ('jenkins-agent' in service_account_lower)
+        or ('jenkins-inbound-agent' in service_account_lower)
+        or ('tekton-task' in service_account_lower)
+        or ('buildkite-agent' in service_account_lower)
+      }}
+    is_operator_managed_pod: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in pod_name_lower)
+        or ('operator-' in pod_name_lower)
+        or ('controller-manager' in pod_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+        or (is_runner_noise_pod | bool)
+      }}
     orphan_pod_entry: >-
       {{
         [{
@@ -17,6 +80,7 @@
         }]
         if (
           (is_user_namespace | bool)
+          and not (is_operator_managed_pod | bool)
           and (phase not in ['Succeeded', 'Completed'])
           and ((owner_references | length) == 0)
         ) else []
@@ -34,6 +98,26 @@
     workload_kind: "{{ item.kind | default('Workload') }}"
     labels: "{{ item.metadata.labels | default({}) }}"
     annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    workload_name_lower: "{{ (workload_name | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
+    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_operator_managed_workload: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in workload_name_lower)
+        or ('operator-' in workload_name_lower)
+        or ('controller-manager' in workload_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+      }}
     missing_parts: >-
       {{
         ([] +
@@ -64,6 +148,30 @@
         (['description=' ~ annotations.get('description')] if (annotations.get('description', '') | length) > 0 else []) +
         (['kind=' ~ workload_kind] if (workload_kind | length) > 0 else []))
       }}
+    recommended_label_values: >-
+      {{
+        ([] +
+        (['app.kubernetes.io/name=' ~ (labels.get('app.kubernetes.io/name') if (labels.get('app.kubernetes.io/name', '') | length) > 0 else workload_name)] if ('app.kubernetes.io/name' in missing_parts) else []) +
+        (['app.kubernetes.io/instance=' ~ (labels.get('app.kubernetes.io/instance') if (labels.get('app.kubernetes.io/instance', '') | length) > 0 else ns_name)] if ('app.kubernetes.io/instance' in missing_parts) else []) +
+        (['app.kubernetes.io/component=' ~ (labels.get('app.kubernetes.io/component') if (labels.get('app.kubernetes.io/component', '') | length) > 0 else (workload_kind | lower))] if ('app.kubernetes.io/component' in missing_parts) else []) +
+        (['app.kubernetes.io/part-of=' ~ (labels.get('app.kubernetes.io/part-of') if (labels.get('app.kubernetes.io/part-of', '') | length) > 0 else ns_name)] if ('app.kubernetes.io/part-of' in missing_parts) else []) +
+        (['app.kubernetes.io/managed-by=' ~ (labels.get('app.kubernetes.io/managed-by') if (labels.get('app.kubernetes.io/managed-by', '') | length) > 0 else '<set-managing-controller-or-team>')] if ('app.kubernetes.io/managed-by' in missing_parts) else []))
+      }}
+    recommended_annotation_values: >-
+      {{
+        [
+          (
+            'owner.email=' ~ annotations.get('owner.email')
+            if (annotations.get('owner.email', '') | length) > 0
+            else 'owner.email=<set-owner-email>'
+          ),
+          (
+            'owner.contact=' ~ (annotations.get('owner.contact') if (annotations.get('owner.contact', '') | length) > 0 else annotations.get('contact'))
+            if ((annotations.get('owner.contact', '') | length) > 0 or (annotations.get('contact', '') | length) > 0)
+            else 'owner.contact=<set-owner-contact>'
+          )
+        ]
+      }}
     label_review_entry: >-
       {{
         [{
@@ -72,9 +180,11 @@
           'name': workload_name,
           'detail': missing_parts | join('; '),
           'label_values': label_context_values,
-          'annotation_values': annotation_context_values
+          'annotation_values': annotation_context_values,
+          'recommended_label_values': recommended_label_values,
+          'recommended_annotation_values': recommended_annotation_values
         }]
-        if ((is_user_namespace | bool) and (missing_parts | length > 0)) else []
+        if ((is_user_namespace | bool) and not (is_operator_managed_workload | bool) and (missing_parts | length > 0)) else []
       }}
   changed_when: false
 
@@ -85,6 +195,28 @@
   vars:
     ns_name: "{{ item.metadata.namespace | default('') }}"
     is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
+    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
+    workload_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
+    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
+    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
+    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
+    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
+    is_operator_managed_workload: >-
+      {{
+        (ns_name in (operator_managed_namespace_names | default([])))
+        or has_operator_marker_keys
+        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
+        or ('operator' in managed_by_value)
+        or ('-operator' in workload_name_lower)
+        or ('operator-' in workload_name_lower)
+        or ('controller-manager' in workload_name_lower)
+        or ('-operator' in app_name_lower)
+        or ('operator-' in app_name_lower)
+        or has_csv_owner
+      }}
     pod_spec: "{{ item.spec.template.spec | default({}) }}"
     containers: "{{ (pod_spec.containers | default([])) + (pod_spec.initContainers | default([])) }}"
     containers_without_requests: "{{ containers | rejectattr('resources.requests', 'defined') | map(attribute='name') | list }}"
@@ -98,13 +230,13 @@
           'name': item.metadata.name | default('unknown'),
           'issue': 'workload-missing-resource-requests',
           'detail': containers_without_requests | join(', ')
-        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_requests | length > 0 else []) +
+        }] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and containers_without_requests | length > 0 else []) +
         ([{
           'kind': item.kind | default('Workload'),
           'namespace': ns_name,
           'name': item.metadata.name | default('unknown'),
           'issue': 'workload-missing-resource-limits',
           'detail': containers_without_limits | join(', ')
-        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_limits | length > 0 else []))
+        }] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and containers_without_limits | length > 0 else []))
       }}
   changed_when: false

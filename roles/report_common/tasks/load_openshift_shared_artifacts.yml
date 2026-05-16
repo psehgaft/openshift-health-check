@@ -52,3 +52,52 @@
   when:
     - not (item.skipped | default(false))
     - (item.content | default('') | length) > 0
+
+- name: Restore canonical facts from OpenShift shared artifacts
+  vars:
+    openshift_shared_collection_artifact: "{{ (openshift_shared_artifacts | default({})).get('collection', {}) }}"
+    openshift_shared_analysis_graph_artifact: "{{ (openshift_shared_artifacts | default({})).get('analysis_graph', {}) }}"
+  ansible.builtin.set_fact:
+    collected_resource_graph: >-
+      {{
+        openshift_shared_collection_artifact.collected_resource_graph
+        | default(collected_resource_graph | default({}))
+      }}
+    analysis_graph: >-
+      {{
+        openshift_shared_analysis_graph_artifact
+        | default(analysis_graph | default({}))
+      }}
+    cluster_profile: >-
+      {{
+        openshift_shared_analysis_graph_artifact.cluster_profile
+        | default(
+            openshift_shared_collection_artifact.cluster_profile
+            | default(cluster_profile | default({}))
+          )
+      }}
+    evidence_summary: >-
+      {{
+        openshift_shared_collection_artifact.evidence_summary
+        | default(evidence_summary | default({}))
+      }}
+    assessment_collection_summary: >-
+      {{
+        openshift_shared_collection_artifact.collection_summary
+        | default(assessment_collection_summary | default({}))
+      }}
+    assessment_collection_failures: >-
+      {{
+        openshift_shared_collection_artifact.collection_failures
+        | default(assessment_collection_failures | default([]))
+      }}
+    assessment_collection_skipped_optional_commands: >-
+      {{
+        openshift_shared_collection_artifact.collection_skipped_optional_commands
+        | default(assessment_collection_skipped_optional_commands | default([]))
+      }}
+    live_support_data: >-
+      {{
+        openshift_shared_collection_artifact.live_support_data
+        | default(live_support_data | default({}))
+      }}

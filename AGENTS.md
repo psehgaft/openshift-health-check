@@ -63,19 +63,23 @@ OpenShift is the deepest path in the repo. Preserve these rules:
 
 Current OpenShift report order comes from the design notes and template. Keep it aligned:
 
-1. Evidence And Supportability
-2. Platform Health
-3. Node Health And Capacity
-4. Backup And Disaster Recovery
-5. Application Access And Network Isolation
-6. Observability
-7. Security And Governance
-8. Workload Health
-9. Platform Architecture And Lifecycle
-10. Capacity Planning Snapshot
-11. Declarative Operations
-12. Container Platform Adoption And Release Engineering
-13. Day 2 Production Readiness
+1. Platform Health
+2. Node Health And Capacity
+3. Backup And Disaster Recovery
+4. Application Access And Network Isolation
+5. Observability
+6. Security And Governance
+7. Workload Health
+8. Platform Architecture And Lifecycle
+9. Capacity Planning Snapshot
+10. Declarative Operations
+11. Container Platform Adoption And Release Engineering
+12. Day 2 Production Readiness
+
+Appendix placement:
+
+- `Evidence And Supportability` is no longer a top-level main-body posture section.
+- It renders under `## Appendix` as a subsection, ahead of any supporting evidence samples.
 
 ## Current Ownership Pattern
 
@@ -165,6 +169,11 @@ When adding a new OpenShift posture:
   - what should be done
   - who owns it
   - how to tell it is fixed
+- Wire the posture into `playbooks/openshift_cluster_health_report.yml` anywhere the current posture roles are explicitly included.
+- Update selector-scope behavior when needed:
+  - `report_execution_selected_postures`
+  - `cluster_health_profile_execution`
+  - `roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml`
 - Make sure the new posture obeys `.enabled` gating in the final report.
 
 When adding a new OpenShift capability:
@@ -176,9 +185,28 @@ When adding a new OpenShift capability:
 - Make sure `roles/analyze_openshift/tasks/day2.yml` can account for it in either:
   - collected assessment output, or
   - the fallback capability-section builder
+- Wire the capability role into `playbooks/openshift_cluster_health_report.yml` anywhere the current dedicated capability roles are explicitly included.
 - Make sure `templates/openshift_cluster_health_report.md.j2` renders it through the profile-gated Day 2 capability section path.
 - Make sure `scripts/validate_openshift_report_output.py` still passes with the new enabled capability set.
+- Update selector dependency ownership when the capability needs additional evidence, optional support inputs, or execution prerequisites:
+  - `roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml`
+  - capability execution prerequisite mapping in `playbooks/openshift_cluster_health_report.yml` when truly needed
 - Provide non-empty `docs`, `verification`, `owner`, `recommended_action`, and `top_detail` semantics for rendered validation.
+
+Minimum implementation checklist:
+
+- Catalog-only addition:
+  - profile entry
+  - posture mapping
+  - docs and verification metadata
+  - keep it `enabled: false` until owning analysis or artifact logic exists
+- Fully supported addition:
+  - profile entry
+  - owning role-local files
+  - playbook wiring
+  - template and validator updates
+  - scoped dependency updates when needed
+  - runtime validation on the narrowest realistic path
 
 Extension rules:
 

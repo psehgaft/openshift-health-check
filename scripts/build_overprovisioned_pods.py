@@ -3,6 +3,8 @@ import json
 import re
 import sys
 
+from workload_noise_filters import is_operator_managed_object
+
 
 def parse_cpu(value):
     if not value:
@@ -63,9 +65,12 @@ def main():
 
     findings = []
     exclude_re = re.compile(data["exclude_regex"])
+    operator_managed_namespace_names = data.get("operator_managed_namespace_names") or []
     for pod in data["pods"]:
         ns = pod.get("metadata", {}).get("namespace", "")
         if exclude_re.match(ns):
+            continue
+        if is_operator_managed_object(pod, operator_managed_namespace_names):
             continue
         if pod.get("status", {}).get("phase") != "Running":
             continue
@@ -103,4 +108,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

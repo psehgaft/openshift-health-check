@@ -1,0 +1,16 @@
+---
+- name: Build cluster proxy configuration capability artifact facts
+  vars:
+    day2_cluster_proxy_configuration_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'cluster_proxy_configuration') | list | first) | default({})) }}"
+  ansible.builtin.set_fact:
+    capability_artifact_key: cluster_proxy_configuration
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      network_status: "{{ day2_cluster_proxy_configuration_section_current.status | default('unknown') }}"
+      network_reason_summary: "{{ day2_cluster_proxy_configuration_section_current.top_detail | default('unknown') }}"
+    capability_artifact_render_inputs:
+      day2_cluster_proxy_configuration_section: "{{ day2_cluster_proxy_configuration_section_current }}"
+    capability_artifact_collection_inputs:
+      cluster_proxy_configured: "{{ ((network_architecture_summary | default({})).get('cluster_proxy_configured', false)) | bool }}"
+      no_proxy_entry_count: "{{ ((network_architecture_summary | default({})).get('no_proxy_entry_count', 0)) | int }}"
+      missing_internal_no_proxy_entries: "{{ (network_architecture_summary | default({})).get('proxy_missing_internal_no_proxy_entries', []) | default([]) }}"

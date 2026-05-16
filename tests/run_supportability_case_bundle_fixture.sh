@@ -49,7 +49,8 @@ PY
 
 rg -q '^# OpenShift Cluster Health Report' "${report_md}"
 rg -q 'Case bundle path' "${report_md}"
-rg -q '^## Evidence And Supportability' "${report_md}"
+rg -q '^## Appendix' "${report_md}"
+rg -q '^### Evidence And Supportability' "${report_md}"
 rg -q '^## Day 2 Production Readiness' "${report_md}"
 
 printf 'case bundle fixture report ok\njson=%s\nmd=%s\nlog=%s\n' "${report_json}" "${report_md}" "${LOG_PATH}"

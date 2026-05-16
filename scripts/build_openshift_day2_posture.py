@@ -34,6 +34,7 @@ updateservices = data.get("updateservices") or []
 subscriptions = data.get("subscriptions") or []
 control_plane_backup_evidence = data.get("control_plane_backup_evidence") or {}
 nodes = data.get("nodes") or []
+ingresscontrollers = data.get("ingresscontrollers") or []
 uwm = data.get("user_workload_monitoring_config") or {}
 auth_posture_summary = data.get("auth_posture_summary") or {}
 prom_k8s = (cmc.get("prometheusK8s") or {})
@@ -258,6 +259,8 @@ configmaps = data.get("configmaps") or []
 crds = data.get("crds") or []
 servicemonitors = data.get("servicemonitors") or []
 podmonitors = data.get("podmonitors") or []
+ingresscontroller_summary = data.get("ingresscontroller_summary") or []
+ingresscontroller_issues = data.get("ingresscontroller_issues") or []
 clusterlogforwarders = data.get("clusterlogforwarders") or []
 lokistacks = data.get("lokistacks") or []
 backupstoragelocations = data.get("backupstoragelocations") or []
@@ -1526,11 +1529,13 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "External secrets integration": "external_secrets_operator",
         "CyberArk Conjur secrets management footprint": "cyberark_conjur_secrets_management",
         "User workload monitoring enabled": "user_workload_metrics_monitoring",
+        "User workload alerting and SLOs": "user_workload_alerting_and_slos",
         "Grafana dashboard inventory": "grafana_metrics_dashboards",
         "Persistent cluster monitoring storage": "persistent_monitoring_storage",
         "External log forwarding": "cluster_log_forwarding",
         "Cluster metrics remote write": "cluster_metrics_remote_write",
         "External alert delivery": "external_alert_delivery",
+        "API server audit logging and retention": "api_server_audit_and_log_retention",
         "Application backup and restore baseline": "application_backup_and_restore_readiness",
         "Control plane backup and recovery baseline": "control_plane_backup_and_recovery_readiness",
         "Secondary-site disaster recovery": "secondary_site_disaster_recovery",
@@ -1546,6 +1551,7 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "etcd encryption enabled": "etcd_encryption",
         "Cluster proxy configuration": "cluster_proxy_configuration",
         "Custom trust bundle configuration": "custom_ca_trust_bundle",
+        "Ingress controller topology and sharding": "ingress_controller_topology_and_sharding",
         "Application external private registry usage": "workloads_using_external_private_registries",
         "Cluster-hosted CI/CD runners": "cluster_hosted_cicd_runners",
         "Workload vulnerability scanner agents": "workload_vulnerability_scanning",
@@ -1556,7 +1562,15 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
     capability_key = capability_key if capability_key is not None else capability_key_map.get(capability, "")
     if capability_key and not (
         cap_required(capability_key)
-        or (capability_key == "advanced_cluster_security" and cap_enabled(capability_key))
+        or (
+            capability_key in {
+                "advanced_cluster_security",
+                "api_server_audit_and_log_retention",
+                "ingress_controller_topology_and_sharding",
+                "user_workload_alerting_and_slos",
+            }
+            and cap_enabled(capability_key)
+        )
     ):
         return
     checks.append({
@@ -1582,10 +1596,13 @@ def finding_capability_key(issue, source):
         "prod-day2-external-secrets-missing": "external_secrets_operator",
         "prod-day2-cyberark-conjur-secrets-management-missing": "cyberark_conjur_secrets_management",
         "prod-day2-user-workload-monitoring-disabled": "user_workload_metrics_monitoring",
+        "prod-day2-user-workload-alerting-slos-missing": "user_workload_alerting_and_slos",
         "prod-day2-grafana-dashboards-missing": "grafana_metrics_dashboards",
         "prod-day2-monitoring-persistence-missing": "persistent_monitoring_storage",
         "prod-day2-external-log-forwarding-missing": "cluster_log_forwarding",
         "prod-day2-cluster-metrics-remote-write-missing": "cluster_metrics_remote_write",
+        "prod-day2-api-server-audit-and-log-retention-missing": "api_server_audit_and_log_retention",
+        "prod-day2-api-server-audit-retention-path-missing": "api_server_audit_and_log_retention",
         "prod-day2-application-backup-baseline-incomplete": "application_backup_and_restore_readiness",
         "prod-day2-control-plane-backup-evidence-missing": "control_plane_backup_and_recovery_readiness",
         "prod-day2-control-plane-runtime-unhealthy-for-recovery": "control_plane_backup_and_recovery_readiness",
@@ -1598,6 +1615,8 @@ def finding_capability_key(issue, source):
         "prod-day2-cluster-image-mirror-configuration-legacy-icsp-only": "cluster_image_mirror_configuration",
         "prod-day2-cluster-image-mirror-configuration-targets-missing": "cluster_image_mirror_configuration",
         "prod-day2-proxy-no-proxy-incomplete": "cluster_proxy_configuration",
+        "prod-day2-ingress-controller-topology-and-sharding-missing": "ingress_controller_topology_and_sharding",
+        "prod-day2-ingress-controller-topology-and-sharding-unhealthy": "ingress_controller_topology_and_sharding",
         "prod-day2-disconnected-installation-evidence-missing": "disconnected_cluster_image_sources",
         "prod-day2-disconnected-release-image-not-mirrored": "disconnected_cluster_image_sources",
         "prod-day2-disconnected-operator-catalog-missing": "disconnected_cluster_image_sources",
@@ -1873,6 +1892,89 @@ if not enable_user_workload:
         source="user workload monitoring and platform monitoring guidance",
     )
 
+user_workload_alertmanager_additional_configs = (
+    ((uwm.get("alertmanager") or {}).get("additionalAlertmanagerConfigs") or [])
+    if isinstance(uwm, dict)
+    else []
+)
+vendor_metrics_forwarding_present = bool(obs.get("vendor_managed_metrics_forwarding_present"))
+vendor_metrics_forwarding_names = [
+    str(item).strip()
+    for item in (obs.get("metrics_forwarding_vendor_names") or [])
+    if str(item).strip()
+]
+user_workload_scrape_present = len(servicemonitors) > 0 or len(podmonitors) > 0 or bool(uwm)
+user_workload_alerting_present = (
+    len(user_workload_alertmanager_additional_configs) > 0
+    or len(servicemonitors) > 0
+)
+user_workload_native_alerting_healthy = (
+    enable_user_workload
+    and user_workload_scrape_present
+    and user_workload_alerting_present
+)
+user_workload_vendor_managed_observability_present = bool(
+    vendor_metrics_forwarding_present and vendor_metrics_forwarding_names
+)
+user_workload_alerting_delivery_model = (
+    "hybrid"
+    if (user_workload_native_alerting_healthy and user_workload_vendor_managed_observability_present)
+    else (
+        "vendor-managed"
+        if user_workload_vendor_managed_observability_present
+        else ("native" if user_workload_native_alerting_healthy else "none")
+    )
+)
+user_workload_alerting_healthy = (
+    user_workload_native_alerting_healthy
+    or user_workload_vendor_managed_observability_present
+)
+add_check(
+    "User workload alerting and SLOs",
+    cap_status_for_presence(
+        "user_workload_alerting_and_slos",
+        user_workload_scrape_present or user_workload_vendor_managed_observability_present,
+        user_workload_alerting_healthy,
+    ),
+    (
+        (
+            "meets criteria via vendor-managed observability evidence: "
+            f"vendors={','.join(vendor_metrics_forwarding_names)} "
+            f"deliveryModel={user_workload_alerting_delivery_model} "
+            f"enableUserWorkload={enable_user_workload} "
+            f"servicemonitors={len(servicemonitors)} "
+            f"podmonitors={len(podmonitors)} "
+            f"userAlertmanagerAdditionalConfigs={len(user_workload_alertmanager_additional_configs)}"
+        )
+        if (user_workload_vendor_managed_observability_present and not user_workload_native_alerting_healthy)
+        else (
+            f"enableUserWorkload={enable_user_workload} "
+            f"servicemonitors={len(servicemonitors)} "
+            f"podmonitors={len(podmonitors)} "
+            f"userWorkloadConfigPresent={bool(uwm)} "
+            f"userAlertmanagerAdditionalConfigs={len(user_workload_alertmanager_additional_configs)} "
+            f"vendorManaged={user_workload_vendor_managed_observability_present} "
+            f"vendors={','.join(vendor_metrics_forwarding_names) if vendor_metrics_forwarding_names else 'none'} "
+            f"deliveryModel={user_workload_alerting_delivery_model}"
+        )
+    ),
+    "user workload monitoring alerting and SLO guidance",
+    level=cap_level("user_workload_alerting_and_slos", base_required_level),
+)
+if cap_required("user_workload_alerting_and_slos") and not user_workload_alerting_healthy:
+    add_finding(
+        "prod-day2-user-workload-alerting-slos-missing",
+        (
+            "no native user workload monitoring path or vendor-managed observability evidence was detected for user workload alerting and SLO support"
+            if (not enable_user_workload and not user_workload_vendor_managed_observability_present)
+            else (
+                "user workload scrape or alert-routing evidence is incomplete and no qualifying vendor-managed observability path was detected for user workload alerting and SLO support"
+            )
+        ),
+        severity=cap_failure_severity("user_workload_alerting_and_slos"),
+        source="user workload monitoring alerting and SLO guidance",
+    )
+
 add_check(
     "Grafana dashboard inventory",
     cap_status_for_presence("grafana_metrics_dashboards", grafana_dashboard_present),
@@ -2048,6 +2150,57 @@ elif cap_required("external_alert_delivery") and not external_alert_delivery_hea
         ),
         severity=cap_failure_severity("external_alert_delivery"),
         source="AlertmanagerConfig and monitoring alert delivery inventory",
+    )
+
+apiserver_audit_profile = str((((apiserver_config.get("spec") or {}).get("audit") or {}).get("profile") or "")).strip().lower()
+api_audit_logs_collected = bool(obs.get("audit_logs_collected"))
+api_audit_logs_exported_external = bool(obs.get("audit_logs_exported_external"))
+api_audit_vendor_log_delivery_present = bool(vendor_log_forwarding_present)
+api_audit_vendor_names = [
+    str(item).strip()
+    for item in (obs.get("log_forwarding_vendor_names") or [])
+    if str(item).strip()
+]
+api_audit_logging_present = bool(
+    apiserver_audit_profile
+    or api_audit_logs_collected
+    or api_audit_vendor_log_delivery_present
+)
+api_audit_retention_present = bool(
+    api_audit_logs_exported_external
+    or api_audit_vendor_log_delivery_present
+)
+add_check(
+    "API server audit logging and retention",
+    cap_status_for_presence(
+        "api_server_audit_and_log_retention",
+        api_audit_logging_present,
+        api_audit_logging_present and api_audit_retention_present,
+    ),
+    (
+        f"apiserverAuditProfile={apiserver_audit_profile or 'not-configured'} "
+        f"auditLogsCollected={api_audit_logs_collected} "
+        f"auditLogsExportedExternal={api_audit_logs_exported_external} "
+        f"vendorManaged={api_audit_vendor_log_delivery_present} "
+        f"vendors={','.join(api_audit_vendor_names) if api_audit_vendor_names else 'none'}"
+    ),
+    "OpenShift API server audit logging and external retention guidance",
+    level=cap_level("api_server_audit_and_log_retention", "informational"),
+    scored=False,
+)
+if cap_required("api_server_audit_and_log_retention") and not api_audit_logging_present:
+    add_finding(
+        "prod-day2-api-server-audit-and-log-retention-missing",
+        "no API server audit profile, external audit log collection, or qualifying vendor-managed audit log delivery path was detected",
+        severity=cap_failure_severity("api_server_audit_and_log_retention"),
+        source="OpenShift API server audit logging and external retention guidance",
+    )
+elif cap_required("api_server_audit_and_log_retention") and not api_audit_retention_present:
+    add_finding(
+        "prod-day2-api-server-audit-retention-path-missing",
+        "API server audit logging evidence exists, but no external audit log retention or qualifying vendor-managed audit-delivery path was detected",
+        severity=cap_failure_severity("api_server_audit_and_log_retention"),
+        source="OpenShift API server audit logging and external retention guidance",
     )
 
 etcd_operator = operators.get("etcd") or {}
@@ -2902,6 +3055,70 @@ if not custom_ca_configured and cap_required("custom_ca_trust_bundle"):
         "neither proxy.config.openshift.io/cluster.spec.trustedCA nor image.config.openshift.io/cluster.spec.additionalTrustedCA references a ConfigMap",
         severity=cap_failure_severity("custom_ca_trust_bundle"),
         source="OpenShift Proxy and Image trust configuration",
+    )
+
+default_ingresscontroller_issue_count = len([
+    item for item in ingresscontroller_issues
+    if str(item.get("component") or "").strip() == "ingresscontroller/default"
+])
+nondefault_ingresscontroller_count = len([
+    item for item in ingresscontroller_summary
+    if str(item.get("name") or "").strip() and str(item.get("name") or "").strip() != "default"
+])
+ingress_topology_signals = []
+for item in ingresscontrollers:
+    metadata = item.get("metadata") or {}
+    spec = item.get("spec") or {}
+    node_placement = spec.get("nodePlacement") or {}
+    if (
+        str(metadata.get("name") or "").strip() != "default"
+        or bool(spec.get("routeSelector"))
+        or bool(spec.get("namespaceSelector"))
+        or bool(spec.get("domain"))
+        or bool(node_placement.get("nodeSelector"))
+        or bool(node_placement.get("tolerations"))
+    ):
+        ingress_topology_signals.append(item)
+ingress_topology_present = bool(ingresscontroller_summary or ingresscontrollers)
+ingress_topology_configured = bool(
+    nondefault_ingresscontroller_count > 0
+    or len(ingress_topology_signals) > 0
+)
+ingress_topology_healthy = bool(
+    ingress_topology_configured
+    and len(ingresscontroller_issues) == 0
+)
+add_check(
+    "Ingress controller topology and sharding",
+    cap_status_for_presence(
+        "ingress_controller_topology_and_sharding",
+        ingress_topology_present,
+        ingress_topology_healthy,
+    ),
+    (
+        f"ingresscontrollers={len(ingresscontroller_summary)} "
+        f"nondefaultIngresscontrollers={nondefault_ingresscontroller_count} "
+        f"topologySignals={len(ingress_topology_signals)} "
+        f"defaultIngresscontrollerIssues={default_ingresscontroller_issue_count} "
+        f"totalIngresscontrollerIssues={len(ingresscontroller_issues)}"
+    ),
+    "OpenShift ingress controller topology and sharding guidance",
+    level=cap_level("ingress_controller_topology_and_sharding", "informational"),
+    scored=False,
+)
+if cap_required("ingress_controller_topology_and_sharding") and not ingress_topology_configured:
+    add_finding(
+        "prod-day2-ingress-controller-topology-and-sharding-missing",
+        "only the default ingress controller footprint was detected and no dedicated ingress topology or sharding signals were found",
+        severity=cap_failure_severity("ingress_controller_topology_and_sharding"),
+        source="OpenShift ingress controller topology and sharding guidance",
+    )
+elif cap_required("ingress_controller_topology_and_sharding") and ingress_topology_configured and not ingress_topology_healthy:
+    add_finding(
+        "prod-day2-ingress-controller-topology-and-sharding-unhealthy",
+        "ingress topology or sharding signals were detected, but ingress controller health findings still require review",
+        severity=cap_failure_severity("ingress_controller_topology_and_sharding"),
+        source="OpenShift ingress controller topology and sharding guidance",
     )
 
 add_check(
@@ -3987,6 +4204,11 @@ print(json.dumps({
         "enable_user_workload_monitoring": enable_user_workload,
         "servicemonitor_count": len(servicemonitors),
         "podmonitor_count": len(podmonitors),
+        "user_workload_alertmanager_additional_config_count": len(user_workload_alertmanager_additional_configs),
+        "user_workload_alerting_signal_present": user_workload_alerting_present,
+        "user_workload_vendor_managed_observability_present": user_workload_vendor_managed_observability_present,
+        "user_workload_observability_vendor_names": vendor_metrics_forwarding_names,
+        "user_workload_alerting_delivery_model": user_workload_alerting_delivery_model,
         "grafana_present": grafana_present,
         "grafana_dashboard_configmap_count": len(dashboard_configmaps),
         "grafana_dashboard_present": grafana_dashboard_present,
@@ -4014,6 +4236,9 @@ print(json.dumps({
         "external_alert_receiver_count": int(obs.get("external_alert_receiver_count") or 0),
         "external_cluster_metrics_remote_write_count": cluster_remote_write,
         "external_user_workload_metrics_remote_write_count": user_remote_write,
+        "apiserver_audit_profile": apiserver_audit_profile or "not-configured",
+        "api_audit_logging_present": api_audit_logging_present,
+        "api_audit_retention_present": api_audit_retention_present,
         "backup_schedule_count": len(schedules),
         "successful_backup_count": successful_backups,
         "secondary_site_disaster_recovery_present": secondary_site_dr_present,
@@ -4031,6 +4256,10 @@ print(json.dumps({
         "openshift_data_foundation_present": openshift_data_foundation_present,
         "openshift_virtualization_present": openshift_virtualization_present,
         "openshift_virtualization_healthy": openshift_virtualization_healthy,
+        "ingresscontroller_count": len(ingresscontroller_summary),
+        "nondefault_ingresscontroller_count": nondefault_ingresscontroller_count,
+        "ingress_topology_signal_count": len(ingress_topology_signals),
+        "ingress_topology_healthy": ingress_topology_healthy,
         "openshift_ai_present": openshift_ai_present,
         "service_mesh_control_plane_present": service_mesh_present,
         "service_mesh_control_plane_healthy": service_mesh_healthy,

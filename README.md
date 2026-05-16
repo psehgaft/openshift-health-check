@@ -292,7 +292,6 @@ The Kubernetes path covers shared checks plus provider-aware sections where safe
 
 For OpenShift, the report is ordered from immediate operational risk to longer-term readiness:
 
-- Evidence And Supportability
 - Platform Health
 - Node Health And Capacity
 - Backup And Disaster Recovery
@@ -373,7 +372,7 @@ The report also includes:
 - OpenShift deployment type labels for SNO and ROSA HCP
 - cleaned-up section formatting that prefers readable tables and plain-language labels over debug-style issue dumps
 
-If you want help reading the OpenShift report in order, start with the early sections first: Evidence And Supportability, Platform Health, and Security And Governance. Those sections usually determine whether the rest of the report is actionable or only informational.
+If you want help reading the OpenShift report in order, start with the early sections first: Platform Health, Security And Governance, and Observability. Those sections usually determine whether the rest of the report is actionable or only informational. `Evidence And Supportability` now lives under `Appendix`.
 
 
 ## Signal Notes
@@ -970,7 +969,7 @@ For checks that should focus on customer workloads, the tool treats these as pla
 
 That default works well for OpenShift, ARO, and ROSA.
 
-Checks such as security review, best-practice review, probe coverage, and unused-resource detection skip those namespaces on purpose. That keeps platform components from creating noise in the application-focused sections.
+Checks such as security review, best-practice review, probe coverage, workload health, and unused-resource detection skip those namespaces on purpose. Those same workload-focused checks also exclude operator-managed namespaces and operator-managed workloads when the collected metadata identifies them as platform or operator control-plane components. That keeps platform components from creating noise in the application-focused sections.
 
 If your environment has extra managed namespaces that should also be excluded, override:
 

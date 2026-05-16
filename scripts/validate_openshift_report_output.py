@@ -11,7 +11,6 @@ import yaml
 
 
 POSTURE_SECTION_TITLES = [
-    ("evidence_and_supportability", "Evidence And Supportability"),
     ("platform_health", "Platform Health"),
     ("node_health_and_capacity", "Node Health And Capacity"),
     ("backup_and_disaster_recovery", "Backup And Disaster Recovery"),
@@ -115,7 +114,7 @@ def validate_cluster_posture_sections(markdown: str) -> None:
     non_appendix_sections = [
         (line_no, title)
         for line_no, title in sections
-        if not title.startswith("Appendix:")
+        if title != "Appendix" and not title.startswith("Appendix:")
     ]
     expected_sections = expected_cluster_sections()
     titles = [title for _, title in non_appendix_sections]
@@ -123,7 +122,7 @@ def validate_cluster_posture_sections(markdown: str) -> None:
         fail("unexpected cluster section order: " + ", ".join(titles))
 
     for idx, (start, title) in enumerate(sections):
-        if title.startswith("Appendix:"):
+        if title == "Appendix" or title.startswith("Appendix:"):
             continue
         end = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines) + 1
         block = "\n".join(lines[start - 1 : end - 1])

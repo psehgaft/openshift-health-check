@@ -9,7 +9,6 @@ from pathlib import Path
 EXPECTED_SECTIONS = [
     "Report Context",
     "Cluster Health Overview",
-    "Evidence And Supportability",
     "Platform Health",
     "Node Health And Capacity",
     "Backup And Disaster Recovery",
@@ -31,7 +30,6 @@ REQUIRED_SUBSECTIONS = [
 ]
 
 POSTURE_SECTIONS = {
-    "Evidence And Supportability",
     "Platform Health",
     "Node Health And Capacity",
     "Backup And Disaster Recovery",
@@ -86,7 +84,7 @@ def main() -> int:
     non_appendix_sections = [
         (line_no, title)
         for line_no, title in sections
-        if not title.startswith("Appendix:")
+        if title != "Appendix" and not title.startswith("Appendix:")
     ]
     titles = [title for _, title in non_appendix_sections]
 
@@ -101,7 +99,7 @@ def main() -> int:
         fail("duplicate non-appendix sections: " + ", ".join(duplicates))
 
     for idx, (start, title) in enumerate(sections):
-        if title.startswith("Appendix:"):
+        if title == "Appendix" or title.startswith("Appendix:"):
             continue
         end = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines) + 1
         block = "\n".join(lines[start - 1 : end - 1])

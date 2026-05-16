@@ -12,6 +12,9 @@
     cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
     pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
     cpu_allocatable_millicores: "{{ (cpu_allocatable_raw | regex_replace('m$', '') | int) if (cpu_allocatable_raw | string | regex_search('m$')) else (((cpu_allocatable_raw | float) * 1000) | int) }}"
+    analysis_graph_pod_items: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
+    collected_pod_items: "{{ ((pods | default({})).get('items', []) if ((pods | default({})) is mapping) else ((pods | default([])) if ((pods | default([])) is sequence and (pods | default([])) is not string) else [])) }}"
+    analysis_pod_items: "{{ analysis_graph_pod_items if (analysis_graph_pod_items | length) > 0 else collected_pod_items }}"
     node_address_values: "{{ item.status.addresses | default([]) | map(attribute='address') | list }}"
     node_hostname_label: "{{ (item.metadata.labels | default({})).get('kubernetes.io/hostname', '') }}"
     node_lookup_candidates: >-
@@ -23,6 +26,20 @@
         | reject('equalto', '')
         | map('string')
         | map('trim')
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+    node_lookup_candidates_expanded: >-
+      {{
+        (
+          node_lookup_candidates
+          + (
+            node_lookup_candidates
+            | map('regex_replace', '\\..*$', '')
+            | list
+          )
+        )
         | reject('equalto', '')
         | unique
         | list
@@ -78,7 +95,15 @@
       }}
     scheduled_pods_primary: "{{ (node_pod_counts | default({}))[node_pod_count_lookup_key] | default(0) | int }}"
     scheduled_pods_fallback: "{{ (node_pod_counts_fallback | default({}))[node_pod_count_fallback_lookup_key] | default(0) | int }}"
-    scheduled_pods: "{{ [scheduled_pods_primary, scheduled_pods_fallback] | max }}"
+    scheduled_pods_direct: >-
+      {{
+        analysis_pod_items
+        | selectattr('spec.nodeName', 'defined')
+        | selectattr('spec.nodeName', 'in', node_lookup_candidates_expanded)
+        | list
+        | length
+      }}
+    scheduled_pods: "{{ [scheduled_pods_primary, scheduled_pods_fallback, scheduled_pods_direct] | max }}"
     node_capacity_entry:
       name: "{{ item.metadata.name }}"
       role: "{{ node_role_name }}"

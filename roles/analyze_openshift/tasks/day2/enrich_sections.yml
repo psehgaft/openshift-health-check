@@ -528,6 +528,95 @@
                 'top_detail': top_detail,
                 'recommended_action': recommended_action
               }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'user_workload_alerting_and_slos') -%}
+          {%- set user_workload_monitoring_config = analysis_graph.user_workload_monitoring_config | default({}) -%}
+          {%- set servicemonitor_count = day2_posture_summary.servicemonitor_count | default((((analysis_graph.servicemonitors | default({})).get('items', [])) | length)) | int -%}
+          {%- set podmonitor_count = day2_posture_summary.podmonitor_count | default((((analysis_graph.podmonitors | default({})).get('items', [])) | length)) | int -%}
+          {%- set enable_user_workload_monitoring = day2_posture_summary.enable_user_workload_monitoring | default((((analysis_graph.cluster_monitoring_config | default({})).get('config', {}) | default({})).get('enableUserWorkload', false))) -%}
+          {%- set user_workload_alertmanager_additional_config_count = day2_posture_summary.user_workload_alertmanager_additional_config_count | default((((user_workload_monitoring_config.alertmanager | default({})).additionalAlertmanagerConfigs | default([])) | length)) | int -%}
+          {%- set user_workload_vendor_managed_observability_present = day2_posture_summary.user_workload_vendor_managed_observability_present | default(false) | bool -%}
+          {%- set user_workload_observability_vendor_names = day2_posture_summary.user_workload_observability_vendor_names | default([]) -%}
+          {%- set user_workload_scrape_present = (servicemonitor_count > 0) or (podmonitor_count > 0) or ((user_workload_monitoring_config | length) > 0) -%}
+          {%- set user_workload_alerting_present = (user_workload_alertmanager_additional_config_count > 0) or (servicemonitor_count > 0) -%}
+          {%- set user_workload_native_alerting_healthy = (
+                enable_user_workload_monitoring
+                and user_workload_scrape_present
+                and user_workload_alerting_present
+              ) -%}
+          {%- set user_workload_alerting_delivery_model = (
+                'hybrid'
+                if (user_workload_native_alerting_healthy and user_workload_vendor_managed_observability_present)
+                else (
+                  'vendor-managed'
+                  if user_workload_vendor_managed_observability_present
+                  else ('native' if user_workload_native_alerting_healthy else 'none')
+                )
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if (user_workload_native_alerting_healthy or user_workload_vendor_managed_observability_present)
+                else 'WARNING'
+              ) -%}
+          {%- set top_detail = (
+                (
+                  'vendorManaged=true vendors=' ~ ((user_workload_observability_vendor_names | join(',')) if (user_workload_observability_vendor_names | length > 0) else 'unknown')
+                  ~ ' deliveryModel=' ~ user_workload_alerting_delivery_model
+                  ~ ' enableUserWorkload=' ~ (enable_user_workload_monitoring | string)
+                  ~ ' servicemonitors=' ~ (servicemonitor_count | string)
+                  ~ ' podmonitors=' ~ (podmonitor_count | string)
+                  ~ ' userAlertmanagerAdditionalConfigs=' ~ (user_workload_alertmanager_additional_config_count | string)
+                )
+                if (user_workload_vendor_managed_observability_present and not user_workload_native_alerting_healthy)
+                else (
+                  'enableUserWorkload=' ~ (enable_user_workload_monitoring | string)
+                  ~ ' servicemonitors=' ~ (servicemonitor_count | string)
+                  ~ ' podmonitors=' ~ (podmonitor_count | string)
+                  ~ ' userWorkloadConfigPresent=' ~ (((user_workload_monitoring_config | length) > 0) | string)
+                  ~ ' userAlertmanagerAdditionalConfigs=' ~ (user_workload_alertmanager_additional_config_count | string)
+                  ~ ' vendorManaged=' ~ (user_workload_vendor_managed_observability_present | string)
+                  ~ ' vendors=' ~ ((user_workload_observability_vendor_names | join(',')) if (user_workload_observability_vendor_names | length > 0) else 'none')
+                  ~ ' deliveryModel=' ~ user_workload_alerting_delivery_model
+                )
+              ) -%}
+          {%- set recommended_action = (
+                'No user-workload alerting or SLO remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Enable user workload monitoring in cluster-monitoring-config or provide validated vendor-managed observability evidence for the intended user-workload alerting and SLO model.'
+                  if (not enable_user_workload_monitoring and not user_workload_vendor_managed_observability_present)
+                  else 'Native user workload alerting evidence is incomplete and no qualifying vendor-managed observability path was detected. Confirm ServiceMonitor or PodMonitor coverage, alert-routing configuration, or the intended vendor-managed observability platform evidence for the workloads that depend on SLO-driven alerting.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': 'warning',
+                  'issue': (
+                    'User workload alerting and SLO support is not enabled through native or vendor-managed observability paths'
+                    if (not enable_user_workload_monitoring and not user_workload_vendor_managed_observability_present)
+                    else 'User workload alerting and SLO evidence is incomplete'
+                  ),
+                  'source': 'user workload monitoring alerting and SLO guidance',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'user_workload_alerting_and_slos',
+                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'user workload monitoring alerting and SLO guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
         {%- elif (not capability_assessment_completed) and (section.key | default('') == 'grafana_metrics_dashboards') -%}
           {%- set grafana_present = day2_posture_summary.grafana_present | default(false) -%}
           {%- set grafana_dashboard_configmap_count = day2_posture_summary.grafana_dashboard_configmap_count | default(0) | int -%}
@@ -633,6 +722,69 @@
                   'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
                   'level': ('required' if (section.required | default(false)) else 'informational'),
                   'source': 'Red Hat monitoring + vendor monitoring guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'api_server_audit_and_log_retention') -%}
+          {%- set apiserver_audit_profile = day2_posture_summary.apiserver_audit_profile | default('not-configured') -%}
+          {%- set api_audit_logging_present = day2_posture_summary.api_audit_logging_present | default(false) | bool -%}
+          {%- set api_audit_retention_present = day2_posture_summary.api_audit_retention_present | default(false) | bool -%}
+          {%- set audit_logs_delivery_state = observability_summary.audit_logs_delivery_state | default('not-configured') -%}
+          {%- set vendor_managed_log_forwarding_present = observability_summary.vendor_managed_log_forwarding_present | default(false) | bool -%}
+          {%- set log_forwarding_vendor_names = observability_summary.log_forwarding_vendor_names | default([]) -%}
+          {%- set capability_status = (
+                'OK'
+                if (api_audit_logging_present and api_audit_retention_present)
+                else (
+                  'WARNING'
+                  if (api_audit_logging_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'apiserverAuditProfile=' ~ (apiserver_audit_profile | string)
+                ~ ' auditLogsCollected=' ~ (api_audit_logging_present | string)
+                ~ ' auditLogsRetained=' ~ (api_audit_retention_present | string)
+                ~ ' auditDeliveryState=' ~ (audit_logs_delivery_state | string)
+                ~ ' vendorManaged=' ~ (vendor_managed_log_forwarding_present | string)
+                ~ ' vendors=' ~ ((log_forwarding_vendor_names | join(',')) or 'none')
+              ) -%}
+          {%- set recommended_action = (
+                'No API-server-audit remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No API server audit profile or qualifying external audit delivery path was found. Configure the API server audit profile and confirm collection into the intended external or vendor-managed retention path.'
+                  if not api_audit_logging_present
+                  else 'API server audit logging evidence exists, but no external retention path was confirmed. Complete external or vendor-managed audit log delivery before treating retention as satisfied.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'API server audit logging and retention evidence missing'
+                    if not api_audit_logging_present
+                    else 'API server audit retention path incomplete'
+                  ),
+                  'source': 'OpenShift API server audit logging and external retention guidance',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'api_server_audit_and_log_retention',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'OpenShift API server audit logging and external retention guidance',
                   'detail': top_detail
                 }],
                 'findings': findings,
@@ -1469,6 +1621,69 @@
                 'top_detail': top_detail,
                 'recommended_action': recommended_action
               }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'ingress_controller_topology_and_sharding') -%}
+          {%- set ingresscontroller_count = day2_posture_summary.ingresscontroller_count | default((((analysis_graph.ingresscontrollers | default({})).get('items', [])) | length)) | int -%}
+          {%- set nondefault_ingresscontroller_count = day2_posture_summary.nondefault_ingresscontroller_count | default(0) | int -%}
+          {%- set ingress_topology_signal_count = day2_posture_summary.ingress_topology_signal_count | default(0) | int -%}
+          {%- set ingress_topology_healthy = day2_posture_summary.ingress_topology_healthy | default(false) | bool -%}
+          {%- set default_ingresscontroller_issue_count = network_architecture_summary.default_ingresscontroller_issue_count | default(0) | int -%}
+          {%- set ingresscontroller_issue_count = network_architecture_summary.ingresscontroller_issue_count | default(0) | int -%}
+          {%- set ingress_topology_configured = (nondefault_ingresscontroller_count > 0) or (ingress_topology_signal_count > 0) -%}
+          {%- set capability_status = (
+                'OK'
+                if ingress_topology_healthy
+                else (
+                  'WARNING'
+                  if (ingress_topology_configured or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'ingresscontrollers=' ~ (ingresscontroller_count | string)
+                ~ ' nondefaultIngresscontrollers=' ~ (nondefault_ingresscontroller_count | string)
+                ~ ' topologySignals=' ~ (ingress_topology_signal_count | string)
+                ~ ' defaultIngresscontrollerIssues=' ~ (default_ingresscontroller_issue_count | string)
+                ~ ' totalIngresscontrollerIssues=' ~ (ingresscontroller_issue_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No ingress-topology remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Only the default ingress controller footprint was detected. If ingress sharding or dedicated ingress topology is expected, configure non-default ingress controllers or explicit selector and placement signals.'
+                  if not ingress_topology_configured
+                  else 'Ingress topology or sharding signals were found, but ingress controller health findings remain. Review degraded ingress controller evidence before treating the topology as healthy.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Ingress controller topology and sharding evidence missing'
+                    if not ingress_topology_configured
+                    else 'Ingress controller topology requires health review'
+                  ),
+                  'source': 'OpenShift ingress controller topology and sharding guidance',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'ingress_controller_topology_and_sharding',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'OpenShift ingress controller topology and sharding guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
         {%- elif (not capability_assessment_completed) and (section.key | default('') == 'custom_ca_trust_bundle') -%}
           {%- set proxy_config = analysis_graph.proxy_config | default({}) -%}
           {%- set image_config = analysis_graph.image_config | default({}) -%}
@@ -1538,9 +1753,9 @@
                 'Repair MachineHealthCheck coverage, paused state, or selectors for worker pools where automated remediation is expected.'
                 if capability_status == 'WARNING'
                 else (
-                  'No machine-remediation remediation is required for this capability because Machine API-based worker auto-remediation is not expected for this cluster shape.'
+                  'No machine-remediation action is required for this capability because Machine API-based worker auto-remediation is not expected for this cluster shape.'
                   if not machinehealthcheck_expected
-                  else 'No machine-remediation remediation is required for this capability.'
+                  else 'No machine-remediation action is required for this capability.'
                 )
               ) -%}
           {%- set findings = (

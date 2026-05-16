@@ -3,6 +3,8 @@ import json
 import re
 import sys
 
+from workload_noise_filters import is_operator_managed_object
+
 
 def normalize_labels(raw):
     return {
@@ -64,6 +66,7 @@ def main() -> int:
         data = json.load(handle)
 
     exclude_re = re.compile(data.get("exclude_regex") or r"^$")
+    operator_managed_namespace_names = data.get("operator_managed_namespace_names") or []
 
     workloads = []
     for collection_name, kind in (("deployments", "Deployment"), ("statefulsets", "StatefulSet")):
@@ -71,6 +74,8 @@ def main() -> int:
             metadata = item.get("metadata", {}) or {}
             namespace = str(metadata.get("namespace") or "")
             if exclude_re.search(namespace):
+                continue
+            if is_operator_managed_object(item, operator_managed_namespace_names):
                 continue
             desired_replicas = int(((item.get("spec", {}) or {}).get("replicas", 1)) or 1)
             if desired_replicas < 2:

@@ -46,19 +46,20 @@ The goal is to let these tools enrich the report, not split the repo into separa
 
 The OpenShift report now follows one order, from immediate risk to broader readiness:
 
-1. Evidence And Supportability
-2. Platform Health
-3. Node Health And Capacity
-4. Backup And Disaster Recovery
-5. Application Access And Network Isolation
-6. Observability
-7. Security And Governance
-8. Workload Health
-9. Platform Architecture And Lifecycle
-10. Capacity Planning Snapshot
-11. Declarative Operations
-12. Container Platform Adoption And Release Engineering
-13. Day 2 Production Readiness
+1. Platform Health
+2. Node Health And Capacity
+3. Backup And Disaster Recovery
+4. Application Access And Network Isolation
+5. Observability
+6. Security And Governance
+7. Workload Health
+8. Platform Architecture And Lifecycle
+9. Capacity Planning Snapshot
+10. Declarative Operations
+11. Container Platform Adoption And Release Engineering
+12. Day 2 Production Readiness
+
+`Evidence And Supportability` still exists, but it now renders under `Appendix` instead of the main section order.
 
 This keeps the report readable:
 
