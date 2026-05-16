@@ -1,0 +1,31 @@
+---
+- name: Build oauth external identity provider capability artifact facts
+  vars:
+    oauth_idp_summary: "{{ auth_posture_summary | default({}) }}"
+    oauth_idp_status_current: "{{ oauth_idp_summary.status | default('unknown') | string | lower }}"
+    oauth_idp_external_count: "{{ (oauth_idp_summary.external_identity_provider_count | default(0)) | int }}"
+    oauth_idp_invalid_count: "{{ (oauth_idp_summary.invalid_identity_provider_count | default(0)) | int }}"
+    oauth_idp_kubeadmin_present: "{{ oauth_idp_summary.kubeadmin_secret_present | default(false) | bool }}"
+    oauth_idp_capability_status: >-
+      {{
+        'OK'
+        if (
+          (oauth_idp_external_count | int) > 0
+          and (not oauth_idp_kubeadmin_present)
+          and (oauth_idp_invalid_count | int) == 0
+          and oauth_idp_status_current == 'healthy'
+        )
+        else 'WARNING'
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: oauth_external_identity_provider
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      auth_posture_status: "{{ oauth_idp_capability_status }}"
+      auth_reason_summary: "{{ oauth_idp_summary.reason_summary | default('unknown') }}"
+    capability_artifact_collection_inputs:
+      identity_provider_count: "{{ (oauth_idp_summary.identity_provider_count | default(0)) | int }}"
+      external_identity_provider_count: "{{ oauth_idp_external_count | int }}"
+      local_identity_provider_count: "{{ (oauth_idp_summary.local_identity_provider_count | default(0)) | int }}"
+      invalid_identity_provider_count: "{{ oauth_idp_invalid_count | int }}"
+      kubeadmin_secret_present: "{{ oauth_idp_kubeadmin_present | bool }}"

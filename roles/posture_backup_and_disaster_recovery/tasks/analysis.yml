@@ -1,0 +1,143 @@
+---
+- name: Build backup and disaster recovery posture summary
+  vars:
+    available_backup_storage_locations: "{{ backup_storage_location_summary | default([]) | selectattr('available', 'equalto', 'True') | list }}"
+    paused_backup_schedules: "{{ backup_schedule_summary | default([]) | selectattr('paused', 'equalto', true) | list }}"
+    clean_successful_backup_count: "{{ backup_posture_data.clean_successful_backup_count | default(0) }}"
+    completed_backup_with_issues_count: >-
+      {{
+        (backup_posture_data.successful_backup_count | default(0) | int)
+        - (backup_posture_data.clean_successful_backup_count | default(0) | int)
+      }}
+    clean_completed_restore_count: "{{ backup_posture_data.clean_completed_restore_count | default(0) }}"
+    completed_restore_with_issues_count: >-
+      {{
+        (backup_posture_data.completed_restore_count | default(0) | int)
+        - (backup_posture_data.clean_completed_restore_count | default(0) | int)
+      }}
+    backup_tooling_detected: >-
+      {{
+        (dataprotectionapplication_summary | default([]) | length) > 0
+        or (backup_storage_location_summary | default([]) | length) > 0
+        or (backup_schedule_summary | default([]) | length) > 0
+        or (backup_summary | default([]) | length) > 0
+        or (restore_summary | default([]) | length) > 0
+      }}
+    control_plane_recovery_applicable: "{{ not (cluster_profile.is_hosted_control_plane | default(false) | bool) }}"
+    control_plane_runtime_healthy: >-
+      {{
+        (platform_health_summary.apiserver_readyz_failed | default(0) | int) == 0
+        and (platform_health_summary.apiserver_runtime_degraded | default(0) | int) == 0
+        and (platform_health_summary.etcd_leader_unhealthy | default(0) | int) == 0
+        and (platform_health_summary.etcd_runtime_degraded | default(0) | int) == 0
+      }}
+    control_plane_backup_evidence_scanned: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).present | default(false) | bool }}"
+    control_plane_snapshot_evidence_collected: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).healthy | default(false) | bool }}"
+    control_plane_backup_nodes_with_any_artifacts: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).nodes_with_any_artifacts | default(0) }}"
+    control_plane_backup_newest_matching_pair_age_hours: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).newest_matching_pair_age_hours | default('unknown') }}"
+    control_plane_backup_findings_summary: >-
+      {{
+        (
+          (control_plane_backup_evidence_data | default({})).findings
+          | default([])
+          | map(attribute='detail')
+          | list
+          | join('; ')
+        )
+        if (((control_plane_backup_evidence_data | default({})).findings | default([]) | length) > 0)
+        else 'none'
+      }}
+    control_plane_backup_warning: >-
+      {{
+        (control_plane_recovery_applicable | bool)
+        and (
+          not (control_plane_runtime_healthy | bool)
+          or not (control_plane_snapshot_evidence_collected | bool)
+        )
+      }}
+    storage_provider_warning: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) | bool }}"
+    backup_recovery_status: >-
+      {{
+        'CRITICAL'
+        if (
+          (backup_posture_findings | default([]) | selectattr('issue', 'in', ['backup-tooling-not-detected', 'backup-storage-location-missing', 'backup-storage-location-unavailable', 'backup-schedule-missing', 'successful-backup-missing']) | list | length) > 0
+          or (clean_successful_backup_count | int) == 0
+        )
+        else (
+          'WARNING'
+          if (
+            (backup_posture_findings | default([]) | selectattr('issue', 'in', ['backup-schedule-paused', 'successful-backup-has-warnings-or-errors', 'successful-backup-stale', 'restore-evidence-not-demonstrated', 'restore-evidence-has-warnings-or-errors']) | list | length) > 0
+            or (machine_healthcheck_findings | default([]) | length) > 0
+            or storage_provider_warning
+            or control_plane_backup_warning
+          )
+          else 'HEALTHY'
+        )
+      }}
+    backup_recovery_reason_summary: >-
+      {{
+        (
+          []
+          + (['backup tooling not detected'] if not (backup_tooling_detected | bool) else [])
+          + (['available backup storage locations=0'] if (available_backup_storage_locations | length) == 0 else [])
+          + (['available backup storage locations=' ~ ((available_backup_storage_locations | length) | string)] if (available_backup_storage_locations | length) > 0 else [])
+          + (['backup schedules=0'] if (backup_schedule_summary | default([]) | length) == 0 else [])
+          + (['paused backup schedules=' ~ ((paused_backup_schedules | length) | string)] if (paused_backup_schedules | length) > 0 else [])
+          + (['clean successful backups=0'] if (clean_successful_backup_count | int) == 0 else [])
+          + (['clean successful backups=' ~ ((clean_successful_backup_count | int) | string)] if (clean_successful_backup_count | int) > 0 else [])
+          + (['completed backups with warnings/errors=' ~ ((completed_backup_with_issues_count | int) | string)] if (completed_backup_with_issues_count | int) > 0 else [])
+          + (['clean restore evidence=0'] if (clean_completed_restore_count | int) == 0 else [])
+          + (['clean restore evidence=' ~ ((clean_completed_restore_count | int) | string)] if (clean_completed_restore_count | int) > 0 else [])
+          + (['completed restores with warnings/errors=' ~ ((completed_restore_with_issues_count | int) | string)] if (completed_restore_with_issues_count | int) > 0 else [])
+          + (['machine remediation findings=' ~ ((machine_healthcheck_findings | default([]) | length) | string)] if ((machine_healthcheck_findings | default([]) | length) > 0) else [])
+          + (['storage provider risk=local-or-ephemeral-only'] if storage_provider_warning else [])
+          + (['control plane runtime not healthy for backup validation'] if ((control_plane_recovery_applicable | bool) and not (control_plane_runtime_healthy | bool)) else [])
+          + (['control plane backup evidence not scanned'] if ((control_plane_recovery_applicable | bool) and (control_plane_runtime_healthy | bool) and not (control_plane_backup_evidence_scanned | bool)) else [])
+          + (['control plane matching snapshot evidence=0'] if ((control_plane_recovery_applicable | bool) and (control_plane_runtime_healthy | bool) and (control_plane_backup_evidence_scanned | bool) and not (control_plane_snapshot_evidence_collected | bool)) else [])
+        ) | join('; ')
+      }}
+    backup_recovery_recommendation: >-
+      {{
+        (
+          'Stabilize recovery posture first: ensure backup tooling is present, at least one backup storage location is available, schedules are active, and a clean successful backup exists before treating disaster recovery as credible.'
+          if backup_recovery_status == 'CRITICAL'
+          else (
+            'Reduce recovery risk next: investigate paused schedules, backup or restore runs with warnings or errors, stale backup evidence, and machine remediation gaps before treating resilience as production-ready.'
+            if backup_recovery_status == 'WARNING'
+            else 'Backup and disaster recovery posture looks acceptable for this run. Keep backup success and restore evidence current, and maintain machine remediation coverage for the worker fleet.'
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    backup_recovery_summary:
+      status: "{{ backup_recovery_status }}"
+      reason_summary: "{{ backup_recovery_reason_summary }}"
+      recommendation: "{{ backup_recovery_recommendation }}"
+      backup_tooling_detected: "{{ backup_tooling_detected }}"
+      control_plane_recovery_applicable: "{{ control_plane_recovery_applicable }}"
+      control_plane_runtime_healthy: "{{ control_plane_runtime_healthy }}"
+      control_plane_backup_evidence_scanned: "{{ control_plane_backup_evidence_scanned }}"
+      control_plane_snapshot_evidence_collected: "{{ control_plane_snapshot_evidence_collected }}"
+      control_plane_backup_node_count: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).node_count | default(0) }}"
+      control_plane_backup_nodes_with_any_artifacts: "{{ control_plane_backup_nodes_with_any_artifacts }}"
+      control_plane_backup_nodes_with_matching_pairs: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})).nodes_with_matching_pairs | default(0) }}"
+      control_plane_backup_newest_matching_pair_age_hours: "{{ control_plane_backup_newest_matching_pair_age_hours }}"
+      control_plane_backup_findings_summary: "{{ control_plane_backup_findings_summary }}"
+      dataprotectionapplication_count: "{{ dataprotectionapplication_summary | default([]) | length }}"
+      available_backup_storage_location_count: "{{ available_backup_storage_locations | length }}"
+      backup_schedule_count: "{{ backup_schedule_summary | default([]) | length }}"
+      paused_backup_schedule_count: "{{ paused_backup_schedules | length }}"
+      successful_backup_count: "{{ backup_posture_data.successful_backup_count | default(0) }}"
+      clean_successful_backup_count: "{{ clean_successful_backup_count }}"
+      completed_backup_with_issues_count: "{{ completed_backup_with_issues_count }}"
+      completed_restore_count: "{{ backup_posture_data.completed_restore_count | default(0) }}"
+      clean_completed_restore_count: "{{ clean_completed_restore_count }}"
+      completed_restore_with_issues_count: "{{ completed_restore_with_issues_count }}"
+      backup_posture_findings: "{{ backup_posture_findings | default([]) | length }}"
+      machine_healthcheck_findings: "{{ machine_healthcheck_findings | default([]) | length }}"
+      external_storage_provider_detected: "{{ storage_posture_summary.has_external_storage_provider | default(false) }}"
+      local_or_ephemeral_only_risk: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}"
+      external_storageclass_count: "{{ storage_posture_summary.external_storageclass_count | default(0) }}"
+      local_storageclass_count: "{{ storage_posture_summary.local_storageclass_count | default(0) }}"
+      external_pv_count: "{{ storage_posture_summary.external_pv_count | default(0) }}"
+      local_pv_count: "{{ storage_posture_summary.local_pv_count | default(0) }}"

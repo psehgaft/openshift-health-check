@@ -1,0 +1,212 @@
+---
+- name: Build authentication findings
+  block:
+    - name: Create authentication findings input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-auth-findings-
+        suffix: .json
+      register: auth_posture_input_file
+      changed_when: false
+
+    - name: Write authentication findings input data
+      ansible.builtin.copy:
+        dest: "{{ auth_posture_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'oauth_config': (analysis_graph.oauth_config | default({})),
+          'secrets': ((analysis_graph.secrets | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run authentication findings analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_authentication_findings.py"
+          - "{{ auth_posture_input_file.path }}"
+      register: auth_posture_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove authentication findings input file
+      ansible.builtin.file:
+        path: "{{ auth_posture_input_file.path }}"
+        state: absent
+      when: auth_posture_input_file is defined and (auth_posture_input_file.path | default('') | length > 0)
+      changed_when: false
+  when: report_scope_requires_core_auth_analysis | default(true) | bool
+
+- name: Normalize authentication findings
+  vars:
+    auth_fallback_idps: "{{ analysis_graph.oauth_config.spec.identityProviders | default([]) }}"
+    auth_fallback_identity_provider_count: "{{ auth_fallback_idps | length }}"
+    auth_fallback_provider_names: "{{ auth_fallback_idps | map(attribute='name') | list }}"
+    auth_fallback_local_identity_provider_count: >-
+      {{
+        (auth_fallback_idps | selectattr('htpasswd', 'defined') | list | length)
+        + (auth_fallback_idps | selectattr('basicAuth', 'defined') | list | length)
+      }}
+    auth_fallback_external_identity_provider_count: >-
+      {{
+        (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('github', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('gitlab', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('google', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('ldap', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('keystone', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('openID', 'defined')
+          | list
+          | length
+        )
+        + (
+          auth_fallback_idps
+          | rejectattr('htpasswd', 'defined')
+          | rejectattr('basicAuth', 'defined')
+          | selectattr('requestHeader', 'defined')
+          | list
+          | length
+        )
+      }}
+    auth_fallback_invalid_identity_provider_count: >-
+      {{
+        (auth_fallback_identity_provider_count | int)
+        - (auth_fallback_local_identity_provider_count | int)
+        - (auth_fallback_external_identity_provider_count | int)
+      }}
+    auth_fallback_provider_types: >-
+      {%- set provider_types = [] -%}
+      {%- for item in auth_fallback_idps -%}
+      {%- if item.htpasswd is defined -%}
+      {%- set _ = provider_types.append('htpasswd') -%}
+      {%- elif item.basicAuth is defined -%}
+      {%- set _ = provider_types.append('basicAuth') -%}
+      {%- elif item.github is defined -%}
+      {%- set _ = provider_types.append('github') -%}
+      {%- elif item.gitlab is defined -%}
+      {%- set _ = provider_types.append('gitlab') -%}
+      {%- elif item.google is defined -%}
+      {%- set _ = provider_types.append('google') -%}
+      {%- elif item.ldap is defined -%}
+      {%- set _ = provider_types.append('ldap') -%}
+      {%- elif item.keystone is defined -%}
+      {%- set _ = provider_types.append('keystone') -%}
+      {%- elif item.openID is defined -%}
+      {%- set _ = provider_types.append('openID') -%}
+      {%- elif item.requestHeader is defined -%}
+      {%- set _ = provider_types.append('requestHeader') -%}
+      {%- else -%}
+      {%- set _ = provider_types.append(item.type | default('unknown')) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ provider_types }}
+    auth_fallback_kubeadmin_secret_present: >-
+      {{
+        (
+          (analysis_graph.secrets | default({'items': []})).get('items', [])
+          | selectattr('metadata.namespace', 'equalto', 'kube-system')
+          | selectattr('metadata.name', 'equalto', 'kubeadmin')
+          | list
+          | length
+        ) > 0
+      }}
+    auth_fallback_status: >-
+      {{
+        'warning'
+        if (auth_fallback_identity_provider_count | int) == 0 or (auth_fallback_external_identity_provider_count | int) == 0
+        else (
+          'review'
+          if (auth_fallback_kubeadmin_secret_present or (auth_fallback_invalid_identity_provider_count | int) > 0)
+          else 'healthy'
+        )
+      }}
+    auth_fallback_reason_summary: >-
+      {{
+        'no configured identity providers'
+        if (auth_fallback_identity_provider_count | int) == 0
+        else (
+          'only local identity providers are configured'
+          if (auth_fallback_external_identity_provider_count | int) == 0 and (auth_fallback_local_identity_provider_count | int) > 0
+          else (
+            'no valid external identity providers are configured'
+            if (auth_fallback_external_identity_provider_count | int) == 0
+            else (
+              'external identity providers are configured, but kubeadmin fallback is still present'
+              if auth_fallback_kubeadmin_secret_present
+              else (
+                'external identity providers are configured, but some provider entries are unclassified'
+                if (auth_fallback_invalid_identity_provider_count | int) > 0
+                else (
+                  'single external identity provider configured'
+                  if (auth_fallback_external_identity_provider_count | int) == 1 and (auth_fallback_identity_provider_count | int) == 1
+                  else 'external identity providers are configured'
+                )
+              )
+            )
+          )
+        )
+      }}
+    auth_fallback_findings: >-
+      {{
+        [{'issue': 'missing-identity-provider', 'detail': 'oauth/cluster has no configured identityProviders' ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '')}]
+        if (auth_fallback_identity_provider_count | int) == 0
+        else (
+          [{'issue': 'local-only-identity-provider', 'detail': 'only local identity providers are configured: ' ~ ((auth_fallback_provider_types | unique | list | join(', ')) or 'unknown') ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '') ~ ('; unclassified identity provider entries=' ~ (auth_fallback_invalid_identity_provider_count | string) if (auth_fallback_invalid_identity_provider_count | int) > 0 else '')}]
+          if (auth_fallback_external_identity_provider_count | int) == 0 and (auth_fallback_local_identity_provider_count | int) > 0
+          else (
+            [{'issue': 'invalid-identity-provider-configuration', 'detail': 'oauth/cluster does not show a valid external identity provider configuration; provider types observed: ' ~ ((auth_fallback_provider_types | unique | list | join(', ')) or 'unknown') ~ ('; kubeadmin secret is still present' if auth_fallback_kubeadmin_secret_present else '')}]
+            if (auth_fallback_external_identity_provider_count | int) == 0
+            else (
+              [{'issue': 'kubeadmin-secret-still-present', 'detail': 'kubeadmin secret is still present while identity providers are configured'}]
+              if auth_fallback_kubeadmin_secret_present
+              else (
+                [{'issue': 'unclassified-identity-provider-configuration', 'detail': 'one or more identity provider entries could not be classified as a supported local or external provider type'}]
+                if (auth_fallback_invalid_identity_provider_count | int) > 0
+                else []
+              )
+            )
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    auth_findings: "{{ ((auth_posture_cmd.stdout | from_json).auth_findings) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else auth_fallback_findings }}"
+    auth_posture_summary: "{{ ((auth_posture_cmd.stdout | from_json).auth_posture_summary) if (auth_posture_cmd.rc == 0 and (auth_posture_cmd.stdout | default('') | length > 0)) else {'status': auth_fallback_status, 'identity_provider_count': (auth_fallback_identity_provider_count | int), 'provider_names': auth_fallback_provider_names, 'provider_types': auth_fallback_provider_types, 'external_identity_provider_count': (auth_fallback_external_identity_provider_count | int), 'local_identity_provider_count': (auth_fallback_local_identity_provider_count | int), 'invalid_identity_provider_count': (auth_fallback_invalid_identity_provider_count | int), 'kubeadmin_secret_present': auth_fallback_kubeadmin_secret_present, 'reason_summary': auth_fallback_reason_summary} }}"
+  when: report_scope_requires_core_auth_analysis | default(true) | bool

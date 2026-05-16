@@ -1,0 +1,35 @@
+---
+- name: Resolve production Day 2 posture summary aggregate
+  vars:
+    day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+  ansible.builtin.set_fact:
+    day2_posture_summary_resolved: >-
+      {{
+        (day2_posture_payload.day2_posture_summary | default({}))
+        | combine(
+            {
+              'capability_assessment_state': (
+                'completed'
+                if (
+                  (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+                  and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+                )
+                else 'failed'
+              ),
+              'capability_assessment_error': (
+                ''
+                if (
+                  (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+                  and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+                )
+                else (
+                  day2_posture_payload.day2_posture_summary.capability_assessment_error
+                  | default(day2_posture_payload.assessment_error | default('production Day 2 capability assessment did not produce mapped capability sections'))
+                )
+              ),
+              'checks_total': (day2_posture_payload.day2_posture_summary.checks_total | default(0) | int)
+            },
+            recursive=True
+          )
+      }}
+

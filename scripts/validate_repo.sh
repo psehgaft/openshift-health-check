@@ -58,7 +58,12 @@ tracked_files = [
 yaml_files = sorted(
     root / path
     for path in tracked_files
-    if path.suffix in {".yml", ".yaml"} and path.parts and path.parts[0] in {"playbooks", "roles", "inputs", "manifests"}
+    if (
+        path.suffix in {".yml", ".yaml"}
+        and path.parts
+        and path.parts[0] in {"playbooks", "roles", "inputs", "manifests"}
+        and (root / path).exists()
+    )
 )
 
 failures = []
@@ -92,7 +97,7 @@ root = Path(sys.argv[1])
 python_files = sorted(
     root / Path(line)
     for line in subprocess.check_output(["git", "-C", str(root), "ls-files"], text=True).splitlines()
-    if line.endswith(".py")
+    if line.endswith(".py") and (root / Path(line)).exists()
 )
 
 for path in python_files:

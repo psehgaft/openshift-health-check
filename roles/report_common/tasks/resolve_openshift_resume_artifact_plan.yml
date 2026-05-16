@@ -1,0 +1,401 @@
+---
+- name: Discover existing shared artifact files for resume planning
+  ansible.builtin.find:
+    paths: "{{ report_run_workspace_shared_dir }}"
+    patterns: "*.json"
+    file_type: file
+  register: report_resume_shared_artifact_files
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Discover existing posture artifact files for resume planning
+  ansible.builtin.find:
+    paths: "{{ report_run_workspace_postures_dir }}"
+    patterns: "*.json"
+    file_type: file
+  register: report_resume_posture_artifact_files
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Discover existing capability artifact files for resume planning
+  ansible.builtin.find:
+    paths: "{{ report_run_workspace_capabilities_dir }}"
+    patterns: "*.json"
+    file_type: file
+  register: report_resume_capability_artifact_files
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Discover existing report artifact files for resume planning
+  ansible.builtin.find:
+    paths: "{{ report_run_workspace_report_dir }}"
+    patterns:
+      - "*.md"
+      - "*.json"
+    file_type: file
+  register: report_resume_report_artifact_files
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Resolve existing artifact paths for resume planning
+  ansible.builtin.set_fact:
+    report_resume_existing_artifact_paths: >-
+      {{
+        (
+          (
+            (report_resume_shared_artifact_files.files | default([]))
+            + (report_resume_posture_artifact_files.files | default([]))
+            + (report_resume_capability_artifact_files.files | default([]))
+            + (report_resume_report_artifact_files.files | default([]))
+          )
+          | map(attribute='path')
+          | map('regex_replace', '^' ~ (report_run_workspace_dir | regex_escape) ~ '/', '')
+          | list
+        )
+        if (report_run_mode | default('fresh')) == 'resume_last_failure'
+        else []
+      }}
+
+- name: Resolve effective posture and capability keys for artifact planning
+  ansible.builtin.set_fact:
+    report_resume_effective_posture_keys: >-
+      {{
+        (
+          ((cluster_health_profile | default({})).get('postures', {}) | dict2items)
+          | selectattr('value.enabled', 'equalto', true)
+          | map(attribute='key')
+          | list
+        )
+      }}
+    report_resume_effective_capability_keys: >-
+      {{
+        (
+          ((cluster_health_profile | default({})).get('capabilities', {}) | dict2items)
+          | selectattr('value.enabled', 'equalto', true)
+          | map(attribute='key')
+          | list
+        )
+      }}
+
+- name: Read existing posture artifact files for resume planning
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ report_resume_posture_artifact_files.files | default([]) }}"
+  register: report_resume_posture_artifact_slurps
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Read existing shared artifact files for resume planning
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ report_resume_shared_artifact_files.files | default([]) }}"
+  register: report_resume_shared_artifact_slurps
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Read existing capability artifact files for resume planning
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ report_resume_capability_artifact_files.files | default([]) }}"
+  register: report_resume_capability_artifact_slurps
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Initialize resume artifact metadata maps
+  ansible.builtin.set_fact:
+    report_resume_shared_artifact_hash_map: {}
+    report_resume_posture_artifact_metadata_map: {}
+    report_resume_capability_artifact_metadata_map: {}
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Merge shared artifact hashes for resume planning
+  ansible.builtin.set_fact:
+    report_resume_shared_artifact_hash_map: >-
+      {{
+        (report_resume_shared_artifact_hash_map | default({}))
+        | combine(
+            {
+              (((item.item.path | basename) | replace('.json', '') | replace('-', '_'))): ((((item.content | b64decode) | from_json).get('artifact_hash', '')) if (item.content is defined) else '')
+            },
+            recursive=True
+          )
+      }}
+  loop: "{{ report_resume_shared_artifact_slurps.results | default([]) }}"
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - not (item.failed | default(false))
+    - item.content is defined
+
+- name: Merge posture artifact metadata for resume planning
+  ansible.builtin.set_fact:
+    report_resume_posture_artifact_metadata_map: >-
+      {{
+        (report_resume_posture_artifact_metadata_map | default({}))
+        | combine(
+            {
+              (((item.item.path | basename) | replace('.json', ''))): (((item.content | b64decode) | from_json) if (item.content is defined) else {})
+            },
+            recursive=True
+          )
+      }}
+  loop: "{{ report_resume_posture_artifact_slurps.results | default([]) }}"
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - not (item.failed | default(false))
+    - item.content is defined
+
+- name: Merge capability artifact metadata for resume planning
+  ansible.builtin.set_fact:
+    report_resume_capability_artifact_metadata_map: >-
+      {{
+        (report_resume_capability_artifact_metadata_map | default({}))
+        | combine(
+            {
+              (((item.item.path | basename) | replace('.json', ''))): (((item.content | b64decode) | from_json) if (item.content is defined) else {})
+            },
+            recursive=True
+          )
+      }}
+  loop: "{{ report_resume_capability_artifact_slurps.results | default([]) }}"
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - not (item.failed | default(false))
+    - item.content is defined
+
+- name: Resolve current shared artifact hashes for resume planning
+  ansible.builtin.set_fact:
+    report_current_shared_artifact_hashes: "{{ report_resume_shared_artifact_hash_map | default({}) }}"
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Resolve OpenShift artifact-granular resume plan
+  ansible.builtin.set_fact:
+    report_resume_artifact_plan:
+      shared: >-
+        {%- set completed = report_workspace_completed_artifacts | default([]) -%}
+        {%- set failed = report_workspace_failed_artifacts | default([]) -%}
+        {%- set existing = report_resume_existing_artifact_paths | default([]) -%}
+        {%- set ns = namespace(items={}) -%}
+        {%- for item in [
+          {'key': 'collection', 'path': 'shared/collection.json'},
+          {'key': 'analysis_graph', 'path': 'shared/analysis-graph.json'}
+        ] -%}
+        {%- set reusable = (
+          (report_run_mode | default('fresh')) == 'resume_last_failure'
+          and (item.path in completed)
+          and (item.path not in failed)
+          and (item.path in existing)
+        ) -%}
+        {%- set _ = ns.items.update({
+          item.key: {
+            'path': item.path,
+            'exists': (item.path in existing),
+            'reusable': reusable,
+            'should_build': (not reusable)
+          }
+        }) -%}
+        {%- endfor -%}
+        {{ ns.items }}
+      postures: >-
+        {%- set completed = report_workspace_completed_artifacts | default([]) -%}
+        {%- set failed = report_workspace_failed_artifacts | default([]) -%}
+        {%- set existing = report_resume_existing_artifact_paths | default([]) -%}
+        {%- set metadata_map = report_resume_posture_artifact_metadata_map | default({}) -%}
+        {%- set current_scope = report_effective_section_scope | default({'postures': [], 'capabilities': []}) -%}
+        {%- set current_dependency_tags = report_scope_selected_dependency_tags | default([]) | list | sort -%}
+        {%- set current_shared_inputs = report_scope_selected_shared_inputs_used | default([]) | list | sort -%}
+        {%- set current_shared_hashes = report_current_shared_artifact_hashes | default({}) -%}
+        {%- set current_schema_version = report_artifact_schema_version | default('1') | string -%}
+        {%- set current_contract_version = report_repo_contract_version | default('openshift-artifact-workspace-v1') | string -%}
+        {%- set current_platform_family = platform_family | default('openshift') | string -%}
+        {%- set current_report_mode = report_mode_resolved | default('live') | string -%}
+        {%- set ns = namespace(items={}) -%}
+        {%- for key in (report_resume_effective_posture_keys | default([])) -%}
+        {%- set artifact_path = 'postures/' ~ key ~ '.json' -%}
+        {%- set artifact_meta = metadata_map.get(key, {}) -%}
+        {%- set invalidated = (
+          ((artifact_meta.get('section_scope', {'postures': [], 'capabilities': []})) != current_scope)
+          or ((artifact_meta.get('dependency_keys', []) | list | sort) != current_dependency_tags)
+          or ((artifact_meta.get('shared_inputs_used', []) | list | sort) != current_shared_inputs)
+          or ((artifact_meta.get('upstream_shared_artifact_hashes', {})) != current_shared_hashes)
+          or ((artifact_meta.get('schema_version', '') | string) != current_schema_version)
+          or ((artifact_meta.get('repo_contract_version', '') | string) != current_contract_version)
+          or ((artifact_meta.get('platform_family', '') | string) != current_platform_family)
+          or ((artifact_meta.get('report_mode', '') | string) != current_report_mode)
+        ) -%}
+        {%- set reusable = (
+          (report_run_mode | default('fresh')) == 'resume_last_failure'
+          and (artifact_path in completed)
+          and (artifact_path not in failed)
+          and (artifact_path in existing)
+          and not invalidated
+        ) -%}
+        {%- set _ = ns.items.update({
+          key: {
+            'path': artifact_path,
+            'exists': (artifact_path in existing),
+            'invalidated': invalidated,
+            'reusable': reusable,
+            'should_build': (not reusable)
+          }
+        }) -%}
+        {%- endfor -%}
+        {{ ns.items }}
+      capabilities: >-
+        {%- set completed = report_workspace_completed_artifacts | default([]) -%}
+        {%- set failed = report_workspace_failed_artifacts | default([]) -%}
+        {%- set existing = report_resume_existing_artifact_paths | default([]) -%}
+        {%- set metadata_map = report_resume_capability_artifact_metadata_map | default({}) -%}
+        {%- set current_scope = report_effective_section_scope | default({'postures': [], 'capabilities': []}) -%}
+        {%- set current_dependency_tags = report_scope_selected_dependency_tags | default([]) | list | sort -%}
+        {%- set current_shared_inputs = report_scope_selected_shared_inputs_used | default([]) | list | sort -%}
+        {%- set current_shared_hashes = report_current_shared_artifact_hashes | default({}) -%}
+        {%- set current_schema_version = report_artifact_schema_version | default('1') | string -%}
+        {%- set current_contract_version = report_repo_contract_version | default('openshift-artifact-workspace-v1') | string -%}
+        {%- set current_platform_family = platform_family | default('openshift') | string -%}
+        {%- set current_report_mode = report_mode_resolved | default('live') | string -%}
+        {%- set ns = namespace(items={}) -%}
+        {%- for key in (report_resume_effective_capability_keys | default([])) -%}
+        {%- set artifact_path = 'capabilities/' ~ key ~ '.json' -%}
+        {%- set artifact_meta = metadata_map.get(key, {}) -%}
+        {%- set invalidated = (
+          ((artifact_meta.get('section_scope', {'postures': [], 'capabilities': []})) != current_scope)
+          or ((artifact_meta.get('dependency_keys', []) | list | sort) != current_dependency_tags)
+          or ((artifact_meta.get('shared_inputs_used', []) | list | sort) != current_shared_inputs)
+          or ((artifact_meta.get('upstream_shared_artifact_hashes', {})) != current_shared_hashes)
+          or ((artifact_meta.get('schema_version', '') | string) != current_schema_version)
+          or ((artifact_meta.get('repo_contract_version', '') | string) != current_contract_version)
+          or ((artifact_meta.get('platform_family', '') | string) != current_platform_family)
+          or ((artifact_meta.get('report_mode', '') | string) != current_report_mode)
+        ) -%}
+        {%- set reusable = (
+          (report_run_mode | default('fresh')) == 'resume_last_failure'
+          and (artifact_path in completed)
+          and (artifact_path not in failed)
+          and (artifact_path in existing)
+          and not invalidated
+        ) -%}
+        {%- set _ = ns.items.update({
+          key: {
+            'path': artifact_path,
+            'exists': (artifact_path in existing),
+            'invalidated': invalidated,
+            'reusable': reusable,
+            'should_build': (not reusable)
+          }
+        }) -%}
+        {%- endfor -%}
+        {{ ns.items }}
+      report: >-
+        {%- set completed = report_workspace_completed_artifacts | default([]) -%}
+        {%- set failed = report_workspace_failed_artifacts | default([]) -%}
+        {%- set existing = report_resume_existing_artifact_paths | default([]) -%}
+        {%- set markdown_path = ((completed | select('match', '^report/.*\\.md$') | list | last) | default('')) -%}
+        {%- set json_path = ((completed | select('match', '^report/.*\\.json$') | reject('equalto', 'report/payload.json') | list | last) | default('')) -%}
+        {%- set payload_path = ('report/payload.json' if ('report/payload.json' in completed) else '') -%}
+        {%- set markdown_reusable = (
+          (report_run_mode | default('fresh')) == 'resume_last_failure'
+          and (markdown_path | length > 0)
+          and (markdown_path not in failed)
+          and (markdown_path in existing)
+        ) -%}
+        {%- set json_reusable = (
+          (report_run_mode | default('fresh')) == 'resume_last_failure'
+          and (json_path | length > 0)
+          and (json_path not in failed)
+          and (json_path in existing)
+        ) -%}
+        {%- set payload_reusable = (
+          (report_run_mode | default('fresh')) == 'resume_last_failure'
+          and (payload_path | length > 0)
+          and (payload_path not in failed)
+          and (payload_path in existing)
+        ) -%}
+        {{
+          {
+            'markdown': {
+              'path': markdown_path,
+              'exists': (markdown_path in existing),
+              'reusable': markdown_reusable,
+              'should_build': (not markdown_reusable)
+            },
+            'json': {
+              'path': json_path,
+              'exists': (json_path in existing),
+              'reusable': json_reusable,
+              'should_build': (not json_reusable)
+            },
+            'payload': {
+              'path': payload_path,
+              'exists': (payload_path in existing),
+              'reusable': payload_reusable,
+              'should_build': (not payload_reusable)
+            }
+          }
+        }}
+
+- name: Resolve whether any upstream artifacts must rebuild
+  ansible.builtin.set_fact:
+    report_resume_upstream_artifacts_pending: >-
+      {{
+        (
+          (report_resume_artifact_plan.shared | default({}) | dict2items | selectattr('value.should_build', 'equalto', true) | list | length)
+          + (report_resume_artifact_plan.postures | default({}) | dict2items | selectattr('value.should_build', 'equalto', true) | list | length)
+          + (report_resume_artifact_plan.capabilities | default({}) | dict2items | selectattr('value.should_build', 'equalto', true) | list | length)
+        ) > 0
+      }}
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Resolve report-artifact invalidation contract
+  vars:
+    resume_manifest_effective_scope: "{{ (report_resume_manifest | default({})).get('effective_section_scope', {'postures': [], 'capabilities': []}) }}"
+    current_effective_scope: "{{ report_effective_section_scope | default({'postures': [], 'capabilities': []}) }}"
+    resume_manifest_dependency_tags: "{{ (report_resume_manifest | default({})).get('resolved_dependency_tags', []) | list | sort }}"
+    current_dependency_tags: "{{ report_scope_selected_dependency_tags | default([]) | list | sort }}"
+    resume_manifest_shared_inputs: "{{ (report_resume_manifest | default({})).get('resolved_shared_inputs_used', []) | list | sort }}"
+    current_shared_inputs: "{{ report_scope_selected_shared_inputs_used | default([]) | list | sort }}"
+    resume_manifest_schema_version: "{{ (report_resume_manifest | default({})).get('schema_version', '') | string }}"
+    resume_manifest_contract_version: "{{ (report_resume_manifest | default({})).get('repo_contract_version', '') | string }}"
+    current_schema_version: "{{ report_artifact_schema_version | default('1') | string }}"
+    current_contract_version: "{{ report_repo_contract_version | default('openshift-artifact-workspace-v1') | string }}"
+  ansible.builtin.set_fact:
+    report_resume_report_artifact_invalidated: >-
+      {{
+        (resume_manifest_effective_scope != current_effective_scope)
+        or (resume_manifest_dependency_tags != current_dependency_tags)
+        or (resume_manifest_shared_inputs != current_shared_inputs)
+        or (resume_manifest_schema_version != current_schema_version)
+        or (resume_manifest_contract_version != current_contract_version)
+      }}
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Finalize report artifact resume decisions
+  ansible.builtin.set_fact:
+    report_resume_artifact_plan: >-
+      {{
+        (report_resume_artifact_plan | default({}))
+        | combine(
+            {
+              'report': (
+                (report_resume_artifact_plan.report | default({}))
+                | combine(
+                    {
+                      'upstream_rebuild_required': (report_resume_upstream_artifacts_pending | default(false) | bool),
+                      'invalidated': (report_resume_report_artifact_invalidated | default(false) | bool),
+                      'bundle_reusable': (
+                        (report_resume_artifact_plan.report.markdown.reusable | default(false) | bool)
+                        and (report_resume_artifact_plan.report.json.reusable | default(false) | bool)
+                        and (report_resume_artifact_plan.report.payload.reusable | default(false) | bool)
+                        and not (report_resume_upstream_artifacts_pending | default(false) | bool)
+                        and not (report_resume_report_artifact_invalidated | default(false) | bool)
+                      ),
+                      'should_build': (
+                        not (
+                          (report_resume_artifact_plan.report.markdown.reusable | default(false) | bool)
+                          and (report_resume_artifact_plan.report.json.reusable | default(false) | bool)
+                          and (report_resume_artifact_plan.report.payload.reusable | default(false) | bool)
+                          and not (report_resume_upstream_artifacts_pending | default(false) | bool)
+                          and not (report_resume_report_artifact_invalidated | default(false) | bool)
+                        )
+                      )
+                    },
+                    recursive=True
+                  )
+              )
+            },
+            recursive=True
+          )
+      }}
+  when: report_run_mode | default('fresh') == 'resume_last_failure'

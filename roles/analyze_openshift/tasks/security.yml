@@ -51,62 +51,11 @@
       changed_when: false
 
     - name: Run internal registry workload analysis
-      ansible.builtin.shell: |
-        python3 - <<'PY' "{{ internal_registry_workloads_input_file.path }}"
-        import json
-        import re
-        import sys
-
-        with open(sys.argv[1], "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-
-        exclude_re = re.compile(data.get("exclude_regex") or r"^$")
-        internal_markers = [
-            "image-registry.openshift-image-registry.svc",
-            "image-registry.openshift-image-registry.svc:5000",
-        ]
-
-        def is_internal_image(image):
-            text = str(image or "").strip().lower()
-            return any(marker in text for marker in internal_markers)
-
-        findings = []
-        for kind, key in [("Deployment", "deployments"), ("StatefulSet", "statefulsets"), ("DaemonSet", "daemonsets")]:
-            for item in data.get(key, []):
-                meta = item.get("metadata", {}) or {}
-                ns = meta.get("namespace", "")
-                if exclude_re.search(ns or ""):
-                    continue
-                template_spec = (((item.get("spec", {}) or {}).get("template", {}) or {}).get("spec", {}) or {})
-                containers = (template_spec.get("containers", []) or []) + (template_spec.get("initContainers", []) or [])
-                matched = []
-                for container in containers:
-                    image = container.get("image", "")
-                    if is_internal_image(image):
-                        matched.append({
-                            "container": container.get("name", "unknown"),
-                            "image": image,
-                        })
-                if matched:
-                    findings.append({
-                        "kind": kind,
-                        "namespace": ns,
-                        "name": meta.get("name", "unknown"),
-                        "container_names": [item["container"] for item in matched],
-                        "images": sorted({item["image"] for item in matched}),
-                    })
-
-        result = {
-            "internal_registry_workloads": findings,
-            "image_registry_findings": (
-                [{
-                    "issue": "internal-registry-images-in-user-workloads",
-                    "detail": f"{len(findings)} workload templates reference the internal OpenShift image registry service"
-                }] if findings else []
-            ),
-        }
-        print(json.dumps(result))
-        PY
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_internal_registry_workload_findings.py"
+          - "{{ internal_registry_workloads_input_file.path }}"
       register: internal_registry_workloads_cmd
       changed_when: false
       failed_when: false
@@ -144,81 +93,11 @@
   changed_when: false
 
 - name: Build stale access review candidates
-  ansible.builtin.shell: |
-    python3 - <<'PY' "{{ stale_access_review_input_file.path }}"
-    import json
-    import re
-    import sys
-
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
-    system_name_re = re.compile(r"^(system:|kube:|openshift:)")
-    user_names = {
-        str((((item.get("metadata") or {}).get("name")) or "")).strip()
-        for item in (data.get("users") or [])
-        if str((((item.get("metadata") or {}).get("name")) or "")).strip()
-    }
-    group_map = {
-        str((((item.get("metadata") or {}).get("name")) or "")).strip(): item
-        for item in (data.get("groups") or [])
-        if str((((item.get("metadata") or {}).get("name")) or "")).strip()
-    }
-
-    stale_users = []
-    stale_groups = []
-    bindings = (data.get("rolebindings") or []) + (data.get("clusterrolebindings") or [])
-
-    for binding in bindings:
-        subjects = binding.get("subjects") or []
-        binding_kind = str(binding.get("kind") or "Binding").strip() or "Binding"
-        binding_namespace = str((((binding.get("metadata") or {}).get("namespace")) or "")).strip()
-        binding_name = str((((binding.get("metadata") or {}).get("name")) or "unknown")).strip() or "unknown"
-        binding_scope = "cluster-wide" if not binding_namespace else f"namespace {binding_namespace}"
-        grant_source = (
-            f"{binding_kind}/{binding_name}"
-            if not binding_namespace
-            else f"{binding_kind}/{binding_namespace}/{binding_name}"
-        )
-
-        for subject in subjects:
-            kind = str(subject.get("kind") or "").strip()
-            name = str(subject.get("name") or "").strip()
-            if not name or system_name_re.search(name):
-                continue
-            if kind == "User":
-                if name not in user_names:
-                    stale_users.append({
-                        **subject,
-                        "binding_scope": binding_scope,
-                        "grant_source": grant_source,
-                        "reason": "subject appears in RBAC bindings but no matching OpenShift User object was collected",
-                    })
-            elif kind == "Group":
-                matching_group = group_map.get(name)
-                if matching_group is None:
-                    stale_groups.append({
-                        **subject,
-                        "binding_scope": binding_scope,
-                        "grant_source": grant_source,
-                        "reason": "subject appears in RBAC bindings but no matching OpenShift Group object was collected",
-                    })
-                else:
-                    matching_group_users = matching_group.get("users") or []
-                    if len(matching_group_users) == 0:
-                        stale_groups.append({
-                            **subject,
-                            "binding_scope": binding_scope,
-                            "grant_source": grant_source,
-                            "reason": "matching OpenShift Group object was collected but it currently lists no members",
-                        })
-
-    print(json.dumps({
-        "stale_access_review_serviceaccounts": data.get("likely_unused_serviceaccounts") or [],
-        "stale_access_review_users": stale_users,
-        "stale_access_review_groups": stale_groups,
-    }))
-    PY
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/build_stale_access_review_candidates.py"
+      - "{{ stale_access_review_input_file.path }}"
   register: stale_access_review_cmd
   changed_when: false
 

@@ -1,0 +1,31 @@
+---
+- name: Build machine health check remediation capability artifact facts
+  vars:
+    machinehealthcheck_expected_current: "{{ declarative_operations_summary.machinehealthcheck_expected | default((day2_posture_summary | default({})).get('machinehealthcheck_expected', false)) | bool }}"
+    machinehealthcheck_count_current: "{{ declarative_operations_summary.machinehealthcheck_count | default((day2_posture_summary | default({})).get('machinehealthcheck_count', 0)) | int }}"
+    machine_healthcheck_findings_current: "{{ (machine_healthcheck_findings | default([])) | length }}"
+    machine_health_check_status_current: >-
+      {{
+        'WARNING'
+        if (machinehealthcheck_expected_current and (machinehealthcheck_count_current == 0 or (machine_healthcheck_findings_current | int) > 0))
+        else 'OK'
+      }}
+    machine_health_check_reason_current: >-
+      {{
+        'machine remediation evidence: expected='
+        ~ (machinehealthcheck_expected_current | string)
+        ~ ', machineHealthChecks=' ~ (machinehealthcheck_count_current | string)
+        ~ ', findings=' ~ (machine_healthcheck_findings_current | string)
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: machine_health_check_remediation
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      backup_recovery_status: "{{ machine_health_check_status_current }}"
+      backup_recovery_reason_summary: "{{ machine_health_check_reason_current }}"
+    capability_artifact_collection_inputs:
+      machinehealthcheck_expected: "{{ machinehealthcheck_expected_current | bool }}"
+      machinehealthcheck_count: "{{ machinehealthcheck_count_current | int }}"
+      machine_healthcheck_findings: "{{ machine_healthcheck_findings_current | int }}"
+      machinehealthcheck_coverage_target: 0
+      machinehealthcheck_covered_machineset_count: 0

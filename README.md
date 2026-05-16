@@ -52,7 +52,7 @@ Launch the tool from the repo root:
 ```bash
 ./scripts/setup-ansible-venv.sh
 source .venv/bin/activate
-ansible-playbook playbooks/openshift_cluster_health_report.yml
+ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
 ```
 
 If you are trying the repo for the first time, start with OpenShift. OpenShift is the original cluster type this solution was designed around, and `playbooks/openshift_cluster_health_report.yml` remains the primary entrypoint and deepest report path in the repo.
@@ -62,7 +62,7 @@ For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the ma
 Example live OpenShift run:
 
 ```bash
-ansible-playbook playbooks/openshift_cluster_health_report.yml
+ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
 ```
 
 For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
@@ -71,7 +71,7 @@ Common OpenShift command variants:
 
 - Default live scan
 ```bash
-ansible-playbook playbooks/openshift_cluster_health_report.yml
+ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
 ```
 - Live scan with a custom profile override file
 ```bash
@@ -84,6 +84,19 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_mode=collected \
   -e must_gather_path=/path/to/must-gather.local.123456 \
   -e inspect_path=/path/to/inspect-dir
+```
+- Selector-scoped run for only specific postures
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=live \
+  -e selected_postures=platform_health,security_and_governance
+```
+- Selector-scoped run for only specific capabilities
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=collected \
+  -e case_bundle_path=/path/to/case-bundle \
+  -e selected_capabilities=oauth_external_identity_provider,external_alert_delivery
 ```
 - Resume the last failed OpenShift run
 ```bash
@@ -102,7 +115,7 @@ Most-used OpenShift options:
 - `cluster_health_profile_override_source_path`
   Load a second profile file and merge it onto `inputs/openshift-cluster-health-profile.yml`
 - `report_mode`
-  Use `live`, `collected`, or `auto`
+  Use `live`, `collected`, or `auto`. `auto` resolves to `collected` when collected-state inputs are present.
 - `report_run_mode`
   Use `fresh` or `resume_last_failure`
 - `must_gather_path`
@@ -115,6 +128,10 @@ Most-used OpenShift options:
   Choose where the report files are written
 - `report_basename`
   Change the report filename prefix
+- `selected_postures`
+  Limit the run to one or more posture sections while preserving shared prerequisites automatically
+- `selected_capabilities`
+  Limit the run to one or more capability sections while preserving shared prerequisites automatically
 - `report_generate_html`
   Enable or disable HTML output
 - `report_generate_pdf`
@@ -133,6 +150,23 @@ The same OpenShift playbook also supports collected-state reprocessing. If you s
 - `case_bundle_path`
 
 You can also force that path explicitly with `-e report_mode=collected`.
+
+Every OpenShift run writes a workspace artifact tree under:
+
+```text
+<report_output_dir>/.run-state/openshift/
+```
+
+That workspace now includes:
+
+- `shared/collection.json`
+- `shared/analysis-graph.json`
+- one JSON artifact per rendered posture
+- one JSON artifact per rendered capability
+- `report/payload.json`
+- final Markdown and JSON report outputs under `report/`
+
+Resume mode uses those artifacts directly, so a resumed run can skip completed collection, analysis, posture, capability, payload, or report work when the persisted contract still matches the current run.
 
 To keep a run log in the repo, create `.logs/` if needed and pipe the run through `tee`:
 
@@ -181,6 +215,8 @@ This validation covers:
 - shell syntax for tracked `scripts/*.sh` and `tests/*.sh`
 - OpenShift report template validation
 - capability profile validation for OpenShift and Kubernetes variants
+- rendered OpenShift report and JSON validation
+- full OpenShift CI fixture report generation
 
 The wrapper scripts in `scripts/`, such as `run_ci_report.sh` and `validate_repo.sh`, also write stdout and stderr to `.logs/<cluster-type>-run-<timestamp>.log`. Direct `ansible-playbook ...` runs only write there if you pipe them through `tee` yourself. The `.logs/` directory is created automatically by the wrappers when it does not already exist.
 
@@ -572,6 +608,14 @@ This section maps the main report signals to their reason for inclusion and the 
 
 ## Repository Layout
 
+The repo no longer relies on a few large monolithic task files for the OpenShift path. The current layout is:
+
+- shared collection, evidence loading, and analysis entrypoints
+- dedicated `roles/posture_<key>/` roles for enabled OpenShift postures
+- dedicated `roles/capability_<key>/` roles for enabled OpenShift capabilities
+- shared artifact persistence and artifact-first resume/render helpers under `roles/report_common/tasks/`
+- helper Python scripts under `scripts/` instead of embedded Python blocks in Ansible task files
+
 - [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml)
   Main OpenShift playbook for both live scans and collected-state reprocessing.
 - [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml)
@@ -605,23 +649,31 @@ This section maps the main report signals to their reason for inclusion and the 
 - [roles/collect_kubernetes/tasks/main.yml](roles/collect_kubernetes/tasks/main.yml)
   Kubernetes collection extension point.
 - [roles/load_evidence_common/tasks/main.yml](roles/load_evidence_common/tasks/main.yml)
-  Shared collected-state evidence discovery and parsing.
+  Shared collected-state evidence discovery entrypoint, now split into smaller task files for case-bundle resolution, validation, optional evidence, coverage, hygiene, and redaction.
 - [roles/load_evidence_openshift/tasks/main.yml](roles/load_evidence_openshift/tasks/main.yml)
-  OpenShift collected-state loading and graph preparation.
+  OpenShift collected-state loading entrypoint, now split into resource-graph, scaffold, and product-evidence task files.
 - [roles/load_evidence_openshift_products/tasks/main.yml](roles/load_evidence_openshift_products/tasks/main.yml)
-  Optional product evidence loading for collected-state OpenShift inputs, including Pipelines, Logging, GitOps, ODF, Virtualization, and OpenShift AI.
+  Full product-evidence loader entrypoint, now split by product family.
 - [roles/analyze_common/tasks/main.yml](roles/analyze_common/tasks/main.yml)
-  Shared workload analysis.
+  Shared workload and security analysis entrypoint, with subtask trees under `roles/analyze_common/tasks/security/` and `roles/analyze_common/tasks/workload/`.
 - [roles/analyze_openshift/tasks/main.yml](roles/analyze_openshift/tasks/main.yml)
-  OpenShift-specific analysis entry point.
+  OpenShift-specific analysis entrypoint, with decomposed task trees under `core/`, `day2/`, `observability/`, `review_domains/`, `summary/`, `supportability_evidence/`, and `collected_state_health/`.
 - [roles/analyze_kubernetes/tasks/main.yml](roles/analyze_kubernetes/tasks/main.yml)
   Kubernetes analysis extension point.
 - [roles/report_common/tasks/main.yml](roles/report_common/tasks/main.yml)
-  Shared reporting extension point.
+  Shared reporting extension point, including artifact persistence, payload assembly, selector dependency resolution, and artifact-granular resume planning.
 - [roles/report_openshift/tasks/main.yml](roles/report_openshift/tasks/main.yml)
   OpenShift scoring, rendering, and output generation.
 - [roles/report_openshift/tasks/render_collected_state_report.yml](roles/report_openshift/tasks/render_collected_state_report.yml)
   Collected-state OpenShift report rendering entrypoint.
+- `roles/posture_<key>/`
+  Dedicated posture roles that own posture-specific synthesis and artifact builders.
+- `roles/capability_<key>/`
+  Dedicated capability roles that own capability-specific artifact builders.
+- [roles/posture_artifact_from_builder/tasks/main.yml](roles/posture_artifact_from_builder/tasks/main.yml)
+  Shared posture artifact wrapper used by dedicated posture roles.
+- [roles/capability_artifact_from_builder/tasks/main.yml](roles/capability_artifact_from_builder/tasks/main.yml)
+  Shared capability artifact wrapper used by dedicated capability roles.
 - [templates/openshift_cluster_health_report.md.j2](templates/openshift_cluster_health_report.md.j2)
   OpenShift Markdown report template.
 - [scripts/parse_must_gather.py](scripts/parse_must_gather.py)
@@ -788,7 +840,7 @@ Non-`cluster-admin` live mode:
   - a namespace-scoped Insights reader in `openshift-insights`
   - an additional optional node-debug role plus privileged SCC use if you want `collect_live_sosreport=true`
 - The built-in `cluster-reader` and `cluster-monitoring-view` ClusterRoles can be combined with custom support-collector and optional node-debug RBAC.
-- See [docs/openshift-rbac-guide.md](docs/openshift-rbac-guide.md) for the recommended role split and example manifests you can adapt for your cluster.
+- See [docs/ocp-health-check-sa-rbac.md](docs/ocp-health-check-sa-rbac.md) for the recommended role split and example manifests you can adapt for your cluster.
 - Then log in as the `health-check-runner` service account or mint a token for it before running the playbook.
 
 For `omc`, the playbook will use, in this order:

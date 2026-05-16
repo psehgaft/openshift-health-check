@@ -1,0 +1,108 @@
+---
+- name: Build ComplianceSuite summary
+  ansible.builtin.set_fact:
+    compliance_result_counts: "{{ compliance_result_counts | default({}) | combine({suite_result: (((compliance_result_counts | default({}))[suite_result] | default(0)) + 1)}, recursive=True) }}"
+    compliance_suite_findings: "{{ compliance_suite_findings | default([]) + compliance_suite_finding_entry }}"
+    compliance_suite_summary: "{{ compliance_suite_summary | default([]) + [compliance_suite_summary_entry] }}"
+  loop: "{{ (analysis_graph.compliancesuites | default({})).get('items', []) }}"
+  vars:
+    suite_phase: "{{ item.status.phase | default('Unknown') }}"
+    suite_result: "{{ item.status.result | default(suite_phase) }}"
+    compliance_suite_summary_entry:
+      namespace: "{{ item.metadata.namespace | default('') }}"
+      name: "{{ item.metadata.name | default('') }}"
+      phase: "{{ suite_phase }}"
+      result: "{{ suite_result }}"
+    compliance_suite_finding_entry: >-
+      {{
+        [compliance_suite_summary_entry]
+        if (
+          suite_result not in ['COMPLIANT', 'NOT-APPLICABLE', 'PASS']
+          or suite_phase not in ['DONE', 'COMPLIANT', 'NOT-APPLICABLE']
+        ) else []
+      }}
+  changed_when: false
+
+- name: Build compliance program posture summary
+  block:
+    - name: Create compliance program posture input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-compliance-program-
+        suffix: .json
+      register: compliance_program_summary_input_file
+      changed_when: false
+
+    - name: Write compliance program posture input data
+      ansible.builtin.copy:
+        dest: "{{ compliance_program_summary_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
+          'compliancesuites': ((analysis_graph.compliancesuites | default({})).get('items', [])),
+          'compliancescans': ((analysis_graph.compliancescans | default({})).get('items', [])),
+          'scansettings': ((analysis_graph.scansettings | default({})).get('items', [])),
+          'scansettingbindings': ((analysis_graph.scansettingbindings | default({})).get('items', [])),
+          'tailoredprofiles': ((analysis_graph.tailoredprofiles | default({})).get('items', [])),
+          'profiles': ((analysis_graph.profiles | default({})).get('items', [])),
+          'profilebundles': ((analysis_graph.profilebundles | default({})).get('items', [])),
+          'compliancecheckresults': ((analysis_graph.compliancecheckresults | default({})).get('items', [])),
+          'sosreport_reports': (
+            (live_support_data.parsed.sosreport.reports | default([]))
+            if (live_support_data is defined and live_support_data.parsed is defined)
+            else (sosreport_data.reports | default([]))
+          )
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run compliance program posture summary
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_compliance_program_posture.py"
+          - "{{ compliance_program_summary_input_file.path }}"
+      register: compliance_program_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove compliance program posture input file
+      ansible.builtin.file:
+        path: "{{ compliance_program_summary_input_file.path }}"
+        state: absent
+      when: compliance_program_summary_input_file is defined and (compliance_program_summary_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize compliance program posture summary
+  vars:
+    compliance_program_summary_payload: >-
+      {{
+        compliance_program_summary_cmd.stdout | from_json
+        if (compliance_program_summary_cmd.rc == 0 and (compliance_program_summary_cmd.stdout | default('') | length > 0))
+        else {
+          'operator_summary': {
+            'present': false,
+            'namespace_present': false,
+            'suite_count': 0,
+            'scan_count': 0,
+            'scan_setting_count': 0,
+            'scan_setting_binding_count': 0,
+            'profile_count': 0,
+            'tailored_profile_count': 0,
+            'profilebundle_count': 0,
+            'valid_profilebundle_count': 0,
+            'invalid_profilebundle_count': 0,
+            'failing_scan_count': 0,
+            'failed_check_count': 0,
+            'standards_configured_count': 0,
+            'verdict': 'unknown',
+            'profilebundle_summary': [],
+            'scan_summary': []
+          },
+          'standards_summary': [],
+          'findings': []
+        }
+      }}
+  ansible.builtin.set_fact:
+    compliance_operator_summary: "{{ compliance_program_summary_payload.operator_summary }}"
+    compliance_standards_summary: "{{ compliance_program_summary_payload.standards_summary }}"
+    compliance_standards_findings: "{{ compliance_program_summary_payload.findings }}"

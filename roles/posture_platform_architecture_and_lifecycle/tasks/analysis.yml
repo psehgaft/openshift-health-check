@@ -1,0 +1,542 @@
+---
+- name: Build platform architecture and lifecycle summary
+  vars:
+    graph: "{{ analysis_graph | default({}) }}"
+    topology_resilience_resolved: "{{ topology_resilience | default({}) }}"
+    node_ip_capacity_summary_resolved: "{{ node_ip_capacity_summary | default({}) }}"
+    current_date: "{{ now(utc=true, fmt='%Y-%m-%d') }}"
+    ocp_version_full: "{{ graph.clusterversion.status.desired.version | default('unknown') }}"
+    ocp_version_minor: "{{ (graph.clusterversion.status.desired.version | default('') | regex_search('^[0-9]+\\.[0-9]+')) | default('') }}"
+    lifecycle_calendar: "{{ (lookup('file', role_path ~ '/vars/lifecycle_calendar.yml') | from_yaml).openshift_lifecycle_calendar | default({}) }}"
+    release_calendar: "{{ lifecycle_calendar.get(ocp_version_minor, {}) }}"
+    maintenance_end: "{{ release_calendar.maintenance_end | default('') }}"
+    full_support_end: "{{ release_calendar.full_support_end | default('') }}"
+    eus_end: "{{ release_calendar.eus_end | default('') }}"
+    eus_term_2_end: "{{ release_calendar.eus_term_2_end | default('') }}"
+    topology_warning_count: >-
+      {{
+        (1 if (topology_resilience_resolved.single_zone_worker_pool_count | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience_resolved.worker_nodes_without_zone_label | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience_resolved.worker_zone_spread_unbalanced | default(false) | bool) else 0)
+        + (1 if (topology_resilience_resolved.machinesets_without_zone_label | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience_resolved.machineset_replica_unbalanced | default(false) | bool) else 0)
+      }}
+    topology_reason_summary: >-
+      {{
+        (
+          []
+          + (['worker pools limited to one zone'] if (topology_resilience_resolved.single_zone_worker_pool_count | default(0) | int) > 0 else [])
+          + (['worker nodes missing zone labels'] if (topology_resilience_resolved.worker_nodes_without_zone_label | default(0) | int) > 0 else [])
+          + (['worker zone spread is imbalanced'] if (topology_resilience_resolved.worker_zone_spread_unbalanced | default(false) | bool) else [])
+          + (['machine API worker pools missing zone labels'] if (topology_resilience_resolved.machinesets_without_zone_label | default(0) | int) > 0 else [])
+          + (['machine API worker-pool replicas are imbalanced'] if (topology_resilience_resolved.machineset_replica_unbalanced | default(false) | bool) else [])
+        ) | join('; ')
+      }}
+    deployment_type_confidence_warning: "{{ (cluster_profile.cluster_classification_confidence | default(cluster_profile.deployment_type_confidence | default('low'))) == 'low' }}"
+    derived_machine_networks: >-
+      {{
+          (cluster_profile.machine_networks | default([]))
+          if ((cluster_profile.machine_networks | default([]) | length) > 0)
+          else (
+          (node_ip_capacity_summary_resolved.range_list | default([]))
+          if (
+            (node_ip_capacity_summary_resolved.source | default('')) not in ['', 'unknown', 'not-found']
+            and ((node_ip_capacity_summary_resolved.range_list | default([])) | length) > 0
+          )
+          else []
+        )
+      }}
+    derived_machine_networks_source: >-
+      {{
+        cluster_profile.machine_networks_source | default('not-exposed-via-cluster-api')
+        if ((cluster_profile.machine_networks | default([]) | length) > 0)
+        else (
+          'derived-from-' ~ (node_ip_capacity_summary_resolved.source | default('node-ip-analysis'))
+          if (
+            (node_ip_capacity_summary_resolved.source | default('')) not in ['', 'unknown', 'not-found']
+            and ((node_ip_capacity_summary_resolved.range_list | default([])) | length) > 0
+          )
+          else (cluster_profile.machine_networks_source | default('not-exposed-via-cluster-api'))
+        )
+      }}
+    machine_networks_evidence_gap: "{{ (derived_machine_networks | default([]) | length) == 0 }}"
+    lifecycle_support_phase: >-
+      {{
+        'unknown'
+        if (release_calendar | length) == 0
+        else (
+          'full-support'
+          if (full_support_end | length > 0 and current_date <= full_support_end)
+          else (
+            'maintenance-support'
+            if (maintenance_end | length > 0 and current_date <= maintenance_end)
+            else (
+              'eus-term-1-available'
+              if (eus_end | length > 0 and current_date <= eus_end)
+              else (
+                'eus-term-2-available'
+                if (eus_term_2_end | length > 0 and current_date <= eus_term_2_end)
+                else 'unsupported'
+              )
+            )
+          )
+        )
+      }}
+    lifecycle_support_status: >-
+      {{
+        'unknown'
+        if lifecycle_support_phase == 'unknown'
+        else (
+          'supported'
+          if lifecycle_support_phase in ['full-support', 'maintenance-support']
+          else (
+            'eus-optional'
+            if lifecycle_support_phase in ['eus-term-1-available', 'eus-term-2-available']
+            else 'unsupported'
+          )
+        )
+      }}
+    conditional_update_risk_names: >-
+      {{
+        conditional_updates | default([])
+        | map(attribute='risks')
+        | map('default', [])
+        | map('first')
+        | select('defined')
+        | map(attribute='name')
+        | list
+      }}
+    days_to_maintenance_end: >-
+      {{
+        (
+          ((maintenance_end | to_datetime('%Y-%m-%d')) - (current_date | to_datetime('%Y-%m-%d'))).days
+        )
+        if (maintenance_end | length) > 0
+        else None
+      }}
+    days_to_eus_end: >-
+      {{
+        (
+          ((eus_end | to_datetime('%Y-%m-%d')) - (current_date | to_datetime('%Y-%m-%d'))).days
+        )
+        if (eus_end | length) > 0
+        else None
+      }}
+    architecture_lifecycle_status: >-
+      {{
+        'CRITICAL'
+        if lifecycle_support_status == 'unsupported'
+        else (
+          'WARNING'
+          if (
+            lifecycle_support_status == 'eus-optional'
+            or (conditional_updates | default([]) | length > 0)
+            or (topology_warning_count | int) > 0
+            or deployment_type_confidence_warning
+            or machine_networks_evidence_gap
+          )
+          else (
+            'not-assessed'
+            if lifecycle_support_status == 'unknown'
+            else 'HEALTHY'
+          )
+        )
+      }}
+    architecture_lifecycle_recommendation: >-
+      {{
+        (
+          'Upgrade planning is urgent: this OpenShift minor release is outside base support. Move to a currently supported minor immediately, and do not treat conditional update or topology cleanup as a substitute for a supported lifecycle state.'
+          if lifecycle_support_status == 'unsupported'
+          else (
+            'Base maintenance support has ended for this EUS-capable minor. Confirm Extended Update Support entitlement and coverage immediately, or upgrade to a fully supported minor before treating the platform as lifecycle-stable.'
+            if lifecycle_support_status == 'eus-optional'
+            else (
+              'Tighten architecture and lifecycle posture next: resolve conditional update risks, improve failure-domain spread and zone labeling, and verify deployment topology assumptions before treating the cluster architecture as production-ready.'
+              if (
+                (conditional_updates | default([]) | length) > 0
+                or (topology_warning_count | int) > 0
+              )
+              else (
+                'Architecture and lifecycle posture are acceptable for this run. Keep the cluster on a supported release, preserve multi-zone worker spread where expected, and continue normal upgrade readiness review.'
+                if (
+                  lifecycle_support_status == 'supported'
+                  and not deployment_type_confidence_warning
+                  and not machine_networks_evidence_gap
+                )
+                else 'Architecture and lifecycle evidence is incomplete for this run. Verify cluster classification assumptions and machine-network design explicitly before relying on this posture as a full architecture review.'
+              )
+            )
+          )
+        )
+      }}
+    architecture_lifecycle_reason_summary: >-
+      {{
+        (
+          []
+          + (
+            ['support status=' ~ lifecycle_support_status ~ ' phase=' ~ lifecycle_support_phase]
+            if lifecycle_support_status != 'supported'
+            else []
+          )
+          + (
+            ['conditional update risks: ' ~ (conditional_update_risk_names[:3] | join(', '))]
+            if (conditional_update_risk_names | length) > 0
+            else []
+          )
+          + (
+            [topology_reason_summary]
+            if (topology_reason_summary | length) > 0
+            else []
+          )
+          + (
+            ['cluster classification confidence=' ~ (cluster_profile.cluster_classification_confidence | default(cluster_profile.deployment_type_confidence | default('low')))]
+            if deployment_type_confidence_warning
+            else []
+          )
+          + (
+            ['machine-network design was not exposed by collected cluster API data']
+            if machine_networks_evidence_gap
+            else []
+          )
+        ) | join('; ')
+      }}
+  ansible.builtin.set_fact:
+    architecture_lifecycle_summary:
+      status: "{{ architecture_lifecycle_status }}"
+      support_status: "{{ lifecycle_support_status }}"
+      support_phase: "{{ lifecycle_support_phase }}"
+      version: "{{ ocp_version_full }}"
+      version_minor: "{{ ocp_version_minor | default('unknown') }}"
+      ga_date: "{{ release_calendar.ga | default('unknown') }}"
+      full_support_end: "{{ full_support_end | default('unknown') }}"
+      maintenance_end: "{{ maintenance_end | default('unknown') }}"
+      eus_end: "{{ eus_end | default('n/a') }}"
+      eus_term_2_end: "{{ eus_term_2_end | default('n/a') }}"
+      days_to_maintenance_end: "{{ days_to_maintenance_end }}"
+      days_to_eus_end: "{{ days_to_eus_end }}"
+      conditional_update_count: "{{ conditional_updates | default([]) | length }}"
+      conditional_update_risk_names: "{{ conditional_update_risk_names }}"
+      topology_warning_count: "{{ topology_warning_count | int }}"
+      topology_reason_summary: "{{ topology_reason_summary }}"
+      reason_summary: "{{ architecture_lifecycle_reason_summary }}"
+      recommendation: "{{ architecture_lifecycle_recommendation }}"
+      cluster_classification_label: "{{ cluster_profile.cluster_classification_label | default(cluster_profile.deployment_type | default('openshift')) }}"
+      cluster_classification_source: "{{ cluster_profile.cluster_classification_source | default(cluster_profile.deployment_type_source | default('default-openshift-fallback')) }}"
+      cluster_classification_confidence: "{{ cluster_profile.cluster_classification_confidence | default(cluster_profile.deployment_type_confidence | default('low')) }}"
+      service_model: "{{ cluster_profile.service_model | default('unknown') }}"
+      service_model_source: "{{ cluster_profile.service_model_source | default('not-derived') }}"
+      service_model_confidence: "{{ cluster_profile.service_model_confidence | default('low') }}"
+      service_variant: "{{ cluster_profile.service_variant | default('unknown') }}"
+      install_model: "{{ cluster_profile.install_model | default('unknown') }}"
+      install_model_source: "{{ cluster_profile.install_model_source | default('not-derived') }}"
+      install_model_confidence: "{{ cluster_profile.install_model_confidence | default('low') }}"
+      control_plane_model: "{{ cluster_profile.control_plane_model | default('unknown') }}"
+      control_plane_model_source: "{{ cluster_profile.control_plane_model_source | default('not-derived') }}"
+      control_plane_model_confidence: "{{ cluster_profile.control_plane_model_confidence | default('low') }}"
+      platform_category: "{{ cluster_profile.platform_category | default('unknown') }}"
+      public_cloud: "{{ cluster_profile.public_cloud | default(false) | bool }}"
+      deployment_type: "{{ cluster_profile.deployment_type | default('openshift') }}"
+      deployment_type_source: "{{ cluster_profile.deployment_type_source | default('default-openshift-fallback') }}"
+      deployment_type_confidence: "{{ cluster_profile.deployment_type_confidence | default('low') }}"
+      deployment_type_confidence_warning: "{{ deployment_type_confidence_warning }}"
+      machine_networks: "{{ derived_machine_networks }}"
+      machine_networks_known: "{{ (derived_machine_networks | default([]) | length) > 0 }}"
+      machine_networks_source: "{{ derived_machine_networks_source }}"
+      machine_networks_evidence_gap: "{{ machine_networks_evidence_gap }}"
+      lifecycle_policy_source: repo-local-versioned-policy
+
+- name: Build upgrade readiness summary
+  vars:
+    immediate_deprecated_api_lines: >-
+      {{
+        (deprecated_api_lines | default([]))
+        | select('search', '(?i)removed')
+        | list
+      }}
+    near_term_deprecated_api_lines: >-
+      {{
+        (deprecated_api_lines | default([]))
+        | reject('search', '(?i)removed')
+        | list
+      }}
+    upgrade_blockers: >-
+      {{
+        ([]
+          + ([{
+            'issue': 'unsupported-release',
+            'detail': 'current OpenShift minor is outside base support'
+          }] if (architecture_lifecycle_summary.support_status | default('unknown')) == 'unsupported' else [])
+          + ([{
+            'issue': 'clusterversion-failing',
+            'detail': 'ClusterVersion reports failing=true'
+          }] if (cv_failing | default('Unknown')) == 'True' else [])
+          + ([{
+            'issue': 'clusteroperators-unavailable',
+            'detail': (unavailable_operators | default([]) | length | string) ~ ' operators unavailable'
+          }] if (unavailable_operators | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'clusteroperators-degraded',
+            'detail': (degraded_operators | default([]) | length | string) ~ ' operators degraded'
+          }] if (degraded_operators | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'nodes-not-ready',
+            'detail': (not_ready_nodes | default([]) | length | string) ~ ' nodes not ready'
+          }] if (not_ready_nodes | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'mcp-degraded',
+            'detail': (degraded_mcps | default([]) | length | string) ~ ' MachineConfigPools degraded'
+          }] if (degraded_mcps | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'deprecated-api-resources-removed',
+            'detail': (immediate_deprecated_api_lines | length | string) ~ ' deprecated API resources explicitly show removal language'
+          }] if (immediate_deprecated_api_lines | length) > 0 else [])
+          + ([{
+            'issue': 'critical-certificate-expiry',
+            'detail': (expiring_certificates_critical | default([]) | length | string) ~ ' certificates expire within the critical window'
+          }] if (expiring_certificates_critical | default([]) | length) > 0 else [])
+        )
+      }}
+    upgrade_warnings: >-
+      {{
+        ([]
+          + ([{
+            'issue': 'lifecycle-eus-only',
+            'detail': 'base maintenance support has ended; continued lifecycle coverage depends on EUS entitlement'
+          }] if (architecture_lifecycle_summary.support_status | default('unknown')) == 'eus-optional' else [])
+          + ([{
+            'issue': 'clusterversion-progressing',
+            'detail': 'ClusterVersion reports progressing=true'
+          }] if (cv_progressing | default('Unknown')) == 'True' else [])
+          + ([{
+            'issue': 'high-impact-operators-progressing',
+            'detail': (high_impact_progressing_operators | default([]) | join(', ')) ~ ' progressing'
+          }] if (high_impact_progressing_operators | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'node-pressure',
+            'detail': (pressure_nodes | default([]) | length | string) ~ ' nodes under pressure'
+          }] if (pressure_nodes | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'conditional-update-risks',
+            'detail': (conditional_updates | default([]) | length | string) ~ ' conditional update risks returned by ClusterVersion'
+          }] if (conditional_updates | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'deprecated-crd-versions',
+            'detail': (deprecated_crd_findings | default([]) | length | string) ~ ' deprecated CRD versions need review before a future minor upgrade'
+          }] if (deprecated_crd_findings | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'deprecated-api-resources',
+            'detail': (near_term_deprecated_api_lines | length | string) ~ ' deprecated API resources were detected without explicit removal language'
+          }] if (near_term_deprecated_api_lines | length) > 0 else [])
+          + ([{
+            'issue': 'warning-certificate-expiry',
+            'detail': (expiring_certificates_warning | default([]) | length | string) ~ ' certificates expire within the warning window'
+          }] if (expiring_certificates_warning | default([]) | length) > 0 else [])
+          + ([{
+            'issue': 'upgrade-evidence-confidence',
+            'detail': 'cluster classification confidence is low or machine-network design was not collected'
+          }] if (
+            (architecture_lifecycle_summary.deployment_type_confidence_warning | default(false))
+            or (architecture_lifecycle_summary.machine_networks_evidence_gap | default(false))
+          ) else [])
+        )
+      }}
+    upgrade_readiness_status: >-
+      {{
+        'BLOCKED'
+        if (upgrade_blockers | length) > 0
+        else (
+          'WARNING'
+          if (upgrade_warnings | length) > 0
+          else (
+            'not-assessed'
+            if (architecture_lifecycle_summary.support_status | default('unknown')) == 'unknown'
+            else 'READY'
+          )
+        )
+      }}
+    upgrade_readiness_recommendation: >-
+      {{
+        (
+          'Do not proceed with a cluster upgrade yet. Clear blocking conditions first: restore degraded or unavailable operators, recover not-ready nodes or MCP degradation, remove deprecated APIs that show explicit removal language, and resolve critical certificate expiry before planning the next minor.'
+          if (upgrade_blockers | length) > 0
+          else (
+            'Upgrade readiness is not blocked, but it still needs cleanup. Review conditional update risks, progressing high-impact operators, node pressure, and evidence-confidence gaps before treating the cluster as ready for the next upgrade step.'
+            if (upgrade_warnings | length) > 0
+            else (
+              'Current evidence does not show obvious upgrade blockers. Keep normal pre-upgrade review in place, confirm backup and rollback readiness, and proceed through the standard upgrade process for the target minor.'
+              if upgrade_readiness_status == 'READY'
+              else 'Upgrade readiness could not be classified confidently from collected data. Verify support status, deprecation posture, and cluster health before planning an upgrade.'
+            )
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    upgrade_readiness_summary:
+      status: "{{ upgrade_readiness_status }}"
+      blocker_count: "{{ upgrade_blockers | length }}"
+      warning_count: "{{ upgrade_warnings | length }}"
+      available_update_count: "{{ available_updates | default([]) | length }}"
+      conditional_update_count: "{{ conditional_updates | default([]) | length }}"
+      deprecated_api_blocker_count: "{{ immediate_deprecated_api_lines | length }}"
+      deprecated_api_warning_count: "{{ near_term_deprecated_api_lines | length }}"
+      deprecated_crd_warning_count: "{{ deprecated_crd_findings | default([]) | length }}"
+      blocker_findings: "{{ upgrade_blockers }}"
+      warning_findings: "{{ upgrade_warnings }}"
+      recommendation: "{{ upgrade_readiness_recommendation }}"
+
+- name: Build OpenShift topology resilience summary
+  block:
+    - name: Create OpenShift topology resilience input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-ocp-topology-
+        suffix: .json
+      register: topology_resilience_input_file
+      changed_when: false
+
+    - name: Write OpenShift topology resilience input data
+      ansible.builtin.copy:
+        dest: "{{ topology_resilience_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
+          'worker_pools': (cluster_current_state.worker_pools | default([])),
+          'machinesets': ((analysis_graph.machinesets | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run OpenShift topology resilience summary
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_openshift_topology_resilience.py"
+          - "{{ topology_resilience_input_file.path }}"
+      register: topology_resilience_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove OpenShift topology resilience input file
+      ansible.builtin.file:
+        path: "{{ topology_resilience_input_file.path }}"
+        state: absent
+      when: topology_resilience_input_file is defined and (topology_resilience_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize OpenShift topology resilience summary
+  ansible.builtin.set_fact:
+    topology_resilience: "{{ topology_resilience_cmd.stdout | from_json if (topology_resilience_cmd.rc == 0 and (topology_resilience_cmd.stdout | default('') | length > 0)) else {'worker_failure_domains_observed': [], 'worker_zone_counts': [], 'worker_nodes_without_zone_label': 0, 'single_zone_worker_pools': [], 'single_zone_worker_pool_count': 0, 'worker_zone_spread_unbalanced': false, 'machineset_summary': [], 'machine_set_failure_domains_observed': [], 'machine_set_zone_counts': [], 'machinesets_without_zone_label': 0, 'machineset_replica_unbalanced': false} }}"
+
+- name: Refresh platform architecture and lifecycle summary with topology evidence
+  vars:
+    refreshed_topology_warning_count: >-
+      {{
+        (1 if (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) else 0)
+        + (1 if (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 else 0)
+        + (1 if (topology_resilience.machineset_replica_unbalanced | default(false) | bool) else 0)
+      }}
+    refreshed_topology_reason_summary: >-
+      {{
+        (
+          []
+          + (['worker pools limited to one zone'] if (topology_resilience.single_zone_worker_pool_count | default(0) | int) > 0 else [])
+          + (['worker nodes missing zone labels'] if (topology_resilience.worker_nodes_without_zone_label | default(0) | int) > 0 else [])
+          + (['worker zone spread is imbalanced'] if (topology_resilience.worker_zone_spread_unbalanced | default(false) | bool) else [])
+          + (['machine API worker pools missing zone labels'] if (topology_resilience.machinesets_without_zone_label | default(0) | int) > 0 else [])
+          + (['machine API worker-pool replicas are imbalanced'] if (topology_resilience.machineset_replica_unbalanced | default(false) | bool) else [])
+        ) | join('; ')
+      }}
+    refreshed_deployment_type_confidence_warning: "{{ architecture_lifecycle_summary.deployment_type_confidence_warning | default(false) | bool }}"
+    refreshed_machine_networks_evidence_gap: "{{ architecture_lifecycle_summary.machine_networks_evidence_gap | default(false) | bool }}"
+    refreshed_lifecycle_support_status: "{{ architecture_lifecycle_summary.support_status | default('unknown') }}"
+    refreshed_architecture_lifecycle_status: >-
+      {{
+        'CRITICAL'
+        if refreshed_lifecycle_support_status == 'unsupported'
+        else (
+          'WARNING'
+          if (
+            refreshed_lifecycle_support_status == 'eus-optional'
+            or (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0
+            or (refreshed_topology_warning_count | int) > 0
+            or refreshed_deployment_type_confidence_warning
+            or refreshed_machine_networks_evidence_gap
+          )
+          else (
+            'not-assessed'
+            if refreshed_lifecycle_support_status == 'unknown'
+            else 'HEALTHY'
+          )
+        )
+      }}
+    refreshed_architecture_lifecycle_recommendation: >-
+      {{
+        (
+          'Upgrade planning is urgent: this OpenShift minor release is outside base support. Move to a currently supported minor immediately, and do not treat conditional update or topology cleanup as a substitute for a supported lifecycle state.'
+          if refreshed_lifecycle_support_status == 'unsupported'
+          else (
+            'Base maintenance support has ended for this EUS-capable minor. Confirm Extended Update Support entitlement and coverage immediately, or upgrade to a fully supported minor before treating the platform as lifecycle-stable.'
+            if refreshed_lifecycle_support_status == 'eus-optional'
+            else (
+              'Tighten architecture and lifecycle posture next: resolve conditional update risks, improve failure-domain spread and zone labeling, and verify deployment topology assumptions before treating the cluster architecture as production-ready.'
+              if (
+                (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0
+                or (refreshed_topology_warning_count | int) > 0
+              )
+              else (
+                'Architecture and lifecycle posture are acceptable for this run. Keep the cluster on a supported release, preserve multi-zone worker spread where expected, and continue normal upgrade readiness review.'
+                if (
+                  refreshed_lifecycle_support_status == 'supported'
+                  and not refreshed_deployment_type_confidence_warning
+                  and not refreshed_machine_networks_evidence_gap
+                )
+                else 'Architecture and lifecycle evidence is incomplete for this run. Verify cluster classification assumptions and machine-network design explicitly before relying on this posture as a full architecture review.'
+              )
+            )
+          )
+        )
+      }}
+    refreshed_architecture_lifecycle_reason_summary: >-
+      {{
+        (
+          []
+          + (
+            ['support status=' ~ refreshed_lifecycle_support_status ~ ' phase=' ~ (architecture_lifecycle_summary.support_phase | default('unknown'))]
+            if refreshed_lifecycle_support_status != 'supported'
+            else []
+          )
+          + (
+            ['conditional update risks: ' ~ ((architecture_lifecycle_summary.conditional_update_risk_names | default([]))[:3] | join(', '))]
+            if ((architecture_lifecycle_summary.conditional_update_risk_names | default([])) | length) > 0
+            else []
+          )
+          + (
+            [refreshed_topology_reason_summary]
+            if (refreshed_topology_reason_summary | length) > 0
+            else []
+          )
+          + (
+            ['cluster classification confidence=' ~ (architecture_lifecycle_summary.cluster_classification_confidence | default('low'))]
+            if refreshed_deployment_type_confidence_warning
+            else []
+          )
+          + (
+            ['machine-network design was not exposed by collected cluster API data']
+            if refreshed_machine_networks_evidence_gap
+            else []
+          )
+        ) | join('; ')
+      }}
+  ansible.builtin.set_fact:
+    architecture_lifecycle_summary: >-
+      {{
+        architecture_lifecycle_summary
+        | combine({
+            'status': refreshed_architecture_lifecycle_status,
+            'topology_warning_count': (refreshed_topology_warning_count | int),
+            'topology_reason_summary': refreshed_topology_reason_summary,
+            'reason_summary': refreshed_architecture_lifecycle_reason_summary,
+            'recommendation': refreshed_architecture_lifecycle_recommendation
+          }, recursive=True)
+      }}

@@ -1,0 +1,88 @@
+---
+- name: Initialize MCP facts
+  ansible.builtin.set_fact:
+    degraded_mcps: []
+    updating_mcps: []
+  when: report_scope_requires_core_mcp_analysis | default(true) | bool
+
+- name: Build MCP facts
+  ansible.builtin.set_fact:
+    degraded_mcps: "{{ degraded_mcps + ([item.metadata.name] if degraded_status == 'True' else []) }}"
+    updating_mcps: "{{ updating_mcps + ([item.metadata.name] if updating_status == 'True' else []) }}"
+  loop: "{{ (analysis_graph.machineconfigpools | default({'items': []})).get('items', []) }}"
+  vars:
+    degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
+    updating_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default('Unknown')) }}"
+  changed_when: false
+  when: report_scope_requires_core_mcp_analysis | default(true) | bool
+
+- name: Build namespace phase findings
+  ansible.builtin.set_fact:
+    namespace_issue_summary: "{{ namespace_issue_summary | default([]) + ([{'name': item.metadata.name, 'phase': phase}] if phase != 'Active' else []) }}"
+    user_namespace_names: "{{ user_namespace_names | default([]) + ([item.metadata.name] if not (item.metadata.name is match(user_namespaces_exclude_regex)) else []) }}"
+  loop: "{{ (analysis_graph.namespaces | default({})).get('items', []) }}"
+  vars:
+    phase: "{{ item.status.phase | default('Unknown') }}"
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Create namespace metadata governance input file
+  ansible.builtin.tempfile:
+    state: file
+    suffix: namespace-metadata-governance.json
+  register: namespace_metadata_governance_input_file
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Write namespace metadata governance input
+  ansible.builtin.copy:
+    dest: "{{ namespace_metadata_governance_input_file.path }}"
+    mode: "0600"
+    content: "{{ {
+      'user_namespaces_exclude_regex': user_namespaces_exclude_regex,
+      'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
+      'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+      'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
+      'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+      'deploymentconfigs': ((analysis_graph.deploymentconfigs | default({})).get('items', [])),
+      'pods': ((analysis_graph.pods | default({})).get('items', [])),
+      'serviceaccounts': ((analysis_graph.serviceaccounts | default({})).get('items', [])),
+      'gitops_applications': ((analysis_graph.gitops_applications | default({})).get('items', []))
+    } | to_json }}"
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Build namespace ownership and chargeback metadata findings
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/build_namespace_metadata_governance_findings.py"
+      - "{{ namespace_metadata_governance_input_file.path }}"
+  register: namespace_metadata_governance_cmd
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Remove namespace metadata governance input file
+  ansible.builtin.file:
+    path: "{{ namespace_metadata_governance_input_file.path }}"
+    state: absent
+  when: namespace_metadata_governance_input_file is defined and (namespace_metadata_governance_input_file.path | default('') | length > 0)
+  changed_when: false
+
+- name: Normalize namespace ownership and chargeback metadata findings
+  ansible.builtin.set_fact:
+    namespace_metadata_governance_findings: >-
+      {{
+        (
+          (
+            namespace_metadata_governance_cmd.stdout
+            | default('{}', true)
+            | trim
+            | default('{}', true)
+            | from_json
+          ).namespace_metadata_governance_findings
+          | default([])
+        )
+      }}
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool

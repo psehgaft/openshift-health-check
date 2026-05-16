@@ -1,0 +1,174 @@
+---
+- name: Ensure shared artifact workspace exists
+  ansible.builtin.file:
+    path: "{{ report_run_workspace_shared_dir }}"
+    state: directory
+    mode: "0755"
+  when:
+    - (report_resume_artifact_plan | default({})).get('shared', {}).get('collection', {}).get('should_build', true)
+      or (report_resume_artifact_plan | default({})).get('shared', {}).get('analysis_graph', {}).get('should_build', true)
+
+- name: Write shared collection artifact
+  vars:
+    shared_collection_hash_basis:
+      kind: shared-collection
+      platform_family: "{{ platform_family | default('openshift') }}"
+      report_mode: "{{ report_mode_resolved | default('live') }}"
+      collection_summary: "{{ assessment_collection_summary | default({}) }}"
+      collection_failures: "{{ assessment_collection_failures | default([]) }}"
+      collection_skipped_optional_commands: "{{ assessment_collection_skipped_optional_commands | default([]) }}"
+      cluster_profile: "{{ cluster_profile | default({}) }}"
+      collected_resource_graph: "{{ collected_resource_graph | default({}) }}"
+      live_support_data: "{{ live_support_data | default({}) }}"
+      evidence_summary: "{{ evidence_summary | default({}) }}"
+      must_gather_path: "{{ must_gather_path | default('') }}"
+      inspect_path: "{{ inspect_path | default('') }}"
+      cluster_compare_path: "{{ cluster_compare_path | default('') }}"
+      managed_gates_path: "{{ managed_gates_path | default('') }}"
+      advisor_export_path: "{{ advisor_export_path | default('') }}"
+      insights_archive_path: "{{ insights_archive_path | default('') }}"
+      sosreport_paths: "{{ sosreport_paths | default([]) }}"
+    shared_collection_artifact_hash: "{{ (shared_collection_hash_basis | to_json) | hash('sha256') }}"
+  ansible.builtin.copy:
+    dest: "{{ report_run_workspace_shared_dir }}/collection.json"
+    mode: "0644"
+    content: >-
+      {{
+        {
+          'schema_version': (report_artifact_schema_version | default('1')),
+          'repo_contract_version': (report_repo_contract_version | default('openshift-artifact-workspace-v1')),
+          'run_id': (report_run_id | default('')),
+          'platform_family': (platform_family | default('openshift')),
+          'report_mode': (report_mode_resolved | default('live')),
+          'kind': 'shared-collection',
+          'generated_at': (report_generated_at | default(ansible_date_time.iso8601)),
+          'artifact_hash': shared_collection_artifact_hash,
+          'status': 'collected',
+          'errors': [],
+          'collection_summary': (assessment_collection_summary | default({})),
+          'collection_failures': (assessment_collection_failures | default([])),
+          'collection_skipped_optional_commands': (assessment_collection_skipped_optional_commands | default([])),
+          'cluster_profile': (cluster_profile | default({})),
+          'collected_resource_graph': (collected_resource_graph | default({})),
+          'live_support_data': (live_support_data | default({})),
+          'evidence_summary': (evidence_summary | default({})),
+          'must_gather_path': (must_gather_path | default('')),
+          'inspect_path': (inspect_path | default('')),
+          'cluster_compare_path': (cluster_compare_path | default('')),
+          'managed_gates_path': (managed_gates_path | default('')),
+          'advisor_export_path': (advisor_export_path | default('')),
+          'insights_archive_path': (insights_archive_path | default('')),
+          'sosreport_paths': (sosreport_paths | default([]))
+        }
+        | to_nice_json
+      }}
+  when: ((report_resume_artifact_plan | default({})).get('shared', {}).get('collection', {}).get('should_build', true) | bool)
+
+- name: Write shared analysis graph artifact
+  vars:
+    shared_analysis_graph_hash_basis:
+      kind: shared-analysis-graph
+      platform_family: "{{ platform_family | default('openshift') }}"
+      report_mode: "{{ report_mode_resolved | default('live') }}"
+      analysis_graph: "{{ analysis_graph | default(openshift_analysis_graph | default({})) }}"
+      analysis_graph_summary: "{{ openshift_analysis_graph_summary | default({}) }}"
+      cluster_profile: "{{ cluster_profile | default({}) }}"
+    shared_analysis_graph_artifact_hash: "{{ (shared_analysis_graph_hash_basis | to_json) | hash('sha256') }}"
+  ansible.builtin.copy:
+    dest: "{{ report_run_workspace_shared_dir }}/analysis-graph.json"
+    mode: "0644"
+    content: >-
+      {{
+        {
+          'schema_version': (report_artifact_schema_version | default('1')),
+          'repo_contract_version': (report_repo_contract_version | default('openshift-artifact-workspace-v1')),
+          'run_id': (report_run_id | default('')),
+          'platform_family': (platform_family | default('openshift')),
+          'report_mode': (report_mode_resolved | default('live')),
+          'kind': 'shared-analysis-graph',
+          'generated_at': (report_generated_at | default(ansible_date_time.iso8601)),
+          'artifact_hash': shared_analysis_graph_artifact_hash,
+          'status': 'analyzed',
+          'errors': [],
+          'analysis_graph': (analysis_graph | default(openshift_analysis_graph | default({}))),
+          'analysis_graph_summary': (openshift_analysis_graph_summary | default({})),
+          'cluster_profile': (cluster_profile | default({}))
+        }
+        | to_nice_json
+      }}
+  when: ((report_resume_artifact_plan | default({})).get('shared', {}).get('analysis_graph', {}).get('should_build', true) | bool)
+
+- name: Record current shared artifact hashes after writes
+  vars:
+    shared_collection_hash_basis:
+      kind: shared-collection
+      platform_family: "{{ platform_family | default('openshift') }}"
+      report_mode: "{{ report_mode_resolved | default('live') }}"
+      collection_summary: "{{ assessment_collection_summary | default({}) }}"
+      collection_failures: "{{ assessment_collection_failures | default([]) }}"
+      collection_skipped_optional_commands: "{{ assessment_collection_skipped_optional_commands | default([]) }}"
+      cluster_profile: "{{ cluster_profile | default({}) }}"
+      collected_resource_graph: "{{ collected_resource_graph | default({}) }}"
+      live_support_data: "{{ live_support_data | default({}) }}"
+      evidence_summary: "{{ evidence_summary | default({}) }}"
+      must_gather_path: "{{ must_gather_path | default('') }}"
+      inspect_path: "{{ inspect_path | default('') }}"
+      cluster_compare_path: "{{ cluster_compare_path | default('') }}"
+      managed_gates_path: "{{ managed_gates_path | default('') }}"
+      advisor_export_path: "{{ advisor_export_path | default('') }}"
+      insights_archive_path: "{{ insights_archive_path | default('') }}"
+      sosreport_paths: "{{ sosreport_paths | default([]) }}"
+    shared_collection_artifact_hash: "{{ (shared_collection_hash_basis | to_json) | hash('sha256') }}"
+    shared_collection_artifact_hash_current: "{{ (shared_collection_hash_basis | to_json) | hash('sha256') }}"
+    shared_analysis_graph_hash_basis:
+      kind: shared-analysis-graph
+      platform_family: "{{ platform_family | default('openshift') }}"
+      report_mode: "{{ report_mode_resolved | default('live') }}"
+      analysis_graph: "{{ analysis_graph | default(openshift_analysis_graph | default({})) }}"
+      analysis_graph_summary: "{{ openshift_analysis_graph_summary | default({}) }}"
+      cluster_profile: "{{ cluster_profile | default({}) }}"
+    shared_analysis_graph_artifact_hash: "{{ (shared_analysis_graph_hash_basis | to_json) | hash('sha256') }}"
+    shared_analysis_graph_artifact_hash_current: "{{ (shared_analysis_graph_hash_basis | to_json) | hash('sha256') }}"
+  ansible.builtin.set_fact:
+    report_current_shared_artifact_hashes: >-
+      {{
+        (report_current_shared_artifact_hashes | default({}))
+        | combine(
+            ({
+              'collection': shared_collection_artifact_hash_current
+            } if ((report_resume_artifact_plan | default({})).get('shared', {}).get('collection', {}).get('should_build', true) | bool) else {}),
+            recursive=True
+          )
+        | combine(
+            ({
+              'analysis_graph': shared_analysis_graph_artifact_hash_current
+            } if ((report_resume_artifact_plan | default({})).get('shared', {}).get('analysis_graph', {}).get('should_build', true) | bool) else {}),
+            recursive=True
+          )
+      }}
+
+- name: Clear failed shared collection artifact state after successful write
+  ansible.builtin.set_fact:
+    report_workspace_failed_artifacts: "{{ (report_workspace_failed_artifacts | default([])) | reject('equalto', 'shared/collection.json') | list }}"
+  when: ((report_resume_artifact_plan | default({})).get('shared', {}).get('collection', {}).get('should_build', true) | bool)
+
+- name: Clear failed shared analysis graph artifact state after successful write
+  ansible.builtin.set_fact:
+    report_workspace_failed_artifacts: "{{ (report_workspace_failed_artifacts | default([])) | reject('equalto', 'shared/analysis-graph.json') | list }}"
+  when: ((report_resume_artifact_plan | default({})).get('shared', {}).get('analysis_graph', {}).get('should_build', true) | bool)
+
+- name: Record completed shared artifacts
+  ansible.builtin.set_fact:
+    report_workspace_completed_artifacts: >-
+      {{
+        (
+          report_workspace_completed_artifacts | default([])
+        )
+        + [
+            'shared/collection.json',
+            'shared/analysis-graph.json'
+          ]
+      }}
+  when:
+    - ((report_resume_artifact_plan | default({})).get('shared', {}).get('collection', {}).get('should_build', true) | bool)
+      or ((report_resume_artifact_plan | default({})).get('shared', {}).get('analysis_graph', {}).get('should_build', true) | bool)

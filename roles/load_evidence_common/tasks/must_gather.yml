@@ -1,0 +1,98 @@
+---
+- name: Parse must-gather evidence summary
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_must_gather.py"
+      - "{{ must_gather_path }}"
+  register: must_gather_parse_cmd
+  changed_when: false
+  when: must_gather_path | default('') | trim | length > 0
+
+- name: Normalize must-gather evidence data
+  vars:
+    must_gather_payload: "{{ (must_gather_parse_cmd.stdout | from_json) if (must_gather_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
+  ansible.builtin.set_fact:
+    must_gather_inventory: "{{ must_gather_payload }}"
+    evidence_sources: "{{ (evidence_sources | default([])) + [{'name': 'must-gather', 'type': 'archive-directory', 'mode': 'offline', 'path': must_gather_path, 'parser': 'parse_must_gather.py'}] }}"
+  when: must_gather_path | default('') | trim | length > 0
+
+- name: Merge must-gather evidence summary facts
+  ansible.builtin.set_fact:
+    evidence_summary: "{{ (evidence_summary | default({'source_count': 0, 'source_labels': []})) | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + 1), 'source_labels': ((evidence_summary.source_labels | default([])) + ['must-gather']), 'must_gather_path': must_gather_path, 'must_gather_root_entries': (must_gather_inventory.summary.root_entry_count | default(0)), 'namespaced_resource_files': (must_gather_inventory.summary.namespaced_resource_file_count | default(0)), 'cluster_resource_files': (must_gather_inventory.summary.cluster_resource_file_count | default(0)), 'event_files': (must_gather_inventory.summary.event_file_count | default(0)), 'log_files': (must_gather_inventory.summary.log_file_count | default(0)), 'has_cluster_scoped_resources': (must_gather_inventory.summary.has_cluster_scoped_resources | default(false)), 'has_namespaces_tree': (must_gather_inventory.summary.has_namespaces_tree | default(false)), 'parser_version': (must_gather_inventory.summary.parser_version | default('1'))}, recursive=True) }}"
+  when: must_gather_path | default('') | trim | length > 0
+
+- name: Validate must-gather evidence JSON
+  ansible.builtin.assert:
+    that:
+      - must_gather_parse_cmd.rc == 0
+      - must_gather_inventory is mapping
+      - must_gather_inventory.summary is defined
+    fail_msg: "Must-gather parser returned invalid JSON."
+  when: must_gather_path | default('') | trim | length > 0
+
+- name: Parse optional etcd-ocp-diag evidence from must-gather
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_etcd_ocp_diag.py"
+      - "{{ must_gather_path }}"
+  register: etcd_ocp_diag_parse_cmd
+  changed_when: false
+  when:
+    - must_gather_path | default('') | trim | length > 0
+    - report_scope_requires_etcd_ocp_diag_evidence | default(true) | bool
+
+- name: Merge optional etcd-ocp-diag evidence facts
+  vars:
+    etcd_ocp_diag_payload: "{{ (etcd_ocp_diag_parse_cmd.stdout | from_json) if (etcd_ocp_diag_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
+  ansible.builtin.set_fact:
+    etcd_ocp_diag_data: "{{ etcd_ocp_diag_payload }}"
+  when:
+    - must_gather_path | default('') | trim | length > 0
+    - report_scope_requires_etcd_ocp_diag_evidence | default(true) | bool
+
+- name: Merge optional etcd-ocp-diag evidence summary
+  ansible.builtin.set_fact:
+    evidence_summary: "{{ evidence_summary | combine({'etcd_ocp_diag_present': (etcd_ocp_diag_data.summary.present | default(false)), 'etcd_ocp_diag_verdict': (etcd_ocp_diag_data.summary.verdict | default('not-collected'))}, recursive=True) }}"
+  when:
+    - must_gather_path | default('') | trim | length > 0
+    - report_scope_requires_etcd_ocp_diag_evidence | default(true) | bool
+
+- name: Parse optional omc evidence from must-gather
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['python3', playbook_dir ~ '/../scripts/parse_omc.py', must_gather_path]
+        + (['--omc-bin', omc_binary_path] if (omc_binary_path | default('') | trim | length > 0) else [])
+      }}
+  register: omc_parse_cmd
+  changed_when: false
+  when:
+    - must_gather_path | default('') | trim | length > 0
+    - report_scope_requires_omc_evidence | default(true) | bool
+
+- name: Merge optional omc evidence facts
+  vars:
+    omc_payload: "{{ (omc_parse_cmd.stdout | from_json) if (omc_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
+  ansible.builtin.set_fact:
+    omc_data: "{{ omc_payload }}"
+  when:
+    - must_gather_path | default('') | trim | length > 0
+    - report_scope_requires_omc_evidence | default(true) | bool
+
+- name: Merge optional omc evidence summary
+  ansible.builtin.set_fact:
+    evidence_summary: "{{ evidence_summary | combine({'omc_present': (omc_data.summary.present | default(false)), 'omc_verdict': (omc_data.summary.verdict | default('not-collected'))}, recursive=True) }}"
+  when:
+    - must_gather_path | default('') | trim | length > 0
+    - report_scope_requires_omc_evidence | default(true) | bool
+
+- name: Initialize empty must-gather inventory when absent
+  ansible.builtin.set_fact:
+    must_gather_inventory: "{{ must_gather_inventory | default({}) }}"
+    etcd_ocp_diag_data: "{{ etcd_ocp_diag_data | default({}) }}"
+    omc_data: "{{ omc_data | default({}) }}"
+    evidence_sources: "{{ evidence_sources | default([]) }}"
+    evidence_summary: "{{ evidence_summary | default({'source_count': 0, 'source_labels': []}) }}"
+  when: must_gather_path | default('') | trim | length == 0

@@ -1,0 +1,61 @@
+---
+- name: Build core collected-state health findings
+  vars:
+    cv_available_resolved: "{{ cv_available | default('Unknown') }}"
+    cv_progressing_resolved: "{{ cv_progressing | default('Unknown') }}"
+    cv_failing_resolved: "{{ cv_failing | default('Unknown') }}"
+    collected_state_external_delivery_evidence_present: >-
+      {{
+        (
+          (gitops_summary | default({})).get('argocd_count', 0) | int > 0
+          or (gitops_summary | default({})).get('application_count', 0) | int > 0
+          or (day2_posture_summary | default({})).get('tekton_present', false)
+          or ((analysis_graph.pipelines | default({'items': []})).get('items', []) | length) > 0
+          or ((analysis_graph.pipelineruns | default({'items': []})).get('items', []) | length) > 0
+        )
+      }}
+  ansible.builtin.set_fact:
+    assessment_core_health_findings: >-
+      {{
+        []
+        + ([{'severity': 'critical', 'area': 'cluster-version', 'detail': 'ClusterVersion reports failing=True or unavailable without progressing.'}] if (cv_failing_resolved == 'True' or (cv_available_resolved == 'False' and cv_progressing_resolved != 'True')) else [])
+        + ([{'severity': 'critical', 'area': 'operators', 'detail': 'Degraded operators: ' ~ (degraded_operators | join(', '))}] if (degraded_operators | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'operators', 'detail': 'Unavailable operators: ' ~ (unavailable_operators | join(', '))}] if (unavailable_operators | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'nodes', 'detail': 'NotReady nodes: ' ~ (not_ready_nodes | join(', '))}] if (not_ready_nodes | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'nodes', 'detail': 'Nodes under pressure: ' ~ ((pressure_nodes | default([]) | map(attribute='name') | list) | join(', '))}] if (pressure_nodes | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'mcp', 'detail': 'Degraded MCPs: ' ~ (degraded_mcps | join(', '))}] if (degraded_mcps | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'routes', 'detail': 'Routes without admitted status: ' ~ ((assessment_route_issues | length) | string)}] if (assessment_route_issues | length > 0) else [])
+        + ([{
+              'severity': 'warning',
+              'area': 'auth',
+              'detail': (
+                'OAuth identity posture requires review: '
+                ~ (
+                    auth_posture_summary.reason_summary
+                    | default((auth_findings | default([]) | map(attribute='detail') | first), true)
+                    | default('identity provider or kubeadmin posture requires review', true)
+                  )
+              )
+            }] if (auth_findings | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'workloads', 'detail': 'Unhealthy workloads: ' ~ ((workload_health_issues | default([]) | length) | string)}] if (workload_health_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'pods', 'detail': 'Unhealthy user pods: ' ~ ((unhealthy_user_pods | default([]) | length) | string)}] if (unhealthy_user_pods | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'pods', 'detail': 'High-restart user pods: ' ~ (((pod_restart_hotspots | default([]) | map(attribute='restarts') | map('int') | select('ge', 5) | list) | length) | string)}] if ((pod_restart_hotspots | default([]) | map(attribute='restarts') | map('int') | select('ge', 5) | list | length) > 0) else [])
+        + ([{'severity': 'warning', 'area': 'namespace-hygiene', 'detail': 'Namespaces missing NetworkPolicy: ' ~ (namespaces_without_networkpolicy | default([]) | join(', '))}] if (namespaces_without_networkpolicy | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'namespace-hygiene', 'detail': 'Namespaces missing ResourceQuota: ' ~ (namespaces_without_resourcequota | default([]) | join(', '))}] if (namespaces_without_resourcequota | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'namespace-hygiene', 'detail': 'Namespaces missing LimitRange: ' ~ (namespaces_without_limitrange | default([]) | join(', '))}] if (namespaces_without_limitrange | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'storage', 'detail': 'PV issues: ' ~ ((pv_issues | default([]) | length) | string) ~ ', PVC issues: ' ~ ((pvc_issues | default([]) | length) | string)}] if ((pv_issues | default([]) | length > 0) or (pvc_issues | default([]) | length > 0)) else [])
+        + ([{'severity': 'warning', 'area': 'events', 'detail': 'Warning events collected: ' ~ ((((analysis_graph.events | default({'items': []})).get('items', []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Warning') | list) | length) | string)}] if ((((analysis_graph.events | default({'items': []})).get('items', []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Warning') | list) | length) > 0) else [])
+        + ([{'severity': 'warning', 'area': 'infrastructure-components', 'detail': 'Infrastructure component issues: ' ~ ((infrastructure_component_issues | default([]) | length) | string)}] if (infrastructure_component_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'ingresscontrollers', 'detail': 'Ingress controller issues: ' ~ ((ingresscontroller_issues | default([]) | length) | string)}] if (ingresscontroller_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'image-registry', 'detail': 'Image registry and governance findings: ' ~ (((image_registry_findings | default([]) | length) + (feature_findings | default([]) | length)) | string)}] if ((image_registry_findings | default([]) | length > 0) or (feature_findings | default([]) | length > 0)) else [])
+        + ([{'severity': 'warning', 'area': 'apiservices', 'detail': 'Unavailable aggregated API services: ' ~ ((apiservice_issues | default([]) | length) | string)}] if (apiservice_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'pipelines', 'detail': 'Failed PipelineRuns: ' ~ ((failed_pipelineruns | default([]) | length) | string)}] if (failed_pipelineruns | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'buildconfigs', 'detail': 'BuildConfigs without triggers: ' ~ ((buildconfigs_without_triggers | default([]) | length) | string)}] if ((buildconfigs_without_triggers | default([]) | length) > 0 and not (collected_state_external_delivery_evidence_present | bool)) else [])
+        + ([{'severity': 'warning', 'area': 'compliance', 'detail': 'Compliance findings: ' ~ ((((compliance_suite_findings | default([]) | length) + (compliance_standards_findings | default([]) | length))) | string)}] if ((compliance_suite_findings | default([]) | length > 0) or (compliance_standards_findings | default([]) | length > 0)) else [])
+        + ([{'severity': 'warning', 'area': 'backup', 'detail': 'Backup posture findings: ' ~ ((backup_posture_findings | default([]) | length) | string)}] if (backup_posture_findings | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'machine-remediation', 'detail': 'MachineHealthCheck findings: ' ~ ((machine_healthcheck_findings | default([]) | length) | string)}] if (machine_healthcheck_findings | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'day2', 'detail': 'Production Day 2 posture findings: ' ~ ((day2_posture_findings | default([]) | length) | string)}] if (day2_posture_findings | default([]) | length > 0) else [])
+        + (etcd_ocp_diag_findings | default([]))
+        + (omc_findings | default([]))
+        + (assessment_product_evidence_findings | default([]))
+      }}

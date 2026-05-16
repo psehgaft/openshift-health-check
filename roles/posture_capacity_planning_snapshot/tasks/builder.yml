@@ -1,0 +1,158 @@
+---
+- name: Build capacity planning snapshot posture artifact facts
+  vars:
+    capacity_cluster_current_state: "{{ cluster_current_state | default({}) }}"
+    capacity_cluster_profile: "{{ cluster_profile | default({}) }}"
+    capacity_architecture_lifecycle_summary: "{{ architecture_lifecycle_summary | default({}) }}"
+    capacity_node_counts: "{{ capacity_cluster_current_state.get('node_counts', {}) }}"
+    capacity_object_counts: "{{ capacity_cluster_current_state.get('object_counts', {}) }}"
+    capacity_resources: "{{ capacity_cluster_current_state.get('resources', {}) }}"
+    capacity_ip_capacity: "{{ capacity_cluster_current_state.get('ip_capacity', {}) }}"
+    capacity_node_growth: "{{ capacity_cluster_current_state.get('node_growth_capacity', {}) }}"
+    capacity_worker_pools: "{{ capacity_cluster_current_state.get('worker_pools', []) }}"
+    capacity_node_shapes: "{{ capacity_cluster_current_state.get('node_shapes', []) }}"
+    capacity_node_inventory_missing: "{{ (capacity_node_counts.get('total', 0) | int) == 0 }}"
+    capacity_resource_partial: >-
+      {{
+        (capacity_resources.get('total_cpu_millicores', 'not-derived') == 'not-derived')
+        or (capacity_resources.get('total_memory_mib', 'not-derived') == 'not-derived')
+      }}
+    capacity_zero_allocatable_suspect: >-
+      {{
+        (capacity_node_counts.get('total', 0) | int) > 0
+        and (capacity_resources.get('total_cpu_millicores', 'not-derived') | string) == '0'
+        and (capacity_resources.get('total_memory_mib', 'not-derived') | string) == '0'
+      }}
+    capacity_shape_placeholder_present: >-
+      {{
+        (
+          capacity_worker_pools
+          | selectattr('type', 'defined')
+          | map(attribute='type')
+          | select('search', '-unknown$|not-assessed$')
+          | list
+          | length
+        ) > 0
+        or
+        (
+          capacity_node_shapes
+          | selectattr('shape', 'defined')
+          | map(attribute='shape')
+          | select('search', '-unknown$|not-assessed$')
+          | list
+          | length
+        ) > 0
+      }}
+    capacity_object_count_partial: >-
+      {{
+        (
+          (capacity_object_counts.get('pods', 0) | int) == 0
+          and (capacity_object_counts.get('namespaces', 0) | int) > 0
+        )
+        or
+        (
+          (capacity_object_counts.get('deployments', 0) | int) == 0
+          and (capacity_object_counts.get('namespaces', 0) | int) > 0
+        )
+      }}
+    capacity_nodes_display: "{{ 'not-derived' if (capacity_node_inventory_missing | bool) else (capacity_node_counts.get('total', 0) | string) }}"
+    capacity_workers_display: "{{ 'not-derived' if (capacity_node_inventory_missing | bool) else (capacity_node_counts.get('worker', 0) | string) }}"
+    capacity_pods_display: "{{ 'not-derived' if (capacity_node_inventory_missing | bool) else (capacity_object_counts.get('pods', 0) | string) }}"
+    capacity_cpu_display: >-
+      {{
+        'not-derived'
+        if (capacity_node_inventory_missing | bool) or (capacity_resources.get('total_cpu_millicores', 'not-derived') == 'not-derived')
+        else (capacity_resources.get('total_cpu_millicores') | string ~ 'm')
+      }}
+    capacity_memory_display: >-
+      {{
+        'not-derived'
+        if (capacity_node_inventory_missing | bool) or (capacity_resources.get('total_memory_mib', 'not-derived') == 'not-derived')
+        else (capacity_resources.get('total_memory_mib') | string ~ 'MiB')
+      }}
+    capacity_summary_status: >-
+      {{
+        'not-assessed'
+        if (capacity_node_inventory_missing | bool)
+        else ('partial' if ((capacity_resource_partial | bool) or (capacity_object_count_partial | bool) or (capacity_zero_allocatable_suspect | bool) or (capacity_shape_placeholder_present | bool)) else 'available')
+      }}
+    capacity_summary_health_score: >-
+      {{
+        'not-scored'
+        if (capacity_node_inventory_missing | bool)
+        else ('80/100' if ((capacity_resource_partial | bool) or (capacity_zero_allocatable_suspect | bool) or (capacity_shape_placeholder_present | bool)) else '100/100')
+      }}
+    capacity_summary_recommendation: >-
+      {{
+        'Rerun after node inventory is available before using this section for sizing decisions.'
+        if (capacity_node_inventory_missing | bool)
+        else (
+          'Rerun after node allocatable CPU and memory are available before using this section for sizing decisions.'
+          if ((capacity_resource_partial | bool) or (capacity_zero_allocatable_suspect | bool))
+          else (
+            'Rerun after workload object counts or node shape details are reconciled from the collected graph before using this section for sizing decisions.'
+            if ((capacity_object_count_partial | bool) or (capacity_shape_placeholder_present | bool))
+            else 'Use the baseline and growth tables to plan scaling, upgrades, and workload placement.'
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    posture_artifact_key: capacity_planning_snapshot
+    posture_artifact_analysis_summary:
+      status: "{{ capacity_summary_status }}"
+      health_score: "{{ capacity_summary_health_score }}"
+      node_inventory_missing: "{{ capacity_node_inventory_missing | bool }}"
+      resource_partial: "{{ capacity_resource_partial | bool }}"
+      zero_allocatable_suspect: "{{ capacity_zero_allocatable_suspect | bool }}"
+      shape_placeholder_present: "{{ capacity_shape_placeholder_present | bool }}"
+      object_count_partial: "{{ capacity_object_count_partial | bool }}"
+      nodes: "{{ capacity_nodes_display }}"
+      workers: "{{ capacity_workers_display }}"
+      pods: "{{ capacity_pods_display }}"
+      total_cpu: "{{ capacity_cpu_display }}"
+      total_memory: "{{ capacity_memory_display }}"
+      recommendation: "{{ capacity_summary_recommendation }}"
+    posture_artifact_findings:
+      sanity_findings: "{{ cluster_current_state_sanity_findings | default([]) }}"
+      build_error: "{{ cluster_current_state_build_error | default('') }}"
+    posture_artifact_render_inputs:
+      cluster_current_state: "{{ capacity_cluster_current_state }}"
+      cluster_profile: "{{ capacity_cluster_profile }}"
+      architecture_lifecycle_summary: "{{ capacity_architecture_lifecycle_summary }}"
+      cluster_current_state_sanity_findings: "{{ cluster_current_state_sanity_findings | default([]) }}"
+      cluster_current_state_build_error: "{{ cluster_current_state_build_error | default('') }}"
+      runtime_signal_resolution_map: "{{ runtime_signal_resolution_map | default({}) }}"
+    posture_artifact_collection_inputs:
+      total_nodes: "{{ capacity_node_counts.get('total', 0) }}"
+      worker_nodes: "{{ capacity_node_counts.get('worker', 0) }}"
+      pods: "{{ capacity_object_counts.get('pods', 0) }}"
+      namespaces: "{{ capacity_object_counts.get('namespaces', 0) }}"
+      total_cpu_millicores: "{{ capacity_resources.get('total_cpu_millicores', 'not-derived') }}"
+      total_memory_mib: "{{ capacity_resources.get('total_memory_mib', 'not-derived') }}"
+      zero_allocatable_suspect: "{{ capacity_zero_allocatable_suspect | bool }}"
+      shape_placeholder_present: "{{ capacity_shape_placeholder_present | bool }}"
+      service_ip_range_count: "{{ (capacity_ip_capacity.get('services', {})).get('range_count', 0) }}"
+      pod_ip_range_count: "{{ (capacity_ip_capacity.get('pods', {})).get('range_count', 0) }}"
+      node_ip_range_count: "{{ (capacity_ip_capacity.get('nodes', {})).get('range_count', 0) }}"
+      additional_nodes_before_exhaustion: "{{ capacity_node_growth.get('additional_nodes_before_exhaustion', 'unknown') }}"
+    posture_artifact_section_fields:
+      summary:
+        status: "{{ capacity_summary_status }}"
+        health_score: "{{ capacity_summary_health_score }}"
+        node_inventory_missing: "{{ capacity_node_inventory_missing | bool }}"
+        resource_partial: "{{ capacity_resource_partial | bool }}"
+        zero_allocatable_suspect: "{{ capacity_zero_allocatable_suspect | bool }}"
+        shape_placeholder_present: "{{ capacity_shape_placeholder_present | bool }}"
+        object_count_partial: "{{ capacity_object_count_partial | bool }}"
+        nodes: "{{ capacity_nodes_display }}"
+        workers: "{{ capacity_workers_display }}"
+        pods: "{{ capacity_pods_display }}"
+        total_cpu: "{{ capacity_cpu_display }}"
+        total_memory: "{{ capacity_memory_display }}"
+      recommendations: "{{ capacity_summary_recommendation }}"
+      cluster_current_state: "{{ capacity_cluster_current_state }}"
+      cluster_profile: "{{ capacity_cluster_profile }}"
+      architecture_lifecycle_summary: "{{ capacity_architecture_lifecycle_summary }}"
+      cluster_current_state_sanity_findings: "{{ cluster_current_state_sanity_findings | default([]) }}"
+      cluster_current_state_build_error: "{{ cluster_current_state_build_error | default('') }}"
+      runtime_signal_resolution_map: "{{ runtime_signal_resolution_map | default({}) }}"

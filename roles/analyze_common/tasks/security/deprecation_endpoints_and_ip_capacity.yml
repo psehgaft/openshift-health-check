@@ -1,0 +1,131 @@
+- name: Build CRD deprecation findings
+  ansible.builtin.set_fact:
+    deprecated_crd_findings: "{{ deprecated_crd_findings | default([]) + deprecated_entry }}"
+  loop: "{{ (analysis_graph.crds | default({})).get('items', []) }}"
+  vars:
+    deprecated_versions: "{{ item.spec.versions | default([]) | selectattr('deprecated', 'defined') | selectattr('deprecated', 'equalto', true) | map(attribute='name') | list }}"
+    deprecated_entry: "{{ [{'name': item.metadata.name, 'group': item.spec.group | default(''), 'versions': deprecated_versions | join(', ')}] if deprecated_versions | length > 0 else [] }}"
+  changed_when: false
+
+- name: Build deprecated API resource findings
+  ansible.builtin.set_fact:
+    deprecated_api_lines: "{{ (api_resources_cmd.stdout_lines | default([])) | select('search', 'DEPRECATED') | list }}"
+
+- name: Build endpoint map
+  ansible.builtin.set_fact:
+    service_endpoint_address_counts: "{{ service_endpoint_address_counts | default({}) | combine({endpoint_key: endpoint_count}, recursive=True) }}"
+  loop: "{{ (analysis_graph.endpoints | default({})).get('items', []) }}"
+  vars:
+    endpoint_key: "{{ (item.metadata.namespace | default('')) ~ '/' ~ (item.metadata.name | default('')) }}"
+    endpoint_count: >-
+      {%- set total = 0 -%}
+      {%- for subset in (item.subsets | default([])) -%}
+      {%- set total = total + ((subset.addresses | default([])) | length) -%}
+      {%- endfor -%}
+      {{ total }}
+  changed_when: false
+
+- name: Build service without endpoint findings
+  ansible.builtin.set_fact:
+    services_without_endpoints: "{{ services_without_endpoints | default([]) + service_issue_entry }}"
+  loop: "{{ (analysis_graph.services | default({})).get('items', []) }}"
+  vars:
+    service_ns: "{{ item.metadata.namespace | default('') }}"
+    service_name: "{{ item.metadata.name | default('') }}"
+    service_type: "{{ item.spec.type | default('ClusterIP') }}"
+    endpoint_key: "{{ service_ns ~ '/' ~ service_name }}"
+    endpoint_count: "{{ (service_endpoint_address_counts | default({}))[endpoint_key] | default(0) | int }}"
+    service_issue_entry: >-
+      {{
+        [{
+          'namespace': service_ns,
+          'name': service_name,
+          'type': service_type,
+          'endpoint_count': endpoint_count
+        }]
+        if (
+          not (service_ns is match(user_namespaces_exclude_regex))
+          and service_name != 'kubernetes'
+          and service_type != 'ExternalName'
+          and (item.spec.selector | default({}) | length > 0)
+          and endpoint_count == 0
+        ) else []
+      }}
+  changed_when: false
+
+- name: Build effective cluster profile for IP capacity analysis
+  ansible.builtin.set_fact:
+    ip_capacity_cluster_profile: >-
+      {{
+        (cluster_profile | default({})) | combine(
+          {
+            'service_networks': (
+              ((cluster_profile | default({})).get('service_networks', []))
+              if (((cluster_profile | default({})).get('service_networks', []) | length) > 0)
+              else ((analysis_graph.network_config | default({})).get('spec', {}).get('serviceNetwork', []))
+            ),
+            'cluster_networks': (
+              ((cluster_profile | default({})).get('cluster_networks', []))
+              if (((cluster_profile | default({})).get('cluster_networks', []) | length) > 0)
+              else ((analysis_graph.network_config | default({})).get('spec', {}).get('clusterNetwork', []))
+            ),
+            'machine_networks': (
+              ((cluster_profile | default({})).get('machine_networks', []))
+              if (((cluster_profile | default({})).get('machine_networks', []) | length) > 0)
+              else []
+            )
+          },
+          recursive=True
+        )
+      }}
+
+- name: Build service and pod IP capacity summaries
+  block:
+    - name: Create temporary IP capacity summary input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-ip-capacity-
+        suffix: .json
+      register: ip_capacity_summary_input_file
+
+    - name: Write IP capacity summary input data
+      ansible.builtin.copy:
+        dest: "{{ ip_capacity_summary_input_file.path }}"
+        content: >-
+          {{
+            {
+              "cluster_profile": ip_capacity_cluster_profile | default(cluster_profile | default({})),
+              "infrastructure": analysis_graph.infrastructure | default({}),
+              "network_config": analysis_graph.network_config | default({}),
+              "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
+              "configmaps": (analysis_graph.configmaps | default({})).get('items', []),
+              "secrets": (analysis_graph.secrets | default({})).get('items', []),
+              "services": (analysis_graph.services | default({})).get('items', []),
+              "pods": (analysis_graph.pods | default({})).get('items', []),
+              "nodes": (analysis_graph.nodes | default({})).get('items', [])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run IP capacity summary helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_ip_capacity_summary.py"
+          - "{{ ip_capacity_summary_input_file.path }}"
+      register: ip_capacity_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary IP capacity summary input file
+      ansible.builtin.file:
+        path: "{{ ip_capacity_summary_input_file.path }}"
+        state: absent
+      when: ip_capacity_summary_input_file is defined and (ip_capacity_summary_input_file.path | default('') | length > 0)
+
+- name: Normalize service and pod IP capacity summaries
+  ansible.builtin.set_fact:
+    service_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).service_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
+    pod_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).pod_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
+    node_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).node_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
+

@@ -1,0 +1,143 @@
+---
+- name: Build security and compliance posture summary
+  vars:
+    requested_compliance_standards: >-
+      {{
+        (
+          (
+            (
+              (cluster_health_profile | default({})).capabilities
+              | default({})
+            ).compliance_requirements_validation
+            | default({})
+          ).standards
+          | default([])
+        )
+        | map('string')
+        | list
+      }}
+    compliance_standards_for_security_summary: >-
+      {{
+        (
+          compliance_standards_summary | default([])
+          | selectattr('standard', 'in', requested_compliance_standards)
+          | list
+        )
+        if (requested_compliance_standards | length) > 0
+        else (compliance_standards_summary | default([]))
+      }}
+    privileged_access_count: >-
+      {{
+        (privileged_serviceaccount_access | default([]) | length)
+        + (privileged_user_access | default([]) | length)
+        + (privileged_group_access | default([]) | length)
+      }}
+    active_non_supported_standards: >-
+      {{
+        compliance_standards_for_security_summary
+        | selectattr('active_enabled', 'equalto', true)
+        | rejectattr('verdict', 'equalto', 'supported')
+        | list
+      }}
+    high_signal_security_findings: >-
+      {{
+        security_findings | default([])
+        | selectattr('issue', 'in', [
+          'privileged-containers',
+          'host-network',
+          'host-pid',
+          'host-ipc',
+          'hostpath-volume',
+          'run-as-root',
+          'unconfined-seccomp-profile',
+          'allow-privilege-escalation-not-disabled',
+          'capabilities-not-fully-dropped'
+        ])
+        | list
+      }}
+    configured_but_inactive_standards: >-
+      {{
+        compliance_standards_for_security_summary
+        | selectattr('configured', 'equalto', true)
+        | rejectattr('active_enabled', 'equalto', true)
+        | list
+      }}
+    stale_access_review_count: >-
+      {{
+        (stale_access_review_serviceaccounts | default([]) | length)
+        + (stale_access_review_users | default([]) | length)
+        + (stale_access_review_groups | default([]) | length)
+      }}
+    security_compliance_status: >-
+      {{
+        'CRITICAL'
+        if ((expiring_certificates_critical | default([]) | length) > 0)
+        else (
+          'WARNING'
+          if (
+            (auth_posture_summary.status | default('unknown')) in ['warning', 'review']
+            or (privileged_access_count | int) > 0
+            or (scc_grant_findings | default([]) | length) > 0
+            or (high_signal_security_findings | length) > 0
+            or (image_registry_findings | default([]) | length) > 0
+            or (compliance_suite_findings | default([]) | length) > 0
+            or (active_non_supported_standards | length) > 0
+            or (configured_but_inactive_standards | length) > 0
+            or (compliance_operator_summary.invalid_profilebundle_count | default(0) | int) > 0
+            or (expiring_certificates_warning | default([]) | length) > 0
+          )
+          else 'HEALTHY'
+        )
+      }}
+    security_compliance_reason_summary: >-
+      {{
+        (
+          []
+          + (['critical certificate expiry=' ~ ((expiring_certificates_critical | default([]) | length) | string)] if (expiring_certificates_critical | default([]) | length) > 0 else [])
+          + (['auth posture=' ~ (auth_posture_summary.reason_summary | default('unknown'))] if (auth_posture_summary.status | default('unknown')) in ['warning', 'review'] else [])
+          + (['privileged access grants=' ~ ((privileged_access_count | int) | string)] if (privileged_access_count | int) > 0 else [])
+          + (['high-risk SCC grants=' ~ ((scc_grant_findings | default([]) | length) | string)] if (scc_grant_findings | default([]) | length) > 0 else [])
+          + (['high-signal pod security findings=' ~ ((high_signal_security_findings | length) | string)] if (high_signal_security_findings | length) > 0 else [])
+          + (['image registry policy findings=' ~ ((image_registry_findings | default([]) | length) | string)] if (image_registry_findings | default([]) | length) > 0 else [])
+          + (['warning certificate expiry=' ~ ((expiring_certificates_warning | default([]) | length) | string)] if (expiring_certificates_warning | default([]) | length) > 0 else [])
+          + (['active compliance standards needing review=' ~ ((active_non_supported_standards | length) | string)] if (active_non_supported_standards | length) > 0 else [])
+          + (['configured but inactive compliance standards=' ~ ((configured_but_inactive_standards | length) | string)] if (configured_but_inactive_standards | length) > 0 else [])
+          + (['compliance suite findings=' ~ ((compliance_suite_findings | default([]) | length) | string)] if (compliance_suite_findings | default([]) | length) > 0 else [])
+          + (['invalid compliance profile bundles=' ~ ((compliance_operator_summary.invalid_profilebundle_count | default(0) | int) | string)] if (compliance_operator_summary.invalid_profilebundle_count | default(0) | int) > 0 else [])
+        ) | join('; ')
+      }}
+    security_compliance_recommendation: >-
+      {{
+        (
+          'Address immediate security posture risks first: rotate or replace critically expiring certificates, reduce privileged access exposure, and correct the highest-signal access or compliance issues before treating the cluster as production-ready.'
+          if security_compliance_status == 'CRITICAL'
+          else (
+            'Reduce security and compliance risk next: review identity-provider posture, privileged access grants, SCC exposure, image registry policy findings, active compliance standards, and certificate warnings. Treat namespace guardrail gaps as baseline governance debt rather than the primary security signal.'
+            if security_compliance_status == 'WARNING'
+            else 'Security and compliance posture looks acceptable for this run. Keep access controls, certificate hygiene, and active compliance standards under normal review while tracking namespace baseline guardrails as governance hygiene.'
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    security_compliance_summary:
+      status: "{{ security_compliance_status }}"
+      reason_summary: "{{ security_compliance_reason_summary }}"
+      recommendation: "{{ security_compliance_recommendation }}"
+      auth_posture_status: "{{ auth_posture_summary.status | default('unknown') }}"
+      identity_provider_count: "{{ auth_posture_summary.identity_provider_count | default(0) }}"
+      external_identity_provider_count: "{{ auth_posture_summary.external_identity_provider_count | default(0) }}"
+      local_identity_provider_count: "{{ auth_posture_summary.local_identity_provider_count | default(0) }}"
+      kubeadmin_secret_present: "{{ auth_posture_summary.kubeadmin_secret_present | default(false) }}"
+      privileged_access_count: "{{ privileged_access_count }}"
+      stale_access_review_count: "{{ stale_access_review_count }}"
+      scc_grant_findings: "{{ scc_grant_findings | default([]) | length }}"
+      security_findings: "{{ security_findings | default([]) | length }}"
+      image_registry_findings: "{{ image_registry_findings | default([]) | length }}"
+      likely_unused_secrets: "{{ likely_unused_secrets | default([]) | length }}"
+      expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) | length }}"
+      expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) | length }}"
+      compliance_suite_findings: "{{ compliance_suite_findings | default([]) | length }}"
+      compliance_active_standards_review_count: "{{ active_non_supported_standards | length }}"
+      compliance_configured_inactive_standard_count: "{{ configured_but_inactive_standards | length }}"
+      compliance_invalid_profilebundle_count: "{{ compliance_operator_summary.invalid_profilebundle_count | default(0) }}"
+      high_signal_security_findings: "{{ high_signal_security_findings | length }}"

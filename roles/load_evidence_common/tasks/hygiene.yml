@@ -1,0 +1,65 @@
+---
+- name: Build evidence hygiene scanner arguments
+  ansible.builtin.set_fact:
+    evidence_hygiene_scan_args: >-
+      {{
+        (
+          ['--root', 'case-bundle', case_bundle_path]
+          if (case_bundle_path | default('') | trim | length > 0)
+          else (
+            []
+            + (['--root', 'must-gather', must_gather_path] if (must_gather_path | default('') | trim | length > 0) else [])
+            + (['--root', 'inspect', inspect_path] if (inspect_path | default('') | trim | length > 0) else [])
+            + (['--root', 'cluster-compare', cluster_compare_path] if (cluster_compare_path | default('') | trim | length > 0) else [])
+            + (['--root', 'managed-gates', managed_gates_path] if (managed_gates_path | default('') | trim | length > 0) else [])
+            + (['--root', 'advisor-export', advisor_export_path] if (advisor_export_path | default('') | trim | length > 0) else [])
+            + (['--root', 'insights-archive', insights_archive_path] if (insights_archive_path | default('') | trim | length > 0) else [])
+          )
+        )
+      }}
+  when: report_scope_requires_optional_support_evidence | default(true) | bool
+
+- name: Add sosreport roots to evidence hygiene scan arguments
+  ansible.builtin.set_fact:
+    evidence_hygiene_scan_args: "{{ (evidence_hygiene_scan_args | default([])) + ['--root', 'sosreport', item] }}"
+  loop: "{{ sosreport_paths | default([]) }}"
+  when:
+    - report_scope_requires_optional_support_evidence | default(true) | bool
+    - (case_bundle_path | default('') | trim | length) == 0
+    - (sosreport_paths | default([]) | length) > 0
+
+- name: Analyze evidence hygiene and redaction candidates
+  ansible.builtin.command:
+    argv: "{{ ['python3', playbook_dir ~ '/../scripts/analyze_evidence_hygiene.py'] + evidence_hygiene_scan_args }}"
+  register: evidence_hygiene_cmd
+  changed_when: false
+  when:
+    - report_scope_requires_optional_support_evidence | default(true) | bool
+    - (evidence_hygiene_scan_args | default([]) | length) > 0
+
+- name: Merge evidence hygiene facts
+  ansible.builtin.set_fact:
+    evidence_hygiene_data: "{{ evidence_hygiene_payload }}"
+    evidence_summary: "{{ evidence_summary | combine({'evidence_hygiene_verdict': (evidence_hygiene_payload.summary.verdict | default('unknown')), 'evidence_hygiene_candidate_count': (evidence_hygiene_payload.summary.candidate_count | default(0)), 'evidence_hygiene_scanned_files': (evidence_hygiene_payload.summary.scanned_file_count | default(0))}, recursive=True) }}"
+    evidence_limitations: >-
+      {{
+        (evidence_limitations | default([]))
+        + ([{'area': 'evidence hygiene', 'detail': 'Potentially sensitive evidence files were detected; review or redact the bundle before sharing it beyond core support workflows.'}] if ((evidence_hygiene_payload.summary.candidate_count | default(0) | int) > 0) else [])
+      }}
+  vars:
+    evidence_hygiene_payload: >-
+      {{
+        (evidence_hygiene_cmd.stdout | from_json)
+        if (evidence_hygiene_cmd.stdout | default('') | trim | length > 0)
+        else {'summary': {'verdict': 'unknown', 'candidate_count': 0, 'scanned_file_count': 0}}
+      }}
+  when:
+    - report_scope_requires_optional_support_evidence | default(true) | bool
+    - (evidence_hygiene_scan_args | default([]) | length) > 0
+
+- name: Initialize empty evidence hygiene facts when scan is skipped
+  ansible.builtin.set_fact:
+    evidence_hygiene_data: "{{ evidence_hygiene_data | default({'summary': {'verdict': 'unknown', 'present': false, 'scanned_root_count': 0, 'scanned_file_count': 0, 'scanned_directory_count': 0, 'candidate_count': 0}, 'roots': [], 'findings': [], 'sensitive_candidates': [], 'redaction_guidance': []}) }}"
+  when:
+    - not (report_scope_requires_optional_support_evidence | default(true) | bool)
+      or (evidence_hygiene_scan_args | default([]) | length) == 0

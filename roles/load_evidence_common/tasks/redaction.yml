@@ -1,0 +1,67 @@
+---
+- name: Resolve redaction artifact paths
+  ansible.builtin.set_fact:
+    resolved_redaction_manifest_path: >-
+      {{
+        redaction_manifest_path
+        if (redaction_manifest_path | default('') | trim | length > 0)
+        else (
+          report_output_dir
+          ~ '/redaction-manifest-'
+          ~ platform_family
+          ~ '-'
+          ~ ansible_date_time.iso8601_basic_short
+          ~ '.json'
+        )
+      }}
+    resolved_redacted_bundle_output_dir: >-
+      {{
+        redacted_bundle_output_dir
+        if (redacted_bundle_output_dir | default('') | trim | length > 0)
+        else (
+          report_output_dir
+          ~ '/redacted-case-bundle-'
+          ~ platform_family
+          ~ '-'
+          ~ ansible_date_time.iso8601_basic_short
+        )
+      }}
+  when:
+    - (case_bundle_path | default('') | trim | length) > 0
+    - (write_redaction_manifest | default(false) | bool) or (write_redacted_bundle | default(false) | bool)
+
+- name: Materialize redaction manifest and optional sanitized bundle
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['python3', playbook_dir ~ '/../scripts/materialize_redaction_outputs.py',
+         '--source-root', case_bundle_path,
+         '--manifest-path', resolved_redaction_manifest_path]
+        + (['--redacted-root', resolved_redacted_bundle_output_dir] if (write_redacted_bundle | default(false) | bool) else [])
+      }}
+  register: redaction_materialization_cmd
+  changed_when: true
+  when:
+    - (case_bundle_path | default('') | trim | length) > 0
+    - (write_redaction_manifest | default(false) | bool) or (write_redacted_bundle | default(false) | bool)
+
+- name: Merge redaction output facts
+  ansible.builtin.set_fact:
+    evidence_redaction_outputs: "{{ redaction_result }}"
+    evidence_summary: "{{ evidence_summary | combine({'redaction_manifest_path': (redaction_result.manifest_path | default('')), 'redacted_bundle_path': resolved_redacted_bundle_path, 'redacted_bundle_written': (redaction_result.redacted_bundle_written | default(false) | bool)}, recursive=True) }}"
+  vars:
+    redaction_result: "{{ redaction_materialization_cmd.stdout | from_json }}"
+    resolved_redacted_bundle_path: >-
+      {{
+        ((redaction_result.redacted_bundle | default({})).path | default(''))
+        if (redaction_result.redacted_bundle_written | default(false) | bool)
+        else ''
+      }}
+  when:
+    - redaction_materialization_cmd is defined
+    - (redaction_materialization_cmd.stdout | default('') | trim | length) > 0
+
+- name: Initialize empty redaction output facts when materialization is skipped
+  ansible.builtin.set_fact:
+    evidence_redaction_outputs: "{{ evidence_redaction_outputs | default({'manifest_path': '', 'manifest_written': false, 'redacted_bundle_written': false}) }}"
+  when: evidence_redaction_outputs is not defined

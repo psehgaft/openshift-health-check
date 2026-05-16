@@ -1,0 +1,89 @@
+---
+- name: Build workload health and deployment hygiene posture summary
+  vars:
+    workload_runtime_issue_count: >-
+      {{
+        (unhealthy_user_pods | default([]) | length)
+        + (workload_health_issues | default([]) | length)
+      }}
+    workload_warning_issue_count: >-
+      {{
+        (high_restart_pods | default([]) | length)
+        + (high_replica_workloads | default([]) | length)
+        + (orphan_pods | default([]) | length)
+        + (workload_label_governance_findings | default([]) | length)
+        + (workload_resource_findings | default([]) | length)
+        + (workload_probe_findings | default([]) | length)
+      }}
+    workload_hygiene_debt_count: >-
+      {{
+        (high_replica_workloads | default([]) | length)
+        + (orphan_pods | default([]) | length)
+        + (workload_label_governance_findings | default([]) | length)
+        + (workload_resource_findings | default([]) | length)
+        + (workload_probe_findings | default([]) | length)
+      }}
+    workload_efficiency_context_count: >-
+      {{
+        (overprovisioned_pods | default([]) | length)
+      }}
+    workload_status: >-
+      {{
+        'CRITICAL'
+        if (
+          (unhealthy_user_pods | default([]) | length) > 0
+          or (workload_health_issues | default([]) | length) > 0
+        )
+        else (
+          'WARNING'
+          if (
+            (high_restart_pods | default([]) | length) > 0
+            or (workload_hygiene_debt_count | int) > 0
+          )
+          else 'HEALTHY'
+        )
+      }}
+    workload_reason_summary: >-
+      {{
+        (
+          []
+          + (['unhealthy user pods=' ~ ((unhealthy_user_pods | default([]) | length) | string)] if ((unhealthy_user_pods | default([]) | length) > 0) else [])
+          + (['workload rollout issues=' ~ ((workload_health_issues | default([]) | length) | string)] if ((workload_health_issues | default([]) | length) > 0) else [])
+          + (['restart hotspots=' ~ ((high_restart_pods | default([]) | length) | string)] if ((high_restart_pods | default([]) | length) > 0) else [])
+          + (['probe coverage findings=' ~ ((workload_probe_findings | default([]) | length) | string)] if ((workload_probe_findings | default([]) | length) > 0) else [])
+          + (['resource request/limit findings=' ~ ((workload_resource_findings | default([]) | length) | string)] if ((workload_resource_findings | default([]) | length) > 0) else [])
+          + (['label governance findings=' ~ ((workload_label_governance_findings | default([]) | length) | string)] if ((workload_label_governance_findings | default([]) | length) > 0) else [])
+          + (['orphan pods=' ~ ((orphan_pods | default([]) | length) | string)] if ((orphan_pods | default([]) | length) > 0) else [])
+          + (['high replica workloads=' ~ ((high_replica_workloads | default([]) | length) | string)] if ((high_replica_workloads | default([]) | length) > 0) else [])
+          + (['overprovisioned pods=' ~ ((overprovisioned_pods | default([]) | length) | string)] if ((overprovisioned_pods | default([]) | length) > 0) else [])
+        ) | join('; ')
+      }}
+    workload_recommendation: >-
+      {{
+        (
+          'Stabilize workload runtime health first: fix unhealthy user pods and incomplete workload rollouts before treating application posture as acceptable.'
+          if workload_status == 'CRITICAL'
+          else (
+            'Reduce workload deployment risk next: review restart hotspots and workload hygiene debt such as missing probes, resource settings, labels, or owner references. Treat overprovisioning signals as softer follow-up context.'
+            if workload_status == 'WARNING'
+            else 'Workload health and deployment hygiene look acceptable for this run. Keep rollout status, restart hotspots, probes, and resource hygiene under normal review.'
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    workload_health_summary:
+      status: "{{ workload_status }}"
+      reason_summary: "{{ workload_reason_summary }}"
+      recommendation: "{{ workload_recommendation }}"
+      unhealthy_user_pod_count: "{{ unhealthy_user_pods | default([]) | length }}"
+      workload_health_issue_count: "{{ workload_health_issues | default([]) | length }}"
+      high_restart_pod_count: "{{ high_restart_pods | default([]) | length }}"
+      service_endpoint_gap_count: "{{ services_without_endpoints | default([]) | length }}"
+      workload_hygiene_debt_count: "{{ workload_hygiene_debt_count }}"
+      workload_efficiency_context_count: "{{ workload_efficiency_context_count }}"
+      high_replica_workload_count: "{{ high_replica_workloads | default([]) | length }}"
+      orphan_pod_count: "{{ orphan_pods | default([]) | length }}"
+      workload_label_governance_count: "{{ workload_label_governance_findings | default([]) | length }}"
+      workload_resource_finding_count: "{{ workload_resource_findings | default([]) | length }}"
+      workload_probe_finding_count: "{{ workload_probe_findings | default([]) | length }}"
+      overprovisioned_pod_count: "{{ overprovisioned_pods | default([]) | length }}"

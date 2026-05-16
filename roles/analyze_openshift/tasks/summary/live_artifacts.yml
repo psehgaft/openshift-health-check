@@ -1,0 +1,121 @@
+- name: Build live artifact analysis findings
+  vars:
+    live_support_parsed: "{{ (live_support_data | default({})).get('parsed', {}) }}"
+    live_support_paths: "{{ (live_support_data | default({})).get('paths', {}) }}"
+  ansible.builtin.set_fact:
+    live_cluster_compare_findings: >-
+      {{
+        ([] +
+        ([{
+          'issue': 'cluster-compare-errors',
+          'severity': 'critical',
+          'detail': 'cluster-compare returned ' ~ (live_support_parsed.cluster_compare.summary.error_count | default(0) | string) ~ ' errors during baseline comparison'
+        }] if ((live_support_parsed.cluster_compare.summary.error_count | default(0) | int) > 0) else []) +
+        ([{
+          'issue': 'cluster-compare-drift',
+          'severity': 'warning',
+          'detail': 'cluster-compare found ' ~ (live_support_parsed.cluster_compare.summary.diff_count | default(0) | string) ~ ' diffs and ' ~ (live_support_parsed.cluster_compare.summary.missing_count | default(0) | string) ~ ' missing baseline items'
+        }] if (((live_support_parsed.cluster_compare.summary.diff_count | default(0) | int) > 0) or ((live_support_parsed.cluster_compare.summary.missing_count | default(0) | int) > 0)) else []) +
+        ([{
+          'issue': 'cluster-compare-warnings',
+          'severity': 'warning',
+          'detail': 'cluster-compare returned ' ~ (live_support_parsed.cluster_compare.summary.warning_count | default(0) | string) ~ ' warnings'
+        }] if ((live_support_parsed.cluster_compare.summary.warning_count | default(0) | int) > 0) else []))
+      }}
+    live_managed_gate_findings: >-
+      {{
+        ([] +
+        ([{
+          'issue': 'managed-gates-blocked',
+          'severity': 'critical',
+          'detail': (live_support_parsed.managed_gates.summary.blocked_count | default(0) | string) ~ ' managed-service gates are blocked'
+        }] if ((live_support_parsed.managed_gates.summary.blocked_count | default(0) | int) > 0) else []) +
+        ([{
+          'issue': 'managed-gates-pending',
+          'severity': 'warning',
+          'detail': (live_support_parsed.managed_gates.summary.pending_count | default(0) | string) ~ ' managed-service gates are pending'
+        }] if ((live_support_parsed.managed_gates.summary.pending_count | default(0) | int) > 0) else []) +
+        ([{
+          'issue': 'managed-gates-warning',
+          'severity': 'warning',
+          'detail': (live_support_parsed.managed_gates.summary.warning_count | default(0) | string) ~ ' managed-service gates returned warning state'
+        }] if ((live_support_parsed.managed_gates.summary.warning_count | default(0) | int) > 0) else []))
+      }}
+    live_advisor_findings: >-
+      {{
+        ([] +
+        ([{
+          'issue': 'advisor-critical-recommendations',
+          'severity': 'warning',
+          'detail': 'Advisor reported ' ~ (live_support_parsed.advisor_export.summary.critical_count | default(0) | string) ~ ' critical recommendations'
+        }] if ((live_support_parsed.advisor_export.summary.critical_count | default(0) | int) > 0) else []) +
+        ([{
+          'issue': 'advisor-high-recommendations',
+          'severity': 'warning',
+          'detail': 'Advisor reported ' ~ (live_support_parsed.advisor_export.summary.high_count | default(0) | string) ~ ' high-severity recommendations'
+        }] if ((live_support_parsed.advisor_export.summary.high_count | default(0) | int) > 0) else []))
+      }}
+    live_must_gather_findings: >-
+      {{
+        ([] +
+        ([{
+          'issue': 'must-gather-not-collected',
+          'severity': 'warning',
+          'detail': 'must-gather collection was requested but no must-gather bundle was discovered in the live artifact output'
+        }] if (
+          (live_support_collect_must_gather_resolved | default(false) | bool)
+          and ((live_support_paths.must_gather | default('') | length) == 0)
+        ) else []) +
+        ([{
+          'issue': 'must-gather-coverage-thin',
+          'severity': 'warning',
+          'detail': 'must-gather coverage is thin; cluster resources=' ~ (live_support_parsed.must_gather_inventory.summary.cluster_resource_file_count | default(0) | string) ~ ', namespaced resources=' ~ (live_support_parsed.must_gather_inventory.summary.namespaced_resource_file_count | default(0) | string)
+        }] if (
+          (live_support_parsed.must_gather_inventory.summary is defined)
+          and (
+            not (live_support_parsed.must_gather_inventory.summary.has_cluster_scoped_resources | default(false) | bool)
+            or not (live_support_parsed.must_gather_inventory.summary.has_namespaces_tree | default(false) | bool)
+          )
+        ) else []))
+      }}
+    live_inspect_findings: >-
+      {{
+        ([{
+          'issue': 'inspect-coverage-thin',
+          'severity': 'warning',
+          'detail': 'inspect collected only limited resource markers; nodes=' ~ (live_support_parsed.inspect.summary.resource_markers.nodes | default(0) | string) ~ ', operators=' ~ (live_support_parsed.inspect.summary.resource_markers.operators | default(0) | string) ~ ', routes=' ~ (live_support_parsed.inspect.summary.resource_markers.routes | default(0) | string)
+        }] if (
+          (live_support_parsed.inspect.summary is defined)
+          and (
+            ((live_support_parsed.inspect.summary.resource_markers.nodes | default(0) | int) == 0)
+            or ((live_support_parsed.inspect.summary.resource_markers.operators | default(0) | int) == 0)
+          )
+        ) else [])
+      }}
+    live_sosreport_findings: >-
+      {{
+        ([] +
+        ([{
+          'issue': 'sosreport-node-coverage-missing',
+          'severity': 'warning',
+          'detail': 'node-level sosreport data was requested but no node reports were captured'
+        }] if (
+          (live_support_collect_sosreport_resolved | default(false) | bool)
+          and ((live_support_parsed.sosreport.summary.count | default(0) | int) == 0)
+          and ((node_debug_target_nodes | default([])) | length > 0)
+        ) else []) +
+        ([{
+          'issue': 'sosreport-node-coverage-partial',
+          'severity': 'warning',
+          'detail': 'some sosreports are missing journal, kubelet, CRI-O, or network coverage'
+        }] if (
+          (live_support_parsed.sosreport.summary.count | default(0) | int) > 0
+          and (
+            (live_support_parsed.sosreport.summary.reports_with_journal | default(0) | int) < (live_support_parsed.sosreport.summary.count | default(0) | int)
+            or (live_support_parsed.sosreport.summary.reports_with_kubelet_logs | default(0) | int) < (live_support_parsed.sosreport.summary.count | default(0) | int)
+            or (live_support_parsed.sosreport.summary.reports_with_network_data | default(0) | int) < (live_support_parsed.sosreport.summary.count | default(0) | int)
+          )
+        ) else []))
+      }}
+  changed_when: false
+

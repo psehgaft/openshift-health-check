@@ -1,0 +1,44 @@
+---
+- name: Build application access and network isolation posture artifact facts
+  ansible.builtin.set_fact:
+    posture_artifact_key: application_access_and_network_isolation
+    posture_artifact_analysis_summary: "{{ network_architecture_summary | default({}) }}"
+    posture_artifact_findings:
+      route_issues: "{{ route_issues | default(assessment_route_issues | default([])) }}"
+      ingress_issues: "{{ ingress_issues | default([]) }}"
+      route_host_conflicts: "{{ route_host_conflicts | default([]) }}"
+      ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) }}"
+      route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
+      services_without_endpoints: "{{ services_without_endpoints | default([]) }}"
+      ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) }}"
+    posture_artifact_render_inputs:
+      route_issues: "{{ top_route_issues | default(assessment_route_issues | default([])) }}"
+      ingress_issues: "{{ top_ingress_issues | default(ingress_issues | default([])) }}"
+      route_host_conflicts: "{{ top_route_host_conflicts | default(route_host_conflicts | default([])) }}"
+      ingress_host_conflicts: "{{ top_ingress_host_conflicts | default(ingress_host_conflicts | default([])) }}"
+      route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
+      services_without_endpoints: "{{ top_services_without_endpoints | default(services_without_endpoints | default([])) }}"
+      ingresscontrollers_summary: "{{ ingresscontroller_summary | default([]) }}"
+      ingresscontrollers_issues: "{{ ingresscontroller_issues | default([]) }}"
+      route_object_count: "{{ (assessment_route_summary | default([])) | length }}"
+      ingress_object_count: "{{ ((((analysis_graph.ingresses | default({})).get('items', [])) | length) if (report_mode_resolved | default('live')) == 'collected' else ((ingresses_items | default([])) | length)) }}"
+    posture_artifact_collection_inputs:
+      route_object_count: "{{ (assessment_route_summary | default([])) | length }}"
+      ingress_object_count: "{{ ((((analysis_graph.ingresses | default({})).get('items', [])) | length) if (report_mode_resolved | default('live')) == 'collected' else ((ingresses_items | default([])) | length)) }}"
+      route_issue_count: "{{ (route_issues | default(assessment_route_issues | default([]))) | length }}"
+      ingress_issue_count: "{{ (ingress_issues | default([])) | length }}"
+      service_endpoint_gap_count: "{{ (services_without_endpoints | default([])) | length }}"
+    posture_artifact_section_fields:
+      summary: "{{ network_architecture_summary | default({}) }}"
+      recommendations: "{{ (network_architecture_summary | default({})).get('recommendation', 'Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.') }}"
+      route_issues: "{{ top_route_issues | default(assessment_route_issues | default([])) }}"
+      ingress_issues: "{{ top_ingress_issues | default(ingress_issues | default([])) }}"
+      route_host_conflicts: "{{ top_route_host_conflicts | default(route_host_conflicts | default([])) }}"
+      ingress_host_conflicts: "{{ top_ingress_host_conflicts | default(ingress_host_conflicts | default([])) }}"
+      route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
+      services_without_endpoints: "{{ top_services_without_endpoints | default(services_without_endpoints | default([])) }}"
+      ingresscontrollers:
+        summary: "{{ ingresscontroller_summary | default([]) }}"
+        issues: "{{ ingresscontroller_issues | default([]) }}"
+      route_object_count: "{{ (assessment_route_summary | default([])) | length }}"
+      ingress_object_count: "{{ ((((analysis_graph.ingresses | default({})).get('items', [])) | length) if (report_mode_resolved | default('live')) == 'collected' else ((ingresses_items | default([])) | length)) }}"

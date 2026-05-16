@@ -1,0 +1,112 @@
+---
+- name: Build DataProtectionApplication summary
+  ansible.builtin.set_fact:
+    dataprotectionapplication_summary: "{{ dataprotectionapplication_summary | default([]) + [dpa_summary_entry] }}"
+  loop: "{{ (analysis_graph.dataprotectionapplications | default({})).get('items', []) }}"
+  vars:
+    reconciled_condition: "{{ (item.status.conditions | default([]) | selectattr('type', 'equalto', 'Reconciled') | list | first) | default({}) }}"
+    dpa_summary_entry:
+      namespace: "{{ item.metadata.namespace | default('') }}"
+      name: "{{ item.metadata.name | default('') }}"
+      phase: "{{ item.status.phase | default('Unknown') }}"
+      reconciled: "{{ reconciled_condition.status | default('Unknown') }}"
+      reason: "{{ reconciled_condition.reason | default('unknown') }}"
+  changed_when: false
+
+- name: Build backup posture summary
+  block:
+    - name: Create backup posture input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-backup-posture-
+        suffix: .json
+      register: backup_posture_input_file
+      changed_when: false
+
+    - name: Write backup posture input data
+      ansible.builtin.copy:
+        dest: "{{ backup_posture_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'dataprotectionapplications': ((analysis_graph.dataprotectionapplications | default({})).get('items', [])),
+          'backupstoragelocations': ((analysis_graph.backupstoragelocations | default({})).get('items', [])),
+          'schedules': ((analysis_graph.schedules | default({})).get('items', [])),
+          'backups': ((analysis_graph.backups | default({})).get('items', [])),
+          'restores': ((analysis_graph.restores | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run backup posture analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_backup_posture_summary.py"
+          - "{{ backup_posture_input_file.path }}"
+      register: backup_posture_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove backup posture input file
+      ansible.builtin.file:
+        path: "{{ backup_posture_input_file.path }}"
+        state: absent
+      when: backup_posture_input_file is defined and (backup_posture_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize backup posture summary
+  ansible.builtin.set_fact:
+    backup_posture_data: "{{ backup_posture_cmd.stdout | from_json if (backup_posture_cmd.rc == 0 and (backup_posture_cmd.stdout | default('') | length > 0)) else {'backup_storage_location_summary': [], 'backup_schedule_summary': [], 'backup_summary': [], 'restore_summary': [], 'backup_posture_findings': [], 'successful_backup_count': 0, 'clean_successful_backup_count': 0, 'completed_restore_count': 0, 'clean_completed_restore_count': 0} }}"
+
+- name: Expand backup posture summary facts
+  ansible.builtin.set_fact:
+    backup_storage_location_summary: "{{ backup_posture_data.backup_storage_location_summary | default([]) }}"
+    backup_schedule_summary: "{{ backup_posture_data.backup_schedule_summary | default([]) }}"
+    backup_summary: "{{ backup_posture_data.backup_summary | default([]) }}"
+    restore_summary: "{{ backup_posture_data.restore_summary | default([]) }}"
+    backup_posture_findings: "{{ backup_posture_data.backup_posture_findings | default([]) }}"
+
+- name: Build machine remediation posture summary
+  block:
+    - name: Create machine remediation input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-machine-remediation-
+        suffix: .json
+      register: machine_remediation_input_file
+      changed_when: false
+
+    - name: Write machine remediation input data
+      ansible.builtin.copy:
+        dest: "{{ machine_remediation_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'machinesets': ((analysis_graph.machinesets | default({})).get('items', [])),
+          'machinehealthchecks': ((analysis_graph.machinehealthchecks | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run machine remediation analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_machine_remediation_summary.py"
+          - "{{ machine_remediation_input_file.path }}"
+      register: machine_remediation_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove machine remediation input file
+      ansible.builtin.file:
+        path: "{{ machine_remediation_input_file.path }}"
+        state: absent
+      when: machine_remediation_input_file is defined and (machine_remediation_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize machine remediation posture summary
+  ansible.builtin.set_fact:
+    machine_remediation_data: "{{ machine_remediation_cmd.stdout | from_json if (machine_remediation_cmd.rc == 0 and (machine_remediation_cmd.stdout | default('') | length > 0)) else {'machinehealthcheck_summary': [], 'machine_healthcheck_findings': []} }}"
+
+- name: Expand machine remediation posture facts
+  ansible.builtin.set_fact:
+    machinehealthcheck_summary: "{{ machine_remediation_data.machinehealthcheck_summary | default([]) }}"
+    machine_healthcheck_findings: "{{ machine_remediation_data.machine_healthcheck_findings | default([]) }}"

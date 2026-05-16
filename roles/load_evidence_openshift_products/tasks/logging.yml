@@ -1,0 +1,58 @@
+---
+- name: Build logging product evidence summary
+  vars:
+    clusterlogforwarder_items: "{{ (product_graph_current.clusterlogforwarders | default({'items': []})).get('items', []) }}"
+    openshift_logging_namespace_items: "{{ ((product_graph_current.namespaces | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', 'openshift-logging') | list) }}"
+    logging_sources: >-
+      {{
+        (
+          (clusterlogforwarder_items + openshift_logging_namespace_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (clusterlogforwarder_items + openshift_logging_namespace_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((clusterlogforwarder_items | length > 0) or (openshift_logging_namespace_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'logging': {
+            'installed': ((clusterlogforwarder_items | length) > 0) or ((openshift_logging_namespace_items | length) > 0),
+            'health_applicable': ((clusterlogforwarder_items | length) > 0) or ((openshift_logging_namespace_items | length) > 0),
+            'present': ((clusterlogforwarder_items | length) > 0) or ((openshift_logging_namespace_items | length) > 0),
+            'namespace_present': (openshift_logging_namespace_items | length) > 0,
+            'clusterlogforwarder_count': (clusterlogforwarder_items | length),
+            'output_count': (
+              clusterlogforwarder_items
+              | map(attribute='spec.outputs')
+              | map('default', [])
+              | map('length')
+              | map('int')
+              | sum
+            ),
+            'clusterlogforwarders_with_outputs': (
+              clusterlogforwarder_items
+              | map(attribute='spec.outputs')
+              | map('default', [])
+              | map('length')
+              | map('int')
+              | select('gt', 0)
+              | list
+              | length
+            ),
+            'evidence_sources': logging_sources
+          }
+        }, recursive=True)
+      }}

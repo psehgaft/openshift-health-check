@@ -1,0 +1,110 @@
+---
+- name: Build security and governance posture artifact facts
+  ansible.builtin.set_fact:
+    posture_artifact_key: security_and_governance
+    posture_artifact_analysis_summary: "{{ security_compliance_summary | default(security_governance_summary | default({})) }}"
+    posture_artifact_findings:
+      auth: "{{ auth_findings | default([]) }}"
+      pod_security: "{{ security_findings | default([]) }}"
+      privileged_access:
+        serviceaccounts: "{{ privileged_serviceaccount_access | default([]) }}"
+        users: "{{ privileged_user_access | default([]) }}"
+        groups: "{{ privileged_group_access | default([]) }}"
+      scc:
+        pod_findings: "{{ scc_pod_findings | default([]) }}"
+        grant_findings: "{{ scc_grant_findings | default([]) }}"
+      compliance:
+        suite_findings: "{{ compliance_suite_findings | default([]) }}"
+        standards_findings: "{{ compliance_standards_findings | default([]) }}"
+      access_review:
+        serviceaccounts: "{{ stale_access_review_serviceaccounts | default([]) }}"
+        users: "{{ stale_access_review_users | default([]) }}"
+        groups: "{{ stale_access_review_groups | default([]) }}"
+    posture_artifact_render_inputs:
+      auth_findings: "{{ auth_findings | default([]) }}"
+      namespace_metadata_governance_findings: "{{ top_namespace_metadata_governance_findings | default(namespace_metadata_governance_findings | default([])) }}"
+      pod_security_issue_type_counts: "{{ security_issue_type_counts | default({}) }}"
+      pod_security_findings: "{{ top_security_findings | default(security_findings | default([])) }}"
+      pod_security_findings_count: "{{ (security_findings | default([])) | length }}"
+      privileged_serviceaccount_access: "{{ top_privileged_serviceaccount_access | default(privileged_serviceaccount_access | default([])) }}"
+      privileged_user_access: "{{ top_privileged_user_access | default(privileged_user_access | default([])) }}"
+      privileged_group_access: "{{ top_privileged_group_access | default(privileged_group_access | default([])) }}"
+      scc_pod_findings: "{{ top_scc_pod_findings | default(scc_pod_findings | default([])) }}"
+      scc_grant_findings: "{{ top_scc_grant_findings | default(scc_grant_findings | default([])) }}"
+      scc_item_count: "{{ (securitycontextconstraints_items | default([])) | length }}"
+      likely_unused_secrets: "{{ likely_unused_secrets | default([]) }}"
+      secret_type_counts: "{{ secret_type_counts | default({}) }}"
+      expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) }}"
+      expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) }}"
+      image_registry_findings: "{{ top_image_registry_findings | default(image_registry_findings | default([])) }}"
+      internal_registry_workloads: "{{ top_internal_registry_workloads | default(internal_registry_workloads | default([])) }}"
+      compliance_result_counts: "{{ compliance_result_counts | default({}) }}"
+      compliance_suite_summary: "{{ compliance_suite_summary | default([]) }}"
+      compliance_standards_findings: "{{ top_compliance_standards_findings | default(compliance_standards_findings | default([])) }}"
+      access_review_serviceaccounts: "{{ top_stale_access_review_serviceaccounts | default(stale_access_review_serviceaccounts | default([])) }}"
+      access_review_users: "{{ top_stale_access_review_users | default(stale_access_review_users | default([])) }}"
+      access_review_groups: "{{ top_stale_access_review_groups | default(stale_access_review_groups | default([])) }}"
+      workload_vulnerability_scanning_section: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'workload_vulnerability_scanning') | list | first) | default({})) }}"
+      advanced_cluster_security_section: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'advanced_cluster_security') | list | first) | default({})) }}"
+      external_secrets_operator_section: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'external_secrets_operator') | list | first) | default({})) }}"
+      cyberark_conjur_secrets_management_section: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'cyberark_conjur_secrets_management') | list | first) | default({})) }}"
+    posture_artifact_collection_inputs:
+      auth_finding_count: "{{ (auth_findings | default([])) | length }}"
+      pod_security_finding_count: "{{ (security_findings | default([])) | length }}"
+      privileged_access_count: "{{ (privileged_serviceaccount_access | default([]) | length) + (privileged_user_access | default([]) | length) + (privileged_group_access | default([]) | length) }}"
+      scc_finding_count: "{{ (scc_pod_findings | default([]) | length) + (scc_grant_findings | default([]) | length) }}"
+      compliance_standards_count: "{{ (compliance_standards_summary | default([])) | length }}"
+      access_review_count: "{{ (stale_access_review_serviceaccounts | default([]) | length) + (stale_access_review_users | default([]) | length) + (stale_access_review_groups | default([]) | length) }}"
+      workload_vulnerability_scanning_mapped: "{{ ((((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'workload_vulnerability_scanning') | list | first) | default({})) | length) > 0 }}"
+      external_secret_management_mapped: "{{ ((((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'external_secrets_operator') | list | first) | default({})) | length) > 0 or ((((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'cyberark_conjur_secrets_management') | list | first) | default({})) | length) > 0 }}"
+    posture_artifact_section_fields:
+      summary: "{{ security_compliance_summary | default(security_governance_summary | default({})) }}"
+      recommendations: "{{ (security_compliance_summary | default(security_governance_summary | default({}))).get('recommendation', 'Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.') }}"
+      auth_posture_summary: "{{ auth_posture_summary | default({}) }}"
+      auth_findings: "{{ auth_findings | default([]) }}"
+      namespace_hygiene:
+        user_namespaces: "{{ user_namespace_names | default([]) }}"
+        namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) }}"
+        namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) }}"
+        namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) }}"
+        empty_user_namespaces: "{{ empty_user_namespaces | default([]) }}"
+        namespaces_missing_ingress_policies: "{{ namespaces_missing_ingress_policies | default([]) }}"
+        namespaces_missing_egress_policies: "{{ namespaces_missing_egress_policies | default([]) }}"
+        metadata_governance_findings: "{{ top_namespace_metadata_governance_findings | default(namespace_metadata_governance_findings | default([])) }}"
+      pod_security:
+        issue_type_counts: "{{ security_issue_type_counts | default({}) }}"
+        findings: "{{ top_security_findings | default(security_findings | default([])) }}"
+        findings_total: "{{ (security_findings | default([])) | length }}"
+      privileged_access:
+        serviceaccounts: "{{ top_privileged_serviceaccount_access | default(privileged_serviceaccount_access | default([])) }}"
+        users: "{{ top_privileged_user_access | default(privileged_user_access | default([])) }}"
+        groups: "{{ top_privileged_group_access | default(privileged_group_access | default([])) }}"
+      scc:
+        item_count: "{{ (securitycontextconstraints_items | default([])) | length }}"
+        pod_findings: "{{ top_scc_pod_findings | default(scc_pod_findings | default([])) }}"
+        grant_findings: "{{ top_scc_grant_findings | default(scc_grant_findings | default([])) }}"
+      access_review:
+        likely_unused_serviceaccounts: "{{ top_stale_access_review_serviceaccounts | default(stale_access_review_serviceaccounts | default([])) }}"
+        stale_users: "{{ top_stale_access_review_users | default(stale_access_review_users | default([])) }}"
+        stale_groups: "{{ top_stale_access_review_groups | default(stale_access_review_groups | default([])) }}"
+      secret_inventory:
+        likely_unused_secrets: "{{ likely_unused_secrets | default([]) }}"
+        secret_type_counts: "{{ secret_type_counts | default({}) }}"
+        expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) }}"
+        expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) }}"
+      image_registry:
+        findings: "{{ top_image_registry_findings | default(image_registry_findings | default([])) }}"
+        internal_registry_workloads: "{{ top_internal_registry_workloads | default(internal_registry_workloads | default([])) }}"
+      workload_protection:
+        vulnerability_scanning: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'workload_vulnerability_scanning') | list | first) | default({})) }}"
+        advanced_cluster_security: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'advanced_cluster_security') | list | first) | default({})) }}"
+      secret_management:
+        external_secrets_operator: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'external_secrets_operator') | list | first) | default({})) }}"
+        cyberark_conjur_secrets_management: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'cyberark_conjur_secrets_management') | list | first) | default({})) }}"
+      compliance:
+        summary: "{{ compliance_suite_summary | default([]) }}"
+        findings: "{{ compliance_suite_findings | default([]) }}"
+        operator_summary: "{{ compliance_operator_summary | default({}) }}"
+        standards_summary: "{{ compliance_standards_summary | default([]) }}"
+        standards_findings: "{{ top_compliance_standards_findings | default(compliance_standards_findings | default([])) }}"
+        result_counts: "{{ compliance_result_counts | default({}) }}"

@@ -1,0 +1,133 @@
+- name: Build storage summaries
+  ansible.builtin.set_fact:
+    storageclass_summary: "{{ storageclass_summary | default([]) + [sc_entry] }}"
+  loop: "{{ (analysis_graph.storageclasses | default({})).get('items', []) }}"
+  vars:
+    sc_entry:
+      name: "{{ item.metadata.name }}"
+      provisioner: "{{ item.provisioner | default('unknown') }}"
+      is_default: "{{ ((item.metadata.annotations['storageclass.kubernetes.io/is-default-class'] | default(item.metadata.annotations['storageclass.beta.kubernetes.io/is-default-class'] | default(false))) | string | lower) == 'true' }}"
+      volume_binding_mode: "{{ item.volumeBindingMode | default('Immediate') }}"
+      reclaim_policy: "{{ item.reclaimPolicy | default('Delete') }}"
+  changed_when: false
+
+- name: Build storage posture summary
+  block:
+    - name: Create temporary storage posture summary input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-storage-posture-
+        suffix: .json
+      register: storage_posture_summary_input_file
+
+    - name: Write storage posture summary input data
+      ansible.builtin.copy:
+        dest: "{{ storage_posture_summary_input_file.path }}"
+        content: >-
+          {{
+            {
+              "storageclasses": storageclass_summary | default([]),
+              "persistentvolumes": (analysis_graph.persistentvolumes | default({})).get('items', []),
+              "security_findings": security_findings | default([]),
+              "workload_practice_findings": workload_practice_findings | default([])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run storage posture summary helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_storage_posture_summary.py"
+          - "{{ storage_posture_summary_input_file.path }}"
+      register: storage_posture_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary storage posture summary input file
+      ansible.builtin.file:
+        path: "{{ storage_posture_summary_input_file.path }}"
+        state: absent
+      when: storage_posture_summary_input_file is defined and (storage_posture_summary_input_file.path | default('') | length > 0)
+
+- name: Normalize storage posture summary
+  ansible.builtin.set_fact:
+    storage_posture_summary: "{{ storage_posture_summary_cmd.stdout | from_json if (storage_posture_summary_cmd.rc == 0 and (storage_posture_summary_cmd.stdout | default('') | length > 0)) else {'external_storageclass_count': 0, 'local_storageclass_count': 0, 'default_external_storageclass_count': 0, 'external_storageclass_names': [], 'local_storageclass_names': [], 'external_pv_count': 0, 'local_pv_count': 0, 'hostpath_workload_count': 0, 'ephemeral_workload_count': 0, 'has_external_storage_provider': false, 'local_or_ephemeral_only_risk': false, 'findings': []} }}"
+
+- name: Build PV summary
+  ansible.builtin.set_fact:
+    pv_phase_counts: "{{ pv_phase_counts | default({}) | combine({pv_phase: ((pv_phase_counts[pv_phase] | default(0)) + 1)}, recursive=True) }}"
+    pv_issues: "{{ pv_issues | default([]) + ([{'name': item.metadata.name, 'phase': pv_phase, 'storageClassName': item.spec.storageClassName | default(''), 'claimRef': ((item.spec.claimRef.namespace | default('')) ~ '/' ~ (item.spec.claimRef.name | default(''))) if (item.spec.claimRef is defined) else ''}] if pv_phase not in ['Bound', 'Available'] else []) }}"
+  loop: "{{ (analysis_graph.persistentvolumes | default({})).get('items', []) }}"
+  vars:
+    pv_phase: "{{ item.status.phase | default('Unknown') }}"
+  changed_when: false
+
+- name: Build PVC summary
+  ansible.builtin.set_fact:
+    pvc_phase_counts: "{{ pvc_phase_counts | default({}) | combine({pvc_phase: ((pvc_phase_counts[pvc_phase] | default(0)) + 1)}, recursive=True) }}"
+    pvc_issues: "{{ pvc_issues | default([]) + ([{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': pvc_phase, 'storageClassName': item.spec.storageClassName | default(''), 'volumeName': item.spec.volumeName | default('')}] if pvc_phase != 'Bound' else []) }}"
+  loop: "{{ (analysis_graph.persistentvolumeclaims | default({})).get('items', []) }}"
+  vars:
+    pvc_phase: "{{ item.status.phase | default('Unknown') }}"
+  changed_when: false
+
+- name: Build TLS secret expiry targets
+  ansible.builtin.set_fact:
+    tls_secret_expiry_targets: "{{ (tls_secret_expiry_targets | default([])) + [tls_secret_expiry_target] }}"
+  loop: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
+  vars:
+    tls_secret_expiry_target:
+      namespace: "{{ item.metadata.namespace | default('') }}"
+      name: "{{ item.metadata.name | default('') }}"
+      type: "{{ item.type | default('') }}"
+      tls_crt: "{{ item.data['tls.crt'] | default('') }}"
+  when:
+    - (item.type | default('')) == 'kubernetes.io/tls'
+    - item.data is defined
+    - item.data['tls.crt'] is defined
+  changed_when: false
+
+- name: Collect TLS secret certificate expiry with openssl
+  block:
+    - name: Create temporary TLS secret expiry input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-tls-expiry-
+        suffix: .json
+      register: tls_secret_cert_expiry_input_file
+
+    - name: Write TLS secret expiry input data
+      ansible.builtin.copy:
+        dest: "{{ tls_secret_cert_expiry_input_file.path }}"
+        content: >-
+          {{
+            {
+              "timeout_seconds": 20,
+              "parallelism": effective_analysis_parallelism | default(analysis_parallelism | default(collection_parallelism | default(4))),
+              "secrets": tls_secret_expiry_targets | default([])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run batched TLS secret expiry helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/batch_tls_secret_expiry.py"
+          - "{{ tls_secret_cert_expiry_input_file.path }}"
+      register: tls_secret_cert_expiry_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary TLS secret expiry input file
+      ansible.builtin.file:
+        path: "{{ tls_secret_cert_expiry_input_file.path }}"
+        state: absent
+      when: tls_secret_cert_expiry_input_file is defined and (tls_secret_cert_expiry_input_file.path | default('') | length > 0)
+
+- name: Build certificate expiry findings
+  ansible.builtin.set_fact:
+    certificate_expiry_findings: "{{ certificate_expiry_findings | default([]) + ([{'namespace': item.namespace | default(''), 'name': item.name | default(''), 'type': item.type | default(''), 'not_after': item.not_after | default('')}] if (item.rc | default(1) | int) == 0 and (item.not_after | default('') | length > 0) else []) }}"
+  loop: "{{ (tls_secret_cert_expiry_cmd.stdout | from_json).results if (tls_secret_cert_expiry_cmd.rc == 0 and (tls_secret_cert_expiry_cmd.stdout | default('') | length > 0)) else [] }}"
+  changed_when: false

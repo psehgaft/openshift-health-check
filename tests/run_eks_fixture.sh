@@ -52,7 +52,7 @@ PY
 
 rg -q '^# Kubernetes Cluster Health Report' "${report_md}"
 rg -q '^## Report Context' "${report_md}"
-rg -q '^## At A Glance' "${report_md}"
+rg -q '^## Cluster Health Overview' "${report_md}"
 rg -q '^## Health Scoring' "${report_md}"
 
 printf 'eks fixture report ok\njson=%s\nmd=%s\nlog=%s\n' "${report_json}" "${report_md}" "${LOG_PATH}"

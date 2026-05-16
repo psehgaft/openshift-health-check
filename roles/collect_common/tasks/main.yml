@@ -91,92 +91,41 @@
         argv: ["{{ kube_cli | default('oc') }}", "get", "podmonitors.monitoring.coreos.com", "-A", "-o", "json", "--ignore-not-found"]
 
 - name: Collect common cluster data in parallel
-  ansible.builtin.shell: |
-    python3 - <<'PY'
-    import json
-    import os
-    import subprocess
-    import tempfile
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+  block:
+    - name: Create temporary common collection input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-collect-common-
+        suffix: .json
+      register: common_collection_input_file
 
-    commands = json.loads(r'''{{ collection_commands | to_json }}''')
-    timeout_seconds = int({{ collection_command_timeout_seconds | int }})
-    max_workers = min(
-        max(1, int({{ effective_collection_parallelism | default(collection_parallelism) | int }})),
-        max(1, len(commands)),
-    )
+    - name: Write common collection input data
+      ansible.builtin.copy:
+        dest: "{{ common_collection_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'commands': (collection_commands | default([])),
+          'timeout_seconds': (collection_command_timeout_seconds | int),
+          'max_workers': (effective_collection_parallelism | default(collection_parallelism) | int)
+        } | to_json }}"
+      changed_when: false
 
-    def run_command(spec):
-        try:
-            proc = subprocess.run(
-                spec["argv"],
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
-            return {
-                "name": spec["name"],
-                "rc": proc.returncode,
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
-                "stdout_lines": proc.stdout.splitlines(),
-                "timed_out": False,
-            }
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "name": spec["name"],
-                "rc": 124,
-                "stdout": exc.stdout or "",
-                "stderr": f"timed out after {timeout_seconds} seconds",
-                "stdout_lines": (exc.stdout or "").splitlines(),
-                "timed_out": True,
-            }
-        except Exception as exc:
-            return {
-                "name": spec["name"],
-                "rc": 1,
-                "stdout": "",
-                "stderr": str(exc),
-                "stdout_lines": [],
-                "timed_out": False,
-            }
-
-    results = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(run_command, spec): spec["name"] for spec in commands}
-        for future in as_completed(futures):
-            result = future.result()
-            results[result["name"]] = result
-
-    output_dir = tempfile.mkdtemp(prefix="cluster-health-collect-common-")
-    output_path = os.path.join(output_dir, "collected-commands.json")
-    status_path = os.path.join(output_dir, "collected-command-status.json")
-    with open(output_path, "w", encoding="utf-8") as handle:
-        json.dump(results, handle)
-    with open(status_path, "w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                name: {
-                    "rc": result.get("rc", 1),
-                    "stderr": result.get("stderr", ""),
-                    "timed_out": result.get("timed_out", False),
-                }
-                for name, result in results.items()
-            },
-            handle,
-        )
-    print(json.dumps({
-        "results_path": output_path,
-        "status_path": status_path,
-        "command_count": len(commands),
-        "max_workers": max_workers,
-        "timeout_seconds": timeout_seconds
-    }))
-    PY
-  register: collected_commands_cmd
-  changed_when: false
-  failed_when: false
+    - name: Run common parallel collection helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/run_parallel_collection.py"
+          - "{{ common_collection_input_file.path }}"
+      register: collected_commands_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary common collection input file
+      ansible.builtin.file:
+        path: "{{ common_collection_input_file.path }}"
+        state: absent
+      when: common_collection_input_file is defined and (common_collection_input_file.path | default('') | length > 0)
+      changed_when: false
 
 - name: Normalize common collection metadata
   ansible.builtin.set_fact:

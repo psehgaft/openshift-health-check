@@ -27,6 +27,14 @@ If a change does not need new evidence or new analyzer logic, prefer a profile-o
   [inputs/openshift-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/openshift-cluster-health-profile.yml:1)
 - OpenShift Day 2 analyzer:
   [roles/analyze_openshift/tasks/day2.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/analyze_openshift/tasks/day2.yml:1)
+- Dedicated posture roles:
+  `roles/posture_<key>/`
+- Dedicated capability roles:
+  `roles/capability_<key>/`
+- Shared posture artifact wrapper:
+  [roles/posture_artifact_from_builder/tasks/main.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/posture_artifact_from_builder/tasks/main.yml:1)
+- Shared capability artifact wrapper:
+  [roles/capability_artifact_from_builder/tasks/main.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/capability_artifact_from_builder/tasks/main.yml:1)
 - OpenShift report template:
   [templates/openshift_cluster_health_report.md.j2](/Users/luqman/workspace/guides/openshift-health-check/templates/openshift_cluster_health_report.md.j2:1)
 - Profile validator:
@@ -70,7 +78,10 @@ Recommended workflow:
 2. Paste the snippet into `inputs/openshift-cluster-health-profile.yml`.
 3. Replace placeholder notes, docs, and verification with real content.
 4. Map the capability to a posture or add the new posture mapping.
-5. Run `scripts/validate_repo.sh`.
+5. Create the owning role-local builder file:
+   - posture: `roles/posture_<key>/tasks/builder.yml`
+   - capability: `roles/capability_<key>/tasks/builder.yml`
+6. Run `scripts/validate_repo.sh`.
 
 ## Add A Posture
 
@@ -90,6 +101,7 @@ Add a new posture only when you are introducing a real top-level operating domai
 4. If a full alternate capability can satisfy the posture, list it in `satisfied_by_all`.
    Current safe examples are full observability replacements such as `dynatrace_observability`, `datadog_observability`, or `splunk_observability`.
 5. Do not add template-only posture logic unless the posture is a synthesized summary section like Day 2 production readiness.
+6. Add the owning role under `roles/posture_<key>/` and keep posture-specific synthesis there instead of parking it in shared analysis files.
 
 Use a new posture only when the section answers a distinct operating question. Do not create a new posture for a single product integration or a narrow implementation detail.
 
@@ -114,6 +126,7 @@ Add a capability when you need a checkable production expectation or a supported
    - at least one check
    - specific findings when the capability is present but unhealthy
    - a concrete `recommended_action`
+6. Add the owning capability role under `roles/capability_<key>/` and keep capability-specific artifact mapping in `tasks/builder.yml`.
 
 Do not rely on generic fallback action text. The rendered output validator will fail it.
 
@@ -146,6 +159,7 @@ Treat scan-scope changes as code changes, not as profile edits with extra steps.
 3. Update the analyzer to consume the new evidence.
 4. Update profile metadata only after the evidence path exists.
 5. Document RBAC expectations for the new command if it needs more than reader access.
+6. Prefer helper scripts under `scripts/` for non-trivial parsing or synthesis instead of embedding Python directly in Ansible tasks.
 
 Prefer existing collected resources first. Add a new command only when the current evidence really is not enough.
 

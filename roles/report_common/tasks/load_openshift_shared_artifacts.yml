@@ -1,0 +1,54 @@
+---
+- name: Initialize loaded OpenShift shared artifacts
+  ansible.builtin.set_fact:
+    openshift_shared_artifacts: "{{ openshift_shared_artifacts | default({}) }}"
+
+- name: Find OpenShift shared artifacts
+  ansible.builtin.find:
+    paths: "{{ report_run_workspace_shared_dir }}"
+    patterns: "*.json"
+    file_type: file
+  register: openshift_shared_artifact_files
+
+- name: Read OpenShift shared artifact files
+  ansible.builtin.slurp:
+    path: "{{ item.path }}"
+  loop: "{{ openshift_shared_artifact_files.files | default([]) }}"
+  register: openshift_shared_artifact_raw_results
+  when: (openshift_shared_artifact_files.matched | default(0) | int) > 0
+
+- name: Merge OpenShift shared artifacts
+  ansible.builtin.set_fact:
+    openshift_shared_artifacts: >-
+      {{
+        (openshift_shared_artifacts | default({}))
+        | combine(
+            {
+              shared_artifact_key: shared_artifact
+            },
+            recursive=True
+          )
+      }}
+  vars:
+    shared_artifact: >-
+      {{
+        (item.content | b64decode | from_json)
+        if (item.content | default('') | length > 0)
+        else {}
+      }}
+    shared_artifact_key: >-
+      {{
+        (
+          'collection'
+          if ((shared_artifact.kind | default('')) == 'shared-collection')
+          else (
+            'analysis_graph'
+            if ((shared_artifact.kind | default('')) == 'shared-analysis-graph')
+            else (item.item.path | basename | regex_replace('\.json$', ''))
+          )
+        )
+      }}
+  loop: "{{ openshift_shared_artifact_raw_results.results | default([]) }}"
+  when:
+    - not (item.skipped | default(false))
+    - (item.content | default('') | length) > 0

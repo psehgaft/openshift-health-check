@@ -1,0 +1,74 @@
+---
+- name: Ensure posture artifact workspace exists
+  ansible.builtin.file:
+    path: "{{ report_run_workspace_postures_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Write OpenShift posture artifact
+  vars:
+    posture_artifact_dependency_keys_resolved: >-
+      {{
+        posture_artifact_dependency_keys
+        if (posture_artifact_dependency_keys is defined)
+        else ((report_scope_posture_dependency_map | default({})).get(posture_artifact_key, []))
+      }}
+    posture_artifact_shared_inputs_used_resolved: >-
+      {%- set ns = namespace(inputs=[]) -%}
+      {%- for tag in posture_artifact_dependency_keys_resolved -%}
+        {%- for input_name in ((report_scope_tag_shared_inputs_map | default({})).get(tag, [])) -%}
+          {%- if input_name not in ns.inputs -%}
+            {%- set _ = ns.inputs.append(input_name) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ posture_artifact_shared_inputs_used if (posture_artifact_shared_inputs_used is defined) else ns.inputs }}
+  ansible.builtin.copy:
+    dest: "{{ report_run_workspace_postures_dir }}/{{ posture_artifact_key }}.json"
+    mode: "0644"
+    content: >-
+      {{
+        (
+          {
+            'schema_version': (report_artifact_schema_version | default('1')),
+            'repo_contract_version': (report_repo_contract_version | default('openshift-artifact-workspace-v1')),
+            'run_id': (report_run_id | default('')),
+            'platform_family': (platform_family | default('openshift')),
+            'report_mode': (report_mode_resolved | default('live')),
+            'key': posture_artifact_key,
+            'kind': 'posture',
+            'requested_by_selector': ((report_requested_postures | default([])) | length > 0) and (posture_artifact_key in (report_requested_postures | default([]))),
+            'dependency_keys': posture_artifact_dependency_keys_resolved,
+            'shared_inputs_used': posture_artifact_shared_inputs_used_resolved,
+            'upstream_shared_artifact_hashes': (report_current_shared_artifact_hashes | default({})),
+            'section_scope': {
+              'postures': (report_effective_selected_postures | default([])),
+              'capabilities': (report_effective_selected_capabilities | default([]))
+            },
+            'enabled': (((cluster_health_profile | default({})).get('postures', {})).get(posture_artifact_key, {}).get('enabled', true)),
+            'required': (((cluster_health_profile | default({})).get('postures', {})).get(posture_artifact_key, {}).get('required', false)),
+            'generated_at': (report_generated_at | default(ansible_date_time.iso8601)),
+            'status': 'render-ready',
+            'errors': [],
+            'analysis_summary': (posture_artifact_analysis_summary | default({})),
+            'findings': (posture_artifact_findings | default({})),
+            'render_inputs': (posture_artifact_render_inputs | default({})),
+            'collection_inputs': (posture_artifact_collection_inputs | default({}))
+          }
+          | combine((posture_artifact_section_fields | default({})), recursive=True)
+        )
+        | to_nice_json
+      }}
+
+- name: Record completed OpenShift posture artifact
+  ansible.builtin.set_fact:
+    report_workspace_completed_artifacts: >-
+      {{
+        (
+          report_workspace_completed_artifacts | default([])
+        )
+        + [
+            'postures/' ~ posture_artifact_key ~ '.json'
+          ]
+      }}
+    report_workspace_failed_artifacts: "{{ (report_workspace_failed_artifacts | default([])) | reject('equalto', 'postures/' ~ posture_artifact_key ~ '.json') | list }}"

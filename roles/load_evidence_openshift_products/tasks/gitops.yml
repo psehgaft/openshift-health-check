@@ -1,0 +1,44 @@
+---
+- name: Build GitOps product evidence summary
+  vars:
+    argocd_items: "{{ (product_graph_current.argocds | default({'items': []})).get('items', []) }}"
+    gitops_application_items: "{{ (product_graph_current.gitops_applications | default({'items': []})).get('items', []) }}"
+    gitops_appproject_items: "{{ (product_graph_current.gitops_appprojects | default({'items': []})).get('items', []) }}"
+    openshift_gitops_namespace_items: "{{ ((product_graph_current.namespaces | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', 'openshift-gitops') | list) }}"
+    gitops_sources: >-
+      {{
+        (
+          (argocd_items + gitops_application_items + gitops_appproject_items + openshift_gitops_namespace_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (argocd_items + gitops_application_items + gitops_appproject_items + openshift_gitops_namespace_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((argocd_items | length > 0) or (gitops_application_items | length > 0) or (gitops_appproject_items | length > 0) or (openshift_gitops_namespace_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'gitops': {
+            'installed': ((argocd_items | length) > 0) or ((gitops_application_items | length) > 0) or ((gitops_appproject_items | length) > 0) or ((openshift_gitops_namespace_items | length) > 0),
+            'health_applicable': ((argocd_items | length) > 0) or ((gitops_application_items | length) > 0) or ((gitops_appproject_items | length) > 0) or ((openshift_gitops_namespace_items | length) > 0),
+            'present': ((argocd_items | length) > 0) or ((gitops_application_items | length) > 0) or ((gitops_appproject_items | length) > 0) or ((openshift_gitops_namespace_items | length) > 0),
+            'namespace_present': (openshift_gitops_namespace_items | length) > 0,
+            'argocd_count': (argocd_items | length),
+            'application_count': (gitops_application_items | length),
+            'appproject_count': (gitops_appproject_items | length),
+            'evidence_sources': gitops_sources
+          }
+        }, recursive=True)
+      }}

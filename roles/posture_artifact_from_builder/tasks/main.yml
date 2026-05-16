@@ -1,0 +1,21 @@
+---
+- name: Validate posture artifact builder task selection
+  ansible.builtin.assert:
+    that:
+      - (posture_artifact_builder_tasks_from | default('') | trim | length) > 0
+    fail_msg: "Set posture_artifact_builder_tasks_from before including posture_artifact_from_builder."
+
+- name: Resolve posture artifact resume decision
+  ansible.builtin.set_fact:
+    posture_artifact_key_current: "{{ posture_artifact_key_hint | default(role_name | regex_replace('^posture_', '')) }}"
+    posture_artifact_resume_decision: "{{ ((report_resume_artifact_plan | default({})).get('postures', {})).get((posture_artifact_key_hint | default(role_name | regex_replace('^posture_', ''))), {'should_build': true, 'reusable': false}) }}"
+
+- name: Build posture artifact facts from local builder task
+  ansible.builtin.include_tasks: "{{ posture_artifact_builder_tasks_from }}"
+  when: posture_artifact_resume_decision.should_build | default(true) | bool
+
+- name: Persist posture artifact from shared writer
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: persist_openshift_posture_artifact.yml
+  when: posture_artifact_resume_decision.should_build | default(true) | bool

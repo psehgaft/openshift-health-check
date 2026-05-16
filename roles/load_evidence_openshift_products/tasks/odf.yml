@@ -1,0 +1,48 @@
+---
+- name: Build ODF product evidence summary
+  vars:
+    storagecluster_items: "{{ (product_graph_current.storageclusters | default({'items': []})).get('items', []) }}"
+    cephcluster_items: "{{ (product_graph_current.cephclusters | default({'items': []})).get('items', []) }}"
+    noobaa_items: "{{ (product_graph_current.noobaas | default({'items': []})).get('items', []) }}"
+    volumesnapshotclass_items: "{{ (product_graph_current.volumesnapshotclasses | default({'items': []})).get('items', []) }}"
+    dataprotectionapplication_items: "{{ (product_graph_current.dataprotectionapplications | default({'items': []})).get('items', []) }}"
+    odf_sources: >-
+      {{
+        (
+          (storagecluster_items + cephcluster_items + noobaa_items + volumesnapshotclass_items + dataprotectionapplication_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (storagecluster_items + cephcluster_items + noobaa_items + volumesnapshotclass_items + dataprotectionapplication_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((storagecluster_items | length > 0) or (cephcluster_items | length > 0) or (noobaa_items | length > 0) or (volumesnapshotclass_items | length > 0) or (dataprotectionapplication_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'odf': {
+            'installed': ((storagecluster_items | length) > 0) or ((cephcluster_items | length) > 0) or ((noobaa_items | length) > 0),
+            'health_applicable': ((storagecluster_items | length) > 0) or ((cephcluster_items | length) > 0) or ((noobaa_items | length) > 0),
+            'present': ((storagecluster_items | length) > 0) or ((cephcluster_items | length) > 0) or ((noobaa_items | length) > 0),
+            'storagecluster_count': (storagecluster_items | length),
+            'cephcluster_count': (cephcluster_items | length),
+            'noobaa_count': (noobaa_items | length),
+            'volumesnapshotclass_count': (volumesnapshotclass_items | length),
+            'dataprotectionapplication_count': (dataprotectionapplication_items | length),
+            'snapshot_protection_ready': (volumesnapshotclass_items | length) > 0,
+            'backup_integration_present': (dataprotectionapplication_items | length) > 0,
+            'evidence_sources': odf_sources
+          }
+        }, recursive=True)
+      }}

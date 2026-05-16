@@ -1,0 +1,18 @@
+---
+- name: Build collected-state route findings from analysis graph
+  ansible.builtin.set_fact:
+    assessment_route_issues: >-
+      {%- set items = [] -%}
+      {%- for item in (analysis_graph.routes | default({'items': []})).get('items', []) -%}
+      {%- set admitted_statuses = item.status.ingress | default([]) | map(attribute='conditions') | list | flatten | selectattr('type', 'equalto', 'Admitted') | map(attribute='status') | list -%}
+      {%- if 'True' not in admitted_statuses -%}
+      {%- set _ = items.append({
+        'namespace': item.metadata.namespace | default('unknown'),
+        'name': item.metadata.name | default('unknown'),
+        'issue': 'route-not-admitted',
+        'detail': 'No admitted=True condition was found in collected route status evidence.'
+      }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ items }}
+  changed_when: false

@@ -1,0 +1,534 @@
+- name: Derive offline control-plane fallback summaries
+  vars:
+    cp_summary: "{{ (control_plane_evidence_data | default({})).get('summary', {}) }}"
+    kube_apiserver_operator: "{{ (clusteroperator_status_map | default({})).get('kube-apiserver', {}) }}"
+    kube_apiserver_healthy: "{{ (kube_apiserver_operator.get('available', 'Unknown') == 'True') and (kube_apiserver_operator.get('degraded', 'False') != 'True') }}"
+    live_support_parsed: "{{ (live_support_data | default({})).get('parsed', {}) }}"
+    sosreport_summary: "{{ (live_support_parsed.sosreport | default(sosreport_data | default({}))).get('summary', {}) }}"
+    sosreport_node_names: "{{ sosreport_summary.node_names | default([]) }}"
+    control_plane_node_names: >-
+      {%- set nodes = [] -%}
+      {%- for node in ((analysis_graph.nodes | default({'items': []})).get('items', [])) -%}
+        {%- set labels = node.metadata.labels | default({}) -%}
+        {%- set name = node.metadata.name | default('') -%}
+        {%- if name and ('node-role.kubernetes.io/master' in labels or 'node-role.kubernetes.io/control-plane' in labels) -%}
+          {%- set _ = nodes.append(name) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ nodes | unique }}
+    worker_node_names: >-
+      {%- set nodes = [] -%}
+      {%- for node in ((analysis_graph.nodes | default({'items': []})).get('items', [])) -%}
+        {%- set labels = node.metadata.labels | default({}) -%}
+        {%- set name = node.metadata.name | default('') -%}
+        {%- if name and ('node-role.kubernetes.io/worker' in labels) -%}
+          {%- set _ = nodes.append(name) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ nodes | unique }}
+    sosreport_control_plane_nodes: "{{ sosreport_node_names | intersect(control_plane_node_names) }}"
+    sosreport_worker_nodes: "{{ sosreport_node_names | intersect(worker_node_names) }}"
+    controlplane_to_worker_network_text: >-
+      {{
+        (
+          'network diagnostics present on control plane nodes '
+          ~ ((sosreport_control_plane_nodes | length) | string)
+          ~ '/'
+          ~ ((control_plane_node_names | length) | string)
+          ~ ' and worker nodes '
+          ~ ((sosreport_worker_nodes | length) | string)
+          ~ '/'
+          ~ ((worker_node_names | length) | string)
+          ~ '; measured control-plane-to-worker RTT was not available in this run'
+        )
+        if ((sosreport_control_plane_nodes | length) > 0 or (sosreport_worker_nodes | length) > 0)
+        else ''
+      }}
+    worker_to_worker_network_text: >-
+      {{
+        (
+          'network diagnostics present on worker nodes '
+          ~ ((sosreport_worker_nodes | length) | string)
+          ~ '/'
+          ~ ((worker_node_names | length) | string)
+          ~ '; measured worker-to-worker RTT was not available in this run'
+        )
+        if ((sosreport_worker_nodes | length) > 0)
+        else ''
+      }}
+    offline_readyz_status: >-
+      {{
+        'failed'
+        if ((cp_summary.apiserver_readyz_failed_checks | default(0) | int) > 0)
+        else (
+          'ok'
+          if (
+            kube_apiserver_healthy
+            or (cp_summary.apiserver_termination_logs_present | default(false))
+          )
+          else 'not-collected'
+        )
+      }}
+  ansible.builtin.set_fact:
+    control_plane_offline_signals_present: >-
+      {{
+        (cp_summary.present | default(false))
+        and (
+          (cp_summary.object_count_present | default(false))
+          or (cp_summary.endpoint_status_present | default(false))
+          or (cp_summary.endpoint_health_present | default(false))
+          or (cp_summary.apiserver_termination_logs_present | default(false))
+        )
+      }}
+    control_plane_query_status_map_offline:
+      apiserver_storage_objects: "{{ 'collected' if (cp_summary.object_count_present | default(false)) else 'not-collected' }}"
+      apiserver_read_rate: not-collected
+      apiserver_write_rate: not-collected
+      apiserver_read_inflight: not-collected
+      apiserver_write_inflight: not-collected
+      apiserver_5xx_rate: not-collected
+      apiserver_latency: not-collected
+      etcd_members_reporting_leader: "{{ 'collected' if (cp_summary.endpoint_status_present | default(false)) else 'not-collected' }}"
+      etcd_leader_count: "{{ 'collected' if (cp_summary.endpoint_status_present | default(false)) else 'not-collected' }}"
+      etcd_wal_fsync: not-collected
+      etcd_backend_commit: not-collected
+      etcd_leader_changes: not-collected
+      etcd_peer_rtt: not-collected
+      controlplane_to_worker_network_latency: "{{ 'derived' if ((sosreport_control_plane_nodes | length) > 0 or (sosreport_worker_nodes | length) > 0) else 'not-configured' }}"
+      worker_to_worker_network_latency: "{{ 'derived' if ((sosreport_worker_nodes | length) > 0) else 'not-configured' }}"
+    apiserver_readyz_status_offline: "{{ offline_readyz_status }}"
+    apiserver_readyz_failed_checks_offline: "{{ cp_summary.apiserver_readyz_failed_checks | default(0) }}"
+    apiserver_storage_objects_total_offline: "{{ cp_summary.apiserver_storage_objects_total if (cp_summary.object_count_present | default(false)) else '' }}"
+    etcd_members_reporting_leader_offline: "{{ cp_summary.etcd_members_reporting_leader if (cp_summary.endpoint_status_present | default(false)) else '' }}"
+    etcd_leader_count_offline: "{{ cp_summary.etcd_leader_count if (cp_summary.endpoint_status_present | default(false)) else '' }}"
+    controlplane_to_worker_network_latency_offline: "{{ controlplane_to_worker_network_text }}"
+    worker_to_worker_network_latency_offline: "{{ worker_to_worker_network_text }}"
+    controlplane_to_worker_network_latency_offline_meta:
+      evidence_type: qualitative-node-network-diagnostics
+      control_plane_nodes_covered: "{{ sosreport_control_plane_nodes | default([]) }}"
+      worker_nodes_covered: "{{ sosreport_worker_nodes | default([]) }}"
+      control_plane_coverage_count: "{{ sosreport_control_plane_nodes | length }}"
+      worker_coverage_count: "{{ sosreport_worker_nodes | length }}"
+      control_plane_total_count: "{{ control_plane_node_names | length }}"
+      worker_total_count: "{{ worker_node_names | length }}"
+    worker_to_worker_network_latency_offline_meta:
+      evidence_type: qualitative-node-network-diagnostics
+      worker_nodes_covered: "{{ sosreport_worker_nodes | default([]) }}"
+      worker_coverage_count: "{{ sosreport_worker_nodes | length }}"
+      worker_total_count: "{{ worker_node_names | length }}"
+  changed_when: false
+
+- name: Record Prometheus query availability finding
+  ansible.builtin.set_fact:
+    observability_findings: "{{ (observability_findings | default([])) + [{'issue': 'prometheus-query-endpoint-unavailable', 'detail': prom_query_error_detail}] }}"
+  vars:
+    prom_query_error_detail: >-
+      {{
+        'neither thanos route nor API proxy query path was usable'
+        ~ (
+          '; route=' ~ (prom_query_helper_data.route_error | default('n/a'))
+          if (prom_query_helper_data.route_error | default('') | length) > 0
+          else ''
+        )
+        ~ (
+          '; proxy=' ~ (prom_query_helper_data.proxy_error | default('n/a'))
+          if (prom_query_helper_data.proxy_error | default('') | length) > 0
+          else ''
+        )
+      }}
+  when: not (prom_available | default(false) | bool)
+
+- name: Build resolved runtime signal map for node and pod families
+  vars:
+    capability_profile_data: "{{ (cluster_health_profile | default({})).get('capabilities', {}) }}"
+    prometheus_profile_capabilities: >-
+      {%- set keys = [] -%}
+      {%- for item in (capability_profile_data | dict2items) -%}
+        {%- set value = item.value if item.value is mapping else {} -%}
+        {%- set evidence = value.get('evidence_required', []) -%}
+        {%- set expected = (value.get('expected_state', 'present') | string | lower) -%}
+        {%- if ('prometheus' in evidence) and expected != 'not_applicable' -%}
+          {%- set _ = keys.append(item.key) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ keys }}
+    runtime_signal_specs:
+      - name: node_cpu_utilization
+        offline_method: request-based-node-cpu-pressure
+        units: percent
+        approximation: true
+      - name: node_memory_utilization
+        offline_method: request-based-node-memory-pressure
+        units: percent
+        approximation: true
+      - name: node_disk_utilization
+        offline_method: request-based-node-ephemeral-storage-pressure
+        units: percent
+        approximation: true
+      - name: kubelet_pod_density
+        offline_method: object-derived-pod-density
+        units: percent
+        approximation: false
+      - name: top_pod_cpu_usage
+        offline_method: request-based-pod-cpu
+        units: cores
+        approximation: true
+      - name: top_pod_memory_usage
+        offline_method: request-based-pod-memory
+        units: bytes
+        approximation: true
+      - name: pod_cpu_usage_all
+        offline_method: request-based-pod-cpu
+        units: cores
+        approximation: true
+      - name: pod_memory_usage_all
+        offline_method: request-based-pod-memory
+        units: bytes
+        approximation: true
+  ansible.builtin.set_fact:
+    runtime_signal_resolution_map: >-
+      {%- set resolved = {} -%}
+      {%- set prom_results = prom_result_map | default({}) -%}
+      {%- set prom_statuses = prom_query_status_map | default({}) -%}
+      {%- set offline_results = offline_workload_fallback_data | default({}) -%}
+      {%- set cap_data = capability_profile_data | default({}) -%}
+      {%- set prom_caps = prometheus_profile_capabilities | default([]) -%}
+      {%- for spec in runtime_signal_specs -%}
+        {%- set name = spec.name -%}
+        {%- set prom_rows = prom_results.get(name, []) -%}
+        {%- set offline_rows = offline_results.get(name, []) -%}
+        {%- set prom_has_rows = prom_rows is sequence and prom_rows is not string and prom_rows is not mapping and (prom_rows | length > 0) -%}
+        {%- set offline_has_rows = offline_rows is sequence and offline_rows is not string and offline_rows is not mapping and (offline_rows | length > 0) -%}
+        {%- set prom_status = prom_statuses.get(name, 'not-collected') -%}
+        {%- set related_caps = [] -%}
+        {%- if name in ['top_pod_cpu_usage', 'top_pod_memory_usage', 'pod_cpu_usage_all', 'pod_memory_usage_all'] and (cap_data.get('user_workload_metrics_monitoring') is mapping) -%}
+          {%- set _ = related_caps.append('user_workload_metrics_monitoring') -%}
+        {%- endif -%}
+        {%- if name in ['node_cpu_utilization', 'node_memory_utilization', 'node_disk_utilization', 'kubelet_pod_density'] and (cap_data.get('persistent_monitoring_storage') is mapping) -%}
+          {%- set _ = related_caps.append('persistent_monitoring_storage') -%}
+        {%- endif -%}
+        {%- for cap_name in prom_caps -%}
+          {%- if cap_name not in related_caps -%}
+            {%- set _ = related_caps.append(cap_name) -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set expected_live = false -%}
+        {%- for cap_name in related_caps -%}
+          {%- set cap_value = cap_data.get(cap_name, {}) if (cap_data.get(cap_name) is mapping) else {} -%}
+          {%- set evidence = cap_value.get('evidence_required', []) -%}
+          {%- set expected_state = (cap_value.get('expected_state', 'present') | string | lower) -%}
+          {%- if ('prometheus' in evidence) and expected_state != 'not_applicable' and (cap_value.get('required', false) or expected_state in ['configured', 'healthy', 'present']) -%}
+            {%- set expected_live = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if prom_has_rows -%}
+          {%- set entry = {
+            'value': prom_rows,
+            'status': 'observed',
+            'source': 'prometheus',
+            'method': 'prometheus-query',
+            'confidence': 'high',
+            'is_approximation': false,
+            'units': spec.units,
+            'collected_from': 'openshift-monitoring/thanos-querier',
+            'reason': '',
+            'capability_profile_related_capabilities': related_caps,
+            'capability_profile_expected_live': expected_live
+          } -%}
+        {%- elif offline_has_rows -%}
+          {%- set entry = {
+            'value': offline_rows,
+            'status': 'derived',
+            'source': 'cluster-object',
+            'method': spec.offline_method,
+            'confidence': ('low' if (spec.approximation and expected_live) else ('medium' if spec.approximation else 'high')),
+            'is_approximation': spec.approximation,
+            'units': spec.units,
+            'collected_from': 'analysis_graph nodes/pods inventory',
+            'reason': (
+              'offline-fallback-used-live-metrics-expected-by-capability-profile'
+              if expected_live
+              else (('prometheus-' ~ prom_status) if prom_status not in ['not-collected', 'not-configured'] else 'offline-fallback-used')
+            ),
+            'capability_profile_related_capabilities': related_caps,
+            'capability_profile_expected_live': expected_live
+          } -%}
+        {%- else -%}
+          {%- set entry = {
+            'value': [],
+            'status': prom_status,
+            'source': ('prometheus' if prom_status in ['no-data', 'query-failed'] else 'unavailable'),
+            'method': ('prometheus-query' if prom_status in ['no-data', 'query-failed'] else 'not-collected'),
+            'confidence': 'low',
+            'is_approximation': false,
+            'units': spec.units,
+            'collected_from': '',
+            'reason': prom_status,
+            'capability_profile_related_capabilities': related_caps,
+            'capability_profile_expected_live': expected_live
+          } -%}
+        {%- endif -%}
+        {%- set _ = resolved.update({name: entry}) -%}
+      {%- endfor -%}
+      {{ resolved }}
+  changed_when: false
+
+- name: Extract Prometheus summaries
+  ansible.builtin.set_fact:
+    firing_alerts: "{{ prom_result_map.firing_alerts if (prom_result_map.firing_alerts is defined and prom_result_map.firing_alerts is sequence and prom_result_map.firing_alerts is not string and prom_result_map.firing_alerts is not mapping and (prom_result_map.firing_alerts | length > 0)) else (offline_workload_fallback_data.firing_alerts | default([])) }}"
+    etcd_wal_fsync_p99_ms: "{{ (prom_result_map.etcd_wal_fsync[0].value[1]) if (prom_result_map.etcd_wal_fsync | default([]) | length > 0) else '' }}"
+    etcd_backend_commit_p99_ms: "{{ (prom_result_map.etcd_backend_commit[0].value[1]) if (prom_result_map.etcd_backend_commit | default([]) | length > 0) else '' }}"
+    etcd_leader_changes_5m: "{{ (prom_result_map.etcd_leader_changes[0].value[1]) if (prom_result_map.etcd_leader_changes | default([]) | length > 0) else '' }}"
+    etcd_members_reporting_leader: "{{ (prom_result_map.etcd_members_reporting_leader[0].value[1]) if (prom_result_map.etcd_members_reporting_leader | default([]) | length > 0) else (etcd_members_reporting_leader_offline | default('')) }}"
+    etcd_leader_count: "{{ (prom_result_map.etcd_leader_count[0].value[1]) if (prom_result_map.etcd_leader_count | default([]) | length > 0) else (etcd_leader_count_offline | default('')) }}"
+    etcd_peer_rtt_p99_ms: "{{ (prom_result_map.etcd_peer_rtt[0].value[1]) if (prom_result_map.etcd_peer_rtt | default([]) | length > 0) else '' }}"
+    apiserver_request_p99_seconds: "{{ (prom_result_map.apiserver_latency[0].value[1]) if (prom_result_map.apiserver_latency | default([]) | length > 0) else '' }}"
+    apiserver_request_5xx_rate: "{{ (prom_result_map.apiserver_5xx_rate[0].value[1]) if (prom_result_map.apiserver_5xx_rate | default([]) | length > 0) else '' }}"
+    apiserver_request_read_rate: "{{ (prom_result_map.apiserver_read_rate[0].value[1]) if (prom_result_map.apiserver_read_rate | default([]) | length > 0) else '' }}"
+    apiserver_request_write_rate: "{{ (prom_result_map.apiserver_write_rate[0].value[1]) if (prom_result_map.apiserver_write_rate | default([]) | length > 0) else '' }}"
+    apiserver_current_read_inflight: "{{ (prom_result_map.apiserver_read_inflight[0].value[1]) if (prom_result_map.apiserver_read_inflight | default([]) | length > 0) else '' }}"
+    apiserver_current_write_inflight: "{{ (prom_result_map.apiserver_write_inflight[0].value[1]) if (prom_result_map.apiserver_write_inflight | default([]) | length > 0) else '' }}"
+    apiserver_storage_objects_total: "{{ (prom_result_map.apiserver_storage_objects[0].value[1]) if (prom_result_map.apiserver_storage_objects | default([]) | length > 0) else (apiserver_storage_objects_total_offline | default('')) }}"
+    controlplane_to_controlplane_network_latency_ms: "{{ (prom_result_map.etcd_peer_rtt[0].value[1]) if (prom_result_map.etcd_peer_rtt | default([]) | length > 0) else '' }}"
+    controlplane_to_worker_network_latency_ms: "{{ (prom_result_map.controlplane_to_worker_network_latency[0].value[1]) if (prom_result_map.controlplane_to_worker_network_latency | default([]) | length > 0) else (controlplane_to_worker_network_latency_offline | default('')) }}"
+    worker_to_worker_network_latency_ms: "{{ (prom_result_map.worker_to_worker_network_latency[0].value[1]) if (prom_result_map.worker_to_worker_network_latency | default([]) | length > 0) else (worker_to_worker_network_latency_offline | default('')) }}"
+    apiserver_readyz_status: "{{ 'ok' if (apiserver_readyz_cmd.rc | default(1)) == 0 else ('failed' if (apiserver_readyz_cmd.stdout | default('') | trim | length > 0 or apiserver_readyz_cmd.stderr | default('') | trim | length > 0) else (apiserver_readyz_status_offline | default('not-collected'))) }}"
+    apiserver_readyz_failed_checks: "{{ (((apiserver_readyz_cmd.stdout | default('')) ~ '\n' ~ (apiserver_readyz_cmd.stderr | default(''))) | regex_findall('(?im)\\bfailed\\b') | length) if (apiserver_readyz_cmd is defined and (apiserver_readyz_cmd.stdout is defined or apiserver_readyz_cmd.stderr is defined)) else (apiserver_readyz_failed_checks_offline | default(0)) }}"
+    node_cpu_utilization_results: "{{ (runtime_signal_resolution_map.node_cpu_utilization | default({})).get('value', []) }}"
+    node_memory_utilization_results: "{{ (runtime_signal_resolution_map.node_memory_utilization | default({})).get('value', []) }}"
+    node_disk_utilization_results: "{{ (runtime_signal_resolution_map.node_disk_utilization | default({})).get('value', []) }}"
+    kubelet_pod_density_results: "{{ (runtime_signal_resolution_map.kubelet_pod_density | default({})).get('value', []) }}"
+    top_pod_cpu_usage_summary: "{{ (runtime_signal_resolution_map.top_pod_cpu_usage | default({})).get('value', []) }}"
+    top_pod_memory_usage_summary: "{{ (runtime_signal_resolution_map.top_pod_memory_usage | default({})).get('value', []) }}"
+    pod_cpu_usage_all_results: "{{ (runtime_signal_resolution_map.pod_cpu_usage_all | default({})).get('value', []) }}"
+    pod_memory_usage_all_results: "{{ (runtime_signal_resolution_map.pod_memory_usage_all | default({})).get('value', []) }}"
+
+- name: Finalize control-plane query status maps
+  vars:
+    prom_status: "{{ prom_query_status_map | default({}) }}"
+    offline_status: "{{ control_plane_query_status_map_offline | default({}) }}"
+  ansible.builtin.set_fact:
+    control_plane_query_status_map: >-
+      {{
+        {
+          'apiserver_storage_objects': (prom_status.get('apiserver_storage_objects') if prom_status.get('apiserver_storage_objects') == 'collected' else offline_status.get('apiserver_storage_objects', prom_status.get('apiserver_storage_objects', 'not-collected'))),
+          'apiserver_read_rate': prom_status.get('apiserver_read_rate', offline_status.get('apiserver_read_rate', 'not-collected')),
+          'apiserver_write_rate': prom_status.get('apiserver_write_rate', offline_status.get('apiserver_write_rate', 'not-collected')),
+          'apiserver_read_inflight': prom_status.get('apiserver_read_inflight', offline_status.get('apiserver_read_inflight', 'not-collected')),
+          'apiserver_write_inflight': prom_status.get('apiserver_write_inflight', offline_status.get('apiserver_write_inflight', 'not-collected')),
+          'apiserver_5xx_rate': prom_status.get('apiserver_5xx_rate', offline_status.get('apiserver_5xx_rate', 'not-collected')),
+          'apiserver_latency': prom_status.get('apiserver_latency', offline_status.get('apiserver_latency', 'not-collected')),
+          'etcd_members_reporting_leader': (prom_status.get('etcd_members_reporting_leader') if prom_status.get('etcd_members_reporting_leader') == 'collected' else offline_status.get('etcd_members_reporting_leader', prom_status.get('etcd_members_reporting_leader', 'not-collected'))),
+          'etcd_leader_count': (prom_status.get('etcd_leader_count') if prom_status.get('etcd_leader_count') == 'collected' else offline_status.get('etcd_leader_count', prom_status.get('etcd_leader_count', 'not-collected'))),
+          'etcd_wal_fsync': prom_status.get('etcd_wal_fsync', offline_status.get('etcd_wal_fsync', 'not-collected')),
+          'etcd_backend_commit': prom_status.get('etcd_backend_commit', offline_status.get('etcd_backend_commit', 'not-collected')),
+          'etcd_leader_changes': prom_status.get('etcd_leader_changes', offline_status.get('etcd_leader_changes', 'not-collected')),
+          'etcd_peer_rtt': prom_status.get('etcd_peer_rtt', offline_status.get('etcd_peer_rtt', 'not-collected')),
+          'controlplane_to_worker_network_latency': (prom_status.get('controlplane_to_worker_network_latency') if prom_status.get('controlplane_to_worker_network_latency') == 'collected' else offline_status.get('controlplane_to_worker_network_latency', prom_status.get('controlplane_to_worker_network_latency', 'not-configured'))),
+          'worker_to_worker_network_latency': (prom_status.get('worker_to_worker_network_latency') if prom_status.get('worker_to_worker_network_latency') == 'collected' else offline_status.get('worker_to_worker_network_latency', prom_status.get('worker_to_worker_network_latency', 'not-configured'))),
+        }
+      }}
+  changed_when: false
+
+- name: Build resolved observability signal map for alerts and control-plane metrics
+  vars:
+    capability_profile_data: "{{ (cluster_health_profile | default({})).get('capabilities', {}) }}"
+    observability_signal_specs:
+      - name: firing_alerts
+        value: "{{ firing_alerts | default([]) }}"
+        prom_status_name: firing_alerts
+        units: count
+        offline_method: omc-sample-alert-rules
+        offline_source: must-gather
+        approximation: true
+        related_capabilities: ['external_alert_delivery']
+      - name: apiserver_storage_objects
+        value: "{{ apiserver_storage_objects_total | default('') }}"
+        prom_status_name: apiserver_storage_objects
+        units: count
+        offline_method: must-gather-object-count
+        offline_source: must-gather
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: apiserver_read_rate
+        value: "{{ apiserver_request_read_rate | default('') }}"
+        prom_status_name: apiserver_read_rate
+        units: requests-per-second
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: apiserver_write_rate
+        value: "{{ apiserver_request_write_rate | default('') }}"
+        prom_status_name: apiserver_write_rate
+        units: requests-per-second
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: apiserver_read_inflight
+        value: "{{ apiserver_current_read_inflight | default('') }}"
+        prom_status_name: apiserver_read_inflight
+        units: requests
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: apiserver_write_inflight
+        value: "{{ apiserver_current_write_inflight | default('') }}"
+        prom_status_name: apiserver_write_inflight
+        units: requests
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: apiserver_5xx_rate
+        value: "{{ apiserver_request_5xx_rate | default('') }}"
+        prom_status_name: apiserver_5xx_rate
+        units: requests-per-second
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: apiserver_latency
+        value: "{{ apiserver_request_p99_seconds | default('') }}"
+        prom_status_name: apiserver_latency
+        units: seconds
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: etcd_members_reporting_leader
+        value: "{{ etcd_members_reporting_leader | default('') }}"
+        prom_status_name: etcd_members_reporting_leader
+        units: count
+        offline_method: must-gather-endpoint-status
+        offline_source: must-gather
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: etcd_leader_count
+        value: "{{ etcd_leader_count | default('') }}"
+        prom_status_name: etcd_leader_count
+        units: count
+        offline_method: must-gather-endpoint-status
+        offline_source: must-gather
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: etcd_wal_fsync
+        value: "{{ etcd_wal_fsync_p99_ms | default('') }}"
+        prom_status_name: etcd_wal_fsync
+        units: milliseconds
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: etcd_backend_commit
+        value: "{{ etcd_backend_commit_p99_ms | default('') }}"
+        prom_status_name: etcd_backend_commit
+        units: milliseconds
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: etcd_leader_changes
+        value: "{{ etcd_leader_changes_5m | default('') }}"
+        prom_status_name: etcd_leader_changes
+        units: count
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: etcd_peer_rtt
+        value: "{{ etcd_peer_rtt_p99_ms | default('') }}"
+        prom_status_name: etcd_peer_rtt
+        units: milliseconds
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: controlplane_to_worker_network_latency
+        value: "{{ controlplane_to_worker_network_latency_ms | default('') }}"
+        prom_status_name: controlplane_to_worker_network_latency
+        units: milliseconds
+        offline_method: sosreport-network-coverage
+        offline_source: sosreport
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+      - name: worker_to_worker_network_latency
+        value: "{{ worker_to_worker_network_latency_ms | default('') }}"
+        prom_status_name: worker_to_worker_network_latency
+        units: milliseconds
+        offline_method: sosreport-network-coverage
+        offline_source: sosreport
+        approximation: false
+        related_capabilities: ['persistent_monitoring_storage']
+  ansible.builtin.set_fact:
+    observability_signal_resolution_map: >-
+      {%- set resolved = {} -%}
+      {%- set prom_statuses = prom_query_status_map | default({}) -%}
+      {%- set final_statuses = control_plane_query_status_map | default({}) -%}
+      {%- set cap_data = capability_profile_data | default({}) -%}
+      {%- for spec in observability_signal_specs -%}
+        {%- set name = spec.name -%}
+        {%- set prom_status = prom_statuses.get(spec.prom_status_name, 'not-collected') -%}
+        {%- set final_status = final_statuses.get(spec.prom_status_name, prom_status) -%}
+        {%- set expected_live = false -%}
+        {%- for cap_name in (spec.related_capabilities | default([])) -%}
+          {%- set cap_value = cap_data.get(cap_name, {}) if (cap_data.get(cap_name) is mapping) else {} -%}
+          {%- set evidence = cap_value.get('evidence_required', []) -%}
+          {%- set expected_state = (cap_value.get('expected_state', 'present') | string | lower) -%}
+          {%- if ('prometheus' in evidence) and expected_state != 'not_applicable' and (cap_value.get('required', false) or expected_state in ['configured', 'healthy', 'present']) -%}
+            {%- set expected_live = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if prom_status == 'collected' -%}
+          {%- set entry = {
+            'value': spec.value,
+            'status': 'observed',
+            'source': 'prometheus',
+            'method': 'prometheus-query',
+            'confidence': 'high',
+            'is_approximation': false,
+            'units': spec.units,
+            'collected_from': 'openshift-monitoring/thanos-querier',
+            'reason': '',
+            'capability_profile_related_capabilities': (spec.related_capabilities | default([])),
+            'capability_profile_expected_live': expected_live
+          } -%}
+        {%- elif final_status in ['collected', 'derived'] and (spec.offline_method is defined) -%}
+          {%- set entry = {
+            'value': spec.value,
+            'status': 'derived',
+            'source': (spec.offline_source | default('must-gather')),
+            'method': spec.offline_method,
+            'evidence_type': (
+              controlplane_to_worker_network_latency_offline_meta.evidence_type
+              if name == 'controlplane_to_worker_network_latency'
+              else (
+                worker_to_worker_network_latency_offline_meta.evidence_type
+                if name == 'worker_to_worker_network_latency'
+                else 'offline-derived'
+              )
+            ),
+            'confidence': ('low' if (spec.approximation | default(false)) else 'high'),
+            'is_approximation': (spec.approximation | default(false)),
+            'units': spec.units,
+            'collected_from': (spec.offline_source | default('must-gather')),
+            'reason': (
+              'offline-fallback-used-live-metrics-expected-by-capability-profile'
+              if expected_live
+              else ('prometheus-' ~ prom_status if prom_status not in ['not-collected', 'not-configured'] else 'offline-fallback-used')
+            ),
+            'coverage': (
+              controlplane_to_worker_network_latency_offline_meta
+              if name == 'controlplane_to_worker_network_latency'
+              else (
+                worker_to_worker_network_latency_offline_meta
+                if name == 'worker_to_worker_network_latency'
+                else {}
+              )
+            ),
+            'capability_profile_related_capabilities': (spec.related_capabilities | default([])),
+            'capability_profile_expected_live': expected_live
+          } -%}
+        {%- else -%}
+          {%- set entry = {
+            'value': spec.value,
+            'status': final_status,
+            'source': ('prometheus' if final_status in ['query-failed', 'no-data', 'not-configured', 'not-collected'] else 'unavailable'),
+            'method': ('prometheus-query' if final_status in ['query-failed', 'no-data', 'not-configured', 'not-collected'] else 'not-collected'),
+            'evidence_type': 'not-collected',
+            'confidence': 'low',
+            'is_approximation': false,
+            'units': spec.units,
+            'collected_from': '',
+            'reason': final_status,
+            'capability_profile_related_capabilities': (spec.related_capabilities | default([])),
+            'capability_profile_expected_live': expected_live
+          } -%}
+        {%- endif -%}
+        {%- set _ = resolved.update({name: entry}) -%}
+      {%- endfor -%}
+      {{ resolved }}
+  changed_when: false
+

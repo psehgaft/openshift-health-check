@@ -1,0 +1,85 @@
+---
+- name: Build multi-tenant namespace governance capability artifact facts
+  vars:
+    multi_tenant_user_namespace_count: "{{ (user_namespace_names | default([]) | length) | int }}"
+    multi_tenant_missing_limitrange_count: "{{ (((user_namespace_names | default([])) | difference(namespaces_with_limitrange | default([]))) | length) | int }}"
+    multi_tenant_missing_networkpolicy_count: "{{ (namespaces_without_networkpolicy | default([]) | length) | int }}"
+    multi_tenant_missing_egress_controls_count: "{{ (namespaces_missing_egress_controls | default([]) | length) | int }}"
+    multi_tenant_missing_resourcequota_count: "{{ (namespaces_missing_resourcequota | default([]) | length) | int }}"
+    multi_tenant_present: >-
+      {{
+        ((self_provisioners | default({}) | length) > 0)
+        or (project_request_message_configured | default(false))
+        or (namespace_onboarding_controls_present | default(false))
+        or ((namespaces_with_all_namespace_governance_guardrails | default([]) | length) > 0)
+      }}
+    multi_tenant_healthy: >-
+      {{
+        (namespace_self_provisioning_governed | default(false))
+        and (namespace_onboarding_controls_present | default(false))
+        and (
+          ((multi_tenant_user_namespace_count | int) == 0)
+          or (
+            (multi_tenant_missing_networkpolicy_count | int) == 0
+            and (multi_tenant_missing_egress_controls_count | int) == 0
+            and (multi_tenant_missing_resourcequota_count | int) == 0
+            and (multi_tenant_missing_limitrange_count | int) == 0
+          )
+        )
+      }}
+    multi_tenant_status_current: >-
+      {{
+        'OK'
+        if multi_tenant_healthy
+        else ('WARNING' if (multi_tenant_present or (multi_tenant_user_namespace_count | int) > 0) else 'INFO')
+      }}
+    multi_tenant_reason_current: >-
+      {{
+        'projectRequestTemplate=' ~ ((project_request_template_name | default('') | string) or 'none')
+        ~ ' templatePresent=' ~ ((project_request_template_present | default(false)) | string)
+        ~ ' templateGuardrails=' ~ ((project_request_template_guardrail_count | default(0) | int) | string)
+        ~ ' selfProvisioningRestricted=' ~ ((self_provisioning_restricted | default(false)) | string)
+        ~ ' selfProvisionerAutoupdateFalse=' ~ ((self_provisioner_autoupdate_false | default(false)) | string)
+        ~ ' onboardingControls=' ~ ((namespace_onboarding_controls_present | default(false)) | string)
+        ~ ' userNamespaces=' ~ (multi_tenant_user_namespace_count | string)
+        ~ ' missingNetworkPolicy=' ~ (multi_tenant_missing_networkpolicy_count | string)
+        ~ ' missingEgressControls=' ~ (multi_tenant_missing_egress_controls_count | string)
+        ~ ' missingResourceQuota=' ~ (multi_tenant_missing_resourcequota_count | string)
+        ~ ' missingLimitRange=' ~ (multi_tenant_missing_limitrange_count | string)
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: multi_tenant_namespace_governance
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      security_governance_status: "{{ multi_tenant_status_current }}"
+      security_governance_reason_summary: "{{ multi_tenant_reason_current }}"
+    capability_artifact_render_inputs:
+      self_provisioners: "{{ self_provisioners | default({}) }}"
+      self_provisioning_restricted: "{{ self_provisioning_restricted | default(false) }}"
+      self_provisioner_autoupdate_false: "{{ self_provisioner_autoupdate_false | default(false) }}"
+      namespace_self_provisioning_governed: "{{ namespace_self_provisioning_governed | default(false) }}"
+      namespace_onboarding_controls_present: "{{ namespace_onboarding_controls_present | default(false) }}"
+      project_request_message_configured: "{{ project_request_message_configured | default(false) }}"
+      project_request_template_name: "{{ project_request_template_name | default('') }}"
+      project_request_template_present: "{{ project_request_template_present | default(false) }}"
+      project_request_template_guardrail_count: "{{ project_request_template_guardrail_count | default(0) }}"
+      onboarding_gitops_app_names: "{{ onboarding_gitops_app_names | default([]) }}"
+      team_rbac_namespace_count: "{{ team_rbac_namespace_count | default(0) }}"
+      team_rbac_group_count: "{{ team_rbac_group_count | default(0) }}"
+      known_team_group_count: "{{ known_team_group_count | default(0) }}"
+      user_namespace_names: "{{ user_namespace_names | default([]) }}"
+      namespaces_with_all_namespace_governance_guardrails: "{{ namespaces_with_all_namespace_governance_guardrails | default([]) }}"
+      namespaces_missing_egress_controls: "{{ namespaces_missing_egress_controls | default([]) }}"
+      namespaces_missing_resourcequota: "{{ namespaces_missing_resourcequota | default([]) }}"
+      namespaces_with_limitrange: "{{ namespaces_with_limitrange | default([]) }}"
+      namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) }}"
+    capability_artifact_collection_inputs:
+      user_namespace_count: "{{ multi_tenant_user_namespace_count | int }}"
+      self_provisioners_present: "{{ ((self_provisioners | default({})) | length) > 0 }}"
+      namespace_self_provisioning_governed: "{{ namespace_self_provisioning_governed | default(false) }}"
+      namespace_onboarding_controls_present: "{{ namespace_onboarding_controls_present | default(false) }}"
+      namespaces_with_all_guardrails_count: "{{ (namespaces_with_all_namespace_governance_guardrails | default([]) | length) | int }}"
+      namespaces_without_networkpolicy_count: "{{ multi_tenant_missing_networkpolicy_count | int }}"
+      namespaces_missing_egress_controls_count: "{{ multi_tenant_missing_egress_controls_count | int }}"
+      namespaces_missing_resourcequota_count: "{{ multi_tenant_missing_resourcequota_count | int }}"
+      missing_limitrange_count: "{{ multi_tenant_missing_limitrange_count | int }}"

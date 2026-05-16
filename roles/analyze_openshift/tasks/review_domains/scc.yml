@@ -1,0 +1,43 @@
+---
+- name: Build SCC posture summary
+  block:
+    - name: Create SCC posture input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-scc-posture-
+        suffix: .json
+      register: scc_posture_input_file
+      changed_when: false
+
+    - name: Write SCC posture input data
+      ansible.builtin.copy:
+        dest: "{{ scc_posture_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'sccs': ((analysis_graph.securitycontextconstraints | default({})).get('items', [])),
+          'pods': ((analysis_graph.pods | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run SCC posture analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_scc_posture_summary.py"
+          - "{{ scc_posture_input_file.path }}"
+      register: scc_posture_summary_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove SCC posture input file
+      ansible.builtin.file:
+        path: "{{ scc_posture_input_file.path }}"
+        state: absent
+      when: scc_posture_input_file is defined and (scc_posture_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize SCC posture summary
+  ansible.builtin.set_fact:
+    scc_posture_summary: "{{ (scc_posture_summary_cmd.stdout | from_json).scc_posture_summary if (scc_posture_summary_cmd.rc == 0 and (scc_posture_summary_cmd.stdout | default('') | length > 0)) else [] }}"
+    scc_grant_findings: "{{ (scc_posture_summary_cmd.stdout | from_json).scc_grant_findings if (scc_posture_summary_cmd.rc == 0 and (scc_posture_summary_cmd.stdout | default('') | length > 0)) else [] }}"
+    scc_pod_findings: "{{ (scc_posture_summary_cmd.stdout | from_json).scc_pod_findings if (scc_posture_summary_cmd.rc == 0 and (scc_posture_summary_cmd.stdout | default('') | length > 0)) else [] }}"

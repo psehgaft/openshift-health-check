@@ -1,0 +1,33 @@
+---
+- name: Build namespace egress controls capability artifact facts
+  vars:
+    namespace_egress_user_namespace_count: "{{ (user_namespace_names | default([]) | length) | int }}"
+    namespace_egress_missing_count: "{{ (namespaces_missing_egress_controls | default([]) | length) | int }}"
+    namespace_egress_present: "{{ ((user_namespace_names | default([]) | difference(namespaces_missing_egress_controls | default([]))) | length) | int > 0 }}"
+    namespace_egress_healthy: "{{ ((namespace_egress_user_namespace_count | int) == 0) or ((namespace_egress_missing_count | int) == 0) }}"
+    namespace_egress_status_current: >-
+      {{
+        'OK'
+        if namespace_egress_healthy
+        else ('WARNING' if (namespace_egress_present or (namespace_egress_user_namespace_count | int) > 0) else 'INFO')
+      }}
+    namespace_egress_reason_current: >-
+      {{
+        'userNamespaces=' ~ (namespace_egress_user_namespace_count | string)
+        ~ ' namespacesWithEgressControls=' ~ ((((user_namespace_names | default([]) | difference(namespaces_missing_egress_controls | default([]))) | length) | int) | string)
+        ~ ' missingNamespaces=' ~ (namespace_egress_missing_count | string)
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: namespace_egress_controls
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      security_governance_status: "{{ namespace_egress_status_current }}"
+      security_governance_reason_summary: "{{ namespace_egress_reason_current }}"
+    capability_artifact_render_inputs:
+      user_namespace_names: "{{ user_namespace_names | default([]) }}"
+      namespaces_missing_egress_controls: "{{ namespaces_missing_egress_controls | default([]) }}"
+    capability_artifact_collection_inputs:
+      user_namespace_count: "{{ namespace_egress_user_namespace_count | int }}"
+      namespace_egress_controls_present: "{{ ((day2_posture_summary | default({})).get('namespace_egress_controls_present', false)) | bool }}"
+      namespace_egress_controls_healthy: "{{ ((day2_posture_summary | default({})).get('namespace_egress_controls_healthy', false)) | bool }}"
+      namespaces_missing_egress_controls_count: "{{ namespace_egress_missing_count | int }}"

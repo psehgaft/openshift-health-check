@@ -1,0 +1,2683 @@
+---
+- name: Enrich fallback capability sections from owning posture summaries
+  vars:
+    day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+    capability_assessment_completed: >-
+      {{
+        (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+        and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+      }}
+  ansible.builtin.set_fact:
+    day2_capability_sections_resolved: >-
+      {%- set sections = [] -%}
+      {%- for section in (day2_capability_sections_resolved | default([])) -%}
+        {%- set updated = section -%}
+        {%- if (not capability_assessment_completed) and (section.key | default('') == 'application_backup_and_restore_readiness') -%}
+          {%- set backup_tooling_detected = backup_recovery_summary.backup_tooling_detected | default(false) -%}
+          {%- set dataprotectionapplication_count = backup_recovery_summary.dataprotectionapplication_count | default(0) | int -%}
+          {%- set available_backup_storage_location_count = backup_recovery_summary.available_backup_storage_location_count | default(0) | int -%}
+          {%- set backup_schedule_count = backup_recovery_summary.backup_schedule_count | default(0) | int -%}
+          {%- set clean_successful_backup_count = backup_recovery_summary.clean_successful_backup_count | default(0) | int -%}
+          {%- set clean_completed_restore_count = backup_recovery_summary.clean_completed_restore_count | default(0) | int -%}
+          {%- set paused_backup_schedule_count = backup_recovery_summary.paused_backup_schedule_count | default(0) | int -%}
+          {%- set completed_backup_with_issues_count = backup_recovery_summary.completed_backup_with_issues_count | default(0) | int -%}
+          {%- set completed_restore_with_issues_count = backup_recovery_summary.completed_restore_with_issues_count | default(0) | int -%}
+          {%- set backup_ready = (
+                backup_tooling_detected
+                and available_backup_storage_location_count > 0
+                and backup_schedule_count > 0
+                and clean_successful_backup_count > 0
+                and clean_completed_restore_count > 0
+                and paused_backup_schedule_count == 0
+                and completed_backup_with_issues_count == 0
+                and completed_restore_with_issues_count == 0
+              ) -%}
+          {%- set capability_status = ('OK' if backup_ready else 'WARNING') -%}
+          {%- set top_detail = (
+                'dpas=' ~ (dataprotectionapplication_count | string)
+                ~ ' backupstoragelocations=' ~ (available_backup_storage_location_count | string)
+                ~ ' schedules=' ~ (backup_schedule_count | string)
+                ~ ' cleanSuccessfulBackups=' ~ (clean_successful_backup_count | string)
+                ~ ' cleanCompletedRestores=' ~ (clean_completed_restore_count | string)
+                ~ ' pausedSchedules=' ~ (paused_backup_schedule_count | string)
+                ~ ' backupIssues=' ~ (completed_backup_with_issues_count | string)
+                ~ ' restoreIssues=' ~ (completed_restore_with_issues_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No workload backup and restore remediation is required for this capability.'
+                if capability_status == 'OK'
+                else 'Validate usable BackupStorageLocations, active schedules, clean successful backups, and clean restore tests for workload recovery.'
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': 'Application backup and restore baseline incomplete',
+                  'source': 'OADP application backup posture guidance',
+                  'recommended_action': recommended_action
+                }]
+                if capability_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'application_backup_and_restore_readiness',
+                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'OADP application backup posture guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'control_plane_backup_and_recovery_readiness') -%}
+          {%- set control_plane_recovery_applicable = not (cluster_profile.is_hosted_control_plane | default(false) | bool) -%}
+          {%- set control_plane_runtime_healthy = (
+                (platform_health_summary.apiserver_readyz_failed | default(0) | int) == 0
+                and (platform_health_summary.apiserver_runtime_degraded | default(0) | int) == 0
+                and (platform_health_summary.etcd_leader_unhealthy | default(0) | int) == 0
+                and (platform_health_summary.etcd_runtime_degraded | default(0) | int) == 0
+              ) -%}
+          {%- set control_plane_backup_evidence_summary = ((control_plane_backup_evidence_data | default({})).summary | default({})) -%}
+          {%- set control_plane_snapshot_evidence_collected = control_plane_backup_evidence_summary.healthy | default(false) | bool -%}
+          {%- set control_plane_backup_evidence_scanned = control_plane_backup_evidence_summary.present | default(false) | bool -%}
+          {%- set control_plane_backup_node_count = control_plane_backup_evidence_summary.node_count | default(0) | int -%}
+          {%- set control_plane_backup_nodes_with_any_artifacts = control_plane_backup_evidence_summary.nodes_with_any_artifacts | default(0) | int -%}
+          {%- set control_plane_backup_nodes_with_matching_pairs = control_plane_backup_evidence_summary.nodes_with_matching_pairs | default(0) | int -%}
+          {%- set capability_status = (
+                'INFO'
+                if (not control_plane_recovery_applicable)
+                else (
+                  'WARNING'
+                  if (not control_plane_runtime_healthy)
+                  else (
+                    'OK'
+                    if control_plane_snapshot_evidence_collected
+                    else (
+                      'WARNING'
+                      if control_plane_backup_evidence_scanned
+                      else 'WARNING'
+                    )
+                  )
+                )
+              ) -%}
+          {%- set top_detail = (
+                'hostedControlPlane=true management cluster evidence is required to validate etcd snapshot and control-plane recovery readiness'
+                if (not control_plane_recovery_applicable)
+                else (
+                  'control plane recovery readiness is reduced because API or etcd runtime health is degraded, so snapshot and restore operations should not be treated as fully validated until control plane health is restored'
+                  if (not control_plane_runtime_healthy)
+                  else (
+                    'matching etcd snapshot and static pod backup artifact evidence was found on '
+                    ~ (control_plane_backup_nodes_with_matching_pairs | string)
+                    ~ ' control plane node(s)'
+                    if control_plane_snapshot_evidence_collected
+                    else (
+                      'control plane nodes were scanned but no retained matching snapshot_*.db and static_kuberesources backup artifact pair was found: '
+                      ~ 'nodesScanned=' ~ (control_plane_backup_node_count | string)
+                      ~ ', nodesWithAnyArtifacts=' ~ (control_plane_backup_nodes_with_any_artifacts | string)
+                      ~ ', matchingPairs=' ~ (control_plane_backup_nodes_with_matching_pairs | string)
+                      if control_plane_backup_evidence_scanned
+                      else 'control plane runtime was healthy, but live node-level backup evidence was not collected for this report'
+                    )
+                  )
+                )
+              ) -%}
+          {%- set recommended_action = (
+                'Validate etcd snapshot and restore readiness from the hosted control plane management cluster evidence set.'
+                if (not control_plane_recovery_applicable)
+                else (
+                  'Restore API and etcd runtime health before validating control-plane backup and restore readiness.'
+                  if (not control_plane_runtime_healthy)
+                  else (
+                    'No control-plane backup remediation is required for this capability.'
+                    if control_plane_snapshot_evidence_collected
+                    else (
+                      'The report scanned control plane nodes but did not find a retained matching snapshot_*.db and static_kuberesources archive pair. Review the configured backup paths, retain recent backup artifacts, and document a recent restore drill.'
+                      if control_plane_backup_evidence_scanned
+                      else 'Enable live control-plane node backup evidence collection with oc debug access, or provide collected backup artifact evidence to the report.'
+                    )
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': 'warning',
+                  'issue': 'Control plane backup and recovery readiness',
+                  'source': 'backup and disaster recovery posture summary',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'control_plane_backup_and_recovery_readiness',
+                  'status': capability_status,
+                  'level': ('recommended' if capability_status != 'INFO' else 'informational'),
+                  'source': 'backup and disaster recovery posture summary',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'secondary_site_disaster_recovery') -%}
+          {%- set drpolicy_count = ((analysis_graph.drpolicies | default({})).get('items', []) | length) -%}
+          {%- set drcluster_count = ((analysis_graph.drclusters | default({})).get('items', []) | length) -%}
+          {%- set drplacementcontrol_count = ((analysis_graph.drplacementcontrols | default({})).get('items', []) | length) -%}
+          {%- set volumereplicationgroup_count = ((analysis_graph.volumereplicationgroups | default({})).get('items', []) | length) -%}
+          {%- set volumereplication_count = ((analysis_graph.volumereplications | default({})).get('items', []) | length) -%}
+          {%- set volumereplicationclass_count = ((analysis_graph.volumereplicationclasses | default({})).get('items', []) | length) -%}
+          {%- set secondary_site_dr_present = (
+                drpolicy_count > 0
+                or drcluster_count > 0
+                or drplacementcontrol_count > 0
+                or volumereplicationgroup_count > 0
+                or volumereplication_count > 0
+                or volumereplicationclass_count > 0
+              ) -%}
+          {%- if not secondary_site_dr_present -%}
+            {%- set top_detail = (
+                  'no secondary-site DR inventory was found in the collected graph: '
+                  ~ 'drpolicies=' ~ (drpolicy_count | string)
+                  ~ ', drclusters=' ~ (drcluster_count | string)
+                  ~ ', drplacementcontrols=' ~ (drplacementcontrol_count | string)
+                  ~ ', volumereplicationgroups=' ~ (volumereplicationgroup_count | string)
+                  ~ ', volumereplications=' ~ (volumereplication_count | string)
+                  ~ ', volumereplicationclasses=' ~ (volumereplicationclass_count | string)
+                ) -%}
+            {%- set recommended_action = 'No DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, or VolumeReplicationClass resources were found. If secondary-site disaster recovery is expected for this cluster, review ODF/ACM DR configuration and provide the intended multicluster replication and protected-workload evidence.' -%}
+            {%- set updated = section | combine({
+                  'status': ('WARNING' if (section.required | default(false)) else 'INFO'),
+                  'accounting_state': 'assessed',
+                  'check_count': 1,
+                  'finding_count': 1,
+                  'checks': [{
+                    'capability': 'secondary_site_disaster_recovery',
+                    'status': ('WARN' if (section.required | default(false)) else 'INFO'),
+                    'level': ('required' if (section.required | default(false)) else 'informational'),
+                    'source': 'secondary-site DR inventory from collected graph',
+                    'detail': top_detail
+                  }],
+                  'findings': [{
+                    'severity': ('warning' if (section.required | default(false)) else 'info'),
+                    'issue': 'Secondary-site disaster recovery inventory missing',
+                    'source': 'secondary-site DR inventory from collected graph',
+                    'recommended_action': recommended_action
+                  }],
+                  'top_detail': top_detail,
+                  'recommended_action': recommended_action
+                }, recursive=True) -%}
+          {%- endif -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'acm_multicluster_disaster_recovery') -%}
+          {%- set drpolicy_count = ((analysis_graph.drpolicies | default({})).get('items', []) | length) -%}
+          {%- set valid_drpolicy_count = day2_posture_summary.valid_drpolicy_count | default(0) | int -%}
+          {%- set drcluster_count = ((analysis_graph.drclusters | default({})).get('items', []) | length) -%}
+          {%- set drplacementcontrol_count = ((analysis_graph.drplacementcontrols | default({})).get('items', []) | length) -%}
+          {%- set volumereplicationgroup_count = ((analysis_graph.volumereplicationgroups | default({})).get('items', []) | length) -%}
+          {%- set volumereplication_count = ((analysis_graph.volumereplications | default({})).get('items', []) | length) -%}
+          {%- set volumereplicationclass_count = ((analysis_graph.volumereplicationclasses | default({})).get('items', []) | length) -%}
+          {%- set acm_klusterlet_count = declarative_operations_summary.acm_klusterlet_count | default(day2_posture_summary.acm_klusterlet_count | default(0)) | int -%}
+          {%- set acm_managedclusteraddon_count = declarative_operations_summary.acm_managedclusteraddon_count | default(day2_posture_summary.acm_managedclusteraddon_count | default(0)) | int -%}
+          {%- set acm_agent_namespace_count = declarative_operations_summary.acm_agent_namespace_count | default(day2_posture_summary.acm_agent_namespace_count | default(0)) | int -%}
+          {%- set acm_registration_present = (acm_klusterlet_count > 0) or (acm_managedclusteraddon_count > 0) or (acm_agent_namespace_count > 0) -%}
+          {%- set acm_registration_healthy = (acm_klusterlet_count > 0) or (acm_agent_namespace_count > 0) -%}
+          {%- set secondary_site_dr_present = (
+                drpolicy_count > 0
+                or drcluster_count > 0
+                or drplacementcontrol_count > 0
+                or volumereplicationgroup_count > 0
+                or volumereplication_count > 0
+                or volumereplicationclass_count > 0
+              ) -%}
+          {%- set acm_dr_present = secondary_site_dr_present and acm_registration_present -%}
+          {%- set topology_ready = (valid_drpolicy_count > 0) and (drcluster_count >= 2) -%}
+          {%- set replication_ready = (volumereplicationclass_count > 0) and ((volumereplication_count > 0) or (volumereplicationgroup_count > 0)) -%}
+          {%- set protected_workloads_ready = (drplacementcontrol_count > 0) or (volumereplicationgroup_count > 0) -%}
+          {%- set problem_drcluster_count = day2_posture_summary.secondary_site_dr_problem_drcluster_count | default(0) | int -%}
+          {%- set problem_drpc_count = day2_posture_summary.secondary_site_dr_problem_drpc_count | default(0) | int -%}
+          {%- set problem_vrg_count = day2_posture_summary.secondary_site_dr_problem_vrg_count | default(0) | int -%}
+          {%- set acm_dr_healthy = (
+                acm_dr_present
+                and acm_registration_healthy
+                and topology_ready
+                and replication_ready
+                and protected_workloads_ready
+                and problem_drcluster_count == 0
+                and problem_drpc_count == 0
+                and problem_vrg_count == 0
+              ) -%}
+          {%- set capability_status = ('OK' if acm_dr_healthy else ('WARNING' if (secondary_site_dr_present or acm_registration_present or (section.required | default(false))) else 'INFO')) -%}
+          {%- set top_detail = (
+                'klusterlets=' ~ (acm_klusterlet_count | string)
+                ~ ' managedclusteraddons=' ~ (acm_managedclusteraddon_count | string)
+                ~ ' agentNamespaces=' ~ (acm_agent_namespace_count | string)
+                ~ ' drpolicies=' ~ (drpolicy_count | string)
+                ~ ' validPolicies=' ~ (valid_drpolicy_count | string)
+                ~ ' drclusters=' ~ (drcluster_count | string)
+                ~ ' drplacementcontrols=' ~ (drplacementcontrol_count | string)
+                ~ ' volumereplications=' ~ (volumereplication_count | string)
+                ~ ' volumereplicationgroups=' ~ (volumereplicationgroup_count | string)
+                ~ ' volumereplicationclasses=' ~ (volumereplicationclass_count | string)
+                ~ ' problemDrClusters=' ~ (problem_drcluster_count | string)
+                ~ ' problemDrpcs=' ~ (problem_drpc_count | string)
+                ~ ' problemVrgs=' ~ (problem_vrg_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No ACM + ODF multicluster disaster-recovery remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'The DR scan did not find sufficient ACM + ODF DR evidence. If cluster disaster recovery is expected, implement the ACM + ODF DR solution: register the cluster with ACM, deploy ODF DR resources, define at least one valid DRPolicy spanning two DRClusters, configure VolumeReplicationClass and replication objects, and map protected workloads through DRPlacementControl or VolumeReplicationGroup resources.'
+                  if (not secondary_site_dr_present)
+                  else (
+                    'The DR scan found ODF DR resources, but ACM managed-cluster registration evidence is missing or incomplete. Complete the ACM registration path with Klusterlet and agent namespace health, then validate the ACM + ODF DR topology.'
+                    if (not acm_registration_healthy)
+                    else 'The DR scan found ACM + ODF DR inventory, but the result is still insufficient for readiness. Review valid DRPolicy coverage, DRCluster count, VolumeReplicationClass and replication objects, DRPlacementControl or VolumeReplicationGroup coverage, and any DR resource warning states before relying on the cluster DR path.'
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'ACM + ODF multicluster DR footprint missing'
+                    if (not secondary_site_dr_present)
+                    else (
+                      'ACM managed-cluster registration missing or incomplete for DR'
+                      if (not acm_registration_healthy)
+                      else 'ACM + ODF multicluster DR topology or health incomplete'
+                    )
+                  ),
+                  'source': 'ACM registration plus multicluster DR topology inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'acm_multicluster_disaster_recovery',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'ACM registration plus multicluster DR topology inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'declarative_gitops_operations') -%}
+          {%- set gitops_present = day2_posture_summary.gitops_present | default(false) -%}
+          {%- set gitops_operational = day2_posture_summary.gitops_operational | default(false) -%}
+          {%- set gitops_automated_sync_present = day2_posture_summary.gitops_automated_sync_present | default(false) -%}
+          {%- set gitops_application_count = day2_posture_summary.gitops_application_count | default(0) | int -%}
+          {%- set gitops_repo_backed_application_count = day2_posture_summary.gitops_repo_backed_application_count | default(0) | int -%}
+          {%- set gitops_automated_sync_application_count = day2_posture_summary.gitops_automated_sync_application_count | default(0) | int -%}
+          {%- set gitops_appproject_count = day2_posture_summary.gitops_appproject_count | default(0) | int -%}
+          {%- set argocd_count = day2_posture_summary.argocd_count | default(0) | int -%}
+          {%- set gitops_status = (
+                'INFO'
+                if not gitops_present
+                else (
+                  'WARNING'
+                  if (
+                    gitops_application_count == 0
+                    or not gitops_operational
+                    or (
+                      gitops_application_count > 0
+                      and not gitops_automated_sync_present
+                    )
+                  )
+                  else 'OK'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'GitOps inventory from declarative operations posture: '
+                ~ 'present=' ~ (gitops_present | string)
+                ~ ', operational=' ~ (gitops_operational | string)
+                ~ ', argocds=' ~ (argocd_count | string)
+                ~ ', applications=' ~ (gitops_application_count | string)
+                ~ ', repoBacked=' ~ (gitops_repo_backed_application_count | string)
+                ~ ', automatedSync=' ~ (gitops_automated_sync_application_count | string)
+                ~ ', appProjects=' ~ (gitops_appproject_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'Ensure GitOps is present, GitOps Applications are defined, Git-backed, and use the intended reconciliation policy.'
+                if gitops_status == 'WARNING'
+                else 'No declarative GitOps remediation is required for this capability.'
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': 'Declarative GitOps operations evidence missing or incomplete',
+                  'source': 'declarative operations posture summary',
+                  'recommended_action': recommended_action
+                }]
+                if gitops_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': gitops_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'declarative_gitops_operations',
+                  'status': ('WARN' if gitops_status == 'WARNING' else ('OK' if gitops_status == 'OK' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'day 2 GitOps inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cluster_log_forwarding') -%}
+          {%- set clusterlogforwarder_count = ((analysis_graph.clusterlogforwarders | default({})).get('items', []) | length) -%}
+          {%- set application_logs_delivery_state = observability_summary.application_logs_delivery_state | default('not-collected') -%}
+          {%- set infrastructure_logs_delivery_state = observability_summary.infrastructure_logs_delivery_state | default('not-collected') -%}
+          {%- set audit_logs_delivery_state = observability_summary.audit_logs_delivery_state | default('not-collected') -%}
+          {%- set external_log_output_count = observability_summary.external_log_output_count | default(0) | int -%}
+          {%- set vendor_log_forwarding_present = observability_summary.vendor_managed_log_forwarding_present | default(false) -%}
+          {%- set log_forwarding_vendor_names = observability_summary.log_forwarding_vendor_names | default([]) -%}
+          {%- set logs_delivery_verification_status = observability_summary.logs_delivery_verification_status | default('not-configured') -%}
+          {%- set log_gap_count = observability_summary.log_gap_count | default(0) | int -%}
+          {%- set log_collection_present = (
+                application_logs_delivery_state != 'not-collected'
+                or infrastructure_logs_delivery_state != 'not-collected'
+                or audit_logs_delivery_state != 'not-collected'
+                or clusterlogforwarder_count > 0
+                or vendor_log_forwarding_present
+              ) -%}
+          {%- set cluster_log_forwarding_healthy = (
+                vendor_log_forwarding_present
+                or (
+                  application_logs_delivery_state == 'externally-configured-not-verified'
+                  and infrastructure_logs_delivery_state == 'externally-configured-not-verified'
+                  and audit_logs_delivery_state == 'externally-configured-not-verified'
+                  and external_log_output_count > 0
+                )
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if cluster_log_forwarding_healthy
+                else (
+                  'WARNING'
+                  if (log_collection_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'clusterlogforwarders=' ~ (clusterlogforwarder_count | string)
+                ~ ' app=' ~ (application_logs_delivery_state | string)
+                ~ ' infra=' ~ (infrastructure_logs_delivery_state | string)
+                ~ ' audit=' ~ (audit_logs_delivery_state | string)
+                ~ ' externalOutputs=' ~ (external_log_output_count | string)
+                ~ ' vendorManaged=' ~ (vendor_log_forwarding_present | string)
+                ~ ' vendors=' ~ ((log_forwarding_vendor_names | join(',')) or 'none')
+                ~ ' verification=' ~ (logs_delivery_verification_status | string)
+                ~ ' logGaps=' ~ (log_gap_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No log-forwarding remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No native ClusterLogForwarder or vendor-managed log-forwarding evidence was found. If centralized logging is expected, configure either ClusterLogForwarder pipelines with external outputs or the approved vendor-managed log-forwarding path for application, infrastructure, and audit logs.'
+                  if not log_collection_present
+                  else 'Complete the intended log-forwarding path by wiring application, infrastructure, and audit log collection to external outputs or the approved vendor-managed destination, then verify export end to end.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Centralized log-forwarding evidence missing'
+                    if not log_collection_present
+                    else 'Centralized log-forwarding path incomplete'
+                  ),
+                  'source': 'observability posture summary',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cluster_log_forwarding',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'observability posture summary',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'user_workload_metrics_monitoring') -%}
+          {%- set user_workload_monitoring_config = analysis_graph.user_workload_monitoring_config | default({}) -%}
+          {%- set servicemonitor_count = day2_posture_summary.servicemonitor_count | default((((analysis_graph.servicemonitors | default({})).get('items', [])) | length)) | int -%}
+          {%- set podmonitor_count = day2_posture_summary.podmonitor_count | default((((analysis_graph.podmonitors | default({})).get('items', [])) | length)) | int -%}
+          {%- set enable_user_workload_monitoring = day2_posture_summary.enable_user_workload_monitoring | default((((analysis_graph.cluster_monitoring_config | default({})).get('config', {}) | default({})).get('enableUserWorkload', false))) -%}
+          {%- set capability_status = (
+                'OK'
+                if (
+                  enable_user_workload_monitoring
+                  and (servicemonitor_count > 0 or podmonitor_count > 0 or (user_workload_monitoring_config | length) > 0)
+                )
+                else 'WARNING'
+              ) -%}
+          {%- set top_detail = (
+                'enableUserWorkload=' ~ (enable_user_workload_monitoring | string)
+                ~ ' servicemonitors=' ~ (servicemonitor_count | string)
+                ~ ' podmonitors=' ~ (podmonitor_count | string)
+                ~ ' userWorkloadConfigPresent=' ~ (((user_workload_monitoring_config | length) > 0) | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No user-workload-monitoring remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Enable user workload monitoring in cluster-monitoring-config, then confirm the user-workload monitoring configuration and the ServiceMonitor or PodMonitor inventory needed by the intended operating model.'
+                  if not enable_user_workload_monitoring
+                  else 'User workload monitoring is enabled, but no ServiceMonitor, PodMonitor, or user-workload monitoring configuration evidence was found. Confirm that the expected user-workload monitoring objects are present for the workloads that depend on them.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': 'warning',
+                  'issue': (
+                    'User workload monitoring is not enabled'
+                    if not enable_user_workload_monitoring
+                    else 'User workload monitoring evidence is incomplete'
+                  ),
+                  'source': 'user workload monitoring and platform monitoring guidance',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'user_workload_metrics_monitoring',
+                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'user workload monitoring and platform monitoring guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'grafana_metrics_dashboards') -%}
+          {%- set grafana_present = day2_posture_summary.grafana_present | default(false) -%}
+          {%- set grafana_dashboard_configmap_count = day2_posture_summary.grafana_dashboard_configmap_count | default(0) | int -%}
+          {%- set grafana_dashboard_present = day2_posture_summary.grafana_dashboard_present | default(false) -%}
+          {%- set grafana_dashboard_crd_present = (((analysis_graph.crds | default({})).get('items', []) | selectattr('metadata.name', 'defined') | selectattr('metadata.name', 'search', 'grafanadashboards') | list | length) > 0) -%}
+          {%- set capability_status = ('OK' if grafana_dashboard_present else ('WARNING' if (section.required | default(false)) else 'INFO')) -%}
+          {%- set top_detail = (
+                'grafana_present=' ~ (grafana_present | string)
+                ~ ' dashboardConfigMaps=' ~ (grafana_dashboard_configmap_count | string)
+                ~ ' grafanaDashboardCrds=' ~ (grafana_dashboard_crd_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No Grafana-dashboard remediation is required for this capability.'
+                if capability_status == 'OK'
+                else 'No in-cluster Grafana dashboard inventory was detected from dashboard ConfigMaps. If Grafana dashboards are part of the intended operating model, provide dashboard ConfigMap evidence for the teams that depend on Grafana-based metric visualization.'
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': 'In-cluster Grafana dashboard inventory missing',
+                  'source': 'Grafana dashboard configuration inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'grafana_metrics_dashboards',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Grafana dashboard configuration inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cluster_metrics_remote_write') -%}
+          {%- set cluster_remote_write_total = day2_posture_summary.cluster_metrics_remote_write_count | default(0) | int -%}
+          {%- set cluster_remote_write_external = day2_posture_summary.external_cluster_metrics_remote_write_count | default(0) | int -%}
+          {%- set user_remote_write_total = day2_posture_summary.user_workload_metrics_remote_write_count | default(0) | int -%}
+          {%- set user_remote_write_external = day2_posture_summary.external_user_workload_metrics_remote_write_count | default(0) | int -%}
+          {%- set cluster_metrics_delivery_state = observability_summary.cluster_metrics_delivery_state | default('not-configured') -%}
+          {%- set user_workload_metrics_delivery_state = observability_summary.user_workload_metrics_delivery_state | default('not-configured') -%}
+          {%- set metrics_delivery_verification_status = observability_summary.metrics_delivery_verification_status | default('not-configured') -%}
+          {%- set vendor_metrics_forwarding_present = observability_summary.vendor_managed_metrics_forwarding_present | default(false) -%}
+          {%- set metrics_forwarding_vendor_names = observability_summary.metrics_forwarding_vendor_names | default([]) -%}
+          {%- set capability_status = (
+                'OK'
+                if (cluster_remote_write_external > 0 or vendor_metrics_forwarding_present)
+                else (
+                  'WARNING'
+                  if (cluster_remote_write_total > 0 or vendor_metrics_forwarding_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'clusterState=' ~ (cluster_metrics_delivery_state | string)
+                ~ ' clusterRemoteWriteTotal=' ~ (cluster_remote_write_total | string)
+                ~ ' clusterRemoteWriteExternal=' ~ (cluster_remote_write_external | string)
+                ~ ' userWorkloadState=' ~ (user_workload_metrics_delivery_state | string)
+                ~ ' userWorkloadRemoteWriteTotal=' ~ (user_remote_write_total | string)
+                ~ ' userWorkloadRemoteWriteExternal=' ~ (user_remote_write_external | string)
+                ~ ' vendorManaged=' ~ (vendor_metrics_forwarding_present | string)
+                ~ ' vendors=' ~ ((metrics_forwarding_vendor_names | join(',')) or 'none')
+                ~ ' verification=' ~ (metrics_delivery_verification_status | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No cluster-metrics-remote-write remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No cluster metrics remote-write or vendor-managed metrics-forwarding evidence was found. If external metrics export is expected, configure prometheusK8s.remoteWrite or the approved vendor-managed metrics-forwarding path.'
+                  if (cluster_remote_write_total == 0 and not vendor_metrics_forwarding_present)
+                  else 'Cluster metrics remote write is configured, but the detected targets still appear cluster-local only. Point the remote-write path to the intended external destination or complete the approved vendor-managed metrics-forwarding path, then verify delivery.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Cluster metrics remote-write evidence missing'
+                    if (cluster_remote_write_total == 0 and not vendor_metrics_forwarding_present)
+                    else 'Cluster metrics remote-write path incomplete'
+                  ),
+                  'source': 'Red Hat monitoring + vendor monitoring guidance',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cluster_metrics_remote_write',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Red Hat monitoring + vendor monitoring guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'image_registry_policy_governance') -%}
+          {%- set registry_findings = image_registry_findings | default([]) -%}
+          {%- set registry_issue_names = registry_findings | map(attribute='issue') | reject('equalto', '') | list -%}
+          {%- set registry_issue_details = registry_findings | map(attribute='detail') | reject('equalto', '') | list -%}
+          {%- set image_policy_clean = (registry_findings | length) == 0 -%}
+          {%- set capability_status = ('OK' if image_policy_clean else 'WARNING') -%}
+          {%- set top_detail = (
+                'image_registry_findings=' ~ ((registry_findings | length) | string)
+                ~ ' issues=' ~ ((registry_issue_names | unique | sort | join(',')) or 'none')
+              ) -%}
+          {%- set recommended_action = (
+                'No image-registry-governance remediation is required for this capability.'
+                if image_policy_clean
+                else 'Review registry exposure, import policy, insecure registry configuration, and internal-registry workload usage before treating image supply paths as intentionally governed.'
+              ) -%}
+          {%- set findings = (
+                []
+                if image_policy_clean
+                else [{
+                  'severity': 'warning',
+                  'issue': 'Image registry governance findings require review',
+                  'source': 'registry governance guidance',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'image_registry_policy_governance',
+                  'status': ('OK' if image_policy_clean else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'registry governance guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': (
+                  top_detail
+                  ~ (
+                    ' details=' ~ ((registry_issue_details | unique | sort | join('; ')) or 'none')
+                    if not image_policy_clean
+                    else ''
+                  )
+                ),
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cluster_image_mirror_configuration') -%}
+          {%- set cluster_image_mirror_configuration_present = day2_posture_summary.cluster_image_mirror_configuration_present | default(false) -%}
+          {%- set image_mirror_resource_count = day2_posture_summary.image_mirror_resource_count | default(0) | int -%}
+          {%- set imagedigestmirrorset_count = ((analysis_graph.imagedigestmirrorsets | default({})).get('items', []) | length) -%}
+          {%- set imagetagmirrorset_count = ((analysis_graph.imagetagmirrorsets | default({})).get('items', []) | length) -%}
+          {%- set imagecontentsourcepolicy_count = ((analysis_graph.imagecontentsourcepolicies | default({})).get('items', []) | length) -%}
+          {%- set local_mirror_targets = local_mirror_targets | default(day2_posture_summary.local_mirror_targets | default([])) -%}
+          {%- set local_mirror_target_count = local_mirror_targets | length -%}
+          {%- set deprecated_icsp_only = (imagecontentsourcepolicy_count > 0) and (imagedigestmirrorset_count == 0) and (imagetagmirrorset_count == 0) -%}
+          {%- set capability_status = (
+                'OK'
+                if (cluster_image_mirror_configuration_present and local_mirror_target_count > 0 and not deprecated_icsp_only)
+                else (
+                  'WARNING'
+                  if (cluster_image_mirror_configuration_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'imagedigestmirrorsets=' ~ (imagedigestmirrorset_count | string)
+                ~ ' imagetagmirrorsets=' ~ (imagetagmirrorset_count | string)
+                ~ ' imagecontentsourcepolicies=' ~ (imagecontentsourcepolicy_count | string)
+                ~ ' localMirrorTargets=' ~ (local_mirror_target_count | string)
+                ~ ' deprecatedIcspOnly=' ~ (deprecated_icsp_only | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No cluster-image-mirror remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No image mirror resources were found. If mirrored image delivery is expected, configure ImageDigestMirrorSet or ImageTagMirrorSet resources for the intended non-public mirror targets.'
+                  if not cluster_image_mirror_configuration_present
+                  else (
+                    'Image mirror resources were found, but no non-public mirror targets were derived. Review ImageDigestMirrorSet, ImageTagMirrorSet, or ImageContentSourcePolicy targets so the configured mirror path aligns with the intended registry supply chain.'
+                    if local_mirror_target_count == 0
+                    else 'Cluster image mirroring relies only on deprecated ImageContentSourcePolicy resources. Migrate to ImageDigestMirrorSet and ImageTagMirrorSet before treating image mirror governance as current.'
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Cluster image mirror configuration missing'
+                    if not cluster_image_mirror_configuration_present
+                    else (
+                      'Cluster image mirror targets missing'
+                      if local_mirror_target_count == 0
+                      else 'Cluster image mirror configuration relies on deprecated ICSP only'
+                    )
+                  ),
+                  'source': 'OpenShift image mirror configuration',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cluster_image_mirror_configuration',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'OpenShift image mirror configuration',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'disconnected_cluster_image_sources') -%}
+          {%- set mirror_resource_count = day2_posture_summary.image_mirror_resource_count | default(0) | int -%}
+          {%- set disconnected_cluster_image_sources_present = day2_posture_summary.disconnected_cluster_image_sources_present | default(false) -%}
+          {%- set disconnected_catalog_count = day2_posture_summary.disconnected_catalogsource_count | default(0) | int -%}
+          {%- set disconnected_clustercatalog_count = (((analysis_graph.clustercatalogs | default({})).get('items', []) | selectattr('spec.image', 'defined') | map(attribute='spec.image') | reject('equalto', '') | reject('search', '(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)') | list | length)) -%}
+          {%- set updateservice_count = ((analysis_graph.updateservices | default({})).get('items', []) | length) -%}
+          {%- set release_image_mirrored = (cluster_profile.desired_release_image | default('') | length > 0) and not ((cluster_profile.desired_release_image | default('')) is search('(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)')) -%}
+          {%- set local_mirror_targets = local_mirror_targets | default(day2_posture_summary.local_mirror_targets | default([])) -%}
+          {%- set local_mirror_target_count = local_mirror_targets | length -%}
+          {%- set subscription_count = ((analysis_graph.subscriptions | default({})).get('items', []) | length) -%}
+          {%- set disconnected_operator_sources_ready = (subscription_count == 0) or ((disconnected_catalog_count + disconnected_clustercatalog_count) > 0) -%}
+          {%- set imagecontentsourcepolicy_count = ((analysis_graph.imagecontentsourcepolicies | default({})).get('items', []) | length) -%}
+          {%- set imagedigestmirrorset_count = ((analysis_graph.imagedigestmirrorsets | default({})).get('items', []) | length) -%}
+          {%- set imagetagmirrorset_count = ((analysis_graph.imagetagmirrorsets | default({})).get('items', []) | length) -%}
+          {%- set deprecated_icsp_only = (imagecontentsourcepolicy_count > 0) and (imagedigestmirrorset_count == 0) and (imagetagmirrorset_count == 0) -%}
+          {%- set disconnected_cluster_image_sources_healthy = (
+                mirror_resource_count > 0
+                and local_mirror_target_count > 0
+                and release_image_mirrored
+                and disconnected_operator_sources_ready
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if disconnected_cluster_image_sources_healthy
+                else (
+                  'WARNING'
+                  if (disconnected_cluster_image_sources_present or (section.required | default(false)) or deprecated_icsp_only)
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'mirrorResources=' ~ (mirror_resource_count | string)
+                ~ ' localMirrorTargets=' ~ (local_mirror_target_count | string)
+                ~ ' desiredReleaseImageMirrored=' ~ (release_image_mirrored | string)
+                ~ ' nonPublicCatalogSources=' ~ (disconnected_catalog_count | string)
+                ~ ' nonPublicClusterCatalogs=' ~ (disconnected_clustercatalog_count | string)
+                ~ ' updateServices=' ~ (updateservice_count | string)
+                ~ ' deprecatedIcspOnly=' ~ (deprecated_icsp_only | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No disconnected-image-source remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Disconnected image-mirroring evidence is missing. If this cluster is expected to operate in a disconnected or mirrored-image model, provide ImageDigestMirrorSet or ImageTagMirrorSet resources and the intended non-public mirror targets.'
+                  if mirror_resource_count == 0
+                  else (
+                    'The desired release image still points to a public registry. Mirror the release payload and update the cluster to use the intended non-public release image source.'
+                    if not release_image_mirrored
+                    else (
+                      'Subscriptions are present, but no non-public CatalogSource or ClusterCatalog image source was found for operator delivery. Configure the operator catalog mirror path for the disconnected model.'
+                      if not disconnected_operator_sources_ready
+                      else (
+                        'Disconnected mirroring currently relies only on deprecated ImageContentSourcePolicy resources. Migrate to ImageDigestMirrorSet and ImageTagMirrorSet for new disconnected configurations.'
+                        if deprecated_icsp_only
+                        else 'Mirror resources were found, but no non-public mirror targets were derived. Review mirror targets so the disconnected supply path is complete.'
+                      )
+                    )
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Disconnected image-mirroring evidence missing'
+                    if mirror_resource_count == 0
+                    else (
+                      'Disconnected release image is not mirrored'
+                      if not release_image_mirrored
+                      else (
+                        'Disconnected operator catalog source is missing'
+                        if not disconnected_operator_sources_ready
+                        else (
+                          'Disconnected image mirroring relies on deprecated ICSP only'
+                          if deprecated_icsp_only
+                          else 'Disconnected image mirror targets are incomplete'
+                        )
+                      )
+                    )
+                  ),
+                  'source': 'OpenShift disconnected installation mirror inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'disconnected_cluster_image_sources',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'OpenShift disconnected installation mirror inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cost_management_operator') -%}
+          {%- set cost_managementmetricsconfig_count = (((analysis_graph.costmanagementmetricsconfigs | default({})).get('items', [])) | length) -%}
+          {%- set cost_management_namespace_present = (((analysis_graph.namespaces | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('equalto', 'costmanagement-metrics-operator') | list | length) > 0) -%}
+          {%- set cost_management_crd_present = (((analysis_graph.crds | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('equalto', 'costmanagementmetricsconfigs.costmanagement-metrics-cfg.openshift.io') | list | length) > 0) -%}
+          {%- set cost_management_present = (
+                day2_posture_summary.cost_management_operator_present
+                | default(false)
+              ) or cost_management_namespace_present or cost_management_crd_present or (cost_managementmetricsconfig_count > 0) -%}
+          {%- set cost_management_healthy = (
+                day2_posture_summary.cost_management_operator_healthy
+                | default(false)
+              ) or (cost_managementmetricsconfig_count > 0) -%}
+          {%- set capability_status = (
+                'OK'
+                if cost_management_healthy
+                else (
+                  'WARNING'
+                  if (cost_management_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'costmanagementmetricsconfigs=' ~ (cost_managementmetricsconfig_count | string)
+                ~ ' namespacePresent=' ~ (cost_management_namespace_present | string)
+                ~ ' crdPresent=' ~ (cost_management_crd_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No cost-management remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No cost management metrics operator or CostManagementMetricsConfig footprint was detected. If cost visibility is expected, install the cost management metrics operator and configure a CostManagementMetricsConfig resource.'
+                  if not cost_management_present
+                  else 'Cost management operator footprint was detected, but no CostManagementMetricsConfig resource was found. Configure the expected cost-management metrics export path before treating FinOps or chargeback telemetry as available.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Cost management operator footprint missing'
+                    if not cost_management_present
+                    else 'Cost management operator configuration incomplete'
+                  ),
+                  'source': 'cost management inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cost_management_operator',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'cost management inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'openshift_custom_metrics_autoscaler') -%}
+          {%- set keda_namespace_present = (((analysis_graph.namespaces | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('in', ['openshift-keda', 'keda']) | list | length) > 0) -%}
+          {%- set keda_crd_names = ['kedacontrollers.keda.sh', 'scaledobjects.keda.sh', 'scaledjobs.keda.sh', 'triggerauthentications.keda.sh', 'clustertriggerauthentications.keda.sh'] -%}
+          {%- set keda_crd_present = (((analysis_graph.crds | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('in', keda_crd_names) | list | length) > 0) -%}
+          {%- set kedacontroller_count = (((analysis_graph.kedacontrollers | default({})).get('items', [])) | length) -%}
+          {%- set scaledobject_count = (((analysis_graph.scaledobjects | default({})).get('items', [])) | length) -%}
+          {%- set scaledjob_count = (((analysis_graph.scaledjobs | default({})).get('items', [])) | length) -%}
+          {%- set triggerauthentication_count = (((analysis_graph.triggerauthentications | default({})).get('items', [])) | length) -%}
+          {%- set clustertriggerauthentication_count = (((analysis_graph.clustertriggerauthentications | default({})).get('items', [])) | length) -%}
+          {%- set keda_workload_present = (
+                (((analysis_graph.pods | default({})).get('items', []) | to_json) is search('keda-operator|keda-operator-metrics-apiserver|keda-admission-webhooks'))
+                or (((analysis_graph.deployments | default({})).get('items', []) | to_json) is search('keda-operator|keda-operator-metrics-apiserver|keda-admission-webhooks'))
+                or (((analysis_graph.statefulsets | default({})).get('items', []) | to_json) is search('keda-operator|keda-operator-metrics-apiserver|keda-admission-webhooks'))
+                or (((analysis_graph.daemonsets | default({})).get('items', []) | to_json) is search('keda-operator|keda-operator-metrics-apiserver|keda-admission-webhooks'))
+              ) -%}
+          {%- set autoscaler_context_present = keda_namespace_present or keda_crd_present -%}
+          {%- set autoscaler_present = (
+                kedacontroller_count > 0
+                or scaledobject_count > 0
+                or scaledjob_count > 0
+                or triggerauthentication_count > 0
+                or clustertriggerauthentication_count > 0
+                or keda_workload_present
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if autoscaler_present
+                else (
+                  'WARNING'
+                  if (autoscaler_context_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'namespacePresent=' ~ (keda_namespace_present | string)
+                ~ ' crdPresent=' ~ (keda_crd_present | string)
+                ~ ' kedacontrollers=' ~ (kedacontroller_count | string)
+                ~ ' scaledobjects=' ~ (scaledobject_count | string)
+                ~ ' scaledjobs=' ~ (scaledjob_count | string)
+                ~ ' triggerauthentications=' ~ (triggerauthentication_count | string)
+                ~ ' clustertriggerauthentications=' ~ (clustertriggerauthentication_count | string)
+                ~ ' workloadPresent=' ~ (keda_workload_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No custom-metrics-autoscaler remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No KEDA operator, namespace, CRD, controller, scaling object, or trigger-authentication footprint was detected. If custom-metrics autoscaling is expected, deploy and configure the KEDA operator and the required scaling resources.'
+                  if not autoscaler_context_present
+                  else 'KEDA operator, namespace, or CRD context was detected, but no KedaController, ScaledObject, ScaledJob, trigger authentication, or KEDA-managed workload footprint was found. Complete the expected KEDA configuration before treating custom-metrics autoscaling as available.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'OpenShift custom metrics autoscaler footprint missing'
+                    if not autoscaler_context_present
+                    else 'OpenShift custom metrics autoscaler configuration incomplete'
+                  ),
+                  'source': 'KEDA controller and custom autoscaling resource inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'openshift_custom_metrics_autoscaler',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'KEDA controller and custom autoscaling resource inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cluster_autoscaler_configuration') -%}
+          {%- set autoscaler_expected = day2_posture_summary.clusterautoscaler_expected | default(false) -%}
+          {%- set clusterautoscaler_count = day2_posture_summary.clusterautoscaler_count | default((((analysis_graph.clusterautoscalers | default({})).get('items', [])) | length)) | int -%}
+          {%- set machineautoscaler_count = (((analysis_graph.machineautoscalers | default({})).get('items', [])) | length) -%}
+          {%- set hostedcluster_count = day2_posture_summary.hostedcluster_count | default((((analysis_graph.hostedclusters | default({})).get('items', [])) | length)) | int -%}
+          {%- set nodepool_count = day2_posture_summary.nodepool_count | default((((analysis_graph.nodepools | default({})).get('items', [])) | length)) | int -%}
+          {%- set hostedcluster_autoscaling_present = day2_posture_summary.hostedcluster_autoscaling_present | default(false) -%}
+          {%- set nodepool_autoscaling_present = day2_posture_summary.nodepool_autoscaling_present | default(false) -%}
+          {%- set usable_machineautoscaler_count = usable_machineautoscalers | default([]) | length -%}
+          {%- set covered_worker_machineset_count = covered_worker_machinesets_by_autoscaler | default([]) | length -%}
+          {%- set worker_machineset_count = worker_machinesets | default([]) | length -%}
+          {%- set autoscaler_present = (
+                (hostedcluster_autoscaling_present or nodepool_autoscaling_present or (cloud_managed and clusterautoscaler_count > 0))
+                if is_hosted_control_plane
+                else (clusterautoscaler_count > 0 or machineautoscaler_count > 0)
+              ) -%}
+          {%- set autoscaler_healthy = (
+                (hostedcluster_autoscaling_present or nodepool_autoscaling_present or (cloud_managed and clusterautoscaler_count > 0))
+                if is_hosted_control_plane
+                else (
+                  (not autoscaler_expected)
+                  or (
+                    clusterautoscaler_count > 0
+                    and usable_machineautoscaler_count > 0
+                    and covered_worker_machineset_count == worker_machineset_count
+                  )
+                )
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if (autoscaler_present or not autoscaler_expected) and autoscaler_healthy
+                else (
+                  'WARNING'
+                  if (autoscaler_expected or (section.required | default(false)) or autoscaler_present)
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'classification=' ~ ((cluster_classification_label | default('')) or (deployment_type | default('')) or 'unknown')
+                ~ ' serviceModel=' ~ ((service_model | default('')) or 'unknown')
+                ~ ' publicCloud=' ~ (public_cloud | string)
+                ~ ' installModel=' ~ ((install_model | default('')) or 'unknown')
+                ~ ' workerMachineSets=' ~ (worker_machineset_count | string)
+                ~ ' hostedclusters=' ~ (hostedcluster_count | string)
+                ~ ' nodepools=' ~ (nodepool_count | string)
+                ~ ' hcpHostedClusterAutoscaling=' ~ (hostedcluster_autoscaling_present | string)
+                ~ ' hcpNodePoolAutoscaling=' ~ (nodepool_autoscaling_present | string)
+                ~ ' expected=' ~ (autoscaler_expected | string)
+                ~ ' clusterautoscalers=' ~ (clusterautoscaler_count | string)
+                ~ ' machineautoscalers=' ~ (machineautoscaler_count | string)
+                ~ ' usableMachineAutoscalers=' ~ (usable_machineautoscaler_count | string)
+                ~ ' coveredWorkerMachineSets=' ~ (covered_worker_machineset_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No cluster-autoscaler remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No hosted control plane autoscaling configuration was found in HostedCluster or NodePool resources. Configure the intended HCP autoscaling path before treating worker autoscaling as available.'
+                  if (is_hosted_control_plane and not autoscaler_present)
+                  else (
+                    'No ClusterAutoscaler or MachineAutoscaler evidence was found for Machine API-managed worker pools where autoscaling is expected. Configure the ClusterAutoscaler and the required MachineAutoscaler coverage for worker machine sets.'
+                    if not autoscaler_present
+                    else 'Worker autoscaling coverage is incomplete. Review ClusterAutoscaler presence, usable MachineAutoscaler resources, and worker-machine-set coverage before treating autoscaling as healthy.'
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Cluster autoscaler configuration missing'
+                    if not autoscaler_present
+                    else 'Cluster autoscaler coverage incomplete'
+                  ),
+                  'source': 'cluster autoscaler guidance for Machine API worker pools',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cluster_autoscaler_configuration',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'cluster autoscaler guidance for Machine API worker pools',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'openshift_aap') -%}
+          {%- set aap_namespace_present = (((analysis_graph.namespaces | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('in', ['aap', 'ansible-automation-platform']) | list | length) > 0) -%}
+          {%- set aap_crd_present = (((analysis_graph.crds | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('search', 'ansibleautomationplatforms\\.aap\\.ansible\\.com|automationcontrollers\\.automationcontroller\\.ansible\\.com|automationhubs\\.automationhub\\.ansible\\.com|edas\\.eda\\.ansible\\.com') | list | length) > 0) -%}
+          {%- set aap_cr_count = (((analysis_graph.ansibleautomationplatforms | default({})).get('items', [])) | length) -%}
+          {%- set automationcontroller_count = (((analysis_graph.automationcontrollers | default({})).get('items', [])) | length) -%}
+          {%- set automationhub_count = (((analysis_graph.automationhubs | default({})).get('items', [])) | length) -%}
+          {%- set eda_count = (((analysis_graph.edas | default({})).get('items', [])) | length) -%}
+          {%- set aap_workload_present = (
+                (((analysis_graph.pods | default({})).get('items', []) | to_json) is search('automation-controller|automation hub|automation-hub|ansible-automation-platform|eda-'))
+                or (((analysis_graph.deployments | default({})).get('items', []) | to_json) is search('automation-controller|automation hub|automation-hub|ansible-automation-platform|eda-'))
+                or (((analysis_graph.statefulsets | default({})).get('items', []) | to_json) is search('automation-controller|automation hub|automation-hub|ansible-automation-platform|eda-'))
+              ) -%}
+          {%- set aap_context_present = aap_namespace_present or aap_crd_present -%}
+          {%- set aap_present = (aap_cr_count > 0) or (automationcontroller_count > 0) or (automationhub_count > 0) or (eda_count > 0) or aap_workload_present -%}
+          {%- set capability_status = (
+                'OK'
+                if aap_present
+                else (
+                  'WARNING'
+                  if (aap_context_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'namespacePresent=' ~ (aap_namespace_present | string)
+                ~ ' crdPresent=' ~ (aap_crd_present | string)
+                ~ ' aapCrs=' ~ (aap_cr_count | string)
+                ~ ' automationcontrollers=' ~ (automationcontroller_count | string)
+                ~ ' automationhubs=' ~ (automationhub_count | string)
+                ~ ' edas=' ~ (eda_count | string)
+                ~ ' workloadPresent=' ~ (aap_workload_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No OpenShift AAP remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No Ansible Automation Platform custom resource or AAP-managed workload footprint was detected. If AAP is expected, deploy the required AnsibleAutomationPlatform, AutomationController, AutomationHub, EDA, or equivalent managed workload path.'
+                  if not aap_context_present
+                  else 'AAP operator, namespace, or CRD context was detected, but no AnsibleAutomationPlatform, AutomationController, AutomationHub, EDA, or AAP-managed workload footprint was found. Complete the expected AAP deployment before treating the automation platform as available.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'OpenShift AAP footprint missing'
+                    if not aap_context_present
+                    else 'OpenShift AAP configuration incomplete'
+                  ),
+                  'source': 'Ansible Automation Platform operator and custom resource inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'openshift_aap',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Ansible Automation Platform operator and custom resource inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cluster_hosted_cicd_runners') -%}
+          {%- set runner_keywords_detected = day2_posture_summary.cluster_hosted_cicd_runners_present | default(false) -%}
+          {%- set workload_blob = (
+                ((analysis_graph.pods | default({})).get('items', []) | to_json)
+                ~ ' ' ~ (((analysis_graph.deployments | default({})).get('items', []) | to_json))
+                ~ ' ' ~ (((analysis_graph.statefulsets | default({})).get('items', []) | to_json))
+                ~ ' ' ~ (((analysis_graph.daemonsets | default({})).get('items', []) | to_json))
+              ) -%}
+          {%- set cicd_runner_present = (
+                runner_keywords_detected
+                or (workload_blob is search('gitlab-runner|github-runner|actions-runner|azure-pipelines-agent|azp-agent|jenkins-agent|jenkins-inbound-agent|tekton-task'))
+              ) -%}
+          {%- set workload_count = (
+                (((analysis_graph.pods | default({})).get('items', [])) | length)
+                + (((analysis_graph.deployments | default({})).get('items', [])) | length)
+                + (((analysis_graph.statefulsets | default({})).get('items', [])) | length)
+                + (((analysis_graph.daemonsets | default({})).get('items', [])) | length)
+              ) -%}
+          {%- set capability_status = ('OK' if cicd_runner_present else ('WARNING' if (section.required | default(false)) else 'INFO')) -%}
+          {%- set top_detail = (
+                'runnerKeywordsDetected=' ~ (cicd_runner_present | string)
+                ~ ' workloadsScanned=' ~ (workload_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No cluster-hosted CI/CD-runner remediation is required for this capability.'
+                if capability_status == 'OK'
+                else 'No cluster-hosted CI or CD runner footprint was detected. If the cluster is expected to host delivery runners, review the intended runner deployment path for GitLab Runner, GitHub Actions Runner, Jenkins agents, Azure Pipelines agents, Tekton task runners, or equivalent runner workloads.'
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': 'Cluster-hosted CI/CD runner footprint missing',
+                  'source': 'cluster-hosted delivery runner workload inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cluster_hosted_cicd_runners',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'cluster-hosted delivery runner workload inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cluster_proxy_configuration') -%}
+          {%- set cluster_proxy_configured = network_architecture_summary.cluster_proxy_configured | default(false) -%}
+          {%- set trusted_ca_configured = network_architecture_summary.trusted_ca_configured | default(false) -%}
+          {%- set no_proxy_entry_count = network_architecture_summary.no_proxy_entry_count | default(0) | int -%}
+          {%- set missing_no_proxy = network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) -%}
+          {%- set capability_status = (
+                'OK'
+                if (cluster_proxy_configured and (missing_no_proxy | length == 0))
+                else (
+                  'WARNING'
+                  if (cluster_proxy_configured or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'configured=' ~ (cluster_proxy_configured | string)
+                ~ ' trustedCA=' ~ (trusted_ca_configured | string)
+                ~ ' noProxyEntries=' ~ (no_proxy_entry_count | string)
+                ~ ' missingInternalNoProxy=' ~ ((missing_no_proxy | join(',')) or 'none')
+              ) -%}
+          {%- set recommended_action = (
+                'No cluster-proxy remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Cluster-wide proxy settings were not found. If this cluster is expected to run behind an HTTP or HTTPS proxy, configure proxy.config.openshift.io/cluster with the intended httpProxy or httpsProxy settings and complete internal noProxy coverage.'
+                  if not cluster_proxy_configured
+                  else 'Cluster-wide proxy settings are present, but internal noProxy coverage is incomplete. Add the missing cluster-internal entries before treating the proxy path as production-ready.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Cluster proxy configuration missing'
+                    if not cluster_proxy_configured
+                    else 'Cluster proxy noProxy coverage incomplete'
+                  ),
+                  'source': 'OpenShift cluster-wide Proxy configuration',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cluster_proxy_configuration',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'OpenShift cluster-wide Proxy configuration',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'persistent_monitoring_storage') -%}
+          {%- set cluster_monitoring_config = ((analysis_graph.cluster_monitoring_config | default({})).get('config', {})) | default({}) -%}
+          {%- set prom_k8s = cluster_monitoring_config.get('prometheusK8s', {}) | default({}) -%}
+          {%- set alertmanager_main = cluster_monitoring_config.get('alertmanagerMain', {}) | default({}) -%}
+          {%- set thanos_ruler = cluster_monitoring_config.get('thanosRuler', {}) | default({}) -%}
+          {%- set node_count = (((analysis_graph.nodes | default({})).get('items', [])) | length) -%}
+          {%- set is_multi_node_cluster = node_count > 1 -%}
+          {%- set prometheus_storage_request = (((((prom_k8s.get('volumeClaimTemplate', {}) | default({})).get('spec', {}) | default({})).get('resources', {}) | default({})).get('requests', {}) | default({})).get('storage', '') | string | trim) -%}
+          {%- set alertmanager_storage_request = (((((alertmanager_main.get('volumeClaimTemplate', {}) | default({})).get('spec', {}) | default({})).get('resources', {}) | default({})).get('requests', {}) | default({})).get('storage', '') | string | trim) -%}
+          {%- set thanos_ruler_storage_request = (((((thanos_ruler.get('volumeClaimTemplate', {}) | default({})).get('spec', {}) | default({})).get('resources', {}) | default({})).get('requests', {}) | default({})).get('storage', '') | string | trim) -%}
+          {%- set prometheus_persistent = (prom_k8s.get('volumeClaimTemplate') is mapping) and (prometheus_storage_request | length > 0) -%}
+          {%- set alertmanager_persistent = (alertmanager_main.get('volumeClaimTemplate') is mapping) and (alertmanager_storage_request | length > 0) -%}
+          {%- set thanos_ruler_persistent = (thanos_ruler.get('volumeClaimTemplate') is mapping) and (thanos_ruler_storage_request | length > 0) -%}
+          {%- set monitoring_persistence_present = prometheus_persistent or alertmanager_persistent or thanos_ruler_persistent -%}
+          {%- set monitoring_persistent = prometheus_persistent and alertmanager_persistent and ((not is_multi_node_cluster) or thanos_ruler_persistent) -%}
+          {%- set capability_status = (
+                'OK'
+                if monitoring_persistent
+                else (
+                  'WARNING'
+                  if (monitoring_persistence_present or (section.required | default(false)))
+                  else 'INFO'
+                )
+              ) -%}
+          {%- set top_detail = (
+                'prometheus=' ~ (prometheus_storage_request or 'missing')
+                ~ ' alertmanager=' ~ (alertmanager_storage_request or 'missing')
+                ~ ' thanosRuler=' ~ (thanos_ruler_storage_request or ('not-required' if not is_multi_node_cluster else 'missing'))
+                ~ ' multiNode=' ~ (is_multi_node_cluster | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No monitoring-persistence remediation is required for this capability.'
+                if capability_status == 'OK'
+                else 'Configure persistent storage for Prometheus and Alertmanager, and also for Thanos Ruler when the cluster has more than one node, before treating monitoring history and alerting continuity as durable.'
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': 'Persistent monitoring storage is incomplete',
+                  'source': 'Red Hat monitoring guidance',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'persistent_monitoring_storage',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Red Hat monitoring guidance',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'external_alert_delivery') -%}
+          {%- set external_alert_receiver_count = observability_summary.external_alert_receiver_count | default(0) | int -%}
+          {%- set alert_delivery_state = observability_summary.alert_delivery_state | default('not-configured') -%}
+          {%- set alerting_gap_count = observability_summary.alerting_gap_count | default(0) | int -%}
+          {%- set alert_delivery_source_count = observability_summary.alert_delivery_source_count | default(0) | int -%}
+          {%- set alert_delivery_verification_status = observability_summary.alert_delivery_verification_status | default('not-configured') -%}
+          {%- set capability_status = (
+                'WARNING'
+                if (
+                  alerting_gap_count > 0
+                  or external_alert_receiver_count == 0
+                  or alert_delivery_state not in ['configured', 'verified']
+                )
+                else 'OK'
+              ) -%}
+          {%- set top_detail = (
+                'external alert delivery from observability posture: '
+                ~ 'state=' ~ (alert_delivery_state | string)
+                ~ ', externalReceivers=' ~ (external_alert_receiver_count | string)
+                ~ ', sources=' ~ (alert_delivery_source_count | string)
+                ~ ', verification=' ~ (alert_delivery_verification_status | string)
+                ~ ', alertingGaps=' ~ (alerting_gap_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'Fix AlertmanagerConfig receiver definitions, route receiver references, and external receiver verification for the affected alert path.'
+                if capability_status == 'WARNING'
+                else 'No external-alert-delivery remediation is required for this capability.'
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': 'External alert delivery not configured or not verifiable',
+                  'source': 'observability posture summary',
+                  'recommended_action': recommended_action
+                }]
+                if capability_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'external_alert_delivery',
+                  'status': ('WARN' if capability_status == 'WARNING' else 'OK'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'observability posture summary',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'oauth_external_identity_provider') -%}
+          {%- set identity_provider_count = auth_posture_summary.identity_provider_count | default(0) | int -%}
+          {%- set external_identity_provider_count = auth_posture_summary.external_identity_provider_count | default(0) | int -%}
+          {%- set local_identity_provider_count = auth_posture_summary.local_identity_provider_count | default(0) | int -%}
+          {%- set invalid_identity_provider_count = auth_posture_summary.invalid_identity_provider_count | default(0) | int -%}
+          {%- set kubeadmin_secret_present = auth_posture_summary.kubeadmin_secret_present | default(false) -%}
+          {%- set auth_reason_summary = auth_posture_summary.reason_summary | default('unknown') -%}
+          {%- set auth_status = auth_posture_summary.status | default('unknown') | string | lower -%}
+          {%- set capability_status = (
+                'OK'
+                if (
+                  external_identity_provider_count > 0
+                  and (not kubeadmin_secret_present)
+                  and invalid_identity_provider_count == 0
+                  and auth_status == 'healthy'
+                )
+                else 'WARNING'
+              ) -%}
+          {%- set top_detail = (
+                'identity provider posture from security posture summary: '
+                ~ 'reason=' ~ (auth_reason_summary | string)
+                ~ ', idpCount=' ~ (identity_provider_count | string)
+                ~ ', externalIdp=' ~ (external_identity_provider_count | string)
+                ~ ', localIdp=' ~ (local_identity_provider_count | string)
+                ~ ', invalidIdp=' ~ (invalid_identity_provider_count | string)
+                ~ ', kubeadminSecret=' ~ (kubeadmin_secret_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No external-identity-provider remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Configure at least one approved external identity provider. Local-only or unclassified OAuth identityProvider entries do not satisfy this capability.'
+                  if external_identity_provider_count == 0
+                  else (
+                    'Remove or tightly control kubeadmin fallback according to the customer access standard.'
+                    if kubeadmin_secret_present
+                    else 'Review and correct unclassified OAuth identityProvider entries so only supported provider configurations remain.'
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': 'External identity provider missing or incomplete',
+                  'source': 'security posture summary',
+                  'recommended_action': recommended_action
+                }]
+                if capability_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'oauth_external_identity_provider',
+                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'security posture summary',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'custom_ca_trust_bundle') -%}
+          {%- set proxy_config = analysis_graph.proxy_config | default({}) -%}
+          {%- set image_config = analysis_graph.image_config | default({}) -%}
+          {%- set proxy_spec = proxy_config.get('spec') or {} -%}
+          {%- set image_spec = image_config.get('spec') or {} -%}
+          {%- set cluster_proxy_configured = (((proxy_spec.get('httpProxy') or '') | string | length) > 0) or (((proxy_spec.get('httpsProxy') or '') | string | length) > 0) -%}
+          {%- set proxy_trusted_ca_name = (((proxy_spec.get('trustedCA') or {}).get('name') or '') | string) -%}
+          {%- set image_additional_trusted_ca_name = (((image_spec.get('additionalTrustedCA') or {}).get('name') or '') | string) -%}
+          {%- set custom_ca_configured = ((proxy_trusted_ca_name | length) > 0) or ((image_additional_trusted_ca_name | length) > 0) -%}
+          {%- set no_proxy_entries = ((((proxy_spec.get('noProxy') or '') | string).split(',')) | map('trim') | reject('equalto', '') | list) if (((proxy_spec.get('noProxy') or '') | string | length) > 0) else [] -%}
+          {%- set missing_no_proxy = (['.svc', '.cluster.local'] | difference(no_proxy_entries)) if cluster_proxy_configured else [] -%}
+          {%- set capability_status = ('OK' if custom_ca_configured else 'WARNING') -%}
+          {%- set top_detail = (
+                'trust-bundle evidence from network/proxy posture: '
+                ~ 'proxyConfigured=' ~ (cluster_proxy_configured | string)
+                ~ ', proxyTrustedCA=' ~ ((proxy_trusted_ca_name | string) or 'none')
+                ~ ', imageAdditionalTrustedCA=' ~ ((image_additional_trusted_ca_name | string) or 'none')
+                ~ ', missingNoProxy=' ~ ((missing_no_proxy | join(',')) or 'none')
+              ) -%}
+          {%- set recommended_action = (
+                'No custom trust-bundle remediation is required for this capability.'
+                if capability_status == 'OK'
+                else 'Configure an additional trusted CA bundle through proxy.config.openshift.io/cluster.spec.trustedCA or image.config.openshift.io/cluster.spec.additionalTrustedCA when this capability is expected.'
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': 'Additional trusted CA configuration missing',
+                  'source': 'network and proxy posture summary',
+                  'recommended_action': recommended_action
+                }]
+                if capability_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'custom_ca_trust_bundle',
+                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'network and proxy posture summary',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'machine_health_check_remediation') -%}
+          {%- set machinehealthcheck_count = declarative_operations_summary.machinehealthcheck_count | default(day2_posture_summary.machinehealthcheck_count | default(0)) | int -%}
+          {%- set machinehealthcheck_expected = declarative_operations_summary.machinehealthcheck_expected | default(day2_posture_summary.machinehealthcheck_expected | default(false)) -%}
+          {%- set machine_healthcheck_findings = machine_healthcheck_findings | default([]) | length -%}
+          {%- set capability_status = (
+                'WARNING'
+                if (machinehealthcheck_expected and (machinehealthcheck_count == 0 or machine_healthcheck_findings > 0))
+                else 'OK'
+              ) -%}
+          {%- set top_detail = (
+                'machine remediation evidence from backup/declarative posture summaries: '
+                ~ 'expected=' ~ (machinehealthcheck_expected | string)
+                ~ ', machineHealthChecks=' ~ (machinehealthcheck_count | string)
+                ~ ', findings=' ~ (machine_healthcheck_findings | string)
+              ) -%}
+          {%- set recommended_action = (
+                'Repair MachineHealthCheck coverage, paused state, or selectors for worker pools where automated remediation is expected.'
+                if capability_status == 'WARNING'
+                else (
+                  'No machine-remediation remediation is required for this capability because Machine API-based worker auto-remediation is not expected for this cluster shape.'
+                  if not machinehealthcheck_expected
+                  else 'No machine-remediation remediation is required for this capability.'
+                )
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': 'MachineHealthCheck coverage missing or incomplete',
+                  'source': 'backup and declarative posture summaries',
+                  'recommended_action': recommended_action
+                }]
+                if capability_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'machine_health_check_remediation',
+                  'status': ('WARN' if capability_status == 'WARNING' else 'OK'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'backup and declarative posture summaries',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'etcd_encryption') -%}
+          {%- set apiserver_config = analysis_graph.apiserver_config | default({}) -%}
+          {%- set openshift_apiserver = analysis_graph.openshift_apiserver | default({}) -%}
+          {%- set kube_apiserver = analysis_graph.kube_apiserver | default({}) -%}
+          {%- set authentication_operator = analysis_graph.authentication_operator | default({}) -%}
+          {%- set etcd_encryption_type = ((((apiserver_config.get('spec') or {}).get('encryption') or {}).get('type') or 'identity') | string | lower | trim) -%}
+          {%- set etcd_encryption = etcd_encryption_type in ['aescbc', 'aesgcm'] -%}
+          {%- set encrypted_conditions = [
+                ('apiserver.config', (((apiserver_config.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({}))),
+                ('openshift-apiserver', (((openshift_apiserver.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({}))),
+                ('kube-apiserver', (((kube_apiserver.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({}))),
+                ('authentication', (((authentication_operator.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({})))
+              ] -%}
+          {%- set reported_components = [] -%}
+          {%- set completed_components = [] -%}
+          {%- set component_details = [] -%}
+          {%- for label, condition in encrypted_conditions -%}
+            {%- set cond_status = (condition.get('status') or 'not-reported') | string | trim -%}
+            {%- set cond_reason = (condition.get('reason') or 'not-reported') | string | trim -%}
+            {%- set _ = component_details.append(label ~ '=' ~ cond_status ~ '/' ~ cond_reason) -%}
+            {%- if condition | length > 0 -%}
+              {%- set _ = reported_components.append(label) -%}
+            {%- endif -%}
+            {%- if (cond_status | lower) == 'true' and 'completed' in (cond_reason | lower) -%}
+              {%- set _ = completed_components.append(label) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set missing_components = reported_components | difference(completed_components) -%}
+          {%- set etcd_encryption_complete = etcd_encryption and (reported_components | length > 0) and (missing_components | length == 0) -%}
+          {%- set capability_status = (
+                'WARNING'
+                if (not etcd_encryption or not etcd_encryption_complete)
+                else 'OK'
+              ) -%}
+          {%- set top_detail = (
+                'apiserver_encryption_type=' ~ etcd_encryption_type
+                ~ ' ' ~ (component_details | join(' '))
+              ) -%}
+          {%- set recommended_action = (
+                'No etcd-encryption remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Enable etcd encryption through APIServer encryption configuration and complete the rollout across reported API server components.'
+                  if not etcd_encryption
+                  else 'Complete the etcd encryption rollout across all reported API server components and confirm every component reports Encrypted=True with a completed rollout reason.'
+                )
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': ('Etcd encryption not enabled' if not etcd_encryption else 'Etcd encryption rollout incomplete'),
+                  'source': 'apiserver encryption configuration',
+                  'recommended_action': recommended_action
+                }]
+                if capability_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'etcd_encryption',
+                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'apiserver encryption configuration',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'ovn_ipsec_encryption') -%}
+          {%- set network_config = analysis_graph.network_config | default({}) -%}
+          {%- set default_network = ((network_config.get('spec') or {}).get('defaultNetwork') or {}) -%}
+          {%- set ovn_config = default_network.get('ovnKubernetesConfig') or {} -%}
+          {%- set ipsec_config = ovn_config.get('ipsecConfig') -%}
+          {%- set network_type = (((network_config.get('status') or {}).get('networkType') or default_network.get('type') or 'unknown') | string) -%}
+          {%- set ovn_network = (network_type | lower) == 'ovnkubernetes' -%}
+          {%- set ipsec_mode = (((ipsec_config or {}).get('mode') or ('Full' if (ipsec_config is mapping) else 'Disabled')) | string | trim) -%}
+          {%- set ovn_ipsec_encryption = (ovn_network and (ipsec_config is mapping) and ((ipsec_mode | lower) != 'disabled')) -%}
+          {%- set capability_status = ('OK' if ovn_ipsec_encryption else 'WARNING') -%}
+          {%- set top_detail = (
+                'networkType=' ~ (network_type | string)
+                ~ ' ovnNetwork=' ~ (ovn_network | string)
+                ~ ' ipsecConfigPresent=' ~ ((ipsec_config is mapping) | string)
+                ~ ' mode=' ~ (ipsec_mode | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No OVN-Kubernetes IPsec remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'This cluster is not using OVN-Kubernetes, so this capability is not currently demonstrated from collected network evidence.'
+                  if not ovn_network
+                  else 'Enable OVN-Kubernetes IPsec through spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig when this capability is expected.'
+                )
+              ) -%}
+          {%- set findings = (
+                [{
+                  'severity': 'warning',
+                  'issue': 'OVN-Kubernetes IPsec not enabled',
+                  'source': 'network configuration',
+                  'recommended_action': recommended_action
+                }]
+                if capability_status == 'WARNING'
+                else []
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'ovn_ipsec_encryption',
+                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'network configuration',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'workloads_using_external_private_registries') -%}
+          {%- set pods = ((analysis_graph.pods | default({})).get('items', []) | default([])) -%}
+          {%- set deployments = ((analysis_graph.deployments | default({})).get('items', []) | default([])) -%}
+          {%- set statefulsets = ((analysis_graph.statefulsets | default({})).get('items', []) | default([])) -%}
+          {%- set daemonsets = ((analysis_graph.daemonsets | default({})).get('items', []) | default([])) -%}
+          {%- set secrets = ((analysis_graph.secrets | default({})).get('items', []) | default([])) -%}
+          {%- set serviceaccounts = ((analysis_graph.serviceaccounts | default({})).get('items', []) | default([])) -%}
+          {%- set public_registry_names = ['docker.io', 'index.docker.io', 'quay.io', 'ghcr.io', 'gcr.io', 'registry.k8s.io', 'k8s.gcr.io'] -%}
+          {%- set internal_registry_markers = ['.svc', '.cluster.local', 'image-registry.openshift-image-registry.svc', 'quay.io/openshift', 'registry.redhat.io', 'registry.access.redhat.com'] -%}
+          {%- set ns = namespace(
+                external_registries=[],
+                credentialed_public_registries=[],
+                workloads_with_pull_secret=0,
+                dockerconfig_secret_count=0,
+                serviceaccount_pull_secret_count=0
+              ) -%}
+          {%- for item in secrets -%}
+            {%- set secret_type = (item.get('type') or '') | string | trim -%}
+            {%- if secret_type in ['kubernetes.io/dockerconfigjson', 'kubernetes.io/dockercfg'] -%}
+              {%- set ns.dockerconfig_secret_count = ns.dockerconfig_secret_count + 1 -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- for item in serviceaccounts -%}
+            {%- set ns.serviceaccount_pull_secret_count = ns.serviceaccount_pull_secret_count + (((item.get('imagePullSecrets') or []) | length) | int) -%}
+          {%- endfor -%}
+          {%- for obj in (pods + deployments + statefulsets + daemonsets) -%}
+            {%- set obj_spec = obj.get('spec') or {} -%}
+            {%- set spec = (((obj_spec.get('template') or {}).get('spec')) if (((obj_spec.get('template') or {}).get('spec')) is mapping) else obj_spec) -%}
+            {%- set pull_secrets = spec.get('imagePullSecrets') or [] -%}
+            {%- if (pull_secrets | length) > 0 -%}
+              {%- set ns.workloads_with_pull_secret = ns.workloads_with_pull_secret + 1 -%}
+            {%- endif -%}
+            {%- for container in ((spec.get('containers') or []) + (spec.get('initContainers') or [])) -%}
+              {%- set image = (container.get('image') or '') | string | trim -%}
+              {%- if image -%}
+                {%- set image_first = (image.split('/') | first | string | lower | trim) -%}
+                {%- set registry = (
+                      image_first
+                      if (('.' in image_first) or (':' in image_first) or (image_first == 'localhost'))
+                      else 'docker.io'
+                    ) -%}
+                {%- set internal_registry = false -%}
+                {%- for marker in internal_registry_markers -%}
+                  {%- if marker in registry or marker in (image | lower) -%}
+                    {%- set internal_registry = true -%}
+                  {%- endif -%}
+                {%- endfor -%}
+                {%- if (registry not in public_registry_names) and (not internal_registry) -%}
+                  {%- if registry not in ns.external_registries -%}
+                    {%- set _ = ns.external_registries.append(registry) -%}
+                  {%- endif -%}
+                {%- elif (registry in public_registry_names) and ((pull_secrets | length) > 0) -%}
+                  {%- if registry not in ns.credentialed_public_registries -%}
+                    {%- set _ = ns.credentialed_public_registries.append(registry) -%}
+                  {%- endif -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- set external_private_registry_workloads_present = (ns.external_registries | length) > 0 -%}
+          {%- set workloads_using_external_private_registries_present = (
+                (
+                  external_private_registry_workloads_present
+                  and (
+                    (ns.workloads_with_pull_secret | int) > 0
+                    or (ns.dockerconfig_secret_count | int) > 0
+                    or (ns.serviceaccount_pull_secret_count | int) > 0
+                  )
+                )
+                or ((ns.credentialed_public_registries | length) > 0)
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if workloads_using_external_private_registries_present
+                else ('WARNING' if (external_private_registry_workloads_present or ((ns.credentialed_public_registries | length) > 0) or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'externalRegistries=' ~ ((ns.external_registries | join(',')) or 'none')
+                ~ ', externalPrivateRegistryCount=' ~ ((ns.external_registries | length) | string)
+                ~ ', credentialedPublicRegistries=' ~ ((ns.credentialed_public_registries | join(',')) or 'none')
+                ~ ', credentialedPublicRegistryCount=' ~ ((ns.credentialed_public_registries | length) | string)
+                ~ ', workloadsWithImagePullSecrets=' ~ (ns.workloads_with_pull_secret | string)
+                ~ ', dockerRegistrySecrets=' ~ (ns.dockerconfig_secret_count | string)
+                ~ ', serviceAccountPullSecrets=' ~ (ns.serviceaccount_pull_secret_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No external-private-registry remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No workload evidence showed external private registry usage or credentialed public-registry pulls. If this capability is expected, confirm the intended image sources and collect the corresponding workload image and pull-secret evidence.'
+                  if (not external_private_registry_workloads_present and ((ns.credentialed_public_registries | length) == 0))
+                  else 'External registry workloads were detected but the pull-credential path is incomplete. Review imagePullSecrets, service account pull-secret references, mirrored-image configuration, and additional trust configuration for the affected namespaces and workloads.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'External private registry evidence missing'
+                    if (not external_private_registry_workloads_present and ((ns.credentialed_public_registries | length) == 0))
+                    else 'External registry workload credential path incomplete'
+                  ),
+                  'source': 'Kubernetes imagePullSecrets and workload image inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'workloads_using_external_private_registries',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Kubernetes imagePullSecrets and workload image inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'namespace_network_policy_baseline') -%}
+          {%- set user_namespace_count = (user_namespace_names | default([]) | length) | int -%}
+          {%- set namespaces_with_networkpolicy_count = ((user_namespace_names | default([]) | difference(namespaces_without_networkpolicy | default([]))) | length) | int -%}
+          {%- set missing_namespaces = namespaces_without_networkpolicy | default([]) -%}
+          {%- set top_missing_namespaces = (missing_namespaces[:15] if (missing_namespaces | length) > 15 else missing_namespaces) -%}
+          {%- set network_policy_baseline_present = namespaces_with_networkpolicy_count > 0 -%}
+          {%- set network_policy_baseline_healthy = (user_namespace_count == 0) or ((missing_namespaces | length) == 0) -%}
+          {%- set capability_status = (
+                'OK'
+                if network_policy_baseline_healthy
+                else ('WARNING' if (network_policy_baseline_present or user_namespace_count > 0 or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'userNamespaces=' ~ (user_namespace_count | string)
+                ~ ', namespacesWithDefaultDenyNetworkPolicy=' ~ (namespaces_with_networkpolicy_count | string)
+                ~ ', missingNamespaces=' ~ ((missing_namespaces | length) | string)
+                ~ (
+                  ', missingList=' ~ ((top_missing_namespaces | join(', ')) ~ (' ...' if (missing_namespaces | length) > (top_missing_namespaces | length) else ''))
+                  if (missing_namespaces | length) > 0
+                  else ''
+                )
+              ) -%}
+          {%- set recommended_action = (
+                'No namespace-network-policy-baseline remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No user namespaces were in scope for the namespace-isolation baseline check. If this capability is expected, confirm the cluster tenant scope and collect the corresponding namespace and NetworkPolicy inventory.'
+                  if user_namespace_count == 0
+                  else (
+                    'No namespace-wide default-deny NetworkPolicy baseline was found for evaluated user namespaces. Add a baseline deny policy or document the namespaces that intentionally do not use that operating model.'
+                    if not network_policy_baseline_present
+                    else 'Baseline namespace-isolation coverage is incomplete. Add or standardize default-deny NetworkPolicy coverage for the listed user namespaces, or document approved exceptions.'
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Namespace default-deny NetworkPolicy baseline missing'
+                    if not network_policy_baseline_present
+                    else 'Namespace default-deny NetworkPolicy baseline coverage incomplete'
+                  ),
+                  'source': 'namespace default-deny NetworkPolicy inventory for user namespaces',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'namespace_network_policy_baseline',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'namespace default-deny NetworkPolicy inventory for user namespaces',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'namespace_egress_controls') -%}
+          {%- set user_namespace_count = (user_namespace_names | default([]) | length) | int -%}
+          {%- set namespaces_with_egress_controls_count = ((user_namespace_names | default([]) | difference(namespaces_missing_egress_controls | default([]))) | length) | int -%}
+          {%- set missing_namespaces = namespaces_missing_egress_controls | default([]) -%}
+          {%- set top_missing_namespaces = (missing_namespaces[:15] if (missing_namespaces | length) > 15 else missing_namespaces) -%}
+          {%- set egress_control_present = namespaces_with_egress_controls_count > 0 -%}
+          {%- set egress_control_healthy = (user_namespace_count == 0) or ((missing_namespaces | length) == 0) -%}
+          {%- set capability_status = (
+                'OK'
+                if egress_control_healthy
+                else ('WARNING' if (egress_control_present or user_namespace_count > 0 or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'userNamespaces=' ~ (user_namespace_count | string)
+                ~ ', namespacesWithEgressControls=' ~ (namespaces_with_egress_controls_count | string)
+                ~ ', missingNamespaces=' ~ ((missing_namespaces | length) | string)
+                ~ (
+                  ', missingList=' ~ ((top_missing_namespaces | join(', ')) ~ (' ...' if (missing_namespaces | length) > (top_missing_namespaces | length) else ''))
+                  if (missing_namespaces | length) > 0
+                  else ''
+                )
+              ) -%}
+          {%- set recommended_action = (
+                'No namespace-egress-control remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No user namespaces were in scope for the namespace egress-control check. If this capability is expected, confirm the cluster tenant scope and collect the corresponding NetworkPolicy and EgressFirewall inventory.'
+                  if user_namespace_count == 0
+                  else (
+                    'No namespace baseline egress restriction was found in user namespaces from match-all Egress NetworkPolicy or EgressFirewall resources. Add namespace egress controls or document the namespaces that intentionally do not use that operating model.'
+                    if not egress_control_present
+                    else 'Namespace egress-control coverage is incomplete. Add or standardize baseline egress controls for the listed user namespaces, or document approved exceptions.'
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Namespace egress-control baseline missing'
+                    if not egress_control_present
+                    else 'Namespace egress-control coverage incomplete'
+                  ),
+                  'source': 'namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'namespace_egress_controls',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'multi_tenant_namespace_governance') -%}
+          {%- set user_namespace_count = (user_namespace_names | default([]) | length) | int -%}
+          {%- set missing_limitrange_count = (((user_namespace_names | default([])) | difference(namespaces_with_limitrange | default([]))) | length) | int -%}
+          {%- set missing_networkpolicy_count = (namespaces_without_networkpolicy | default([]) | length) | int -%}
+          {%- set missing_egress_controls_count = (namespaces_missing_egress_controls | default([]) | length) | int -%}
+          {%- set missing_resourcequota_count = (namespaces_missing_resourcequota | default([]) | length) | int -%}
+          {%- set multi_tenant_namespace_governance_present = (
+                (self_provisioners | default({}) | length) > 0
+                or (project_request_message_configured | default(false))
+                or (namespace_onboarding_controls_present | default(false))
+                or ((namespaces_with_all_namespace_governance_guardrails | default([]) | length) > 0)
+              ) -%}
+          {%- set multi_tenant_namespace_governance_healthy = (
+                (namespace_self_provisioning_governed | default(false))
+                and (namespace_onboarding_controls_present | default(false))
+                and ((user_namespace_count == 0) or (
+                  missing_networkpolicy_count == 0
+                  and missing_egress_controls_count == 0
+                  and missing_resourcequota_count == 0
+                  and missing_limitrange_count == 0
+                ))
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if multi_tenant_namespace_governance_healthy
+                else ('WARNING' if (multi_tenant_namespace_governance_present or user_namespace_count > 0 or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'project_request_template=' ~ ((project_request_template_name | default('') | string) or 'none')
+                ~ ' template_present=' ~ ((project_request_template_present | default(false)) | string)
+                ~ ' template_guardrails=' ~ ((project_request_template_guardrail_count | default(0) | int) | string)
+                ~ ' self_provisioning_restricted=' ~ ((self_provisioning_restricted | default(false)) | string)
+                ~ ' self_provisioner_autoupdate_false=' ~ ((self_provisioner_autoupdate_false | default(false)) | string)
+                ~ ' project_request_message=' ~ ((project_request_message_configured | default(false)) | string)
+                ~ ' onboarding_apps=' ~ ((onboarding_gitops_app_names | default([]) | join(',')) or 'none')
+                ~ ' team_rbac_namespaces=' ~ ((team_rbac_namespace_count | default(0) | int) | string)
+                ~ ' team_rbac_groups=' ~ ((team_rbac_group_count | default(0) | int) | string)
+                ~ ' known_team_groups=' ~ ((known_team_group_count | default(0) | int) | string)
+                ~ ' user_namespaces=' ~ (user_namespace_count | string)
+                ~ ' all_guardrails=' ~ (((namespaces_with_all_namespace_governance_guardrails | default([]) | length) | int) | string)
+                ~ ' networkPolicyMissing=' ~ (missing_networkpolicy_count | string)
+                ~ ' egressControlMissing=' ~ (missing_egress_controls_count | string)
+                ~ ' resourceQuotaMissing=' ~ (missing_resourcequota_count | string)
+                ~ ' limitRangeMissing=' ~ (missing_limitrange_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No multi-tenant namespace-governance remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No user namespaces were in scope for the shared-namespace governance check. If this capability is expected, confirm the tenant model and collect the corresponding onboarding, RBAC, and namespace-guardrail evidence.'
+                  if user_namespace_count == 0
+                  else (
+                    'No tenant onboarding or namespace-governance controls were detected for shared user namespaces. Restrict non-admin self-provisioning, define a project request flow, and establish baseline tenant guardrails.'
+                    if not multi_tenant_namespace_governance_present
+                    else 'Multi-tenant namespace governance is incomplete. Tighten self-provisioning controls, complete onboarding controls, and close the remaining baseline guardrail gaps for tenant namespaces.'
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Tenant onboarding and namespace-governance controls missing'
+                    if not multi_tenant_namespace_governance_present
+                    else 'Multi-tenant namespace governance incomplete'
+                  ),
+                  'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'multi_tenant_namespace_governance',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'dynatrace_observability') -%}
+          {%- set dynatrace_namespace_present = ('dynatrace' in (namespace_names | default([]))) -%}
+          {%- set dynatrace_operator_subscription_present = ('dynatrace-operator' in (subscription_packages | default([]))) -%}
+          {%- set dynatrace_workload_present = false -%}
+          {%- for blob in (all_workload_blobs | default([])) -%}
+            {%- set lowered = blob | string | lower -%}
+            {%- if 'dynatrace-operator' in lowered or 'dynakube' in lowered or 'oneagent' in lowered or 'activegate' in lowered or 'dynatrace-webhook' in lowered -%}
+              {%- set dynatrace_workload_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set dynatrace_dynakube_present = (((analysis_graph.dynakubes | default({})).get('items', []) | length) > 0) -%}
+          {%- set dynatrace_edgeconnect_present = (((analysis_graph.edgeconnects | default({})).get('items', []) | length) > 0) -%}
+          {%- set dynatrace_crd_present = (
+                ((analysis_graph.crds | default({})).get('items', []) | default([]))
+                | selectattr('metadata', 'defined')
+                | selectattr('metadata.name', 'defined')
+                | map(attribute='metadata.name')
+                | map('string')
+                | map('lower')
+                | select('in', ['dynakube.dynatrace.com', 'edgeconnects.dynatrace.com'])
+                | list
+                | length
+              ) > 0 -%}
+          {%- set dynatrace_context_present = (
+                dynatrace_operator_subscription_present
+                or dynatrace_namespace_present
+                or dynatrace_crd_present
+              ) -%}
+          {%- set dynatrace_observability_present = (
+                dynatrace_dynakube_present
+                or dynatrace_edgeconnect_present
+                or dynatrace_workload_present
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if dynatrace_observability_present
+                else ('WARNING' if (dynatrace_context_present or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'subscriptionPresent=' ~ (dynatrace_operator_subscription_present | string)
+                ~ ' namespacePresent=' ~ (dynatrace_namespace_present | string)
+                ~ ' crdPresent=' ~ (dynatrace_crd_present | string)
+                ~ ' dynakubes=' ~ ((((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) | string)
+                ~ ' edgeconnects=' ~ ((((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) | string)
+                ~ ' workloadPresent=' ~ (dynatrace_workload_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No Dynatrace observability remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Dynatrace context was detected, but no DynaKube, EdgeConnect, OneAgent, ActiveGate, or other managed workload footprint was found. Review operator rollout and workload deployment state.'
+                  if dynatrace_context_present
+                  else 'No Dynatrace footprint was detected. If Dynatrace is the intended primary observability path, review operator installation, namespace footprint, CRDs, and managed workload rollout.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Dynatrace context present but managed observability footprint missing'
+                    if dynatrace_context_present
+                    else 'Dynatrace observability footprint missing'
+                  ),
+                  'source': 'Dynatrace operator and workload inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'dynatrace_observability',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Dynatrace operator and workload inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'advanced_cluster_management') -%}
+          {%- set acm_managed = declarative_operations_summary.acm_managed | default(day2_posture_summary.acm_managed | default(false)) -%}
+          {%- set acm_klusterlet_count = declarative_operations_summary.acm_klusterlet_count | default(day2_posture_summary.acm_klusterlet_count | default(0)) | int -%}
+          {%- set acm_managedclusteraddon_count = declarative_operations_summary.acm_managedclusteraddon_count | default(day2_posture_summary.acm_managedclusteraddon_count | default(0)) | int -%}
+          {%- set acm_agent_namespace_count = declarative_operations_summary.acm_agent_namespace_count | default(day2_posture_summary.acm_agent_namespace_count | default(0)) | int -%}
+          {%- set acm_registration_present = (acm_klusterlet_count > 0) or (acm_managedclusteraddon_count > 0) or (acm_agent_namespace_count > 0) -%}
+          {%- set acm_registration_healthy = (acm_klusterlet_count > 0) or (acm_agent_namespace_count > 0) -%}
+          {%- set capability_status = (
+                'OK'
+                if acm_registration_healthy
+                else ('WARNING' if (acm_registration_present or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'managed=' ~ (acm_managed | string)
+                ~ ' klusterlets=' ~ (acm_klusterlet_count | string)
+                ~ ' managedclusteraddons=' ~ (acm_managedclusteraddon_count | string)
+                ~ ' agentNamespaces=' ~ (acm_agent_namespace_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No ACM managed-cluster-registration remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'ACM addon-only registration evidence was detected, but no Klusterlet or ACM agent namespace evidence was found. Review ACM managed-cluster registration health and addon rollout.'
+                  if acm_registration_present
+                  else 'No ACM managed-cluster registration evidence was found. If fleet management is expected for this cluster, review Klusterlet, ManagedClusterAddOn, and ACM agent namespace footprint.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'ACM managed-cluster registration incomplete'
+                    if acm_registration_present
+                    else 'ACM managed-cluster registration missing'
+                  ),
+                  'source': 'ACM registration inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'advanced_cluster_management',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'ACM registration inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'openshift_data_foundation') -%}
+          {%- set odf_operator_subscription_present = ('odf-operator' in (subscription_packages | default([]))) or ('ocs-operator' in (subscription_packages | default([]))) -%}
+          {%- set odf_namespace_present = ('openshift-storage' in (namespace_names | default([]))) -%}
+          {%- set storagecluster_count = (((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) -%}
+          {%- set cephcluster_count = (((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) -%}
+          {%- set noobaa_count = (((analysis_graph.noobaas | default({})).get('items', []) | length) | int) -%}
+          {%- set odf_storageclass_names = [] -%}
+          {%- for sc in (((analysis_graph.storageclasses | default({})).get('items', []) | default([])) + ((storage_classes | default([])))) -%}
+            {%- set meta = sc.get('metadata') or {} -%}
+            {%- set sc_name = (meta.get('name') or '') | string | trim -%}
+            {%- set provisioner = (sc.get('provisioner') or '') | string | trim -%}
+            {%- set blob = (sc_name ~ ' ' ~ provisioner) | lower -%}
+            {%- if 'ocs-storagecluster' in blob or 'openshift-storage.noobaa.io' in blob or 'cephfs.csi.ceph.com' in blob or 'rbd.csi.ceph.com' in blob or 'ceph.rook.io/bucket' in blob -%}
+              {%- if sc_name and (sc_name not in odf_storageclass_names) -%}
+                {%- set _ = odf_storageclass_names.append(sc_name) -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set odf_storageclass_count = (odf_storageclass_names | length) | int -%}
+          {%- set openshift_data_foundation_present = (
+                storagecluster_count > 0
+                or cephcluster_count > 0
+                or noobaa_count > 0
+                or odf_storageclass_count > 0
+              ) -%}
+          {%- set openshift_data_foundation_healthy = (
+                (storagecluster_count > 0 and (cephcluster_count > 0 or noobaa_count > 0))
+                or odf_storageclass_count > 0
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if openshift_data_foundation_healthy
+                else ('WARNING' if (openshift_data_foundation_present or odf_operator_subscription_present or odf_namespace_present or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'storageclusters=' ~ (storagecluster_count | string)
+                ~ ' cephclusters=' ~ (cephcluster_count | string)
+                ~ ' noobaas=' ~ (noobaa_count | string)
+                ~ ' odfSubscriptionPresent=' ~ (odf_operator_subscription_present | string)
+                ~ ' openshiftStorageNamespace=' ~ (odf_namespace_present | string)
+                ~ ' odfStorageClasses=' ~ ((odf_storageclass_names | join(',')) or 'none')
+              ) -%}
+          {%- set recommended_action = (
+                'No OpenShift Data Foundation remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'ODF operator or namespace context was detected, but no StorageCluster, CephCluster, NooBaa, or ODF storage-class footprint was found. Review ODF operator rollout and storage-service deployment state.'
+                  if (odf_operator_subscription_present or odf_namespace_present)
+                  else 'No OpenShift Data Foundation footprint was detected. If ODF is the intended storage platform, review StorageCluster, CephCluster, NooBaa, and ODF storage-class evidence.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'ODF context present but storage-service footprint missing'
+                    if (odf_operator_subscription_present or odf_namespace_present)
+                    else 'OpenShift Data Foundation footprint missing'
+                  ),
+                  'source': 'ODF storage platform inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'openshift_data_foundation',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'ODF storage platform inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cyberark_conjur_secrets_management') -%}
+          {%- set conjur_namespace_present = false -%}
+          {%- for ns_name in (namespace_names | default([])) -%}
+            {%- set lowered = ns_name | string | lower -%}
+            {%- if lowered in ['conjur', 'conjur-server', 'cyberark-conjur'] -%}
+              {%- set conjur_namespace_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set conjur_workload_present = false -%}
+          {%- for blob in (all_workload_blobs | default([])) -%}
+            {%- set lowered = blob | string | lower -%}
+            {%- if 'conjur' in lowered or 'conjur-oss' in lowered or 'conjur-follower' in lowered or 'conjur-appliance' in lowered or 'authn-k8s' in lowered or 'conjur-authn' in lowered or 'secretless' in lowered or 'secrets-provider-for-k8s' in lowered or 'conjur-csi-provider' in lowered -%}
+              {%- set conjur_workload_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set conjur_secretproviderclass_count = 0 -%}
+          {%- for item in ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([])) -%}
+            {%- set spec = item.get('spec') or {} -%}
+            {%- set provider = ((spec.get('provider') or '') | string | lower | trim) -%}
+            {%- set params_blob = (((spec.get('parameters') or {}) | to_json) | lower) -%}
+            {%- if provider == 'conjur' or 'conjur.org' in params_blob or 'cyberark' in params_blob -%}
+              {%- set conjur_secretproviderclass_count = conjur_secretproviderclass_count + 1 -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set conjur_secretproviderclass_present = conjur_secretproviderclass_count > 0 -%}
+          {%- set cyberark_conjur_present = conjur_workload_present or conjur_secretproviderclass_present or conjur_namespace_present -%}
+          {%- set cyberark_conjur_healthy = conjur_workload_present or conjur_secretproviderclass_present -%}
+          {%- set capability_status = (
+                'OK'
+                if cyberark_conjur_healthy
+                else ('WARNING' if (cyberark_conjur_present or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'conjurNamespaces=' ~ (conjur_namespace_present | string)
+                ~ ' conjurWorkloadPresent=' ~ (conjur_workload_present | string)
+                ~ ' conjurSecretProviderClasses=' ~ (conjur_secretproviderclass_count | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No CyberArk Conjur remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Partial CyberArk Conjur context was found, but no Conjur workload footprint or Conjur-backed SecretProviderClass was detected to demonstrate an active secrets-management path. Review Conjur server, authenticator, Secretless, or CSI provider rollout.'
+                  if cyberark_conjur_present
+                  else 'No CyberArk Conjur namespace, workload, or Conjur-backed SecretProviderClass footprint was detected. If Conjur is the intended secrets-management path, review namespace, workload, and Secrets Store CSI integration evidence.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Partial CyberArk Conjur signals found without active secret-delivery footprint'
+                    if cyberark_conjur_present
+                    else 'CyberArk Conjur secrets-management footprint missing'
+                  ),
+                  'source': 'CyberArk Conjur workload and Secrets Provider inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'cyberark_conjur_secrets_management',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'CyberArk Conjur workload and Secrets Provider inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'compliance_requirements_validation') -%}
+          {%- set compliance_operator_present = compliance_operator_summary.present | default(false) -%}
+          {%- set compliancesuite_count = (compliance_operator_summary.get('suite_count') | default(((analysis_graph.compliancesuites | default({})).get('items', []) | length)) | int) -%}
+          {%- set compliance_present = compliance_operator_present or (compliancesuite_count > 0) -%}
+          {%- set compliance_scan_setting_binding_count = (compliance_operator_summary.get('scan_setting_binding_count') | default(0) | int) -%}
+          {%- set compliance_scan_count = (compliance_operator_summary.get('scan_count') | default(0) | int) -%}
+          {%- set compliance_invalid_profilebundle_count = (compliance_operator_summary.get('invalid_profilebundle_count') | default(0) | int) -%}
+          {%- set compliance_failed_check_count = (compliance_operator_summary.get('failed_check_count') | default(0) | int) -%}
+          {%- set compliance_failing_scan_count = (compliance_operator_summary.get('failing_scan_count') | default(0) | int) -%}
+          {%- set compliance_scan_config_present = (
+                compliance_scan_setting_binding_count > 0
+                or compliancesuite_count > 0
+                or compliance_scan_count > 0
+              ) -%}
+          {%- set requested_compliance_standards = [] -%}
+          {%- set compliance_capability = ((cluster_health_profile | default({})).get('capabilities', {}).get('compliance_requirements_validation', {}) | default({})) -%}
+          {%- set requested_standards_source = compliance_capability.get('standards', []) | default([]) -%}
+          {%- for item in requested_standards_source -%}
+            {%- set raw = item | string | trim -%}
+            {%- set lowered = raw | lower -%}
+            {%- set normalized = (
+                  'FIPS' if lowered == 'fips'
+                  else (
+                    'FedRAMP' if lowered in ['fedramp', 'fedramp moderate']
+                    else (
+                      'HIPAA' if lowered == 'hipaa'
+                      else (
+                        'PCI-DSS' if lowered in ['pci', 'pci-dss', 'pcidss']
+                        else (
+                          'SOC' if lowered in ['soc', 'soc1', 'soc2', 'soc3']
+                          else (
+                            'SOX' if lowered == 'sox'
+                            else (
+                              'NIST' if lowered == 'nist'
+                              else ('CIS' if lowered == 'cis' else raw)
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                ) -%}
+            {%- if normalized and (normalized not in requested_compliance_standards) -%}
+              {%- set _ = requested_compliance_standards.append(normalized) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set standards_by_name = {} -%}
+          {%- for item in (compliance_standards_summary | default([])) -%}
+            {%- set standard_name = (item.get('standard') or '') | string | trim -%}
+            {%- if standard_name -%}
+              {%- set _ = standards_by_name.update({standard_name: item}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set ns = namespace(
+                requested_status=[],
+                requested_gaps=[],
+                standard_checks=[],
+                requested_failed_scan_count=0,
+                requested_failed_check_count=0
+              ) -%}
+          {%- for standard_name in requested_compliance_standards -%}
+            {%- set summary = standards_by_name.get(standard_name, {}) -%}
+            {%- set verdict = (summary.get('verdict') or 'not-configured') | string -%}
+            {%- set runtime_status = (summary.get('runtime_status') or 'not-applicable') | string -%}
+            {%- set detail = (summary.get('detail') or '') | string | trim -%}
+            {%- set ns.requested_failed_scan_count = ns.requested_failed_scan_count + ((summary.get('failing_scan_count') | default(0)) | int) -%}
+            {%- set ns.requested_failed_check_count = ns.requested_failed_check_count + ((summary.get('failed_check_count') | default(0)) | int) -%}
+            {%- set _ = ns.requested_status.append(standard_name ~ '=' ~ (runtime_status if standard_name == 'FIPS' else verdict)) -%}
+            {%- set standard_supported = (
+                  (runtime_status == 'enabled')
+                  if standard_name == 'FIPS'
+                  else (verdict == 'supported')
+                ) -%}
+            {%- set standard_detail = (
+                  (
+                    'runtime=' ~ runtime_status ~ ' verdict=' ~ verdict ~ ((' detail=' ~ detail) if detail else '')
+                  )
+                  if standard_name == 'FIPS'
+                  else (
+                    'verdict=' ~ verdict
+                    ~ ' configured=' ~ ((summary.get('configured') | default(false)) | string)
+                    ~ ' active=' ~ ((summary.get('active_enabled') | default(false)) | string)
+                    ~ ' scans=' ~ ((summary.get('scan_count') | default(0) | int) | string)
+                    ~ ' failedScans=' ~ ((summary.get('failing_scan_count') | default(0) | int) | string)
+                    ~ ' failedChecks=' ~ ((summary.get('failed_check_count') | default(0) | int) | string)
+                    ~ ((' detail=' ~ detail) if detail else '')
+                  )
+                ) -%}
+            {%- set _ = ns.standard_checks.append({
+                  'capability': 'compliance_requirements_validation',
+                  'status': ('OK' if standard_supported else ('WARN' if (section.required | default(false)) else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'compliance standard ' ~ standard_name,
+                  'detail': standard_name ~ ': ' ~ standard_detail
+                }) -%}
+            {%- if standard_name == 'FIPS' -%}
+              {%- if runtime_status != 'enabled' -%}
+                {%- set gap_detail = (
+                      'FIPS is an install-time cluster setting and runtime node evidence does not confirm full enablement'
+                      if runtime_status == 'unknown'
+                      else (
+                        'FIPS crypto policy evidence is partial and /proc/sys/crypto/fips_enabled confirmation was not collected'
+                        if runtime_status == 'crypto-policy-fips'
+                        else 'runtime FIPS status is ' ~ runtime_status
+                      )
+                    ) -%}
+                {%- set _ = ns.requested_gaps.append({'standard': standard_name, 'detail': gap_detail}) -%}
+              {%- endif -%}
+            {%- elif verdict != 'supported' -%}
+              {%- set gap_detail = (
+                    'matching Compliance Operator content is available but no current binding, suite, or scan evidence shows it is configured'
+                    if verdict == 'content-available'
+                    else (
+                      'Compliance Operator resources are configured for this standard, but no active suite or scan evidence was found'
+                      if verdict == 'configured-no-scan'
+                      else (
+                        'active scans or checks for this standard need review'
+                        if verdict == 'review-required'
+                        else 'no matching Compliance Operator standard evidence was found'
+                      )
+                    )
+                  ) -%}
+              {%- if detail -%}
+                {%- set gap_detail = gap_detail ~ ' (' ~ detail ~ ')' -%}
+              {%- endif -%}
+              {%- set _ = ns.requested_gaps.append({'standard': standard_name, 'detail': gap_detail}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set compliance_operator_healthy = compliance_present and compliance_scan_config_present and (compliance_invalid_profilebundle_count == 0) -%}
+          {%- set compliance_healthy = (
+                ((ns.requested_gaps | length) == 0 and compliance_invalid_profilebundle_count == 0)
+                if (requested_compliance_standards | length) > 0
+                else compliance_operator_healthy
+              ) -%}
+          {%- set capability_status = (
+                'OK'
+                if compliance_healthy
+                else ('WARNING' if (compliance_present or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'requested=' ~ ((requested_compliance_standards | join(',')) or 'none')
+                ~ ' suites=' ~ (compliancesuite_count | string)
+                ~ ' scans=' ~ (compliance_scan_count | string)
+                ~ ' bindings=' ~ (compliance_scan_setting_binding_count | string)
+                ~ ' failedChecks=' ~ ((ns.requested_failed_check_count if (requested_compliance_standards | length) > 0 else compliance_failed_check_count) | string)
+                ~ ' failingScans=' ~ ((ns.requested_failed_scan_count if (requested_compliance_standards | length) > 0 else compliance_failing_scan_count) | string)
+                ~ ' invalidProfileBundles=' ~ (compliance_invalid_profilebundle_count | string)
+                ~ ' standards=' ~ ((ns.requested_status | join(';')) or 'not-requested')
+              ) -%}
+          {%- set recommended_action = (
+                'No compliance-validation remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'No compliance validation evidence was found from requested runtime signals or Compliance Operator suites, scans, scan-setting bindings, profile content, and openshift-compliance resources.'
+                  if not compliance_present
+                  else (
+                    'Requested compliance standards are not fully satisfied. Review the named standards, confirm the expected Compliance Operator content, and remediate missing configuration, inactive scans, or review-required findings.'
+                    if (requested_compliance_standards | length) > 0 and (ns.requested_gaps | length) > 0
+                    else (
+                      'Compliance Operator profile bundles are invalid, so requested compliance standards cannot be trusted until the bundle issues are fixed.'
+                      if (requested_compliance_standards | length) > 0 and compliance_invalid_profilebundle_count > 0
+                      else 'Compliance validation evidence is present but scan-backed configuration is incomplete. Review suite, scan, binding, and profile-bundle state before relying on compliance results.'
+                    )
+                  )
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Compliance validation evidence missing'
+                    if not compliance_present
+                    else (
+                      'Requested compliance standards are not fully satisfied'
+                      if (requested_compliance_standards | length) > 0 and (ns.requested_gaps | length) > 0
+                      else (
+                        'Compliance profile bundle validation failed'
+                        if (requested_compliance_standards | length) > 0 and compliance_invalid_profilebundle_count > 0
+                        else 'Compliance validation configuration incomplete'
+                      )
+                    )
+                  ),
+                  'source': 'compliance requirements validation evidence',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': (1 + (requested_compliance_standards | length)),
+                'finding_count': (findings | length),
+                'checks': ([{
+                  'capability': 'compliance_requirements_validation',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'compliance requirements validation evidence',
+                  'detail': top_detail
+                }] + ns.standard_checks),
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'workload_vulnerability_scanning') -%}
+          {%- set scanner_subscription_present = false -%}
+          {%- for pkg in (subscription_packages | default([])) -%}
+            {%- set lowered = pkg | string | lower -%}
+            {%- if lowered in ['trivy-operator', 'container-security-operator', 'aqua', 'aqua-operator', 'qualys-cloud-agent-operator', 'prisma-cloud-compute'] -%}
+              {%- set scanner_subscription_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set scanner_crd_present = false -%}
+          {%- for crd in ((analysis_graph.crds | default({})).get('items', []) | default([])) -%}
+            {%- set crd_name = (((crd.get('metadata') or {}).get('name')) or '') | string | lower -%}
+            {%- if 'aquasecurity.github.io' in crd_name or 'vulnerabilityreports' in crd_name -%}
+              {%- set scanner_crd_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set scanner_namespace_present = false -%}
+          {%- for ns_name in (namespace_names | default([])) -%}
+            {%- set lowered = ns_name | string | lower -%}
+            {%- if lowered in ['trivy-system', 'stackrox', 'rhacs-operator', 'aqua', 'qualys', 'qualys-agent', 'twistlock', 'prisma-cloud'] -%}
+              {%- set scanner_namespace_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set scanner_workload_present = false -%}
+          {%- for blob in (all_workload_blobs | default([])) -%}
+            {%- set lowered = blob | string | lower -%}
+            {%- if 'trivy-operator' in lowered or 'starboard' in lowered or 'trivy-scanner' in lowered or 'aqua' in lowered or 'qualys' in lowered or 'qualys-cloud-agent' in lowered or 'twistlock' in lowered or 'prisma-cloud' in lowered or 'vulnerability-scanner' in lowered or 'stackrox-scanner' in lowered -%}
+              {%- set scanner_workload_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set scanner_context_present = scanner_subscription_present or scanner_crd_present or scanner_namespace_present or scanner_workload_present -%}
+          {%- set scanner_present = scanner_workload_present -%}
+          {%- set capability_status = (
+                'OK'
+                if scanner_present
+                else ('WARNING' if (scanner_context_present or (section.required | default(false))) else 'INFO')
+              ) -%}
+          {%- set top_detail = (
+                'scannerPresent=' ~ (scanner_present | string)
+                ~ ' scannerContextPresent=' ~ (scanner_context_present | string)
+                ~ ' scannerSubscriptionPresent=' ~ (scanner_subscription_present | string)
+                ~ ' scannerCrdPresent=' ~ (scanner_crd_present | string)
+                ~ ' scannerWorkloadPresent=' ~ (scanner_workload_present | string)
+                ~ ' scannerNamespacePresent=' ~ (scanner_namespace_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No workload-vulnerability-scanning remediation is required for this capability.'
+                if capability_status == 'OK'
+                else (
+                  'Scanner context was detected from namespace, subscription, or CRD evidence, but no live workload vulnerability or security scanner workload footprint was found. Review operator rollout and active scanner deployment state.'
+                  if scanner_context_present
+                  else 'No live workload vulnerability or security scanner workload footprint was detected. If scanner coverage is expected, review RHACS, Qualys, Prisma Cloud, Aqua, Trivy, or equivalent scanner deployment evidence.'
+                )
+              ) -%}
+          {%- set findings = (
+                []
+                if capability_status == 'OK'
+                else [{
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
+                  'issue': (
+                    'Scanner context present but no live scanner workload footprint detected'
+                    if scanner_context_present
+                    else 'No workload vulnerability or security scanner footprint detected'
+                  ),
+                  'source': 'live workload scanner operator, agent, and report inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'workload_vulnerability_scanning',
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'live workload scanner operator, agent, and report inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- elif (not capability_assessment_completed) and (section.key | default('') == 'advanced_cluster_security') -%}
+          {%- set acs_operator_subscription_present = ('container-security-operator' in (subscription_packages | default([]))) -%}
+          {%- set acs_namespace_present = ('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([]))) -%}
+          {%- set acs_crd_present = false -%}
+          {%- for crd in ((analysis_graph.crds | default({})).get('items', []) | default([])) -%}
+            {%- set crd_name = (((crd.get('metadata') or {}).get('name')) or '') | string | lower -%}
+            {%- if 'platform.stackrox.io' in crd_name or 'central.stackrox.io' in crd_name or 'securedcluster.stackrox.io' in crd_name or 'stackrox.io' in crd_name -%}
+              {%- set acs_crd_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set acs_workload_present = false -%}
+          {%- for blob in (all_workload_blobs | default([])) -%}
+            {%- set lowered = blob | string | lower -%}
+            {%- if 'stackrox-central' in lowered or 'central-db' in lowered or 'stackrox-scanner' in lowered or 'stackrox-scanner-db' in lowered or 'secured-cluster-services' in lowered or 'admission-control' in lowered or 'stackrox-sensor' in lowered -%}
+              {%- set acs_workload_present = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set advanced_cluster_security_present = acs_operator_subscription_present or acs_namespace_present or acs_crd_present or acs_workload_present -%}
+          {%- set capability_status = ('OK' if advanced_cluster_security_present else 'INFO') -%}
+          {%- set top_detail = (
+                'subscriptionPresent=' ~ (acs_operator_subscription_present | string)
+                ~ ' acsNamespacePresent=' ~ (acs_namespace_present | string)
+                ~ ' acsCrdPresent=' ~ (acs_crd_present | string)
+                ~ ' acsWorkloadPresent=' ~ (acs_workload_present | string)
+              ) -%}
+          {%- set recommended_action = (
+                'No RHACS footprint remediation is required for this capability.'
+                if advanced_cluster_security_present
+                else 'No RHACS operator, CRD, namespace, or secured-cluster workload footprint was detected. If RHACS is the intended workload-security platform, review operator installation and secured-cluster rollout evidence.'
+              ) -%}
+          {%- set findings = (
+                []
+                if advanced_cluster_security_present
+                else [{
+                  'severity': 'info',
+                  'issue': 'Advanced Cluster Security footprint missing',
+                  'source': 'RHACS operator and secured-cluster inventory',
+                  'recommended_action': recommended_action
+                }]
+              ) -%}
+          {%- set updated = section | combine({
+                'status': capability_status,
+                'accounting_state': 'assessed',
+                'check_count': 1,
+                'finding_count': (findings | length),
+                'checks': [{
+                  'capability': 'advanced_cluster_security',
+                  'status': ('OK' if advanced_cluster_security_present else 'INFO'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'RHACS operator and secured-cluster inventory',
+                  'detail': top_detail
+                }],
+                'findings': findings,
+                'top_detail': top_detail,
+                'recommended_action': recommended_action
+              }, recursive=True) -%}
+        {%- endif -%}
+        {%- set _ = sections.append(updated) -%}
+      {%- endfor -%}
+      {{ sections }}

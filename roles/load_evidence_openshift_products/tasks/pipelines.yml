@@ -1,0 +1,48 @@
+---
+- name: Build pipelines product evidence summary
+  vars:
+    pipeline_items: "{{ (product_graph_current.pipelines | default({'items': []})).get('items', []) }}"
+    pipelinerun_items: "{{ (product_graph_current.pipelineruns | default({'items': []})).get('items', []) }}"
+    pipeline_sources: >-
+      {{
+        (
+          (pipeline_items + pipelinerun_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (pipeline_items + pipelinerun_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((pipeline_items | length > 0) or (pipelinerun_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'pipelines': {
+            'installed': ((pipeline_items | length) > 0) or ((pipelinerun_items | length) > 0),
+            'health_applicable': ((pipeline_items | length) > 0) or ((pipelinerun_items | length) > 0),
+            'present': ((pipeline_items | length) > 0) or ((pipelinerun_items | length) > 0),
+            'pipeline_count': (pipeline_items | length),
+            'pipelinerun_count': (pipelinerun_items | length),
+            'failed_pipelinerun_count': (
+              pipelinerun_items
+              | map('to_json')
+              | select('search', '"type": "Succeeded"')
+              | select('search', '"status": "False"')
+              | list
+              | length
+            ),
+            'evidence_sources': pipeline_sources
+          }
+        }, recursive=True)
+      }}

@@ -38,8 +38,20 @@ printf '[%s] Writing CI run output to %s\n' "$(date '+%H:%M:%S')" "${LOG_FILE}"
 
 FINAL_MD="${ROOT_DIR}/reports/ci-cluster-report.md"
 FINAL_JSON="${ROOT_DIR}/reports/ci-cluster-report.json"
+FINAL_WORKSPACE_MD="${ROOT_DIR}/reports/.run-state/openshift/collected-artifacts/report/ci-cluster-report.md"
+FINAL_WORKSPACE_JSON="${ROOT_DIR}/reports/.run-state/openshift/collected-artifacts/report/ci-cluster-report.json"
 TEMP_REPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ci-cluster-report.XXXXXX")"
+EFFECTIVE_REPORT_DIR="${TEMP_REPORT_DIR}"
 trap 'rm -rf "${TEMP_REPORT_DIR}"' EXIT
+
+args=("$@")
+for ((i=0; i<${#args[@]}; i++)); do
+  if [[ "${args[i]}" == "-e" && $((i + 1)) -lt ${#args[@]} ]]; then
+    if [[ "${args[i+1]}" == report_output_dir=* ]]; then
+      EFFECTIVE_REPORT_DIR="${args[i+1]#report_output_dir=}"
+    fi
+  fi
+done
 
 ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
 ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
@@ -48,11 +60,11 @@ OHC_FORCE_TASK_PROGRESS=1 \
   -e report_output_dir="${TEMP_REPORT_DIR}" \
   "$@"
 
-latest_json="$(find "${TEMP_REPORT_DIR}" -maxdepth 1 -name '*.json' -print | sort | tail -n 1)"
-latest_md="$(find "${TEMP_REPORT_DIR}" -maxdepth 1 -name '*.md' -print | sort | tail -n 1)"
+latest_json="$(find "${EFFECTIVE_REPORT_DIR}" -maxdepth 1 -name '*.json' -print | sort | tail -n 1)"
+latest_md="$(find "${EFFECTIVE_REPORT_DIR}" -maxdepth 1 -name '*.md' -print | sort | tail -n 1)"
 
 if [[ -z "${latest_json}" || -z "${latest_md}" ]]; then
-  echo "unable to locate generated report artifacts in ${TEMP_REPORT_DIR}" >&2
+  echo "unable to locate generated report artifacts in ${EFFECTIVE_REPORT_DIR}" >&2
   exit 1
 fi
 
@@ -60,4 +72,14 @@ mkdir -p "${ROOT_DIR}/reports"
 cp "${latest_json}" "${FINAL_JSON}"
 cp "${latest_md}" "${FINAL_MD}"
 
-printf 'ci report ok\nsource_md=%s\nsource_json=%s\nmd=%s\njson=%s\n' "${latest_md}" "${latest_json}" "${FINAL_MD}" "${FINAL_JSON}"
+if [[ -d "${EFFECTIVE_REPORT_DIR}/.run-state" ]]; then
+  rm -rf "${ROOT_DIR}/reports/.run-state"
+  cp -R "${EFFECTIVE_REPORT_DIR}/.run-state" "${ROOT_DIR}/reports/.run-state"
+fi
+
+mkdir -p "$(dirname "${FINAL_WORKSPACE_MD}")"
+cp "${latest_md}" "${FINAL_WORKSPACE_MD}"
+cp "${latest_json}" "${FINAL_WORKSPACE_JSON}"
+
+printf 'ci report ok\nsource_md=%s\nsource_json=%s\nmd=%s\njson=%s\nworkspace_md=%s\nworkspace_json=%s\n' \
+  "${latest_md}" "${latest_json}" "${FINAL_MD}" "${FINAL_JSON}" "${FINAL_WORKSPACE_MD}" "${FINAL_WORKSPACE_JSON}"

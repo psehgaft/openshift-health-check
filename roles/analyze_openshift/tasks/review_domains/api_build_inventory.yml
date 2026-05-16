@@ -1,0 +1,102 @@
+---
+- name: Build APIService availability findings
+  ansible.builtin.set_fact:
+    apiservice_issues: "{{ apiservice_issues | default([]) + apiservice_issue_entry }}"
+  loop: "{{ (analysis_graph.apiservices | default({})).get('items', []) }}"
+  vars:
+    available_condition: "{{ (item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | list | first) | default({}) }}"
+    service_ref: "{{ ((item.spec.service.namespace | default('')) ~ '/' ~ (item.spec.service.name | default(''))) if (item.spec.service is defined) else 'Local' }}"
+    apiservice_issue_entry: >-
+      {{
+        [{
+          'name': item.metadata.name | default('unknown'),
+          'service': service_ref,
+          'available': available_condition.status | default('Unknown'),
+          'reason': available_condition.reason | default('unknown'),
+          'detail': available_condition.message | default(available_condition.reason | default('APIService is not reporting Available=True'))
+        }]
+        if ((available_condition.status | default('Unknown')) != 'True')
+        else []
+      }}
+  changed_when: false
+
+- name: Build secret type counts
+  ansible.builtin.set_fact:
+    secret_type_counts: "{{ secret_type_counts | default({}) | combine({secret_type: (((secret_type_counts | default({}))[secret_type] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
+  vars:
+    secret_type: "{{ item.type | default('unknown') }}"
+  changed_when: false
+
+- name: Build BuildConfig strategy counts
+  ansible.builtin.set_fact:
+    buildconfig_strategy_counts: "{{ buildconfig_strategy_counts | default({}) | combine({strategy_name: (((buildconfig_strategy_counts | default({}))[strategy_name] | default(0)) + 1)}, recursive=True) }}"
+    buildconfigs_without_triggers: "{{ buildconfigs_without_triggers | default([]) + triggerless_entry }}"
+  loop: "{{ (analysis_graph.buildconfigs | default({})).get('items', []) }}"
+  vars:
+    strategy_name: >-
+      {{
+        'Source'
+        if (item.spec.strategy.sourceStrategy is defined)
+        else (
+          'Docker'
+          if (item.spec.strategy.dockerStrategy is defined)
+          else (
+            'Custom'
+            if (item.spec.strategy.customStrategy is defined)
+            else (
+              'JenkinsPipeline'
+              if (item.spec.strategy.jenkinsPipelineStrategy is defined)
+              else 'Unknown'
+            )
+          )
+        )
+      }}
+    triggerless_entry: >-
+      {{
+        [{
+          'namespace': item.metadata.namespace | default(''),
+          'name': item.metadata.name | default(''),
+          'strategy': strategy_name
+        }]
+        if ((item.spec.triggers | default([]) | length) == 0)
+        else []
+      }}
+  changed_when: false
+
+- name: Build PipelineRun status summary
+  ansible.builtin.set_fact:
+    pipelinerun_status_counts: "{{ pipelinerun_status_counts | default({}) | combine({pipelinerun_status: (((pipelinerun_status_counts | default({}))[pipelinerun_status] | default(0)) + 1)}, recursive=True) }}"
+    failed_pipelineruns: "{{ failed_pipelineruns | default([]) + failed_pipelinerun_entry }}"
+  loop: "{{ (analysis_graph.pipelineruns | default({})).get('items', []) }}"
+  vars:
+    succeeded_condition: "{{ (item.status.conditions | default([]) | selectattr('type', 'equalto', 'Succeeded') | list | first) | default({}) }}"
+    pipelinerun_status: >-
+      {{
+        'Succeeded'
+        if (succeeded_condition.status | default('')) == 'True'
+        else (
+          'Failed'
+          if (succeeded_condition.status | default('')) == 'False'
+          else (
+            'Running'
+            if (succeeded_condition.status | default('')) == 'Unknown'
+            else (item.status.phase | default('Unknown'))
+          )
+        )
+      }}
+    failed_pipelinerun_entry: >-
+      {{
+        [{
+          'namespace': item.metadata.namespace | default(''),
+          'name': item.metadata.name | default(''),
+          'pipeline': ((item.metadata.labels | default({})).get('tekton.dev/pipeline', 'unknown')),
+          'status': pipelinerun_status,
+          'reason': succeeded_condition.reason | default(item.status.reason | default('unknown')),
+          'started_at': item.status.startTime | default('unknown'),
+          'completed_at': item.status.completionTime | default('in-progress')
+        }]
+        if (pipelinerun_status == 'Failed')
+        else []
+      }}
+  changed_when: false

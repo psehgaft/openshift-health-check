@@ -1,0 +1,143 @@
+- name: Build Prometheus alert summaries
+  ansible.builtin.set_fact:
+    firing_alerts_by_severity: "{{ firing_alerts_by_severity | default({}) | combine({severity: ((((firing_alerts_by_severity | default({}))[severity] | default(0)) + 1))}, recursive=True) }}"
+    firing_alert_name_counts: "{{ firing_alert_name_counts | default({}) | combine({alert_name: ((((firing_alert_name_counts | default({}))[alert_name] | default(0)) + 1))}, recursive=True) }}"
+    firing_alert_namespace_counts: "{{ firing_alert_namespace_counts | default({}) | combine({alert_namespace: ((((firing_alert_namespace_counts | default({}))[alert_namespace] | default(0)) + 1))}, recursive=True) }}"
+  loop: "{{ firing_alerts | default([]) }}"
+  vars:
+    severity: "{{ item.metric.severity | default('unknown') }}"
+    alert_name: "{{ item.metric.alertname | default('unknown') }}"
+    alert_namespace: "{{ item.metric.namespace | default('cluster') }}"
+  changed_when: false
+
+- name: Build utilization summaries
+  ansible.builtin.set_fact:
+    low_cpu_nodes: "{{ low_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (cpu_value | float)}] if (cpu_value | float) < 20 else []) }}"
+    high_cpu_nodes: "{{ high_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (cpu_value | float)}] if (cpu_value | float) > 85 else []) }}"
+  loop: "{{ node_cpu_utilization_results | default([]) if ((runtime_signal_resolution_map.node_cpu_utilization | default({})).get('status') == 'observed') else [] }}"
+  vars:
+    cpu_value: "{{ (item.value[1] | float | round(1)) }}"
+  changed_when: false
+
+- name: Build memory summaries
+  ansible.builtin.set_fact:
+    low_memory_nodes: "{{ low_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (mem_value | float)}] if (mem_value | float) < 30 else []) }}"
+    high_memory_nodes: "{{ high_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (mem_value | float)}] if (mem_value | float) > 85 else []) }}"
+  loop: "{{ node_memory_utilization_results | default([]) if ((runtime_signal_resolution_map.node_memory_utilization | default({})).get('status') == 'observed') else [] }}"
+  vars:
+    mem_value: "{{ (item.value[1] | float | round(1)) }}"
+  changed_when: false
+
+- name: Build disk summaries
+  ansible.builtin.set_fact:
+    high_disk_nodes: "{{ high_disk_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (disk_value | float)}] if (disk_value | float) > 85 else []) }}"
+  loop: "{{ node_disk_utilization_results | default([]) if ((runtime_signal_resolution_map.node_disk_utilization | default({})).get('status') == 'observed') else [] }}"
+  vars:
+    disk_value: "{{ (item.value[1] | float | round(1)) }}"
+  changed_when: false
+
+- name: Build pod density summaries
+  ansible.builtin.set_fact:
+    high_pod_density_nodes: "{{ high_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': (density_value | float)}] if (density_value | float) > (pod_density_warn_pct | float) else []) }}"
+    critical_pod_density_nodes: "{{ critical_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': (density_value | float)}] if (density_value | float) > (pod_density_critical_pct | float) else []) }}"
+  loop: "{{ kubelet_pod_density_results | default([]) }}"
+  vars:
+    density_value: "{{ (item.value[1] | float | round(1)) }}"
+  changed_when: false
+
+- name: Build certificate expiry severity buckets
+  ansible.builtin.set_fact:
+    expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) + ([item | combine({'days_remaining': (expiry_days | float)})] if (expiry_days | float) <= (certificate_expiry_warn_days | float) else []) }}"
+    expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) + ([item | combine({'days_remaining': (expiry_days | float)})] if (expiry_days | float) <= (certificate_expiry_critical_days | float) else []) }}"
+  loop: "{{ certificate_expiry_findings | default([]) }}"
+  vars:
+    expiry_days: "{{ (((item.not_after | to_datetime('%b %d %H:%M:%S %Y %Z')) - (report_generated_at | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).total_seconds() / 86400) | round(1) }}"
+  changed_when: false
+
+- name: Build overprovisioned pod findings from Prometheus usage
+  block:
+    - name: Create overprovisioned pod input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-overprovisioned-pods-
+        suffix: .json
+      register: overprovisioned_pods_input_file
+      changed_when: false
+
+    - name: Write overprovisioned pod input data
+      ansible.builtin.copy:
+        dest: "{{ overprovisioned_pods_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'cpu_usage': (pod_cpu_usage_all_results | default([])),
+          'memory_usage': (pod_memory_usage_all_results | default([])),
+          'exclude_regex': user_namespaces_exclude_regex,
+          'cpu_usage_status': (((runtime_signal_resolution_map.pod_cpu_usage_all | default({})).get('status', 'not-collected'))),
+          'memory_usage_status': (((runtime_signal_resolution_map.pod_memory_usage_all | default({})).get('status', 'not-collected')))
+        } | to_json }}"
+      changed_when: false
+      when: prom_available | bool
+
+    - name: Run overprovisioned pod analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_overprovisioned_pods.py"
+          - "{{ overprovisioned_pods_input_file.path }}"
+      register: overprovisioned_pods_cmd
+      changed_when: false
+      failed_when: false
+      when: prom_available | bool
+  always:
+    - name: Remove overprovisioned pod input file
+      ansible.builtin.file:
+        path: "{{ overprovisioned_pods_input_file.path }}"
+        state: absent
+      when:
+        - prom_available | bool
+        - overprovisioned_pods_input_file is defined
+        - (overprovisioned_pods_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize overprovisioned pod findings
+  ansible.builtin.set_fact:
+    overprovisioned_pods: "{{ overprovisioned_pods_cmd.stdout | from_json if (overprovisioned_pods_cmd is defined and overprovisioned_pods_cmd.rc is defined and overprovisioned_pods_cmd.rc == 0 and (overprovisioned_pods_cmd.stdout | default('') | length > 0)) else [] }}"
+
+- name: Build quota pressure findings
+  block:
+    - name: Create quota pressure input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-quota-pressure-
+        suffix: .json
+      register: quota_pressure_input_file
+      changed_when: false
+
+    - name: Write quota pressure input data
+      ansible.builtin.copy:
+        dest: "{{ quota_pressure_input_file.path }}"
+        mode: "0600"
+        content: "{{ ((analysis_graph.resourcequotas | default({})).get('items', [])) | to_json }}"
+      changed_when: false
+
+    - name: Run quota pressure analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_quota_pressure_findings.py"
+          - "{{ quota_pressure_input_file.path }}"
+      register: quota_pressure_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove quota pressure input file
+      ansible.builtin.file:
+        path: "{{ quota_pressure_input_file.path }}"
+        state: absent
+      when: quota_pressure_input_file is defined and (quota_pressure_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize quota pressure findings
+  ansible.builtin.set_fact:
+    quota_pressure_findings: "{{ quota_pressure_cmd.stdout | from_json if (quota_pressure_cmd.rc == 0 and (quota_pressure_cmd.stdout | default('') | length > 0)) else [] }}"

@@ -1,0 +1,61 @@
+---
+- name: Build platform health posture artifact facts
+  ansible.builtin.set_fact:
+    posture_artifact_key: platform_health
+    posture_artifact_analysis_summary: "{{ core_platform_health_summary | default(assessment_health_summary | default({})) }}"
+    posture_artifact_findings:
+      findings: "{{ core_platform_health_findings | default(assessment_health_findings | default([])) }}"
+      etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
+      omc_findings: "{{ omc_findings | default([]) }}"
+      apiservice_issues: "{{ apiservice_issues | default([]) }}"
+      image_registry_findings: "{{ image_registry_findings | default([]) }}"
+      feature_findings: "{{ feature_findings | default([]) }}"
+    posture_artifact_render_inputs:
+      summary: "{{ core_platform_health_summary | default(assessment_health_summary | default({})) }}"
+      findings: "{{ core_platform_health_findings | default(assessment_health_findings | default([])) }}"
+      operators: "{{ assessment_operator_status_summary | default([]) }}"
+      infrastructure_component_summary: "{{ infrastructure_component_summary | default([]) }}"
+      infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) }}"
+      etcd_ocp_diag_summary: "{{ etcd_ocp_diag_summary | default({}) }}"
+      etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
+      omc_summary: "{{ omc_summary | default({}) }}"
+      omc_findings: "{{ omc_findings | default([]) }}"
+      apiservice_issues: "{{ apiservice_issues | default([]) }}"
+      image_registry_findings: "{{ image_registry_findings | default([]) }}"
+      feature_findings: "{{ feature_findings | default([]) }}"
+      internal_registry_workloads: "{{ internal_registry_workloads | default([]) }}"
+    posture_artifact_collection_inputs:
+      operators_degraded: "{{ (core_platform_health_summary | default(assessment_health_summary | default({}))).get('operators_degraded', 0) }}"
+      operators_unavailable: "{{ (core_platform_health_summary | default(assessment_health_summary | default({}))).get('operators_unavailable', 0) }}"
+      nodes_not_ready: "{{ (core_platform_health_summary | default(assessment_health_summary | default({}))).get('nodes_not_ready', 0) }}"
+      node_pressure_count: "{{ (core_platform_health_summary | default(assessment_health_summary | default({}))).get('node_pressure_count', 0) }}"
+      apiserver_readyz_failed: "{{ (core_platform_health_summary | default(assessment_health_summary | default({}))).get('apiserver_readyz_failed', 0) }}"
+      etcd_runtime_degraded: "{{ (core_platform_health_summary | default(assessment_health_summary | default({}))).get('etcd_runtime_degraded', 0) }}"
+    posture_artifact_section_fields:
+      summary: "{{ core_platform_health_summary | default(assessment_health_summary | default({})) }}"
+      recommendations: >-
+        {{
+          (
+            'Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.'
+            if ((core_platform_health_summary | default(assessment_health_summary | default({}))).get('status', 'unknown')) == 'CRITICAL'
+            else (
+              'Reduce platform warning conditions next: review high-impact progressing operators, API or etcd runtime degradation, node pressure, and route or APIService warnings before treating the cluster as steady state.'
+              if ((core_platform_health_summary | default(assessment_health_summary | default({}))).get('status', 'unknown')) == 'WARNING'
+              else 'Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.'
+            )
+          )
+        }}
+      findings: "{{ core_platform_health_findings | default(assessment_health_findings | default([])) }}"
+      operators: "{{ assessment_operator_status_summary | default([]) }}"
+      infrastructure_components:
+        summary: "{{ infrastructure_component_summary | default([]) }}"
+        issues: "{{ infrastructure_component_issues | default([]) }}"
+      etcd_ocp_diag_summary: "{{ etcd_ocp_diag_summary | default({}) }}"
+      etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
+      omc_summary: "{{ omc_summary | default({}) }}"
+      omc_findings: "{{ omc_findings | default([]) }}"
+      apiservice_issues: "{{ apiservice_issues | default([]) }}"
+      image_registry:
+        findings: "{{ image_registry_findings | default([]) }}"
+        feature_findings: "{{ feature_findings | default([]) }}"
+        internal_registry_workloads: "{{ internal_registry_workloads | default([]) }}"

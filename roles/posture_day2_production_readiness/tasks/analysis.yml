@@ -1,0 +1,111 @@
+---
+- name: Build Day 2 production readiness synthesis summary
+  vars:
+    readiness_lifecycle_warning: >-
+      {{
+        (architecture_lifecycle_summary.support_status | default('unknown')) not in ['supported', 'unknown']
+      }}
+    readiness_upgrade_blocked: "{{ (upgrade_readiness_summary.status | default('not-assessed')) == 'BLOCKED' }}"
+    readiness_upgrade_warning: "{{ (upgrade_readiness_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_observability_critical: "{{ (observability_summary.status | default('not-assessed')) == 'CRITICAL' }}"
+    readiness_observability_warning: "{{ (observability_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_backup_critical: "{{ (backup_recovery_summary.status | default('not-assessed')) == 'CRITICAL' }}"
+    readiness_backup_warning: "{{ (backup_recovery_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_security_critical: "{{ (security_compliance_summary.status | default('not-assessed')) == 'CRITICAL' }}"
+    readiness_security_warning: "{{ (security_compliance_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_operations_warning: "{{ (declarative_operations_summary.status | default('not-assessed')) == 'WARNING' }}"
+    readiness_extensions_warning: false
+    readiness_collection: "{{ assessment_collection_summary | default(report_collection | default({})) }}"
+    readiness_collection_confidence: >-
+      {{
+        'low'
+        if (readiness_collection.core_failed_commands | default(0) | int) > 0
+        else (
+          'medium'
+          if (
+            (readiness_collection.failed_commands | default(0) | int) > 0
+            or (readiness_collection.timed_out_commands | default(0) | int) > 0
+          )
+          else 'high'
+        )
+      }}
+    readiness_evidence_confidence: "{{ supportability_summary.evidence_confidence | default(report_confidence | default(readiness_collection_confidence)) }}"
+    readiness_evidence_warning: "{{ readiness_evidence_confidence in ['low', 'unknown'] }}"
+    day2_production_readiness_status: >-
+      {{
+        'CRITICAL'
+        if (
+          readiness_upgrade_blocked
+          or readiness_observability_critical
+          or readiness_backup_critical
+          or readiness_security_critical
+        )
+        else (
+          'WARNING'
+          if (
+            readiness_lifecycle_warning
+            or readiness_upgrade_warning
+            or readiness_observability_warning
+            or readiness_backup_warning
+            or readiness_security_warning
+            or readiness_operations_warning
+            or readiness_extensions_warning
+            or readiness_evidence_warning
+          )
+          else 'HEALTHY'
+        )
+      }}
+    day2_production_readiness_top_blockers: >-
+      {{
+        (
+          []
+          + (['Upgrade readiness is blocked'] if readiness_upgrade_blocked else [])
+          + (['Observability posture is critical'] if readiness_observability_critical else [])
+          + (['Backup and disaster recovery posture is critical'] if readiness_backup_critical else [])
+          + (['Security and compliance posture is critical'] if readiness_security_critical else [])
+          + (['Evidence confidence is limited'] if readiness_evidence_warning else [])
+          + (['Lifecycle support needs review'] if (not readiness_upgrade_blocked and readiness_lifecycle_warning) else [])
+          + (['Observability posture needs review'] if (not readiness_observability_critical and readiness_observability_warning) else [])
+          + (['Backup and disaster recovery posture needs review'] if (not readiness_backup_critical and readiness_backup_warning) else [])
+          + (['Security and compliance posture needs review'] if (not readiness_security_critical and readiness_security_warning) else [])
+          + (['Operations maturity needs review'] if readiness_operations_warning else [])
+        )[:3]
+      }}
+    day2_production_readiness_reason_summary: >-
+      {{
+        (
+          []
+          + (['lifecycle support=' ~ (architecture_lifecycle_summary.support_status | default('unknown'))] if readiness_lifecycle_warning else [])
+          + (['upgrade readiness=' ~ (upgrade_readiness_summary.status | default('not-assessed'))] if (readiness_upgrade_blocked or readiness_upgrade_warning) else [])
+          + (['observability=' ~ (observability_summary.status | default('not-assessed'))] if (readiness_observability_critical or readiness_observability_warning) else [])
+          + (['backup and DR=' ~ (backup_recovery_summary.status | default('not-assessed'))] if (readiness_backup_critical or readiness_backup_warning) else [])
+          + (['security and compliance=' ~ (security_compliance_summary.status | default('not-assessed'))] if (readiness_security_critical or readiness_security_warning) else [])
+          + (['declarative operations=' ~ (declarative_operations_summary.status | default('not-assessed'))] if readiness_operations_warning else [])
+          + (['evidence confidence=' ~ readiness_evidence_confidence] if readiness_evidence_warning else [])
+        ) | join('; ')
+      }}
+    day2_production_readiness_recommendation: >-
+      {{
+        (
+          'Production readiness is blocked by higher-risk posture gaps. Resolve critical blockers in priority order: close evidence gaps if confidence is low, clear upgrade blockers, then fix critical observability, backup, disaster-recovery, security, or compliance findings before treating the cluster as production-ready.'
+          if day2_production_readiness_status == 'CRITICAL'
+          else (
+            'Production readiness needs follow-up. Address lifecycle, upgrade, observability, recovery, security, operations, or evidence-confidence warnings in the owning posture sections, then re-run the report before declaring the cluster production-ready.'
+            if day2_production_readiness_status == 'WARNING'
+            else 'Day 2 production readiness looks acceptable for this run. Keep lifecycle, observability, recovery, and operations maturity under normal review as the cluster evolves.'
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    day2_production_readiness_summary:
+      status: "{{ day2_production_readiness_status }}"
+      reason_summary: "{{ day2_production_readiness_reason_summary }}"
+      recommendation: "{{ day2_production_readiness_recommendation }}"
+      lifecycle_support_status: "{{ architecture_lifecycle_summary.support_status | default('unknown') }}"
+      upgrade_readiness_status: "{{ upgrade_readiness_summary.status | default('not-assessed') }}"
+      observability_status: "{{ observability_summary.status | default('not-assessed') }}"
+      backup_recovery_status: "{{ backup_recovery_summary.status | default('not-assessed') }}"
+      security_compliance_status: "{{ security_compliance_summary.status | default('not-assessed') }}"
+      declarative_operations_status: "{{ declarative_operations_summary.status | default('not-assessed') }}"
+      evidence_confidence: "{{ readiness_evidence_confidence }}"
+      top_blockers: "{{ day2_production_readiness_top_blockers }}"

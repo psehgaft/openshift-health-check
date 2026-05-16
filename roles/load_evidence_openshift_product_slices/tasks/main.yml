@@ -1,0 +1,518 @@
+---
+- name: Resolve scoped product evidence graph and families
+  ansible.builtin.set_fact:
+    scoped_product_graph: "{{ analysis_graph | default(collected_resource_graph | default({})) }}"
+    scoped_product_evidence_families: "{{ report_scope_selected_product_evidence_families | default([]) }}"
+
+- name: Initialize scoped product evidence defaults
+  ansible.builtin.set_fact:
+    assessment_product_evidence:
+      pipelines:
+        installed: false
+        health_applicable: false
+        present: false
+        pipeline_count: 0
+        pipelinerun_count: 0
+        failed_pipelinerun_count: 0
+        evidence_sources: []
+      logging:
+        installed: false
+        health_applicable: false
+        present: false
+        namespace_present: false
+        clusterlogforwarder_count: 0
+        output_count: 0
+        clusterlogforwarders_with_outputs: 0
+        evidence_sources: []
+      gitops:
+        installed: false
+        health_applicable: false
+        present: false
+        namespace_present: false
+        argocd_count: 0
+        application_count: 0
+        appproject_count: 0
+        evidence_sources: []
+      odf:
+        installed: false
+        health_applicable: false
+        present: false
+        storagecluster_count: 0
+        cephcluster_count: 0
+        noobaa_count: 0
+        volumesnapshotclass_count: 0
+        dataprotectionapplication_count: 0
+        snapshot_protection_ready: false
+        backup_integration_present: false
+        evidence_sources: []
+      virtualization:
+        installed: false
+        health_applicable: false
+        present: false
+        kubevirt_count: 0
+        hyperconverged_count: 0
+        ssp_count: 0
+        cdi_count: 0
+        virtualmachine_count: 0
+        virtualmachineinstance_count: 0
+        datavolume_count: 0
+        unhealthy_kubevirt_count: 0
+        unhealthy_hyperconverged_count: 0
+        nonrunning_vmi_count: 0
+        evidence_sources: []
+      ai:
+        installed: false
+        health_applicable: false
+        present: false
+        datasciencecluster_count: 0
+        dscinitialization_count: 0
+        notebook_count: 0
+        servingruntime_count: 0
+        inferenceservice_count: 0
+        modelmeshserving_count: 0
+        acceleratorprofile_count: 0
+        unready_datasciencecluster_count: 0
+        unready_inferenceservice_count: 0
+        evidence_sources: []
+
+- name: Build scoped pipelines product evidence summary
+  vars:
+    pipeline_items: "{{ (scoped_product_graph.pipelines | default({'items': []})).get('items', []) }}"
+    pipelinerun_items: "{{ (scoped_product_graph.pipelineruns | default({'items': []})).get('items', []) }}"
+    pipeline_sources: >-
+      {{
+        (
+          (pipeline_items + pipelinerun_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (pipeline_items + pipelinerun_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((pipeline_items | length > 0) or (pipelinerun_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'pipelines': {
+            'installed': ((pipeline_items | length) > 0) or ((pipelinerun_items | length) > 0),
+            'health_applicable': ((pipeline_items | length) > 0) or ((pipelinerun_items | length) > 0),
+            'present': ((pipeline_items | length) > 0) or ((pipelinerun_items | length) > 0),
+            'pipeline_count': (pipeline_items | length),
+            'pipelinerun_count': (pipelinerun_items | length),
+            'failed_pipelinerun_count': (
+              pipelinerun_items
+              | map('to_json')
+              | select('search', '"type": "Succeeded"')
+              | select('search', '"status": "False"')
+              | list
+              | length
+            ),
+            'evidence_sources': pipeline_sources
+          }
+        }, recursive=True)
+      }}
+  when: "'pipelines' in scoped_product_evidence_families"
+
+- name: Build scoped GitOps product evidence summary
+  vars:
+    argocd_items: "{{ (scoped_product_graph.argocds | default({'items': []})).get('items', []) }}"
+    gitops_application_items: "{{ (scoped_product_graph.gitops_applications | default({'items': []})).get('items', []) }}"
+    gitops_appproject_items: "{{ (scoped_product_graph.gitops_appprojects | default({'items': []})).get('items', []) }}"
+    openshift_gitops_namespace_items: "{{ ((scoped_product_graph.namespaces | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', 'openshift-gitops') | list) }}"
+    gitops_sources: >-
+      {{
+        (
+          (argocd_items + gitops_application_items + gitops_appproject_items + openshift_gitops_namespace_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (argocd_items + gitops_application_items + gitops_appproject_items + openshift_gitops_namespace_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((argocd_items | length > 0) or (gitops_application_items | length > 0) or (gitops_appproject_items | length > 0) or (openshift_gitops_namespace_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'gitops': {
+            'installed': ((argocd_items | length) > 0) or ((gitops_application_items | length) > 0) or ((gitops_appproject_items | length) > 0) or ((openshift_gitops_namespace_items | length) > 0),
+            'health_applicable': ((argocd_items | length) > 0) or ((gitops_application_items | length) > 0) or ((gitops_appproject_items | length) > 0) or ((openshift_gitops_namespace_items | length) > 0),
+            'present': ((argocd_items | length) > 0) or ((gitops_application_items | length) > 0) or ((gitops_appproject_items | length) > 0) or ((openshift_gitops_namespace_items | length) > 0),
+            'namespace_present': (openshift_gitops_namespace_items | length) > 0,
+            'argocd_count': (argocd_items | length),
+            'application_count': (gitops_application_items | length),
+            'appproject_count': (gitops_appproject_items | length),
+            'evidence_sources': gitops_sources
+          }
+        }, recursive=True)
+      }}
+  when: "'gitops' in scoped_product_evidence_families"
+
+- name: Build scoped ODF product evidence summary
+  vars:
+    storagecluster_items: "{{ (scoped_product_graph.storageclusters | default({'items': []})).get('items', []) }}"
+    cephcluster_items: "{{ (scoped_product_graph.cephclusters | default({'items': []})).get('items', []) }}"
+    noobaa_items: "{{ (scoped_product_graph.noobaas | default({'items': []})).get('items', []) }}"
+    volumesnapshotclass_items: "{{ (scoped_product_graph.volumesnapshotclasses | default({'items': []})).get('items', []) }}"
+    dataprotectionapplication_items: "{{ (scoped_product_graph.dataprotectionapplications | default({'items': []})).get('items', []) }}"
+    odf_sources: >-
+      {{
+        (
+          (storagecluster_items + cephcluster_items + noobaa_items + volumesnapshotclass_items + dataprotectionapplication_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (storagecluster_items + cephcluster_items + noobaa_items + volumesnapshotclass_items + dataprotectionapplication_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((storagecluster_items | length > 0) or (cephcluster_items | length > 0) or (noobaa_items | length > 0) or (volumesnapshotclass_items | length > 0) or (dataprotectionapplication_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'odf': {
+            'installed': ((storagecluster_items | length) > 0) or ((cephcluster_items | length) > 0) or ((noobaa_items | length) > 0),
+            'health_applicable': ((storagecluster_items | length) > 0) or ((cephcluster_items | length) > 0) or ((noobaa_items | length) > 0),
+            'present': ((storagecluster_items | length) > 0) or ((cephcluster_items | length) > 0) or ((noobaa_items | length) > 0),
+            'storagecluster_count': (storagecluster_items | length),
+            'cephcluster_count': (cephcluster_items | length),
+            'noobaa_count': (noobaa_items | length),
+            'volumesnapshotclass_count': (volumesnapshotclass_items | length),
+            'dataprotectionapplication_count': (dataprotectionapplication_items | length),
+            'snapshot_protection_ready': (volumesnapshotclass_items | length) > 0,
+            'backup_integration_present': (dataprotectionapplication_items | length) > 0,
+            'evidence_sources': odf_sources
+          }
+        }, recursive=True)
+      }}
+  when: "'odf' in scoped_product_evidence_families"
+
+- name: Build scoped logging product evidence summary
+  vars:
+    clusterlogforwarder_items: "{{ (scoped_product_graph.clusterlogforwarders | default({'items': []})).get('items', []) }}"
+    openshift_logging_namespace_items: "{{ ((scoped_product_graph.namespaces | default({'items': []})).get('items', []) | selectattr('metadata.name', 'equalto', 'openshift-logging') | list) }}"
+    logging_sources: >-
+      {{
+        (
+          (clusterlogforwarder_items + openshift_logging_namespace_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (clusterlogforwarder_items + openshift_logging_namespace_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((clusterlogforwarder_items | length > 0) or (openshift_logging_namespace_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'logging': {
+            'installed': ((clusterlogforwarder_items | length) > 0) or ((openshift_logging_namespace_items | length) > 0),
+            'health_applicable': ((clusterlogforwarder_items | length) > 0) or ((openshift_logging_namespace_items | length) > 0),
+            'present': ((clusterlogforwarder_items | length) > 0) or ((openshift_logging_namespace_items | length) > 0),
+            'namespace_present': (openshift_logging_namespace_items | length) > 0,
+            'clusterlogforwarder_count': (clusterlogforwarder_items | length),
+            'output_count': (
+              clusterlogforwarder_items
+              | map(attribute='spec.outputs')
+              | map('default', [])
+              | map('length')
+              | map('int')
+              | sum
+            ),
+            'clusterlogforwarders_with_outputs': (
+              clusterlogforwarder_items
+              | map(attribute='spec.outputs')
+              | map('default', [])
+              | map('length')
+              | map('int')
+              | select('gt', 0)
+              | list
+              | length
+            ),
+            'evidence_sources': logging_sources
+          }
+        }, recursive=True)
+      }}
+  when: "'logging' in scoped_product_evidence_families"
+
+- name: Build scoped virtualization product evidence summary
+  vars:
+    kubevirt_items: "{{ (scoped_product_graph.kubevirts | default({'items': []})).get('items', []) }}"
+    hyperconverged_items: "{{ (scoped_product_graph.hyperconvergeds | default({'items': []})).get('items', []) }}"
+    ssp_items: "{{ (scoped_product_graph.ssps | default({'items': []})).get('items', []) }}"
+    cdi_items: "{{ (scoped_product_graph.cdis | default({'items': []})).get('items', []) }}"
+    datavolume_items: "{{ (scoped_product_graph.datavolumes | default({'items': []})).get('items', []) }}"
+    virtualmachine_items: "{{ (scoped_product_graph.virtualmachines | default({'items': []})).get('items', []) }}"
+    virtualmachineinstance_items: "{{ (scoped_product_graph.virtualmachineinstances | default({'items': []})).get('items', []) }}"
+    virtualization_sources: >-
+      {{
+        (
+          (kubevirt_items + hyperconverged_items + ssp_items + cdi_items + datavolume_items + virtualmachine_items + virtualmachineinstance_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (kubevirt_items + hyperconverged_items + ssp_items + cdi_items + datavolume_items + virtualmachine_items + virtualmachineinstance_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((kubevirt_items | length > 0) or (hyperconverged_items | length > 0) or (virtualmachine_items | length > 0) or (virtualmachineinstance_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'virtualization': {
+            'installed': ((kubevirt_items | length) > 0) or ((hyperconverged_items | length) > 0) or ((virtualmachine_items | length) > 0) or ((virtualmachineinstance_items | length) > 0),
+            'health_applicable': ((kubevirt_items | length) > 0) or ((hyperconverged_items | length) > 0) or ((virtualmachine_items | length) > 0) or ((virtualmachineinstance_items | length) > 0),
+            'present': ((kubevirt_items | length) > 0) or ((hyperconverged_items | length) > 0) or ((virtualmachine_items | length) > 0) or ((virtualmachineinstance_items | length) > 0),
+            'kubevirt_count': (kubevirt_items | length),
+            'hyperconverged_count': (hyperconverged_items | length),
+            'ssp_count': (ssp_items | length),
+            'cdi_count': (cdi_items | length),
+            'virtualmachine_count': (virtualmachine_items | length),
+            'virtualmachineinstance_count': (virtualmachineinstance_items | length),
+            'datavolume_count': (datavolume_items | length),
+            'unhealthy_kubevirt_count': (
+              kubevirt_items
+              | map(attribute='status.conditions')
+              | map('default', [])
+              | map('to_json')
+              | reject('search', '"type": "Available", "status": "True"')
+              | list
+              | length
+            ),
+            'unhealthy_hyperconverged_count': (
+              hyperconverged_items
+              | map(attribute='status.conditions')
+              | map('default', [])
+              | map('to_json')
+              | reject('search', '"type": "Available", "status": "True"')
+              | list
+              | length
+            ),
+            'nonrunning_vmi_count': (
+              (virtualmachineinstance_items | rejectattr('status.phase', 'defined') | list | length)
+              + (
+                virtualmachineinstance_items
+                | selectattr('status.phase', 'defined')
+                | rejectattr('status.phase', 'equalto', 'Running')
+                | list
+                | length
+              )
+            ),
+            'evidence_sources': virtualization_sources
+          }
+        }, recursive=True)
+      }}
+  when: "'virtualization' in scoped_product_evidence_families"
+
+- name: Build scoped AI product evidence summary
+  vars:
+    datasciencecluster_items: "{{ (scoped_product_graph.datascienceclusters | default({'items': []})).get('items', []) }}"
+    dscinitialization_items: "{{ (scoped_product_graph.dscinitializations | default({'items': []})).get('items', []) }}"
+    notebook_items: "{{ (scoped_product_graph.notebooks | default({'items': []})).get('items', []) }}"
+    servingruntime_items: "{{ (scoped_product_graph.servingruntimes | default({'items': []})).get('items', []) }}"
+    inferenceservice_items: "{{ (scoped_product_graph.inferenceservices | default({'items': []})).get('items', []) }}"
+    modelmeshserving_items: "{{ (scoped_product_graph.modelmeshservings | default({'items': []})).get('items', []) }}"
+    acceleratorprofile_items: "{{ (scoped_product_graph.acceleratorprofiles | default({'items': []})).get('items', []) }}"
+    ai_sources: >-
+      {{
+        (
+          (datasciencecluster_items + dscinitialization_items + notebook_items + servingruntime_items + inferenceservice_items + modelmeshserving_items + acceleratorprofile_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (datasciencecluster_items + dscinitialization_items + notebook_items + servingruntime_items + inferenceservice_items + modelmeshserving_items + acceleratorprofile_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((datasciencecluster_items | length > 0) or (dscinitialization_items | length > 0) or (notebook_items | length > 0) or (servingruntime_items | length > 0) or (inferenceservice_items | length > 0) or (modelmeshserving_items | length > 0) or (acceleratorprofile_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'ai': {
+            'installed': ((datasciencecluster_items | length) > 0) or ((dscinitialization_items | length) > 0) or ((notebook_items | length) > 0) or ((servingruntime_items | length) > 0) or ((inferenceservice_items | length) > 0) or ((modelmeshserving_items | length) > 0) or ((acceleratorprofile_items | length) > 0),
+            'health_applicable': ((datasciencecluster_items | length) > 0) or ((dscinitialization_items | length) > 0) or ((notebook_items | length) > 0) or ((servingruntime_items | length) > 0) or ((inferenceservice_items | length) > 0) or ((modelmeshserving_items | length) > 0) or ((acceleratorprofile_items | length) > 0),
+            'present': ((datasciencecluster_items | length) > 0) or ((dscinitialization_items | length) > 0) or ((notebook_items | length) > 0) or ((servingruntime_items | length) > 0) or ((inferenceservice_items | length) > 0) or ((modelmeshserving_items | length) > 0) or ((acceleratorprofile_items | length) > 0),
+            'datasciencecluster_count': (datasciencecluster_items | length),
+            'dscinitialization_count': (dscinitialization_items | length),
+            'notebook_count': (notebook_items | length),
+            'servingruntime_count': (servingruntime_items | length),
+            'inferenceservice_count': (inferenceservice_items | length),
+            'modelmeshserving_count': (modelmeshserving_items | length),
+            'acceleratorprofile_count': (acceleratorprofile_items | length),
+            'unready_datasciencecluster_count': (
+              datasciencecluster_items
+              | map(attribute='status.conditions')
+              | map('default', [])
+              | map('to_json')
+              | select('search', '"type": "Ready", "status": "False"|"type": "Available", "status": "False"')
+              | list
+              | length
+            ),
+            'unready_inferenceservice_count': (
+              inferenceservice_items
+              | map(attribute='status.conditions')
+              | map('default', [])
+              | map('to_json')
+              | select('search', '"type": "Ready", "status": "False"')
+              | list
+              | length
+            ),
+            'evidence_sources': ai_sources
+          }
+        }, recursive=True)
+      }}
+  when: "'ai' in scoped_product_evidence_families"
+
+- name: Build scoped product-specific evidence findings
+  ansible.builtin.set_fact:
+    assessment_product_evidence_findings: >-
+      {{
+        []
+        + (
+          [{'severity': 'info', 'area': 'pipelines', 'detail': 'Tekton pipeline footprint detected: pipelines=' ~ ((assessment_product_evidence.pipelines.pipeline_count | default(0)) | string) ~ ', pipelineruns=' ~ ((assessment_product_evidence.pipelines.pipelinerun_count | default(0)) | string) ~ ', failed pipelineruns=' ~ ((assessment_product_evidence.pipelines.failed_pipelinerun_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.pipelines.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'logging', 'detail': 'Cluster logging footprint detected: ClusterLogForwarders=' ~ ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0)) | string) ~ ', outputs=' ~ ((assessment_product_evidence.logging.output_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.logging.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'logging', 'detail': 'openshift-logging namespace is present but no ClusterLogForwarder resource was detected.'}]
+          if ((assessment_product_evidence.logging.namespace_present | default(false) | bool) and ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0) | int) == 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'logging', 'detail': 'ClusterLogForwarder resources were detected without any configured outputs.'}]
+          if ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0) | int) > 0 and (assessment_product_evidence.logging.output_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'gitops', 'detail': 'GitOps footprint detected: Argo CD instances=' ~ ((assessment_product_evidence.gitops.argocd_count | default(0)) | string) ~ ', Applications=' ~ ((assessment_product_evidence.gitops.application_count | default(0)) | string) ~ ', AppProjects=' ~ ((assessment_product_evidence.gitops.appproject_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.gitops.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'gitops', 'detail': 'Argo CD is present but no GitOps Application resources were detected.'}]
+          if ((assessment_product_evidence.gitops.argocd_count | default(0) | int) > 0 and (assessment_product_evidence.gitops.application_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'gitops', 'detail': 'GitOps resources are present but no AppProject resources were detected.'}]
+          if ((assessment_product_evidence.gitops.present | default(false) | bool) and (assessment_product_evidence.gitops.appproject_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'virtualization', 'detail': 'OpenShift Virtualization footprint detected: KubeVirt=' ~ ((assessment_product_evidence.virtualization.kubevirt_count | default(0)) | string) ~ ', HyperConverged=' ~ ((assessment_product_evidence.virtualization.hyperconverged_count | default(0)) | string) ~ ', VMs=' ~ ((assessment_product_evidence.virtualization.virtualmachine_count | default(0)) | string) ~ ', VMIs=' ~ ((assessment_product_evidence.virtualization.virtualmachineinstance_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.virtualization.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'OpenShift Virtualization is installed but no KubeVirt control-plane resource was detected.'}]
+          if ((assessment_product_evidence.virtualization.present | default(false) | bool) and ((assessment_product_evidence.virtualization.kubevirt_count | default(0) | int) == 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'OpenShift Virtualization reported unhealthy KubeVirt or HyperConverged resources.'}]
+          if (((assessment_product_evidence.virtualization.unhealthy_kubevirt_count | default(0) | int) > 0) or ((assessment_product_evidence.virtualization.unhealthy_hyperconverged_count | default(0) | int) > 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'VirtualMachineInstances not in Running phase: ' ~ ((assessment_product_evidence.virtualization.nonrunning_vmi_count | string))}]
+          if (((assessment_product_evidence.virtualization.virtualmachineinstance_count | default(0) | int) > 0) and ((assessment_product_evidence.virtualization.nonrunning_vmi_count | default(0) | int) > 0))
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'ai', 'detail': 'OpenShift AI footprint detected: DataScienceClusters=' ~ ((assessment_product_evidence.ai.datasciencecluster_count | default(0)) | string) ~ ', notebooks=' ~ ((assessment_product_evidence.ai.notebook_count | default(0)) | string) ~ ', InferenceServices=' ~ ((assessment_product_evidence.ai.inferenceservice_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.ai.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'ai', 'detail': 'OpenShift AI reported DataScienceCluster resources that are not Ready or Available.'}]
+          if ((assessment_product_evidence.ai.unready_datasciencecluster_count | default(0) | int) > 0)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'ai', 'detail': 'InferenceService resources with Ready=False: ' ~ ((assessment_product_evidence.ai.unready_inferenceservice_count | string))}]
+          if ((assessment_product_evidence.ai.unready_inferenceservice_count | default(0) | int) > 0)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'odf', 'detail': 'ODF or storage-platform footprint detected: StorageClusters=' ~ ((assessment_product_evidence.odf.storagecluster_count | default(0)) | string) ~ ', CephClusters=' ~ ((assessment_product_evidence.odf.cephcluster_count | default(0)) | string) ~ ', VolumeSnapshotClasses=' ~ ((assessment_product_evidence.odf.volumesnapshotclass_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.odf.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'odf', 'detail': 'ODF resources are present but no VolumeSnapshotClass resources were detected.'}]
+          if ((assessment_product_evidence.odf.present | default(false) | bool) and not (assessment_product_evidence.odf.snapshot_protection_ready | default(false) | bool))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'odf', 'detail': 'ODF resources are present but no DataProtectionApplication resources were detected for backup integration.'}]
+          if ((assessment_product_evidence.odf.present | default(false) | bool) and not (assessment_product_evidence.odf.backup_integration_present | default(false) | bool))
+          else []
+        )
+      }}

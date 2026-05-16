@@ -1,0 +1,162 @@
+---
+- name: Create CI/CD runner summary input
+  ansible.builtin.tempfile:
+    state: file
+    prefix: openshift-cicd-runner-summary-
+    suffix: .json
+  register: cicd_runner_summary_input_file
+  changed_when: false
+
+- name: Write CI/CD runner summary input
+  ansible.builtin.copy:
+    dest: "{{ cicd_runner_summary_input_file.path }}"
+    content: "{{ analysis_graph | default({}) | to_json }}"
+    mode: "0600"
+  changed_when: false
+
+- name: Build CI/CD runner summary
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/build_cicd_runner_summary.py"
+      - "{{ cicd_runner_summary_input_file.path }}"
+  register: cicd_runner_summary_cmd
+  changed_when: false
+  failed_when: cicd_runner_summary_cmd.rc != 0
+
+- name: Normalize CI/CD runner summary
+  ansible.builtin.set_fact:
+    cicd_runner_analysis: "{{ cicd_runner_summary_cmd.stdout | from_json if (cicd_runner_summary_cmd.rc == 0 and (cicd_runner_summary_cmd.stdout | default('') | trim | length > 0)) else {'summary': {}, 'findings': []} }}"
+
+- name: Remove CI/CD runner summary input
+  ansible.builtin.file:
+    path: "{{ cicd_runner_summary_input_file.path }}"
+    state: absent
+  changed_when: false
+  when: cicd_runner_summary_input_file.path is defined
+
+- name: Build container platform adoption and release engineering summary
+  vars:
+    graph: "{{ analysis_graph | default({}) }}"
+    runner_summary: "{{ (cicd_runner_analysis | default({})).summary | default({}) }}"
+    pipeline_inventory_count: "{{ (graph.pipelines | default({})).get('items', []) | length }}"
+    pipelinerun_inventory_count: "{{ (graph.pipelineruns | default({})).get('items', []) | length }}"
+    buildconfig_inventory_count: "{{ (graph.buildconfigs | default({})).get('items', []) | length }}"
+    build_inventory_count: "{{ (graph.builds | default({})).get('items', []) | length }}"
+    imagestream_inventory_count: "{{ (graph.imagestreams | default({})).get('items', []) | length }}"
+    product_evidence_present_count: >-
+      {{
+        (
+          assessment_product_evidence | default({})
+        ) | dict2items | selectattr('value.present', 'defined') | selectattr('value.present', 'equalto', true) | list | length
+      }}
+    gitops_argocd_count: "{{ (gitops_summary | default({}))['argocd_count'] | default(0) }}"
+    gitops_application_count: "{{ (gitops_summary | default({}))['application_count'] | default(0) }}"
+    day2_tekton_present: "{{ (day2_posture_summary | default({}))['tekton_present'] | default(false) }}"
+    external_delivery_evidence_present: >-
+      {{
+        (
+          (gitops_argocd_count | int) > 0
+          or (gitops_application_count | int) > 0
+          or (day2_tekton_present | bool)
+          or (pipeline_inventory_count | int) > 0
+          or (pipelinerun_inventory_count | int) > 0
+          or (runner_summary.present | default(false) | bool)
+        )
+      }}
+    triggerless_buildconfig_warning_count: >-
+      {{
+        (buildconfigs_without_triggers | default([]) | length)
+        if (
+          (buildconfigs_without_triggers | default([]) | length) > 0
+          and not external_delivery_evidence_present
+        )
+        else 0
+      }}
+    triggerless_buildconfig_info_count: >-
+      {{
+        (buildconfigs_without_triggers | default([]) | length)
+        if (
+          (buildconfigs_without_triggers | default([]) | length) > 0
+          and external_delivery_evidence_present
+        )
+        else 0
+      }}
+    release_engineering_status: >-
+      {{
+        'WARNING'
+        if (
+          (failed_pipelineruns | default([]) | length) > 0
+          or (triggerless_buildconfig_warning_count | int) > 0
+          or (runner_summary.unhealthy_pod_count | default(0) | int) > 0
+          or (runner_summary.unschedulable_pod_count | default(0) | int) > 0
+          or (runner_summary.privileged_pod_count | default(0) | int) > 0
+        )
+        else (
+          'HEALTHY'
+          if (
+            (pipeline_inventory_count | int) > 0
+            or (pipelinerun_inventory_count | int) > 0
+            or (buildconfig_inventory_count | int) > 0
+            or (build_inventory_count | int) > 0
+            or (imagestream_inventory_count | int) > 0
+            or (runner_summary.present | default(false) | bool)
+          )
+          else 'INFO'
+        )
+      }}
+    release_engineering_reason_summary: >-
+      {{
+        (
+          []
+          + (['failed PipelineRuns=' ~ ((failed_pipelineruns | default([]) | length) | string)] if ((failed_pipelineruns | default([]) | length) > 0) else [])
+          + (['BuildConfigs without triggers=' ~ ((triggerless_buildconfig_warning_count | int) | string)] if (triggerless_buildconfig_warning_count | int) > 0 else [])
+          + (['BuildConfigs without triggers treated as automation context=' ~ ((triggerless_buildconfig_info_count | int) | string)] if (triggerless_buildconfig_info_count | int) > 0 else [])
+          + (['pipelines=' ~ ((pipeline_inventory_count | int) | string)] if (pipeline_inventory_count | int) > 0 else [])
+          + (['PipelineRuns=' ~ ((pipelinerun_inventory_count | int) | string)] if (pipelinerun_inventory_count | int) > 0 else [])
+          + (['BuildConfigs=' ~ ((buildconfig_inventory_count | int) | string)] if (buildconfig_inventory_count | int) > 0 else [])
+          + (['Builds=' ~ ((build_inventory_count | int) | string)] if (build_inventory_count | int) > 0 else [])
+          + (['ImageStreams=' ~ ((imagestream_inventory_count | int) | string)] if (imagestream_inventory_count | int) > 0 else [])
+          + (['cluster-hosted runner pods=' ~ ((runner_summary.runner_pod_count | default(0) | int) | string)] if (runner_summary.runner_pod_count | default(0) | int) > 0 else [])
+          + (['unhealthy runner pods=' ~ ((runner_summary.unhealthy_pod_count | default(0) | int) | string)] if (runner_summary.unhealthy_pod_count | default(0) | int) > 0 else [])
+          + (['unschedulable runner pods=' ~ ((runner_summary.unschedulable_pod_count | default(0) | int) | string)] if (runner_summary.unschedulable_pod_count | default(0) | int) > 0 else [])
+          + (['privileged runner pods=' ~ ((runner_summary.privileged_pod_count | default(0) | int) | string)] if (runner_summary.privileged_pod_count | default(0) | int) > 0 else [])
+          + (['no release-engineering footprint detected'] if ((pipeline_inventory_count | int) == 0 and (pipelinerun_inventory_count | int) == 0 and (buildconfig_inventory_count | int) == 0 and (build_inventory_count | int) == 0 and (imagestream_inventory_count | int) == 0 and not (runner_summary.present | default(false) | bool)) else [])
+        ) | join('; ')
+      }}
+    release_engineering_recommendation: >-
+      {{
+        (
+          'Reduce release-engineering risk next: investigate failed PipelineRuns first, fix unhealthy or unschedulable cluster-hosted runner pods, review privileged or unbounded runner pools, and review triggerless BuildConfigs only where no other delivery automation evidence exists.'
+          if release_engineering_status == 'WARNING'
+          else (
+            'Release-engineering evidence is present. Treat triggerless BuildConfigs as context when pipelines, cluster-hosted runners, or external automation already exist, and keep delivery failures and runner health under normal review.'
+            if (
+              (pipeline_inventory_count | int) > 0
+              or (pipelinerun_inventory_count | int) > 0
+              or (buildconfig_inventory_count | int) > 0
+              or (build_inventory_count | int) > 0
+              or (imagestream_inventory_count | int) > 0
+              or (runner_summary.present | default(false) | bool)
+            )
+            else 'No clear release-engineering footprint was detected in collected resources. Treat this as absence of evidence rather than an automatic defect unless delivery tooling or cluster-hosted runners are expected for this cluster.'
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    release_engineering_adoption_summary:
+      status: "{{ release_engineering_status }}"
+      reason_summary: "{{ release_engineering_reason_summary }}"
+      recommendation: "{{ release_engineering_recommendation }}"
+      pipeline_count: "{{ pipeline_inventory_count }}"
+      pipelinerun_count: "{{ pipelinerun_inventory_count }}"
+      buildconfig_count: "{{ buildconfig_inventory_count }}"
+      build_count: "{{ build_inventory_count }}"
+      imagestream_count: "{{ imagestream_inventory_count }}"
+      failed_pipelinerun_count: "{{ failed_pipelineruns | default([]) | length }}"
+      triggerless_buildconfig_warning_count: "{{ triggerless_buildconfig_warning_count }}"
+      triggerless_buildconfig_info_count: "{{ triggerless_buildconfig_info_count }}"
+      product_evidence_present_count: "{{ product_evidence_present_count }}"
+      external_delivery_evidence_present: "{{ external_delivery_evidence_present }}"
+      runner_summary: "{{ runner_summary }}"
+      runner_findings: "{{ (cicd_runner_analysis | default({})).findings | default([]) }}"

@@ -1,4 +1,69 @@
 ---
+- name: Check for reusable live report payload artifact
+  ansible.builtin.stat:
+    path: "{{ report_run_workspace_report_dir }}/payload.json"
+  register: report_resume_live_payload_artifact_stat
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+    - not ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
+
+- name: Resolve live report payload artifact reuse eligibility
+  ansible.builtin.set_fact:
+    report_resume_payload_reuse_active: >-
+      {{
+        (report_run_mode | default('fresh')) == 'resume_last_failure'
+        and (report_resume_live_payload_artifact_stat.stat.exists | default(false))
+        and (((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true)) | bool)
+        and not ((report_resume_artifact_plan | default({})).get('report', {}).get('invalidated', false) | bool)
+      }}
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+    - not ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
+
+- name: Load reusable live payload artifact
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: load_openshift_report_payload_artifact.yml
+  when: report_resume_payload_reuse_active | default(false) | bool
+
+- name: Resolve reusable live report artifact basenames for resume
+  ansible.builtin.set_fact:
+    report_resume_reusable_markdown_name: "{{ (report_resume_artifact_plan.report.markdown.path | default('') | basename) }}"
+    report_resume_reusable_json_name: "{{ (report_resume_artifact_plan.report.json.path | default('') | basename) }}"
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
+
+- name: Repoint live report output paths to reusable artifact names
+  ansible.builtin.set_fact:
+    report_path: "{{ report_output_dir }}/{{ report_resume_reusable_markdown_name }}"
+    report_json_path: "{{ report_output_dir }}/{{ report_resume_reusable_json_name }}"
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
+
+- name: Restore reusable live Markdown report into output directory
+  ansible.builtin.copy:
+    src: "{{ report_run_workspace_report_dir }}/{{ report_resume_reusable_markdown_name }}"
+    dest: "{{ report_path }}"
+    mode: "0644"
+    remote_src: true
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
+
+- name: Restore reusable live JSON report into output directory
+  ansible.builtin.copy:
+    src: "{{ report_run_workspace_report_dir }}/{{ report_resume_reusable_json_name }}"
+    dest: "{{ report_json_path }}"
+    mode: "0644"
+    remote_src: true
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
+
 - name: Re-wrap resumed report data structures as unsafe before Markdown render
   ansible.builtin.set_fact:
     analysis_graph: "{{ (analysis_graph | default({})) | ohc_wrap_unsafe }}"
@@ -16,19 +81,24 @@
     workload_summary: "{{ (workload_summary | default({})) | ohc_wrap_unsafe }}"
     architecture_lifecycle_summary: "{{ (architecture_lifecycle_summary | default({})) | ohc_wrap_unsafe }}"
     day2_readiness_summary: "{{ (day2_readiness_summary | default({})) | ohc_wrap_unsafe }}"
-  when: report_run_mode | default('fresh') == 'resume_last_failure'
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+    - not ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
 
 - name: Render final Markdown report
   ansible.builtin.template:
     src: "{{ report_markdown_template }}"
     dest: "{{ report_path }}"
     mode: "0644"
+  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Normalize unknown-state labels in final Markdown report
   ansible.builtin.replace:
     path: "{{ report_path }}"
     regexp: "\\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN|Unknown|unknown)\\b"
     replace: "not-assessed"
+  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Render final HTML report when pandoc is available
   ansible.builtin.command:
@@ -50,6 +120,7 @@
   when:
     - report_generate_html | default(true) | bool
     - report_pandoc_available | default(false) | bool
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Render final PDF report when a PDF engine is available
   ansible.builtin.command:
@@ -61,9 +132,45 @@
     - report_generate_pdf | default(true) | bool
     - report_pandoc_available | default(false) | bool
     - report_pdf_engine | length > 0
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Write final JSON report
   ansible.builtin.copy:
     dest: "{{ report_json_path }}"
     mode: "0644"
     content: "{{ audit_report | to_nice_json }}"
+  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+
+- name: Persist assembled live payload into run workspace
+  ansible.builtin.copy:
+    dest: "{{ report_run_workspace_report_dir }}/payload.json"
+    mode: "0644"
+    content: "{{ audit_report | to_nice_json }}"
+  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+
+- name: Persist final Markdown report into run workspace
+  ansible.builtin.copy:
+    src: "{{ report_path }}"
+    dest: "{{ report_run_workspace_report_dir }}/{{ report_path | basename }}"
+    mode: "0644"
+    remote_src: true
+  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+
+- name: Persist final JSON report into run workspace
+  ansible.builtin.copy:
+    src: "{{ report_json_path }}"
+    dest: "{{ report_run_workspace_report_dir }}/{{ report_json_path | basename }}"
+    mode: "0644"
+    remote_src: true
+  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+
+- name: Record final report artifacts in workspace manifest tracking
+  ansible.builtin.set_fact:
+    report_workspace_completed_artifacts: >-
+      {{
+        (report_workspace_completed_artifacts | default([]))
+        + ['report/' ~ (report_path | basename)]
+        + ['report/' ~ (report_json_path | basename)]
+        + ['report/payload.json']
+      }}
+  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)

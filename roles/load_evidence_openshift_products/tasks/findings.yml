@@ -1,0 +1,92 @@
+---
+- name: Build product-specific evidence findings
+  ansible.builtin.set_fact:
+    assessment_product_evidence_findings: >-
+      {{
+        []
+        + (
+          [{'severity': 'info', 'area': 'pipelines', 'detail': 'Tekton pipeline footprint detected: pipelines=' ~ ((assessment_product_evidence.pipelines.pipeline_count | default(0)) | string) ~ ', pipelineruns=' ~ ((assessment_product_evidence.pipelines.pipelinerun_count | default(0)) | string) ~ ', failed pipelineruns=' ~ ((assessment_product_evidence.pipelines.failed_pipelinerun_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.pipelines.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'logging', 'detail': 'Cluster logging footprint detected: ClusterLogForwarders=' ~ ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0)) | string) ~ ', outputs=' ~ ((assessment_product_evidence.logging.output_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.logging.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'logging', 'detail': 'openshift-logging namespace is present but no ClusterLogForwarder resource was detected.'}]
+          if ((assessment_product_evidence.logging.namespace_present | default(false) | bool) and ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0) | int) == 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'logging', 'detail': 'ClusterLogForwarder resources were detected without any configured outputs.'}]
+          if ((assessment_product_evidence.logging.clusterlogforwarder_count | default(0) | int) > 0 and (assessment_product_evidence.logging.output_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'gitops', 'detail': 'GitOps footprint detected: Argo CD instances=' ~ ((assessment_product_evidence.gitops.argocd_count | default(0)) | string) ~ ', Applications=' ~ ((assessment_product_evidence.gitops.application_count | default(0)) | string) ~ ', AppProjects=' ~ ((assessment_product_evidence.gitops.appproject_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.gitops.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'gitops', 'detail': 'Argo CD is present but no GitOps Application resources were detected.'}]
+          if ((assessment_product_evidence.gitops.argocd_count | default(0) | int) > 0 and (assessment_product_evidence.gitops.application_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'gitops', 'detail': 'GitOps resources are present but no AppProject resources were detected.'}]
+          if ((assessment_product_evidence.gitops.present | default(false) | bool) and (assessment_product_evidence.gitops.appproject_count | default(0) | int) == 0)
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'odf', 'detail': 'ODF or storage-platform footprint detected: StorageClusters=' ~ ((assessment_product_evidence.odf.storagecluster_count | default(0)) | string) ~ ', CephClusters=' ~ ((assessment_product_evidence.odf.cephcluster_count | default(0)) | string) ~ ', VolumeSnapshotClasses=' ~ ((assessment_product_evidence.odf.volumesnapshotclass_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.odf.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'odf', 'detail': 'ODF resources are present but no VolumeSnapshotClass resources were detected.'}]
+          if ((assessment_product_evidence.odf.present | default(false) | bool) and not (assessment_product_evidence.odf.snapshot_protection_ready | default(false) | bool))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'odf', 'detail': 'ODF resources are present but no DataProtectionApplication resources were detected for backup integration.'}]
+          if ((assessment_product_evidence.odf.present | default(false) | bool) and not (assessment_product_evidence.odf.backup_integration_present | default(false) | bool))
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'virtualization', 'detail': 'OpenShift Virtualization footprint detected: KubeVirt=' ~ ((assessment_product_evidence.virtualization.kubevirt_count | default(0)) | string) ~ ', HyperConverged=' ~ ((assessment_product_evidence.virtualization.hyperconverged_count | default(0)) | string) ~ ', VMs=' ~ ((assessment_product_evidence.virtualization.virtualmachine_count | default(0)) | string) ~ ', VMIs=' ~ ((assessment_product_evidence.virtualization.virtualmachineinstance_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.virtualization.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'OpenShift Virtualization is installed but no KubeVirt control-plane resource was detected.'}]
+          if ((assessment_product_evidence.virtualization.present | default(false) | bool) and ((assessment_product_evidence.virtualization.kubevirt_count | default(0) | int) == 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'OpenShift Virtualization reported unhealthy KubeVirt or HyperConverged resources.'}]
+          if (((assessment_product_evidence.virtualization.unhealthy_kubevirt_count | default(0) | int) > 0) or ((assessment_product_evidence.virtualization.unhealthy_hyperconverged_count | default(0) | int) > 0))
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'virtualization', 'detail': 'VirtualMachineInstances not in Running phase: ' ~ ((assessment_product_evidence.virtualization.nonrunning_vmi_count | string))}]
+          if (((assessment_product_evidence.virtualization.virtualmachineinstance_count | default(0) | int) > 0) and ((assessment_product_evidence.virtualization.nonrunning_vmi_count | default(0) | int) > 0))
+          else []
+        )
+        + (
+          [{'severity': 'info', 'area': 'ai', 'detail': 'OpenShift AI footprint detected: DataScienceClusters=' ~ ((assessment_product_evidence.ai.datasciencecluster_count | default(0)) | string) ~ ', notebooks=' ~ ((assessment_product_evidence.ai.notebook_count | default(0)) | string) ~ ', InferenceServices=' ~ ((assessment_product_evidence.ai.inferenceservice_count | default(0)) | string) ~ '.'}]
+          if (assessment_product_evidence.ai.present | default(false) | bool)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'ai', 'detail': 'OpenShift AI reported DataScienceCluster resources that are not Ready or Available.'}]
+          if ((assessment_product_evidence.ai.unready_datasciencecluster_count | default(0) | int) > 0)
+          else []
+        )
+        + (
+          [{'severity': 'warning', 'area': 'ai', 'detail': 'InferenceService resources with Ready=False: ' ~ ((assessment_product_evidence.ai.unready_inferenceservice_count | string))}]
+          if ((assessment_product_evidence.ai.unready_inferenceservice_count | default(0) | int) > 0)
+          else []
+        )
+      }}

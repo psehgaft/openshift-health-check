@@ -1,0 +1,25 @@
+---
+- name: Resolve production Day 2 capability sections
+  vars:
+    day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+    resolved_capability_profile: "{{ (cluster_health_profile | default({})).get('capabilities', {}) }}"
+  ansible.builtin.set_fact:
+    day2_capability_sections_resolved: >-
+      {%- set raw_sections = (
+            (day2_posture_payload.capability_sections | default([]))
+            if (
+              (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+              and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+            )
+            else (day2_capability_sections_fallback | default([]))
+          ) -%}
+      {%- set filtered_sections = [] -%}
+      {%- for section in (raw_sections | default([])) -%}
+        {%- set section_key = (section.key | default('') | string | trim) -%}
+        {%- set section_profile = resolved_capability_profile.get(section_key, {}) if section_key else {} -%}
+        {%- if section_key and (section_profile is mapping) and (section_profile.get('enabled', false) | bool) -%}
+        {%- set _ = filtered_sections.append(section) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ filtered_sections }}
+

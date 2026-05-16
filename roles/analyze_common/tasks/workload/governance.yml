@@ -1,0 +1,110 @@
+---
+- name: Build orphan pod review findings
+  ansible.builtin.set_fact:
+    orphan_pods: "{{ (orphan_pods | default([])) + orphan_pod_entry }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    phase: "{{ item.status.phase | default('Unknown') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    owner_references: "{{ item.metadata.ownerReferences | default([]) }}"
+    orphan_pod_entry: >-
+      {{
+        [{
+          'namespace': ns_name,
+          'name': item.metadata.name | default('unknown'),
+          'phase': phase
+        }]
+        if (
+          (is_user_namespace | bool)
+          and (phase not in ['Succeeded', 'Completed'])
+          and ((owner_references | length) == 0)
+        ) else []
+      }}
+  changed_when: false
+
+- name: Build workload ownership label review findings
+  ansible.builtin.set_fact:
+    workload_label_governance_findings: "{{ (workload_label_governance_findings | default([])) + label_review_entry }}"
+  loop: "{{ ((analysis_graph.deployments | default({})).get('items', [])) + ((analysis_graph.statefulsets | default({})).get('items', [])) + ((analysis_graph.daemonsets | default({})).get('items', [])) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    workload_name: "{{ item.metadata.name | default('unknown') }}"
+    workload_kind: "{{ item.kind | default('Workload') }}"
+    labels: "{{ item.metadata.labels | default({}) }}"
+    annotations: "{{ item.metadata.annotations | default({}) }}"
+    missing_parts: >-
+      {{
+        ([] +
+        (['app.kubernetes.io/name'] if (labels.get('app.kubernetes.io/name', '') | length) == 0 else []) +
+        (['app.kubernetes.io/instance'] if (labels.get('app.kubernetes.io/instance', '') | length) == 0 else []) +
+        (['app.kubernetes.io/component'] if (labels.get('app.kubernetes.io/component', '') | length) == 0 else []) +
+        (['app.kubernetes.io/part-of'] if (labels.get('app.kubernetes.io/part-of', '') | length) == 0 else []) +
+        (['app.kubernetes.io/managed-by'] if (labels.get('app.kubernetes.io/managed-by', '') | length) == 0 else []))
+      }}
+    label_context_values: >-
+      {{
+        ([] +
+        (['app=' ~ labels.get('app')] if (labels.get('app', '') | length) > 0 else []) +
+        (['app.kubernetes.io/name=' ~ labels.get('app.kubernetes.io/name')] if (labels.get('app.kubernetes.io/name', '') | length) > 0 else []) +
+        (['app.kubernetes.io/instance=' ~ labels.get('app.kubernetes.io/instance')] if (labels.get('app.kubernetes.io/instance', '') | length) > 0 else []) +
+        (['app.kubernetes.io/component=' ~ labels.get('app.kubernetes.io/component')] if (labels.get('app.kubernetes.io/component', '') | length) > 0 else []) +
+        (['app.kubernetes.io/part-of=' ~ labels.get('app.kubernetes.io/part-of')] if (labels.get('app.kubernetes.io/part-of', '') | length) > 0 else []) +
+        (['app.kubernetes.io/managed-by=' ~ labels.get('app.kubernetes.io/managed-by')] if (labels.get('app.kubernetes.io/managed-by', '') | length) > 0 else []) +
+        (['namespace=' ~ ns_name] if (ns_name | length) > 0 else []) +
+        (['workload=' ~ workload_name] if (workload_name | length) > 0 else []))
+      }}
+    annotation_context_values: >-
+      {{
+        ([] +
+        (['owner.email=' ~ annotations.get('owner.email')] if (annotations.get('owner.email', '') | length) > 0 else []) +
+        (['owner.contact=' ~ annotations.get('owner.contact')] if (annotations.get('owner.contact', '') | length) > 0 else []) +
+        (['contact=' ~ annotations.get('contact')] if (annotations.get('contact', '') | length) > 0 else []) +
+        (['description=' ~ annotations.get('description')] if (annotations.get('description', '') | length) > 0 else []) +
+        (['kind=' ~ workload_kind] if (workload_kind | length) > 0 else []))
+      }}
+    label_review_entry: >-
+      {{
+        [{
+          'kind': workload_kind,
+          'namespace': ns_name,
+          'name': workload_name,
+          'detail': missing_parts | join('; '),
+          'label_values': label_context_values,
+          'annotation_values': annotation_context_values
+        }]
+        if ((is_user_namespace | bool) and (missing_parts | length > 0)) else []
+      }}
+  changed_when: false
+
+- name: Build workload resource requirement findings
+  ansible.builtin.set_fact:
+    workload_resource_findings: "{{ (workload_resource_findings | default([])) + resource_entries }}"
+  loop: "{{ ((analysis_graph.deployments | default({})).get('items', [])) + ((analysis_graph.statefulsets | default({})).get('items', [])) + ((analysis_graph.daemonsets | default({})).get('items', [])) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    pod_spec: "{{ item.spec.template.spec | default({}) }}"
+    containers: "{{ (pod_spec.containers | default([])) + (pod_spec.initContainers | default([])) }}"
+    containers_without_requests: "{{ containers | rejectattr('resources.requests', 'defined') | map(attribute='name') | list }}"
+    containers_without_limits: "{{ containers | rejectattr('resources.limits', 'defined') | map(attribute='name') | list }}"
+    resource_entries: >-
+      {{
+        ([] +
+        ([{
+          'kind': item.kind | default('Workload'),
+          'namespace': ns_name,
+          'name': item.metadata.name | default('unknown'),
+          'issue': 'workload-missing-resource-requests',
+          'detail': containers_without_requests | join(', ')
+        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_requests | length > 0 else []) +
+        ([{
+          'kind': item.kind | default('Workload'),
+          'namespace': ns_name,
+          'name': item.metadata.name | default('unknown'),
+          'issue': 'workload-missing-resource-limits',
+          'detail': containers_without_limits | join(', ')
+        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_limits | length > 0 else []))
+      }}
+  changed_when: false

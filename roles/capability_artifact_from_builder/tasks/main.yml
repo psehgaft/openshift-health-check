@@ -1,0 +1,21 @@
+---
+- name: Validate capability artifact builder task selection
+  ansible.builtin.assert:
+    that:
+      - (capability_artifact_builder_tasks_from | default('') | trim | length) > 0
+    fail_msg: "Set capability_artifact_builder_tasks_from before including capability_artifact_from_builder."
+
+- name: Resolve capability artifact resume decision
+  ansible.builtin.set_fact:
+    capability_artifact_key_current: "{{ capability_artifact_key_hint | default(role_name | regex_replace('^capability_', '')) }}"
+    capability_artifact_resume_decision: "{{ ((report_resume_artifact_plan | default({})).get('capabilities', {})).get((capability_artifact_key_hint | default(role_name | regex_replace('^capability_', ''))), {'should_build': true, 'reusable': false}) }}"
+
+- name: Build capability artifact facts from local builder task
+  ansible.builtin.include_tasks: "{{ capability_artifact_builder_tasks_from }}"
+  when: capability_artifact_resume_decision.should_build | default(true) | bool
+
+- name: Persist capability artifact from shared writer
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: persist_openshift_capability_artifact.yml
+  when: capability_artifact_resume_decision.should_build | default(true) | bool

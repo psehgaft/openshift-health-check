@@ -1,0 +1,76 @@
+---
+- name: Build core platform health posture findings
+  vars:
+    cv_available_resolved: "{{ cv_available | default('Unknown') }}"
+    cv_progressing_resolved: "{{ cv_progressing | default('Unknown') }}"
+    cv_failing_resolved: "{{ cv_failing | default('Unknown') }}"
+    apiserver_readyz_failed: >-
+      {{
+        (apiserver_readyz_status | default('unavailable')) == 'failed'
+        or (apiserver_readyz_failed_checks | default(0) | int) > 0
+      }}
+    high_impact_progressing_operators: >-
+      {{
+        (progressing_operators | default([]))
+        | select('in', ['authentication', 'dns', 'etcd', 'ingress', 'kube-apiserver', 'network'])
+        | list
+      }}
+    etcd_leader_unhealthy: >-
+      {{
+        (etcd_leader_count | default('') | string | length > 0)
+        and ((etcd_leader_count | float) != 1)
+      }}
+    apiserver_runtime_degraded: >-
+      {{
+        ((apiserver_request_5xx_rate | default('') | string | length > 0) and ((apiserver_request_5xx_rate | float) > 0))
+        or ((apiserver_request_p99_seconds | default('') | string | length > 0) and ((apiserver_request_p99_seconds | float) > (apiserver_latency_p99_warn_seconds | default(1) | float)))
+      }}
+    etcd_runtime_degraded: >-
+      {{
+        ((etcd_wal_fsync_p99_ms | default('') | string | length > 0) and ((etcd_wal_fsync_p99_ms | float) > (etcd_wal_fsync_p99_warn_ms | default(10) | float)))
+        or ((etcd_peer_rtt_p99_ms | default('') | string | length > 0) and ((etcd_peer_rtt_p99_ms | float) > (etcd_peer_rtt_p99_warn_ms | default(50) | float)))
+        or ((etcd_leader_changes_5m | default('') | string | length > 0) and ((etcd_leader_changes_5m | float) > 0))
+      }}
+    platform_etcd_diag_verdict: "{{ etcd_ocp_diag_summary.verdict | default('not-collected') }}"
+    platform_omc_diag_verdict: "{{ omc_summary.verdict | default('not-collected') }}"
+  ansible.builtin.set_fact:
+    core_platform_health_findings: >-
+      {{
+        []
+        + ([{'severity': 'critical', 'area': 'cluster-version', 'detail': 'ClusterVersion reports failing=True or unavailable without progressing.'}] if (cv_failing_resolved == 'True' or (cv_available_resolved == 'False' and cv_progressing_resolved != 'True')) else [])
+        + ([{'severity': 'critical', 'area': 'operators', 'detail': 'Degraded operators: ' ~ (degraded_operators | join(', '))}] if (degraded_operators | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'operators', 'detail': 'Unavailable operators: ' ~ (unavailable_operators | join(', '))}] if (unavailable_operators | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'nodes', 'detail': 'NotReady nodes: ' ~ (not_ready_nodes | join(', '))}] if (not_ready_nodes | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'machine-config', 'detail': 'Degraded MachineConfigPools: ' ~ (degraded_mcps | join(', '))}] if (degraded_mcps | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'network-access', 'detail': 'Route, ingress, or ingress-controller health issues were detected.'}] if ((route_issues | default([]) | length > 0) or (ingress_issues | default([]) | length > 0) or (route_host_conflicts | default([]) | length > 0) or (ingress_host_conflicts | default([]) | length > 0) or (ingresscontroller_issues | default([]) | length > 0)) else [])
+        + ([{'severity': 'critical', 'area': 'apiservices', 'detail': 'Unavailable aggregated API services: ' ~ ((apiservice_issues | default([]) | length) | string)}] if (apiservice_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'critical', 'area': 'api-readyz', 'detail': 'API /readyz failed or reported failed checks.'}] if apiserver_readyz_failed else [])
+        + ([{'severity': 'critical', 'area': 'etcd', 'detail': 'etcd leader count is not healthy.'}] if etcd_leader_unhealthy else [])
+        + ([{'severity': 'critical', 'area': 'etcd-diagnostics', 'detail': 'etcd diagnostics verdict: ' ~ platform_etcd_diag_verdict}] if platform_etcd_diag_verdict == 'unsupported-risk' else [])
+        + ([{'severity': 'critical', 'area': 'omc-diagnostics', 'detail': 'OMC diagnostics verdict: ' ~ platform_omc_diag_verdict}] if platform_omc_diag_verdict == 'unsupported-risk' else [])
+        + ([{'severity': 'warning', 'area': 'cluster-version', 'detail': 'ClusterVersion is progressing or availability is unknown.'}] if (cv_progressing_resolved == 'True' or cv_available_resolved == 'Unknown') else [])
+        + ([{'severity': 'warning', 'area': 'operators', 'detail': 'High-impact operators progressing: ' ~ (high_impact_progressing_operators | join(', '))}] if (high_impact_progressing_operators | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'nodes', 'detail': 'Nodes under pressure: ' ~ ((pressure_nodes | default([]) | map(attribute='name') | list) | join(', '))}] if (pressure_nodes | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'api-runtime', 'detail': 'API request errors or latency exceeded warning thresholds.'}] if apiserver_runtime_degraded else [])
+        + ([{'severity': 'warning', 'area': 'etcd-runtime', 'detail': 'etcd latency or leader-change metrics exceeded warning thresholds.'}] if etcd_runtime_degraded else [])
+        + ([{'severity': 'warning', 'area': 'etcd-diagnostics', 'detail': 'etcd diagnostics verdict: ' ~ platform_etcd_diag_verdict}] if platform_etcd_diag_verdict == 'review-required' else [])
+        + ([{'severity': 'warning', 'area': 'omc-diagnostics', 'detail': 'OMC diagnostics verdict: ' ~ platform_omc_diag_verdict}] if platform_omc_diag_verdict == 'review-required' else [])
+        + ([{'severity': 'warning', 'area': 'platform-pods', 'detail': 'Platform namespace pod issues: ' ~ ((platform_pod_issues | default([]) | length) | string)}] if (platform_pod_issues | default([]) | length > 0) else [])
+        + ([{'severity': 'warning', 'area': 'image-registry', 'detail': 'Image registry findings: ' ~ ((image_registry_findings | default([]) | length) | string)}] if (image_registry_findings | default([]) | length > 0) else [])
+      }}
+
+- name: Finalize core platform health posture summary
+  vars:
+    core_platform_critical_count: "{{ core_platform_health_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length }}"
+    core_platform_warning_count: "{{ core_platform_health_findings | default([]) | selectattr('severity', 'equalto', 'warning') | list | length }}"
+  ansible.builtin.set_fact:
+    core_platform_health_summary: "{{ (health_summary | default({})) | combine({
+      'status': ('CRITICAL' if (core_platform_critical_count | int) > 0 else ('WARNING' if (core_platform_warning_count | int) > 0 else 'HEALTHY')),
+      'core_platform_runtime_reason_summary': (
+        core_platform_health_findings | default([]) | map(attribute='detail') | list | join('; ')
+        if ((core_platform_critical_count | int) + (core_platform_warning_count | int)) > 0
+        else ''
+      ),
+      'critical_findings': core_platform_critical_count,
+      'warning_findings': core_platform_warning_count
+    }, recursive=True) }}"

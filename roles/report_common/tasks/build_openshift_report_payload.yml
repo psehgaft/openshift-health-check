@@ -20,7 +20,7 @@
           last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"
           resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
           run_mode: "{{ report_run_mode | default('fresh') }}"
-      cluster_profile: "{{ cluster_profile | default({}) }}"
+      cluster_profile: "{{ openshift_artifact_backed_cluster_profile | default(cluster_profile | default({})) }}"
       cluster_current_state: {}
       health_summary: "{{ assessment_health_summary | default({}) }}"
       supportability:
@@ -45,7 +45,7 @@
         omc_summary: "{{ omc_summary | default({}) }}"
         omc_findings: "{{ omc_findings | default([]) }}"
       evidence:
-        summary: "{{ evidence_summary | default({}) }}"
+        summary: "{{ openshift_shared_collection_artifact.evidence_summary | default(evidence_summary | default({})) }}"
         coverage: >-
           {{
             (evidence_coverage | default({}))
@@ -182,20 +182,96 @@
           last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"
           resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
           run_mode: "{{ report_run_mode | default('fresh') }}"
-      cluster_profile: {}
-      cluster_current_state: {}
-      health_summary:
-        status: "{{ (health_summary | default({})).get('status', 'UNKNOWN') }}"
-      supportability: {}
-      evidence: {}
-      domains: {}
-      findings: {}
+      cluster_profile: "{{ report_render_cluster_profile | default(openshift_artifact_backed_cluster_profile | default(cluster_profile | default({}))) }}"
+      cluster_current_state: "{{ cluster_current_state | default({}) }}"
+      health_summary: "{{ health_summary | default({}) }}"
+      supportability:
+        summary: "{{ live_supportability_summary | default({}) }}"
+        reference_compliance_summary: "{{ live_reference_compliance_summary | default({}) }}"
+        reference_compliance_findings: "{{ top_live_cluster_compare_findings | default([]) }}"
+        managed_gate_summary: "{{ live_support_data.parsed.managed_gates.summary | default({}) }}"
+        managed_gate_findings: "{{ top_live_managed_gate_findings | default([]) }}"
+        advisor_summary: "{{ live_support_data.parsed.advisor_export.summary | default({}) }}"
+        advisor_findings: "{{ top_live_advisor_findings | default([]) }}"
+        insights_archive_summary: "{{ insights_archive_summary | default({}) }}"
+        insights_archive_findings: "{{ insights_archive_findings | default([]) }}"
+        must_gather_findings: "{{ top_live_must_gather_findings | default([]) }}"
+        etcd_ocp_diag_summary: "{{ etcd_ocp_diag_summary | default({}) }}"
+        etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
+        omc_summary: "{{ omc_summary | default({}) }}"
+        omc_findings: "{{ top_live_omc_findings | default([]) }}"
+        node_diagnostics_summary: "{{ live_node_diagnostics_summary | default({}) }}"
+        node_diagnostics_findings: "{{ (top_live_inspect_findings | default([])) + (top_live_sosreport_findings | default([])) }}"
+      evidence:
+        summary: "{{ live_evidence_summary | default({}) }}"
+        coverage: "{{ live_evidence_coverage | default({}) }}"
+      domains: "{{ openshift_report_domain_payload | default({}) }}"
+      findings:
+        report_collection_failures: "{{ report_collection_failures | default([]) }}"
+        degraded_operators: "{{ degraded_operators | default([]) }}"
+        unavailable_operators: "{{ unavailable_operators | default([]) }}"
+        not_ready_nodes: "{{ not_ready_nodes | default([]) }}"
+        pressure_nodes: "{{ pressure_nodes | default([]) }}"
+        infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) }}"
+        apiservice_issues: "{{ top_apiservice_issues | default([]) }}"
+        ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) }}"
+        workload_health_issues: "{{ top_workload_health_issues | default([]) }}"
+        unhealthy_user_pods: "{{ top_unhealthy_user_pods | default([]) }}"
+        workload_probe_findings: "{{ top_workload_probe_findings | default([]) }}"
+        high_restart_pods: "{{ top_high_restart_pods | default([]) }}"
+        high_replica_workloads: "{{ top_high_replica_workloads | default([]) }}"
+        orphan_pods: "{{ top_orphan_pods | default([]) }}"
+        workload_label_governance_findings: "{{ top_workload_label_governance_findings | default([]) }}"
+        workload_resource_findings: "{{ top_workload_resource_findings | default([]) }}"
+        overprovisioned_pods: "{{ top_overprovisioned_pods | default([]) }}"
+        failed_pipelineruns: "{{ top_failed_pipelineruns | default([]) }}"
+        buildconfigs_without_triggers: "{{ top_buildconfigs_without_triggers | default([]) }}"
+        quota_pressure_findings: "{{ top_quota_pressure_findings | default([]) }}"
+        route_issues: "{{ top_route_issues | default([]) }}"
+        ingress_issues: "{{ top_ingress_issues | default([]) }}"
+        route_host_conflicts: "{{ top_route_host_conflicts | default([]) }}"
+        ingress_host_conflicts: "{{ top_ingress_host_conflicts | default([]) }}"
+        auth_findings: "{{ auth_findings | default([]) }}"
+        security_findings: "{{ top_security_findings | default([]) }}"
+        workload_practice_findings: "{{ top_workload_practice_findings | default([]) }}"
+        empty_user_namespaces: "{{ empty_user_namespaces | default([]) }}"
+        services_without_endpoints: "{{ top_services_without_endpoints | default([]) }}"
+        likely_unused_serviceaccounts: "{{ top_likely_unused_serviceaccounts | default([]) }}"
+        likely_unused_configmaps: "{{ top_likely_unused_configmaps | default([]) }}"
+        likely_unused_secrets: "{{ top_likely_unused_secrets | default([]) }}"
+        likely_unused_crds: "{{ top_likely_unused_crds | default([]) }}"
+        image_registry_findings: "{{ top_image_registry_findings | default([]) }}"
+        internal_registry_workloads: "{{ top_internal_registry_workloads | default([]) }}"
+        feature_findings: "{{ top_feature_findings | default([]) }}"
+        scc_grant_findings: "{{ top_scc_grant_findings | default([]) }}"
+        compliance_suite_findings: "{{ top_compliance_suite_findings | default([]) }}"
+        backup_posture_findings: "{{ top_backup_posture_findings | default([]) }}"
+        machine_healthcheck_findings: "{{ top_machine_healthcheck_findings | default([]) }}"
+        day2_posture_findings: "{{ top_day2_posture_findings | default([]) }}"
+        cluster_compare_findings: "{{ top_live_cluster_compare_findings | default([]) }}"
+        managed_gate_findings: "{{ top_live_managed_gate_findings | default([]) }}"
+        advisor_findings: "{{ top_live_advisor_findings | default([]) }}"
+        insights_archive: "{{ insights_archive_findings | default([]) }}"
+        must_gather_findings: "{{ top_live_must_gather_findings | default([]) }}"
+        etcd_ocp_diag: "{{ etcd_ocp_diag_findings | default([]) }}"
+        omc: "{{ top_live_omc_findings | default([]) }}"
+        inspect_findings: "{{ top_live_inspect_findings | default([]) }}"
+        sosreport_findings: "{{ top_live_sosreport_findings | default([]) }}"
+        observability_findings: "{{ top_observability_findings | default([]) }}"
+        deprecated_crd_findings: "{{ top_deprecated_crd_findings | default([]) }}"
+        deprecated_api_lines: "{{ top_deprecated_api_lines | default([]) }}"
+        pv_issues: "{{ top_pv_issues | default([]) }}"
+        pvc_issues: "{{ top_pvc_issues | default([]) }}"
+        expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) }}"
+        expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) }}"
       metrics:
         report_collection:
           failed_commands: "{{ (report_collection | default({})).get('failed_commands', 0) }}"
           core_failed_commands: "{{ (report_collection | default({})).get('core_failed_commands', 0) }}"
         report_confidence: "{{ report_confidence | default('unknown') }}"
-      supplemental_artifacts: {}
+      supplemental_artifacts:
+        collection: "{{ (live_support_data | default({})).get('artifacts', {}).get('collection', {}) }}"
+        summary: "{{ (live_support_data | default({})).get('artifacts', {}).get('summary', {}) }}"
   when:
     - report_mode_resolved | default('live') != 'collected'
     - report_run_mode | default('fresh') == 'resume_last_failure'
@@ -221,7 +297,7 @@
           last_completed_stage: "{{ report_resume_last_completed_stage | default('') }}"
           resume_next_stage: "{{ report_resume_last_resume_next_stage | default('') }}"
           run_mode: "{{ report_run_mode | default('fresh') }}"
-      cluster_profile: "{{ report_render_cluster_profile if (report_run_mode | default('fresh')) == 'resume_last_failure' else (cluster_profile | default({})) }}"
+      cluster_profile: "{{ report_render_cluster_profile if (report_run_mode | default('fresh')) == 'resume_last_failure' else (openshift_artifact_backed_cluster_profile | default(cluster_profile | default({}))) }}"
       cluster_current_state: "{{ cluster_current_state | default({}) }}"
       health_summary: "{{ health_summary | default({}) }}"
       supportability:

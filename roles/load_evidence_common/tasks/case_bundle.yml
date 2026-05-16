@@ -1,0 +1,94 @@
+---
+- name: Stat optional case bundle path
+  ansible.builtin.stat:
+    path: "{{ case_bundle_path }}"
+  register: case_bundle_path_stat
+  when: case_bundle_path | default('') | trim | length > 0
+
+- name: Fail when case bundle path is missing
+  ansible.builtin.assert:
+    that:
+      - case_bundle_path_stat.stat.exists
+      - case_bundle_path_stat.stat.isdir
+    fail_msg: "case_bundle_path does not exist or is not a directory."
+  when: case_bundle_path | default('') | trim | length > 0
+
+- name: Discover case bundle files
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/discover_case_bundle.py"
+      - "{{ case_bundle_path }}"
+  register: case_bundle_discovery
+  changed_when: false
+  when: case_bundle_path | default('') | trim | length > 0
+
+- name: Resolve evidence paths from case bundle
+  ansible.builtin.set_fact:
+    must_gather_path: "{{ resolved_must_gather_path }}"
+    cluster_compare_path: "{{ resolved_cluster_compare_path }}"
+    managed_gates_path: "{{ resolved_managed_gates_path }}"
+    inspect_path: "{{ resolved_inspect_path }}"
+    advisor_export_path: "{{ resolved_advisor_export_path }}"
+    insights_archive_path: "{{ resolved_insights_archive_path }}"
+    sosreport_paths: "{{ resolved_sosreport_paths }}"
+  vars:
+    bundle_data: "{{ (case_bundle_discovery.stdout | from_json) if (case_bundle_discovery.stdout | default('') | trim | length > 0) else {} }}"
+    resolved_must_gather_path: "{{ must_gather_path if (must_gather_path | default('') | trim | length > 0) else (bundle_data.must_gather_path | default('')) }}"
+    resolved_cluster_compare_path: "{{ cluster_compare_path if (cluster_compare_path | default('') | trim | length > 0) else (bundle_data.cluster_compare_path | default('')) }}"
+    resolved_managed_gates_path: "{{ managed_gates_path if (managed_gates_path | default('') | trim | length > 0) else (bundle_data.managed_gates_path | default('')) }}"
+    resolved_inspect_path: "{{ inspect_path if (inspect_path | default('') | trim | length > 0) else (bundle_data.inspect_path | default('')) }}"
+    resolved_advisor_export_path: "{{ advisor_export_path if (advisor_export_path | default('') | trim | length > 0) else (bundle_data.advisor_export_path | default('')) }}"
+    resolved_insights_archive_path: "{{ insights_archive_path if (insights_archive_path | default('') | trim | length > 0) else (bundle_data.insights_archive_path | default('')) }}"
+    resolved_sosreport_paths: "{{ sosreport_paths if (sosreport_paths | default([]) | length > 0) else (bundle_data.sosreport_paths | default([])) }}"
+  when: case_bundle_path | default('') | trim | length > 0
+
+- name: Reduce optional evidence paths for selector-scoped runs
+  ansible.builtin.set_fact:
+    cluster_compare_path: "{{ cluster_compare_path if (report_scope_requires_cluster_compare_evidence | default(true) | bool) else '' }}"
+    managed_gates_path: "{{ managed_gates_path if (report_scope_requires_managed_gates_evidence | default(true) | bool) else '' }}"
+    inspect_path: "{{ inspect_path if (report_scope_requires_inspect_evidence | default(true) | bool) else '' }}"
+    advisor_export_path: "{{ advisor_export_path if (report_scope_requires_advisor_export_evidence | default(true) | bool) else '' }}"
+    insights_archive_path: "{{ insights_archive_path if (report_scope_requires_insights_archive_evidence | default(true) | bool) else '' }}"
+    sosreport_paths: "{{ sosreport_paths if (report_scope_requires_sosreport_evidence | default(true) | bool) else [] }}"
+
+- name: Validate case bundle discovery JSON
+  vars:
+    case_bundle_discovery_payload: "{{ (case_bundle_discovery.stdout | from_json) if (case_bundle_discovery.stdout | default('') | trim | length > 0) else {} }}"
+  ansible.builtin.assert:
+    that:
+      - case_bundle_discovery.rc == 0
+      - case_bundle_discovery.stdout | default('') | trim | length > 0
+      - case_bundle_discovery_payload is mapping
+    fail_msg: "Case bundle discovery returned invalid JSON."
+  when: case_bundle_path | default('') | trim | length > 0
+
+- name: Record case bundle in evidence summary
+  ansible.builtin.set_fact:
+    evidence_summary: "{{ (evidence_summary | default({'source_count': 0, 'source_labels': []})) | combine({'case_bundle_path': case_bundle_path}, recursive=True) }}"
+  when: case_bundle_path | default('') | trim | length > 0
+
+- name: Normalize sosreport paths input
+  ansible.builtin.set_fact:
+    sosreport_paths: >-
+      {{
+        normalized_sosreport_paths
+      }}
+  vars:
+    raw_sosreport_paths: >-
+      {{
+        ((sosreport_paths | default('[]')) | from_yaml)
+        if (sosreport_paths is string)
+        else (sosreport_paths | default([]))
+      }}
+    normalized_sosreport_paths: >-
+      {{
+        []
+        if (raw_sosreport_paths is none)
+        else (
+          [raw_sosreport_paths]
+          if (raw_sosreport_paths is string)
+          else raw_sosreport_paths
+        )
+      }}
+  when: sosreport_paths is defined

@@ -1,0 +1,110 @@
+---
+- name: Validate evidence mode
+  ansible.builtin.assert:
+    that:
+      - evidence_mode | default('auto') in ['auto', 'must_gather', 'inspect', 'hybrid']
+    fail_msg: "Set evidence_mode to one of: auto, must_gather, inspect, hybrid."
+
+- name: Validate evidence input presence
+  ansible.builtin.assert:
+    that:
+      - (must_gather_path | default('') | trim | length > 0) or (inspect_path | default('') | trim | length > 0)
+    fail_msg: "Set must_gather_path, inspect_path, or both."
+
+- name: Stat must-gather path
+  ansible.builtin.stat:
+    path: "{{ must_gather_path }}"
+  register: must_gather_path_stat
+  when: must_gather_path | default('') | trim | length > 0
+
+- name: Stat optional cluster-compare path
+  ansible.builtin.stat:
+    path: "{{ cluster_compare_path }}"
+  register: cluster_compare_path_stat
+  when: cluster_compare_path | default('') | trim | length > 0
+
+- name: Stat optional inspect path
+  ansible.builtin.stat:
+    path: "{{ inspect_path }}"
+  register: inspect_path_stat
+  when: inspect_path | default('') | trim | length > 0
+
+- name: Stat optional managed gates path
+  ansible.builtin.stat:
+    path: "{{ managed_gates_path }}"
+  register: managed_gates_path_stat
+  when: managed_gates_path | default('') | trim | length > 0
+
+- name: Stat optional sosreport paths
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ sosreport_paths | default([]) }}"
+  register: sosreport_path_stats
+  when: (sosreport_paths | default([]) | length) > 0
+
+- name: Stat optional advisor export path
+  ansible.builtin.stat:
+    path: "{{ advisor_export_path }}"
+  register: advisor_export_path_stat
+  when: advisor_export_path | default('') | trim | length > 0
+
+- name: Stat optional insights archive path
+  ansible.builtin.stat:
+    path: "{{ insights_archive_path }}"
+  register: insights_archive_path_stat
+  when: insights_archive_path | default('') | trim | length > 0
+
+- name: Fail when must-gather path is missing
+  ansible.builtin.assert:
+    that:
+      - must_gather_path_stat.stat.exists
+      - must_gather_path_stat.stat.isdir
+    fail_msg: "must_gather_path does not exist or is not a directory."
+  when: must_gather_path | default('') | trim | length > 0
+
+- name: Fail when cluster-compare path is missing
+  ansible.builtin.assert:
+    that:
+      - cluster_compare_path_stat.stat.exists
+      - cluster_compare_path_stat.stat.isreg
+    fail_msg: "cluster_compare_path does not exist or is not a file."
+  when: cluster_compare_path | default('') | trim | length > 0
+
+- name: Fail when inspect path is missing
+  ansible.builtin.assert:
+    that:
+      - inspect_path_stat.stat.exists
+      - inspect_path_stat.stat.isdir
+    fail_msg: "inspect_path does not exist or is not a directory."
+  when: inspect_path | default('') | trim | length > 0
+
+- name: Fail when managed gates path is missing
+  ansible.builtin.assert:
+    that:
+      - managed_gates_path_stat.stat.exists
+      - managed_gates_path_stat.stat.isreg
+    fail_msg: "managed_gates_path does not exist or is not a file."
+  when: managed_gates_path | default('') | trim | length > 0
+
+- name: Fail when any sosreport path is missing
+  ansible.builtin.assert:
+    that:
+      - (sosreport_path_stats.results | selectattr('stat.exists', 'equalto', false) | list | length) == 0
+    fail_msg: "One or more sosreport_paths do not exist."
+  when: (sosreport_paths | default([]) | length) > 0
+
+- name: Fail when advisor export path is missing
+  ansible.builtin.assert:
+    that:
+      - advisor_export_path_stat.stat.exists
+      - advisor_export_path_stat.stat.isreg
+    fail_msg: "advisor_export_path does not exist or is not a file."
+  when: advisor_export_path | default('') | trim | length > 0
+
+- name: Fail when insights archive path is missing
+  ansible.builtin.assert:
+    that:
+      - insights_archive_path_stat.stat.exists
+      - insights_archive_path_stat.stat.isdir
+    fail_msg: "insights_archive_path does not exist or is not a directory."
+  when: insights_archive_path | default('') | trim | length > 0

@@ -1,0 +1,50 @@
+---
+- name: Build external alert delivery capability artifact facts
+  vars:
+    external_alert_delivery_forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
+    external_alert_delivery_gap_count: >-
+      {{
+        (1 if ((external_alert_delivery_forwarding_summary.alertmanagerconfigs_without_route_receivers | default(0) | int) > 0) else 0)
+        + (1 if ((external_alert_delivery_forwarding_summary.external_alert_receiver_count | default(0) | int) > 0 and not (external_alert_delivery_forwarding_summary.alert_routing_to_external_receiver_configured | default(false))) else 0)
+        + (1 if ((external_alert_delivery_forwarding_summary.alert_delivery_source_count | default(0) | int) > 0 and (external_alert_delivery_forwarding_summary.external_alert_receiver_count | default(0) | int) == 0) else 0)
+      }}
+    external_alert_delivery_state_current: "{{ external_alert_delivery_forwarding_summary.alert_delivery_state | default('not-configured') }}"
+    external_alert_delivery_verification_current: "{{ external_alert_delivery_forwarding_summary.alert_delivery_verification_status | default('not-configured') }}"
+    external_alert_delivery_status_current: >-
+      {{
+        'WARNING'
+        if (external_alert_delivery_gap_count | int) > 0
+        else (
+          'INFO'
+          if (
+            external_alert_delivery_state_current in ['not-configured', 'missing']
+            or external_alert_delivery_verification_current in ['not-configured', 'not-verified', 'missing', 'failed']
+          )
+          else 'OK'
+        )
+      }}
+    external_alert_delivery_reason_current: >-
+      {{
+        (
+          []
+          + (['alert routing gaps=' ~ ((external_alert_delivery_gap_count | int) | string)] if (external_alert_delivery_gap_count | int) > 0 else [])
+          + (['state=' ~ external_alert_delivery_state_current] if external_alert_delivery_state_current not in ['configured', 'delivering', 'verified'] else [])
+          + (['verification=' ~ external_alert_delivery_verification_current] if external_alert_delivery_verification_current not in ['verified', 'passed', 'ok'] else [])
+          + (['sources=' ~ ((external_alert_delivery_forwarding_summary.alert_delivery_source_count | default(0) | int) | string)] if ((external_alert_delivery_forwarding_summary.alert_delivery_source_count | default(0) | int) > 0) else [])
+          + (['externalReceivers=' ~ ((external_alert_delivery_forwarding_summary.external_alert_receiver_count | default(0) | int) | string)] if ((external_alert_delivery_forwarding_summary.external_alert_receiver_count | default(0) | int) > 0) else [])
+        ) | join('; ')
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: external_alert_delivery
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      observability_status: "{{ external_alert_delivery_status_current }}"
+      observability_reason_summary: "{{ external_alert_delivery_reason_current | default('unknown') }}"
+    capability_artifact_render_inputs:
+      observability_forwarding_summary: "{{ external_alert_delivery_forwarding_summary }}"
+    capability_artifact_collection_inputs:
+      external_alert_receiver_count: "{{ (external_alert_delivery_forwarding_summary.external_alert_receiver_count | default(0)) | int }}"
+      alert_delivery_state: "{{ external_alert_delivery_state_current }}"
+      alerting_gap_count: "{{ external_alert_delivery_gap_count | int }}"
+      alert_delivery_source_count: "{{ (external_alert_delivery_forwarding_summary.alert_delivery_source_count | default(0)) | int }}"
+      alert_delivery_verification_status: "{{ external_alert_delivery_verification_current }}"

@@ -1,0 +1,68 @@
+---
+- name: Build control plane backup and recovery readiness capability artifact facts
+  vars:
+    control_plane_backup_evidence_summary: "{{ ((control_plane_backup_evidence_data | default({})).summary | default({})) }}"
+    control_plane_recovery_applicable_current: "{{ not (cluster_profile.is_hosted_control_plane | default(false) | bool) }}"
+    control_plane_runtime_healthy_current: >-
+      {{
+        (platform_health_summary.apiserver_readyz_failed | default(0) | int) == 0
+        and (platform_health_summary.apiserver_runtime_degraded | default(0) | int) == 0
+        and (platform_health_summary.etcd_leader_unhealthy | default(0) | int) == 0
+        and (platform_health_summary.etcd_runtime_degraded | default(0) | int) == 0
+      }}
+    control_plane_backup_evidence_scanned_current: "{{ (control_plane_backup_evidence_summary.present | default(false)) | bool }}"
+    control_plane_snapshot_evidence_collected_current: "{{ (control_plane_backup_evidence_summary.healthy | default(false)) | bool }}"
+    control_plane_backup_node_count_current: "{{ (control_plane_backup_evidence_summary.node_count | default(0)) | int }}"
+    control_plane_backup_nodes_with_any_artifacts_current: "{{ (control_plane_backup_evidence_summary.nodes_with_any_artifacts | default(0)) | int }}"
+    control_plane_backup_nodes_with_matching_pairs_current: "{{ (control_plane_backup_evidence_summary.nodes_with_matching_pairs | default(0)) | int }}"
+    control_plane_backup_status_current: >-
+      {{
+        'INFO'
+        if (not control_plane_recovery_applicable_current)
+        else (
+          'WARNING'
+          if (not control_plane_runtime_healthy_current)
+          else (
+            'OK'
+            if control_plane_snapshot_evidence_collected_current
+            else 'WARNING'
+          )
+        )
+      }}
+    control_plane_backup_reason_current: >-
+      {{
+        'hostedControlPlane=true management cluster evidence is required to validate etcd snapshot and control-plane recovery readiness'
+        if (not control_plane_recovery_applicable_current)
+        else (
+          'control plane runtime is not healthy enough for snapshot validation'
+          if (not control_plane_runtime_healthy_current)
+          else (
+            'matching snapshot/static-kuberesources artifact pairs found on '
+            ~ (control_plane_backup_nodes_with_matching_pairs_current | string)
+            ~ ' control-plane node(s)'
+            if control_plane_snapshot_evidence_collected_current
+            else (
+              'control plane nodes were scanned but no retained matching snapshot/static-kuberesources artifact pair was demonstrated: '
+              ~ 'nodesScanned=' ~ (control_plane_backup_node_count_current | string)
+              ~ ', nodesWithAnyArtifacts=' ~ (control_plane_backup_nodes_with_any_artifacts_current | string)
+              ~ ', matchingPairs=' ~ (control_plane_backup_nodes_with_matching_pairs_current | string)
+              if control_plane_backup_evidence_scanned_current
+              else 'control plane runtime was healthy, but live node-level backup evidence was not collected for this report'
+            )
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: control_plane_backup_and_recovery_readiness
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      backup_recovery_status: "{{ control_plane_backup_status_current }}"
+      backup_recovery_reason_summary: "{{ control_plane_backup_reason_current }}"
+    capability_artifact_collection_inputs:
+      control_plane_recovery_applicable: "{{ control_plane_recovery_applicable_current | bool }}"
+      control_plane_runtime_healthy: "{{ control_plane_runtime_healthy_current | bool }}"
+      control_plane_backup_evidence_scanned: "{{ control_plane_backup_evidence_scanned_current | bool }}"
+      control_plane_snapshot_evidence_collected: "{{ control_plane_snapshot_evidence_collected_current | bool }}"
+      control_plane_backup_node_count: "{{ control_plane_backup_node_count_current | int }}"
+      control_plane_backup_nodes_with_any_artifacts: "{{ control_plane_backup_nodes_with_any_artifacts_current | int }}"
+      control_plane_backup_nodes_with_matching_pairs: "{{ control_plane_backup_nodes_with_matching_pairs_current | int }}"

@@ -1,0 +1,252 @@
+---
+- name: Build warning event summaries
+  ansible.builtin.set_fact:
+    warning_event_reason_counts: "{{ warning_event_reason_counts | default({}) | combine({event_reason: ((warning_event_reason_counts[event_reason] | default(0)) + 1)}, recursive=True) }}"
+  loop: "{{ (analysis_graph.events | default({})).get('items', []) }}"
+  vars:
+    event_reason: "{{ item.reason | default('Unknown') }}"
+  changed_when: false
+
+- name: Parse monitoring config YAML
+  vars:
+    graph_configmaps: "{{ (analysis_graph.configmaps | default({'items': []})).get('items', []) }}"
+    cluster_monitoring_config_obj: "{{ (graph_configmaps | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring') | selectattr('metadata.name', 'equalto', 'cluster-monitoring-config') | list | first) | default({}) }}"
+    user_workload_monitoring_config_obj: "{{ (graph_configmaps | selectattr('metadata.namespace', 'equalto', 'openshift-user-workload-monitoring') | selectattr('metadata.name', 'equalto', 'user-workload-monitoring-config') | list | first) | default({}) }}"
+  ansible.builtin.set_fact:
+    cluster_monitoring_config_parsed: "{{ ((cluster_monitoring_config_obj.data['config.yaml'] | default('')) | from_yaml) if (cluster_monitoring_config_obj.data is defined and cluster_monitoring_config_obj.data['config.yaml'] is defined) else {} }}"
+    user_workload_monitoring_config_parsed: "{{ ((user_workload_monitoring_config_obj.data['config.yaml'] | default('')) | from_yaml) if (user_workload_monitoring_config_obj.data is defined and user_workload_monitoring_config_obj.data['config.yaml'] is defined) else {} }}"
+
+- name: Attempt to discover thanos querier route
+  ansible.builtin.command: oc -n openshift-monitoring get route thanos-querier -o jsonpath={.spec.host}
+  register: thanos_route_cmd
+  changed_when: false
+  failed_when: false
+  when: (report_mode_resolved | default('live')) == 'live'
+
+- name: Capture bearer token
+  ansible.builtin.command: oc whoami -t
+  register: oc_token_cmd
+  changed_when: false
+  failed_when: false
+  when: (report_mode_resolved | default('live')) == 'live'
+
+- name: Attempt API server readyz check
+  ansible.builtin.command: oc get --raw=/readyz?verbose
+  register: apiserver_readyz_cmd
+  changed_when: false
+  failed_when: false
+  when: (report_mode_resolved | default('live')) == 'live'
+
+- name: Build observability forwarding summary
+  ansible.builtin.set_fact:
+    observability_forwarding_summary:
+      monitoring_operator_available: >-
+        {{
+          clusteroperator_status_map.monitoring.available
+          if ((clusteroperator_status_map | default({})).get('monitoring', {}) | length) > 0
+          else (
+            'True'
+            if (
+              (
+                (analysis_graph.namespaces | default({'items': []})).get('items', [])
+                | selectattr('metadata.name', 'equalto', 'openshift-monitoring')
+                | list
+                | length
+              ) > 0
+              and (
+                (
+                  (analysis_graph.pods | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+                or (
+                  (analysis_graph.deployments | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+              )
+            )
+            else 'Unknown'
+          )
+        }}
+      monitoring_operator_degraded: >-
+        {{
+          clusteroperator_status_map.monitoring.degraded
+          if ((clusteroperator_status_map | default({})).get('monitoring', {}) | length) > 0
+          else (
+            'False'
+            if (
+              (
+                (analysis_graph.namespaces | default({'items': []})).get('items', [])
+                | selectattr('metadata.name', 'equalto', 'openshift-monitoring')
+                | list
+                | length
+              ) > 0
+              and (
+                (
+                  (analysis_graph.pods | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+                or (
+                  (analysis_graph.deployments | default({'items': []})).get('items', [])
+                  | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+                  | list
+                  | length
+                ) > 0
+              )
+            )
+            else 'Unknown'
+          )
+        }}
+      thanos_querier_route_found: >-
+        {{
+          (
+            (analysis_graph.routes | default({'items': []})).get('items', [])
+            | selectattr('metadata.namespace', 'equalto', 'openshift-monitoring')
+            | selectattr('metadata.name', 'equalto', 'thanos-querier')
+            | list
+            | length
+          ) > 0
+        }}
+      cluster_log_forwarder_count: "{{ (analysis_graph.clusterlogforwarders | default({})).get('items', []) | length }}"
+      alertmanagerconfig_count: "{{ (analysis_graph.alertmanagerconfigs | default({})).get('items', []) | length }}"
+      cluster_alertmanager_additional_config_count: "{{ ((((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([])) | length)) }}"
+      user_workload_alertmanager_additional_config_count: "{{ ((((user_workload_monitoring_config_parsed.alertmanager | default({})).additionalAlertmanagerConfigs | default([])) | length)) }}"
+      log_forwarding_outputs: []
+      external_log_forwarding_outputs: []
+      external_alert_receivers: []
+      alert_delivery_config_sources: []
+      alert_delivery_source_count: 0
+      external_alert_receiver_count: 0
+      external_alert_delivery_configured: false
+      alert_routing_to_external_receiver_configured: false
+      alertmanagerconfigs_with_external_routes: 0
+      alertmanagerconfigs_without_route_receivers: 0
+      application_log_pipeline_count: 0
+      infrastructure_log_pipeline_count: 0
+      audit_log_pipeline_count: 0
+      application_logs_collected: false
+      infrastructure_logs_collected: false
+      audit_logs_collected: false
+      application_logs_exported_external: false
+      infrastructure_logs_exported_external: false
+      audit_logs_exported_external: false
+      application_logs_delivery_state: not-collected
+      infrastructure_logs_delivery_state: not-collected
+      audit_logs_delivery_state: not-collected
+      logs_delivery_verification_status: not-configured
+      cluster_metrics_remote_write_count: "{{ (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([])) | length) }}"
+      user_workload_metrics_remote_write_count: "{{ (((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([])) | length) }}"
+      external_cluster_metrics_remote_write_count: 0
+      external_user_workload_metrics_remote_write_count: 0
+      cluster_metrics_delivery_state: not-configured
+      user_workload_metrics_delivery_state: not-configured
+      metrics_delivery_verification_status: not-configured
+      alert_delivery_state: not-configured
+      alert_delivery_verification_status: not-configured
+
+- name: Update thanos route capability in observability summary
+  ansible.builtin.set_fact:
+    observability_forwarding_summary: "{{ observability_forwarding_summary | combine({'thanos_querier_route_found': (((thanos_route_cmd.rc | default(1)) == 0 and (thanos_route_cmd.stdout | default('') | trim | length > 0)) or (observability_forwarding_summary.thanos_querier_route_found | default(false)))}, recursive=True) }}"
+
+- name: Select must-gather path for offline control-plane evidence
+  ansible.builtin.set_fact:
+    control_plane_evidence_must_gather_path: >-
+      {{
+        (((live_support_data | default({})).get('paths', {})).get('must_gather', ''))
+        if ((report_mode_resolved | default('live')) == 'live')
+        else (must_gather_path | default(''))
+      }}
+
+- name: Parse offline control-plane evidence from must-gather
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/parse_control_plane_evidence.py"
+      - "{{ control_plane_evidence_must_gather_path }}"
+  register: control_plane_evidence_cmd
+  changed_when: false
+  failed_when: false
+  when: control_plane_evidence_must_gather_path | default('') | trim | length > 0
+
+- name: Normalize offline control-plane evidence
+  ansible.builtin.set_fact:
+    control_plane_evidence_data: >-
+      {{
+        control_plane_evidence_cmd.stdout | from_json
+        if (
+          control_plane_evidence_cmd is defined
+          and (control_plane_evidence_cmd.rc | default(1)) == 0
+          and (control_plane_evidence_cmd.stdout | default('') | trim | length > 0)
+        )
+        else {'summary': {'present': false}, 'artifacts': {}, 'samples': {}}
+      }}
+  changed_when: false
+
+- name: Build offline workload metric fallbacks
+  block:
+    - name: Create offline workload fallback input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-offline-workload-
+        suffix: .json
+      register: offline_workload_fallback_input_file
+      changed_when: false
+
+    - name: Write offline workload fallback input data
+      ansible.builtin.copy:
+        dest: "{{ offline_workload_fallback_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
+          'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'exclude_regex': user_namespaces_exclude_regex,
+          'omc_summary': (omc_summary | default({}))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run offline workload fallback analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_offline_workload_fallback.py"
+          - "{{ offline_workload_fallback_input_file.path }}"
+      register: offline_workload_fallback_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove offline workload fallback input file
+      ansible.builtin.file:
+        path: "{{ offline_workload_fallback_input_file.path }}"
+        state: absent
+      when: offline_workload_fallback_input_file is defined and (offline_workload_fallback_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize offline workload metric fallbacks
+  ansible.builtin.set_fact:
+    offline_workload_fallback_data: >-
+      {{
+        offline_workload_fallback_cmd.stdout | from_json
+        if (
+          offline_workload_fallback_cmd is defined
+          and (offline_workload_fallback_cmd.rc | default(1)) == 0
+          and (offline_workload_fallback_cmd.stdout | default('') | trim | length > 0)
+        )
+        else {
+          'node_cpu_utilization': [],
+          'node_memory_utilization': [],
+          'node_disk_utilization': [],
+          'kubelet_pod_density': [],
+          'top_pod_cpu_usage': [],
+          'top_pod_memory_usage': [],
+          'pod_cpu_usage_all': [],
+          'pod_memory_usage_all': [],
+          'firing_alerts': []
+        }
+      }}
+  changed_when: false
+

@@ -1,0 +1,281 @@
+- name: Build health summary
+  vars:
+    graph: "{{ analysis_graph | default({}) }}"
+    assessment_collection: "{{ assessment_collection_summary | default({}) }}"
+    assessment_collection_failure_list: "{{ assessment_collection_failures | default([]) }}"
+    cv_available_resolved: "{{ cv_available | default('Unknown') }}"
+    cv_progressing_resolved: "{{ cv_progressing | default('Unknown') }}"
+    cv_failing_resolved: "{{ cv_failing | default('Unknown') }}"
+    apiserver_readyz_failed: >-
+      {{
+        (apiserver_readyz_status | default('unavailable')) == 'failed'
+        or (apiserver_readyz_failed_checks | default(0) | int) > 0
+      }}
+    high_impact_progressing_operators: >-
+      {{
+        (progressing_operators | default([]))
+        | select('in', ['authentication', 'dns', 'etcd', 'ingress', 'kube-apiserver', 'network'])
+        | list
+      }}
+    etcd_leader_unhealthy: >-
+      {{
+        (etcd_leader_count | default('') | string | length > 0)
+        and ((etcd_leader_count | float) != 1)
+      }}
+    apiserver_runtime_degraded: >-
+      {{
+        ((apiserver_request_5xx_rate | default('') | string | length > 0) and ((apiserver_request_5xx_rate | float) > 0))
+        or ((apiserver_request_p99_seconds | default('') | string | length > 0) and ((apiserver_request_p99_seconds | float) > (apiserver_latency_p99_warn_seconds | default(1) | float)))
+      }}
+    etcd_runtime_degraded: >-
+      {{
+        ((etcd_wal_fsync_p99_ms | default('') | string | length > 0) and ((etcd_wal_fsync_p99_ms | float) > (etcd_wal_fsync_p99_warn_ms | default(10) | float)))
+        or ((etcd_peer_rtt_p99_ms | default('') | string | length > 0) and ((etcd_peer_rtt_p99_ms | float) > (etcd_peer_rtt_p99_warn_ms | default(50) | float)))
+        or ((etcd_leader_changes_5m | default('') | string | length > 0) and ((etcd_leader_changes_5m | float) > 0))
+      }}
+    core_platform_runtime_reason_summary: >-
+      {{
+        (
+          []
+          + (['API /readyz failed'] if apiserver_readyz_failed else [])
+          + (['API runtime degraded'] if apiserver_runtime_degraded else [])
+          + (['etcd leader unhealthy'] if etcd_leader_unhealthy else [])
+          + (['etcd runtime degraded'] if etcd_runtime_degraded else [])
+          + (
+            ['high-impact operators progressing: ' ~ (high_impact_progressing_operators | join(', '))]
+            if (high_impact_progressing_operators | length) > 0
+            else []
+          )
+        ) | join('; ')
+      }}
+  ansible.builtin.set_fact:
+    health_summary:
+      status: >-
+        {{
+          'CRITICAL'
+          if (
+            cv_failing_resolved == 'True'
+            or (cv_available_resolved == 'False' and cv_progressing_resolved != 'True')
+            or (degraded_operators | default([]) | length > 0)
+            or (unavailable_operators | default([]) | length > 0)
+            or (not_ready_nodes | default([]) | length > 0)
+            or (degraded_mcps | default([]) | length > 0)
+            or (route_issues | default([]) | length > 0)
+            or (ingress_issues | default([]) | length > 0)
+            or (route_host_conflicts | default([]) | length > 0)
+            or (ingress_host_conflicts | default([]) | length > 0)
+            or (ingresscontroller_issues | default([]) | length > 0)
+            or (infrastructure_component_issues | default([]) | length > 0)
+            or (apiservice_issues | default([]) | length > 0)
+            or apiserver_readyz_failed
+            or etcd_leader_unhealthy
+            or (critical_pod_density_nodes | default([]) | length > 0)
+            or (expiring_certificates_critical | default([]) | length > 0)
+            or (live_cluster_compare_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)
+            or (live_managed_gate_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)
+            or (assessment_collection.core_failed_commands | default(0) | int > 0)
+          )
+          else (
+            'WARNING'
+            if (
+              cv_progressing_resolved == 'True'
+              or cv_available_resolved == 'Unknown'
+              or (high_impact_progressing_operators | length > 0)
+              or (pressure_nodes | default([]) | length > 0)
+              or apiserver_runtime_degraded
+              or etcd_runtime_degraded
+              or (platform_pod_issues | default([]) | length > 0)
+              or (namespace_issue_summary | default([]) | length > 0)
+              or (pvc_issues | default([]) | length > 0)
+              or (pv_issues | default([]) | length > 0)
+              or (quota_pressure_findings | default([]) | length > 0)
+              or (security_findings | default([]) | length > 0)
+              or (scored_workload_practice_findings | default([]) | length > 0)
+              or (empty_user_namespaces | default([]) | length > 0)
+              or (likely_unused_serviceaccounts | default([]) | length > 0)
+              or (likely_unused_configmaps | default([]) | length > 0)
+              or (likely_unused_secrets | default([]) | length > 0)
+              or (likely_unused_crds | default([]) | length > 0)
+              or (image_registry_findings | default([]) | length > 0)
+              or (feature_findings | default([]) | length > 0)
+              or (scc_grant_findings | default([]) | length > 0)
+              or (compliance_suite_findings | default([]) | length > 0)
+              or (backup_posture_findings | default([]) | length > 0)
+              or (machine_healthcheck_findings | default([]) | length > 0)
+              or (scored_day2_posture_findings | default([]) | length > 0)
+              or (namespaces_without_limitrange | default([]) | length > 0)
+              or (namespaces_without_resourcequota | default([]) | length > 0)
+              or (deprecated_crd_findings | default([]) | length > 0)
+              or (deprecated_api_lines | default([]) | length > 0)
+              or (high_pod_density_nodes | default([]) | length > 0)
+              or (expiring_certificates_warning | default([]) | length > 0)
+              or (observability_findings | default([]) | length > 0)
+              or (live_cluster_compare_findings | default([]) | length > 0)
+              or (live_managed_gate_findings | default([]) | length > 0)
+              or (live_advisor_findings | default([]) | length > 0)
+              or (live_must_gather_findings | default([]) | length > 0)
+              or (live_inspect_findings | default([]) | length > 0)
+              or (live_sosreport_findings | default([]) | length > 0)
+              or (recent_warning_events | default([]) | length > 0)
+              or (assessment_collection_failure_list | length > 0)
+            )
+            else 'HEALTHY'
+          )
+        }}
+      cluster_version: "{{ graph.clusterversion.status.desired.version | default('unknown') }}"
+      operators_total: "{{ (graph.clusteroperators | default({})).get('items', []) | length }}"
+      operators_degraded: "{{ degraded_operators | default([]) | length }}"
+      operators_progressing: "{{ progressing_operators | default([]) | length }}"
+      operators_progressing_high_impact: "{{ high_impact_progressing_operators | length }}"
+      operators_unavailable: "{{ unavailable_operators | default([]) | length }}"
+      operator_version_mismatches: "{{ cluster_operator_version_mismatches | default([]) | length }}"
+      nodes_total: "{{ openshift_node_items | default((graph.nodes | default({})).get('items', [])) | length }}"
+      nodes_not_ready: "{{ not_ready_nodes | default([]) | length }}"
+      node_pressure_count: "{{ pressure_nodes | default([]) | length }}"
+      mcps_degraded: "{{ degraded_mcps | default([]) | length }}"
+      platform_pod_issues: "{{ platform_pod_issues | default([]) | length }}"
+      unhealthy_user_pods: "{{ unhealthy_user_pods | default([]) | length }}"
+      high_restart_pods: "{{ high_restart_pods | default([]) | length }}"
+      workload_health_issues: "{{ workload_health_issues | default([]) | length }}"
+      high_replica_workloads: "{{ high_replica_workloads | default([]) | length }}"
+      orphan_pods: "{{ orphan_pods | default([]) | length }}"
+      workload_label_governance_findings: "{{ workload_label_governance_findings | default([]) | length }}"
+      workload_resource_findings: "{{ workload_resource_findings | default([]) | length }}"
+      workload_probe_findings: "{{ workload_probe_findings | default([]) | length }}"
+      multi_replica_workloads_checked: "{{ workload_resilience_data.multi_replica_workload_count | default(0) }}"
+      multi_replica_workloads_without_pdb: "{{ workload_resilience_data.multi_replica_workloads_without_pdb | default(0) }}"
+      multi_replica_workloads_without_spread_policy: "{{ workload_resilience_data.multi_replica_workloads_without_spread_policy | default(0) }}"
+      overprovisioned_pods: "{{ overprovisioned_pods | default([]) | length }}"
+      quota_pressure_findings: "{{ quota_pressure_findings | default([]) | length }}"
+      route_issues: "{{ route_issues | default([]) | length }}"
+      ingress_issues: "{{ ingress_issues | default([]) | length }}"
+      route_host_conflicts: "{{ route_host_conflicts | default([]) | length }}"
+      ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) | length }}"
+      auth_findings: "{{ auth_findings | default([]) | length }}"
+      ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) | length }}"
+      infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) | length }}"
+      apiservice_issues: "{{ apiservice_issues | default([]) | length }}"
+      apiserver_readyz_failed: "{{ 1 if apiserver_readyz_failed else 0 }}"
+      apiserver_runtime_degraded: "{{ 1 if apiserver_runtime_degraded else 0 }}"
+      etcd_leader_unhealthy: "{{ 1 if etcd_leader_unhealthy else 0 }}"
+      etcd_runtime_degraded: "{{ 1 if etcd_runtime_degraded else 0 }}"
+      core_platform_runtime_reason_summary: "{{ core_platform_runtime_reason_summary }}"
+      security_findings: "{{ security_findings | default([]) | length }}"
+      scc_grant_findings: "{{ scc_grant_findings | default([]) | length }}"
+      privileged_serviceaccount_access: "{{ privileged_serviceaccount_access | default([]) | length }}"
+      privileged_user_access: "{{ privileged_user_access | default([]) | length }}"
+      privileged_group_access: "{{ privileged_group_access | default([]) | length }}"
+      workload_practice_findings: "{{ scored_workload_practice_findings | default([]) | length }}"
+      empty_user_namespaces: "{{ empty_user_namespaces | default([]) | length }}"
+      services_without_endpoints: "{{ services_without_endpoints | default([]) | length }}"
+      likely_unused_serviceaccounts: "{{ likely_unused_serviceaccounts | default([]) | length }}"
+      likely_unused_configmaps: "{{ likely_unused_configmaps | default([]) | length }}"
+      likely_unused_secrets: "{{ likely_unused_secrets | default([]) | length }}"
+      likely_unused_crds: "{{ likely_unused_crds | default([]) | length }}"
+      namespace_metadata_governance_findings: "{{ namespace_metadata_governance_findings | default([]) | length }}"
+      image_registry_findings: "{{ image_registry_findings | default([]) | length }}"
+      internal_registry_workloads: "{{ internal_registry_workloads | default([]) | length }}"
+      feature_findings: "{{ feature_findings | default([]) | length }}"
+      buildconfigs: "{{ (graph.buildconfigs | default({})).get('items', []) | length }}"
+      builds: "{{ (graph.builds | default({})).get('items', []) | length }}"
+      imagestreams: "{{ (graph.imagestreams | default({})).get('items', []) | length }}"
+      pipelines: "{{ (graph.pipelines | default({})).get('items', []) | length }}"
+      pipelineruns: "{{ (graph.pipelineruns | default({})).get('items', []) | length }}"
+      failed_pipelineruns: "{{ failed_pipelineruns | default([]) | length }}"
+      buildconfigs_without_triggers: "{{ buildconfigs_without_triggers | default([]) | length }}"
+      securitycontextconstraints: "{{ (graph.securitycontextconstraints | default({})).get('items', []) | length }}"
+      volumesnapshotclasses: "{{ (graph.volumesnapshotclasses | default({})).get('items', []) | length }}"
+      dataprotectionapplications: "{{ (graph.dataprotectionapplications | default({})).get('items', []) | length }}"
+      compliancesuites: "{{ (graph.compliancesuites | default({})).get('items', []) | length }}"
+      compliancescans: "{{ (graph.compliancescans | default({})).get('items', []) | length }}"
+      compliance_suite_findings: "{{ compliance_suite_findings | default([]) | length }}"
+      compliance_program_findings: "{{ compliance_standards_findings | default([]) | length }}"
+      backupstoragelocations: "{{ (graph.backupstoragelocations | default({})).get('items', []) | length }}"
+      velero_schedules: "{{ (graph.schedules | default({})).get('items', []) | length }}"
+      successful_backups: "{{ backup_posture_data.successful_backup_count | default(0) }}"
+      completed_restores: "{{ backup_posture_data.completed_restore_count | default(0) }}"
+      backup_posture_findings: "{{ backup_posture_findings | default([]) | length }}"
+      machinehealthchecks: "{{ (graph.machinehealthchecks | default({})).get('items', []) | length }}"
+      machine_healthcheck_findings: "{{ machine_healthcheck_findings | default([]) | length }}"
+      day2_posture_findings: "{{ day2_posture_findings | default([]) | length }}"
+      scored_day2_posture_findings: "{{ scored_day2_posture_findings | default([]) | length }}"
+      day2_checks_warn: "{{ day2_posture_summary.checks_warn | default(0) }}"
+      day2_baseline_provider: "{{ (day2_posture_summary.baseline_profile | default({})).provider | default('unknown') }}"
+      day2_baseline_cluster_shape: "{{ (day2_posture_summary.baseline_profile | default({})).cluster_shape | default('unknown') }}"
+      day2_baseline_control_plane_mode: "{{ (day2_posture_summary.baseline_profile | default({})).control_plane_mode | default('unknown') }}"
+      day2_gitops_present: "{{ day2_posture_summary.gitops_present | default(false) }}"
+      day2_argocd_count: "{{ day2_posture_summary.argocd_count | default(0) }}"
+      day2_gitops_application_count: "{{ day2_posture_summary.gitops_application_count | default(0) }}"
+      day2_gitops_appproject_count: "{{ day2_posture_summary.gitops_appproject_count | default(0) }}"
+      day2_external_secret_store_count: "{{ day2_posture_summary.external_secret_store_count | default(0) }}"
+      day2_external_secret_count: "{{ day2_posture_summary.external_secret_count | default(0) }}"
+      day2_clusterautoscaler_count: "{{ day2_posture_summary.clusterautoscaler_count | default(0) }}"
+      day2_clusterautoscaler_expected: "{{ day2_posture_summary.clusterautoscaler_expected | default(false) }}"
+      day2_acm_managed: "{{ day2_posture_summary.acm_managed | default(false) }}"
+      day2_acm_klusterlet_count: "{{ day2_posture_summary.acm_klusterlet_count | default(0) }}"
+      day2_acm_managedclusteraddon_count: "{{ day2_posture_summary.acm_managedclusteraddon_count | default(0) }}"
+      day2_acm_agent_namespace_count: "{{ day2_posture_summary.acm_agent_namespace_count | default(0) }}"
+      day2_enable_user_workload_monitoring: "{{ day2_posture_summary.enable_user_workload_monitoring | default(false) }}"
+      day2_monitoring_persistent_storage_configured: "{{ day2_posture_summary.monitoring_persistent_storage_configured | default(false) }}"
+      day2_external_log_forwarding_output_count: "{{ day2_posture_summary.external_log_forwarding_output_count | default(0) }}"
+      day2_external_cluster_metrics_remote_write_count: "{{ day2_posture_summary.external_cluster_metrics_remote_write_count | default(0) }}"
+      day2_external_user_workload_metrics_remote_write_count: "{{ day2_posture_summary.external_user_workload_metrics_remote_write_count | default(0) }}"
+      day2_backup_schedule_count: "{{ day2_posture_summary.backup_schedule_count | default(0) }}"
+      day2_successful_backup_count: "{{ day2_posture_summary.successful_backup_count | default(0) }}"
+      day2_compliancesuite_count: "{{ day2_posture_summary.compliancesuite_count | default(0) }}"
+      day2_identity_provider_count: "{{ day2_posture_summary.identity_provider_count | default(0) }}"
+      day2_insights_healthy: "{{ day2_posture_summary.insights_healthy | default(false) }}"
+      cluster_compare_findings: "{{ live_cluster_compare_findings | default([]) | length }}"
+      cluster_compare_errors: "{{ live_support_parsed.cluster_compare.summary.error_count | default(0) }}"
+      cluster_compare_diffs: "{{ live_support_parsed.cluster_compare.summary.diff_count | default(0) }}"
+      cluster_compare_missing: "{{ live_support_parsed.cluster_compare.summary.missing_count | default(0) }}"
+      managed_gate_findings: "{{ live_managed_gate_findings | default([]) | length }}"
+      managed_gate_blocked: "{{ live_support_parsed.managed_gates.summary.blocked_count | default(0) }}"
+      managed_gate_pending: "{{ live_support_parsed.managed_gates.summary.pending_count | default(0) }}"
+      advisor_findings: "{{ live_advisor_findings | default([]) | length }}"
+      advisor_critical: "{{ live_support_parsed.advisor_export.summary.critical_count | default(0) }}"
+      advisor_high: "{{ live_support_parsed.advisor_export.summary.high_count | default(0) }}"
+      must_gather_findings: "{{ live_must_gather_findings | default([]) | length }}"
+      must_gather_cluster_resource_files: "{{ live_support_parsed.must_gather_inventory.summary.cluster_resource_file_count | default(0) }}"
+      must_gather_namespaced_resource_files: "{{ live_support_parsed.must_gather_inventory.summary.namespaced_resource_file_count | default(0) }}"
+      inspect_findings: "{{ live_inspect_findings | default([]) | length }}"
+      inspect_files: "{{ live_support_parsed.inspect.summary.file_count | default(0) }}"
+      sosreport_findings: "{{ live_sosreport_findings | default([]) | length }}"
+      sosreport_reports: "{{ live_support_parsed.sosreport.summary.count | default(0) }}"
+      deprecated_crd_findings: "{{ deprecated_crd_findings | default([]) | length }}"
+      deprecated_api_lines: "{{ deprecated_api_lines | default([]) | length }}"
+      namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) | length }}"
+      namespaces_missing_ingress_policies: "{{ namespaces_missing_ingress_policies | default([]) | length }}"
+      namespaces_missing_egress_policies: "{{ namespaces_missing_egress_policies | default([]) | length }}"
+      namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) | length }}"
+      namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) | length }}"
+      namespaces_missing_metadata_governance: "{{ namespace_metadata_governance_findings | default([]) | length }}"
+      worker_failure_domains_observed: "{{ topology_resilience.worker_failure_domains_observed | default([]) | length }}"
+      worker_nodes_without_zone_label: "{{ topology_resilience.worker_nodes_without_zone_label | default(0) }}"
+      single_zone_worker_pool_count: "{{ topology_resilience.single_zone_worker_pool_count | default(0) }}"
+      worker_zone_spread_unbalanced: "{{ topology_resilience.worker_zone_spread_unbalanced | default(false) }}"
+      machinesets_without_zone_label: "{{ topology_resilience.machinesets_without_zone_label | default(0) }}"
+      machineset_replica_unbalanced: "{{ topology_resilience.machineset_replica_unbalanced | default(false) }}"
+      namespaces_non_active: "{{ namespace_issue_summary | default([]) | length }}"
+      pv_issues: "{{ pv_issues | default([]) | length }}"
+      pvc_issues: "{{ pvc_issues | default([]) | length }}"
+      external_storage_providers: "{{ storage_posture_summary.external_storageclass_count | default(0) }}"
+      external_persistent_volume_backends: "{{ storage_posture_summary.external_pv_count | default(0) }}"
+      local_storageclasses: "{{ storage_posture_summary.local_storageclass_count | default(0) }}"
+      local_persistent_volumes: "{{ storage_posture_summary.local_pv_count | default(0) }}"
+      hostpath_workloads: "{{ storage_posture_summary.hostpath_workload_count | default(0) }}"
+      ephemeral_storage_workloads: "{{ storage_posture_summary.ephemeral_workload_count | default(0) }}"
+      has_external_storage_provider: "{{ storage_posture_summary.has_external_storage_provider | default(false) }}"
+      local_or_ephemeral_only_risk: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}"
+      high_pod_density_nodes: "{{ high_pod_density_nodes | default([]) | length }}"
+      critical_pod_density_nodes: "{{ critical_pod_density_nodes | default([]) | length }}"
+      expiring_certificates_warning: "{{ expiring_certificates_warning | default([]) | length }}"
+      expiring_certificates_critical: "{{ expiring_certificates_critical | default([]) | length }}"
+      observability_findings: "{{ observability_findings | default([]) | length }}"
+      collection_failed_commands: "{{ assessment_collection.failed_commands | default(0) }}"
+      collection_core_failed_commands: "{{ assessment_collection.core_failed_commands | default(0) }}"
+      collection_timed_out_commands: "{{ assessment_collection.timed_out_commands | default(0) }}"
+      available_updates: "{{ available_updates | default([]) | length }}"
+      conditional_updates: "{{ conditional_updates | default([]) | length }}"
+      recent_warning_events: "{{ recent_warning_events | default([]) | length }}"
+      firing_alerts: "{{ firing_alerts | default([]) | length }}"

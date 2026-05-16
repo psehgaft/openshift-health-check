@@ -1,0 +1,33 @@
+---
+- name: Build etcd encryption capability artifact facts
+  vars:
+    etcd_encryption_enabled_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption', false)) | bool }}"
+    etcd_encryption_complete_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption_complete', false)) | bool }}"
+    etcd_encryption_type_current: "{{ (day2_posture_summary | default({})).get('etcd_encryption_type', 'unknown') }}"
+    etcd_encryption_reported_component_count_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption_reported_component_count', 0)) | int }}"
+    etcd_encryption_completed_component_count_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption_completed_component_count', 0)) | int }}"
+    etcd_encryption_status_current: "{{ 'OK' if (etcd_encryption_enabled_current and etcd_encryption_complete_current) else 'WARNING' }}"
+    etcd_encryption_reason_current: >-
+      {{
+        'apiserver_encryption_type=' ~ etcd_encryption_type_current
+        ~ ' reportedComponents=' ~ (etcd_encryption_reported_component_count_current | string)
+        ~ ' completedComponents=' ~ (etcd_encryption_completed_component_count_current | string)
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: etcd_encryption
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      security_governance_status: "{{ etcd_encryption_status_current }}"
+      security_governance_reason_summary: "{{ etcd_encryption_reason_current }}"
+    capability_artifact_render_inputs:
+      analysis_graph:
+        apiserver_config: "{{ (analysis_graph | default({})).get('apiserver_config', {}) }}"
+        openshift_apiserver: "{{ (analysis_graph | default({})).get('openshift_apiserver', {}) }}"
+        kube_apiserver: "{{ (analysis_graph | default({})).get('kube_apiserver', {}) }}"
+        authentication_operator: "{{ (analysis_graph | default({})).get('authentication_operator', {}) }}"
+    capability_artifact_collection_inputs:
+      etcd_encryption: "{{ etcd_encryption_enabled_current | bool }}"
+      etcd_encryption_type: "{{ etcd_encryption_type_current }}"
+      etcd_encryption_complete: "{{ etcd_encryption_complete_current | bool }}"
+      etcd_encryption_reported_component_count: "{{ etcd_encryption_reported_component_count_current | int }}"
+      etcd_encryption_completed_component_count: "{{ etcd_encryption_completed_component_count_current | int }}"

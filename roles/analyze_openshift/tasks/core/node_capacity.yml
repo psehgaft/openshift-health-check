@@ -1,0 +1,98 @@
+---
+- name: Initialize node capacity summary
+  ansible.builtin.set_fact:
+    node_capacity_summary: []
+  when: report_scope_requires_core_node_analysis | default(true) | bool
+
+- name: Build node capacity summary
+  ansible.builtin.set_fact:
+    node_capacity_summary: "{{ node_capacity_summary | default([]) + [node_capacity_entry] }}"
+  loop: "{{ openshift_node_items | default([]) }}"
+  vars:
+    cpu_allocatable_raw: "{{ item.status.allocatable.cpu | default('0') }}"
+    pods_allocatable_raw: "{{ item.status.allocatable.pods | default('0') }}"
+    cpu_allocatable_millicores: "{{ (cpu_allocatable_raw | regex_replace('m$', '') | int) if (cpu_allocatable_raw | string | regex_search('m$')) else (((cpu_allocatable_raw | float) * 1000) | int) }}"
+    node_address_values: "{{ item.status.addresses | default([]) | map(attribute='address') | list }}"
+    node_hostname_label: "{{ (item.metadata.labels | default({})).get('kubernetes.io/hostname', '') }}"
+    node_lookup_candidates: >-
+      {{
+        (
+          [item.metadata.name | default(''), node_hostname_label]
+          + node_address_values
+        )
+        | reject('equalto', '')
+        | map('string')
+        | map('trim')
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+    node_pod_count_lookup_key: >-
+      {{
+        (
+          node_lookup_candidates
+          | select('in', ((node_pod_counts | default({})).keys() | list))
+          | list
+          | first
+        )
+        | default(item.metadata.name)
+      }}
+    node_pod_count_fallback_lookup_key: >-
+      {{
+        (
+          node_lookup_candidates
+          | select('in', ((node_pod_counts_fallback | default({})).keys() | list))
+          | list
+          | first
+        )
+        | default(item.metadata.name)
+      }}
+    node_cpu_request_lookup_key: >-
+      {{
+        (
+          node_lookup_candidates
+          | select('in', ((node_cpu_request_millicores | default({})).keys() | list))
+          | list
+          | first
+        )
+        | default(item.metadata.name)
+      }}
+    node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
+    node_role_name: >-
+      {{
+        'master'
+        if 'master' in node_roles
+        else (
+          'control-plane'
+          if 'control-plane' in node_roles
+          else (
+            'infra'
+            if 'infra' in node_roles
+            else (
+              'worker'
+              if 'worker' in node_roles
+              else ((node_roles | sort | first) | default('worker'))
+            )
+          )
+        )
+      }}
+    scheduled_pods_primary: "{{ (node_pod_counts | default({}))[node_pod_count_lookup_key] | default(0) | int }}"
+    scheduled_pods_fallback: "{{ (node_pod_counts_fallback | default({}))[node_pod_count_fallback_lookup_key] | default(0) | int }}"
+    scheduled_pods: "{{ [scheduled_pods_primary, scheduled_pods_fallback] | max }}"
+    node_capacity_entry:
+      name: "{{ item.metadata.name }}"
+      role: "{{ node_role_name }}"
+      pods_allocatable: "{{ pods_allocatable_raw | int }}"
+      scheduled_pods: "{{ scheduled_pods }}"
+      pod_density_pct: "{{ (((scheduled_pods | float) / ((pods_allocatable_raw | int) if (pods_allocatable_raw | int) > 0 else 1)) * 100) | round(1) }}"
+      cpu_allocatable_millicores: "{{ cpu_allocatable_millicores | int }}"
+      requested_cpu_millicores: "{{ (node_cpu_request_millicores | default({}))[node_cpu_request_lookup_key] | default(0) | int }}"
+      requested_cpu_pct: "{{ ((((node_cpu_request_millicores | default({}))[node_cpu_request_lookup_key] | default(0) | float) / ((cpu_allocatable_millicores | int) if (cpu_allocatable_millicores | int) > 0 else 1)) * 100) | round(1) }}"
+  changed_when: false
+  when: report_scope_requires_core_node_analysis | default(true) | bool
+
+- name: Sort node density summaries
+  ansible.builtin.set_fact:
+    node_capacity_summary_by_density_desc: "{{ (node_capacity_summary | default([])) | sort(attribute='pod_density_pct', reverse=true) | list }}"
+    node_capacity_summary_by_density_asc: "{{ (node_capacity_summary | default([])) | sort(attribute='pod_density_pct') | list }}"
+  when: report_scope_requires_core_node_analysis | default(true) | bool

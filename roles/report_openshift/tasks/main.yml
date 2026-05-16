@@ -81,7 +81,9 @@
         score: "{{ 0 if (report_collection.core_failed_commands | default(0) | int > 0) else (4 if (report_collection.failed_commands | default(0) | int > 0) else 8) }}"
         max_score: 8
         findings_count: "{{ report_collection.failed_commands | default(0) }}"
-  when: report_run_mode | default('fresh') == 'resume_last_failure'
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - not ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
 
 - name: Build audit rubric
   vars:
@@ -282,7 +284,9 @@
       - priority: next
         summary: Review the report findings and rerun fresh after major remediation.
         detail: Use this resumed report for current triage, then rerun with `report_run_mode=fresh` after fixes so collection, analysis, and reporting are regenerated from live cluster state.
-  when: report_run_mode | default('fresh') == 'resume_last_failure'
+  when:
+    - report_run_mode | default('fresh') == 'resume_last_failure'
+    - not ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
 
 - name: Add suggested next step for collection failures
   ansible.builtin.set_fact:
@@ -564,6 +568,21 @@
     name: report_common
     tasks_from: build_live_openshift_support_facts.yml
 
+- name: Load OpenShift shared artifacts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: load_openshift_shared_artifacts.yml
+
+- name: Load OpenShift posture artifacts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: load_openshift_posture_artifacts.yml
+
+- name: Load OpenShift capability artifacts
+  ansible.builtin.include_role:
+    name: report_common
+    tasks_from: load_openshift_capability_artifacts.yml
+
 - name: Build shared OpenShift domain payload
   ansible.builtin.include_role:
     name: report_common
@@ -611,7 +630,7 @@
     name: report_common
     tasks_from: show_report_locations.yml
   vars:
-    report_status_value: "{{ health_summary.status }}"
+    report_status_value: "{{ health_summary.status | default('UNKNOWN') }}"
     report_score_total: "{{ audit_score_total }}"
     report_score_max: "{{ audit_score_max }}"
     report_health_score: "{{ cluster_health_score }}"

@@ -1,0 +1,81 @@
+---
+- name: Build Dynatrace observability capability artifact facts
+  ansible.builtin.set_fact:
+    capability_artifact_key: dynatrace_observability
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      dynatrace_context_present: >-
+        {{
+          (
+            ('dynatrace-operator' in (subscription_packages | default([])))
+            or ('dynatrace' in (namespace_names | default([])))
+            or (
+              (
+                ((analysis_graph.crds | default({})).get('items', []) | default([]))
+                | selectattr('metadata', 'defined')
+                | selectattr('metadata.name', 'defined')
+                | map(attribute='metadata.name')
+                | map('string')
+                | map('lower')
+                | select('in', ['dynakube.dynatrace.com', 'edgeconnects.dynatrace.com'])
+                | list
+                | length
+              ) > 0
+            )
+          ) | bool
+        }}
+      dynatrace_observability_present: >-
+        {{
+          (
+            ((((analysis_graph.dynakubes | default({})).get('items', []) | length) > 0))
+            or ((((analysis_graph.edgeconnects | default({})).get('items', []) | length) > 0))
+            or (
+              (all_workload_blobs | default([]))
+              | map('string')
+              | map('lower')
+              | select('search', 'dynatrace-operator|dynakube|oneagent|activegate|dynatrace-webhook')
+              | list
+              | length
+            ) > 0
+          ) | bool
+        }}
+      dynatrace_dynakube_count: "{{ (((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) }}"
+      dynatrace_edgeconnect_count: "{{ (((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) }}"
+    capability_artifact_render_inputs:
+      dynatrace_operator_subscription_present: "{{ ('dynatrace-operator' in (subscription_packages | default([]))) | bool }}"
+      dynatrace_namespace_present: "{{ ('dynatrace' in (namespace_names | default([]))) | bool }}"
+      dynatrace_crd_present: >-
+        {{
+          (
+            ((analysis_graph.crds | default({})).get('items', []) | default([]))
+            | selectattr('metadata', 'defined')
+            | selectattr('metadata.name', 'defined')
+            | map(attribute='metadata.name')
+            | map('string')
+            | map('lower')
+            | select('in', ['dynakube.dynatrace.com', 'edgeconnects.dynatrace.com'])
+            | list
+            | length
+          ) > 0
+        }}
+      dynatrace_dynakube_count: "{{ (((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) }}"
+      dynatrace_edgeconnect_count: "{{ (((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) }}"
+    capability_artifact_collection_inputs:
+      dynatrace_operator_subscription_present: "{{ ('dynatrace-operator' in (subscription_packages | default([]))) | bool }}"
+      dynatrace_namespace_present: "{{ ('dynatrace' in (namespace_names | default([]))) | bool }}"
+      dynatrace_crd_present: >-
+        {{
+          (
+            ((analysis_graph.crds | default({})).get('items', []) | default([]))
+            | selectattr('metadata', 'defined')
+            | selectattr('metadata.name', 'defined')
+            | map(attribute='metadata.name')
+            | map('string')
+            | map('lower')
+            | select('in', ['dynakube.dynatrace.com', 'edgeconnects.dynatrace.com'])
+            | list
+            | length
+          ) > 0
+        }}
+      dynatrace_dynakube_count: "{{ (((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) }}"
+      dynatrace_edgeconnect_count: "{{ (((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) }}"

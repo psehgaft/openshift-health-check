@@ -1,0 +1,291 @@
+- name: Build referenced configmap and secret names from pods
+  ansible.builtin.set_fact:
+    referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
+    referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
+    referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
+  loop: "{{ (analysis_graph.pods | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    volume_configmap_names: "{{ item.spec.volumes | default([]) | selectattr('configMap', 'defined') | map(attribute='configMap.name') | select('defined') | list }}"
+    volume_secret_names: "{{ item.spec.volumes | default([]) | selectattr('secret', 'defined') | map(attribute='secret.secretName') | select('defined') | list }}"
+    envfrom_configmap_names: "{{ ((item.spec.containers | default([])) + (item.spec.initContainers | default([]))) | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('configMapRef', 'defined') | map(attribute='configMapRef.name') | select('defined') | list }}"
+    envfrom_secret_names: "{{ ((item.spec.containers | default([])) + (item.spec.initContainers | default([]))) | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('secretRef', 'defined') | map(attribute='secretRef.name') | select('defined') | list }}"
+    env_configmap_names: "{{ ((item.spec.containers | default([])) + (item.spec.initContainers | default([]))) | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.configMapKeyRef', 'defined') | map(attribute='valueFrom.configMapKeyRef.name') | select('defined') | list }}"
+    env_secret_names: "{{ ((item.spec.containers | default([])) + (item.spec.initContainers | default([]))) | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.secretKeyRef', 'defined') | map(attribute='valueFrom.secretKeyRef.name') | select('defined') | list }}"
+    configmap_names: "{{ volume_configmap_names + envfrom_configmap_names + env_configmap_names }}"
+    secret_names: "{{ volume_secret_names + envfrom_secret_names + env_secret_names }}"
+    referenced_configmap_update: "{{ {ns_name: ((((referenced_configmaps | default({}))[ns_name] | default([])) + configmap_names) | unique)} }}"
+    referenced_secret_update: "{{ {ns_name: ((((referenced_secrets | default({}))[ns_name] | default([])) + secret_names) | unique)} }}"
+    referenced_serviceaccount_update: "{{ {ns_name: ((((referenced_serviceaccounts | default({}))[ns_name] | default([])) + [item.spec.serviceAccountName | default('default')]) | unique)} }}"
+  changed_when: false
+
+- name: Build references from deployment pod templates
+  ansible.builtin.set_fact:
+    referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
+    referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
+    referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
+  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    pod_spec: "{{ item.spec.template.spec | default({}) }}"
+    all_containers: "{{ (pod_spec.containers | default([])) + (pod_spec.initContainers | default([])) }}"
+    volume_configmap_names: "{{ pod_spec.volumes | default([]) | selectattr('configMap', 'defined') | map(attribute='configMap.name') | select('defined') | list }}"
+    volume_secret_names: "{{ pod_spec.volumes | default([]) | selectattr('secret', 'defined') | map(attribute='secret.secretName') | select('defined') | list }}"
+    envfrom_configmap_names: "{{ all_containers | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('configMapRef', 'defined') | map(attribute='configMapRef.name') | select('defined') | list }}"
+    envfrom_secret_names: "{{ all_containers | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('secretRef', 'defined') | map(attribute='secretRef.name') | select('defined') | list }}"
+    env_configmap_names: "{{ all_containers | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.configMapKeyRef', 'defined') | map(attribute='valueFrom.configMapKeyRef.name') | select('defined') | list }}"
+    env_secret_names: "{{ all_containers | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.secretKeyRef', 'defined') | map(attribute='valueFrom.secretKeyRef.name') | select('defined') | list }}"
+    referenced_configmap_update: "{{ {ns_name: ((((referenced_configmaps | default({}))[ns_name] | default([])) + volume_configmap_names + envfrom_configmap_names + env_configmap_names) | unique)} }}"
+    referenced_secret_update: "{{ {ns_name: ((((referenced_secrets | default({}))[ns_name] | default([])) + volume_secret_names + envfrom_secret_names + env_secret_names) | unique)} }}"
+    referenced_serviceaccount_update: "{{ {ns_name: ((((referenced_serviceaccounts | default({}))[ns_name] | default([])) + [pod_spec.serviceAccountName | default('default')]) | unique)} }}"
+  changed_when: false
+
+- name: Build references from statefulset pod templates
+  ansible.builtin.set_fact:
+    referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
+    referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
+    referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
+  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    pod_spec: "{{ item.spec.template.spec | default({}) }}"
+    all_containers: "{{ (pod_spec.containers | default([])) + (pod_spec.initContainers | default([])) }}"
+    volume_configmap_names: "{{ pod_spec.volumes | default([]) | selectattr('configMap', 'defined') | map(attribute='configMap.name') | select('defined') | list }}"
+    volume_secret_names: "{{ pod_spec.volumes | default([]) | selectattr('secret', 'defined') | map(attribute='secret.secretName') | select('defined') | list }}"
+    envfrom_configmap_names: "{{ all_containers | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('configMapRef', 'defined') | map(attribute='configMapRef.name') | select('defined') | list }}"
+    envfrom_secret_names: "{{ all_containers | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('secretRef', 'defined') | map(attribute='secretRef.name') | select('defined') | list }}"
+    env_configmap_names: "{{ all_containers | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.configMapKeyRef', 'defined') | map(attribute='valueFrom.configMapKeyRef.name') | select('defined') | list }}"
+    env_secret_names: "{{ all_containers | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.secretKeyRef', 'defined') | map(attribute='valueFrom.secretKeyRef.name') | select('defined') | list }}"
+    referenced_configmap_update: "{{ {ns_name: ((((referenced_configmaps | default({}))[ns_name] | default([])) + volume_configmap_names + envfrom_configmap_names + env_configmap_names) | unique)} }}"
+    referenced_secret_update: "{{ {ns_name: ((((referenced_secrets | default({}))[ns_name] | default([])) + volume_secret_names + envfrom_secret_names + env_secret_names) | unique)} }}"
+    referenced_serviceaccount_update: "{{ {ns_name: ((((referenced_serviceaccounts | default({}))[ns_name] | default([])) + [pod_spec.serviceAccountName | default('default')]) | unique)} }}"
+  changed_when: false
+
+- name: Build references from daemonset pod templates
+  ansible.builtin.set_fact:
+    referenced_configmaps: "{{ referenced_configmaps | default({}) | combine(referenced_configmap_update, recursive=True) }}"
+    referenced_secrets: "{{ referenced_secrets | default({}) | combine(referenced_secret_update, recursive=True) }}"
+    referenced_serviceaccounts: "{{ referenced_serviceaccounts | default({}) | combine(referenced_serviceaccount_update, recursive=True) }}"
+  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    pod_spec: "{{ item.spec.template.spec | default({}) }}"
+    all_containers: "{{ (pod_spec.containers | default([])) + (pod_spec.initContainers | default([])) }}"
+    volume_configmap_names: "{{ pod_spec.volumes | default([]) | selectattr('configMap', 'defined') | map(attribute='configMap.name') | select('defined') | list }}"
+    volume_secret_names: "{{ pod_spec.volumes | default([]) | selectattr('secret', 'defined') | map(attribute='secret.secretName') | select('defined') | list }}"
+    envfrom_configmap_names: "{{ all_containers | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('configMapRef', 'defined') | map(attribute='configMapRef.name') | select('defined') | list }}"
+    envfrom_secret_names: "{{ all_containers | map(attribute='envFrom') | select('defined') | list | flatten | selectattr('secretRef', 'defined') | map(attribute='secretRef.name') | select('defined') | list }}"
+    env_configmap_names: "{{ all_containers | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.configMapKeyRef', 'defined') | map(attribute='valueFrom.configMapKeyRef.name') | select('defined') | list }}"
+    env_secret_names: "{{ all_containers | map(attribute='env') | select('defined') | list | flatten | selectattr('valueFrom.secretKeyRef', 'defined') | map(attribute='valueFrom.secretKeyRef.name') | select('defined') | list }}"
+    referenced_configmap_update: "{{ {ns_name: ((((referenced_configmaps | default({}))[ns_name] | default([])) + volume_configmap_names + envfrom_configmap_names + env_configmap_names) | unique)} }}"
+    referenced_secret_update: "{{ {ns_name: ((((referenced_secrets | default({}))[ns_name] | default([])) + volume_secret_names + envfrom_secret_names + env_secret_names) | unique)} }}"
+    referenced_serviceaccount_update: "{{ {ns_name: ((((referenced_serviceaccounts | default({}))[ns_name] | default([])) + [pod_spec.serviceAccountName | default('default')]) | unique)} }}"
+  changed_when: false
+
+- name: Build likely unused configmap findings
+  ansible.builtin.set_fact:
+    likely_unused_configmaps: "{{ likely_unused_configmaps | default([]) + configmap_issue_entry }}"
+  loop: "{{ (analysis_graph.configmaps | default({})).get('items', []) }}"
+  vars:
+    cm_ns: "{{ item.metadata.namespace | default('') }}"
+    cm_name: "{{ item.metadata.name | default('') }}"
+    configmap_issue_entry: >-
+      {{
+        [{'namespace': cm_ns, 'name': cm_name}]
+        if (
+          not (cm_ns is match(user_namespaces_exclude_regex))
+          and cm_name not in (((referenced_configmaps | default({}))[cm_ns] | default([])))
+        ) else []
+      }}
+  changed_when: false
+
+- name: Build likely unused service account findings
+  ansible.builtin.set_fact:
+    likely_unused_serviceaccounts: "{{ likely_unused_serviceaccounts | default([]) + serviceaccount_issue_entry }}"
+  loop: "{{ (analysis_graph.serviceaccounts | default({})).get('items', []) }}"
+  vars:
+    sa_ns: "{{ item.metadata.namespace | default('') }}"
+    sa_name: "{{ item.metadata.name | default('') }}"
+    serviceaccount_issue_entry: >-
+      {{
+        [{'namespace': sa_ns, 'name': sa_name}]
+        if (
+          not (sa_ns is match(user_namespaces_exclude_regex))
+          and sa_name not in ['default', 'builder', 'deployer']
+          and sa_name not in (((referenced_serviceaccounts | default({}))[sa_ns] | default([])))
+        ) else []
+      }}
+  changed_when: false
+
+- name: Build likely unused secret findings
+  ansible.builtin.set_fact:
+    likely_unused_secrets: "{{ likely_unused_secrets | default([]) + secret_issue_entry }}"
+  loop: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
+  vars:
+    secret_ns: "{{ item.metadata.namespace | default('') }}"
+    secret_name: "{{ item.metadata.name | default('') }}"
+    secret_type: "{{ item.type | default('') }}"
+    secret_issue_entry: >-
+      {{
+        [{'namespace': secret_ns, 'name': secret_name, 'type': secret_type}]
+        if (
+          not (secret_ns is match(user_namespaces_exclude_regex))
+          and secret_type not in ['kubernetes.io/service-account-token', 'kubernetes.io/dockercfg', 'kubernetes.io/dockerconfigjson']
+          and not (secret_name | regex_search('^builder-|^default-token-|^deployer-token-|^pipeline-|^sh.helm.release.v1\\.'))
+          and secret_name not in (((referenced_secrets | default({}))[secret_ns] | default([])))
+        ) else []
+      }}
+  changed_when: false
+
+- name: Build privileged RBAC findings
+  ansible.builtin.set_fact:
+    privileged_serviceaccount_access: "{{ privileged_serviceaccount_access | default([]) + privileged_serviceaccount_entries }}"
+    privileged_user_access: "{{ privileged_user_access | default([]) + privileged_user_entries }}"
+    privileged_group_access: "{{ privileged_group_access | default([]) + privileged_group_entries }}"
+  loop: "{{ ((analysis_graph.clusterrolebindings | default({})).get('items', [])) + ((analysis_graph.rolebindings | default({})).get('items', [])) }}"
+  vars:
+    binding_kind: "{{ item.kind | default('Binding') }}"
+    binding_name: "{{ item.metadata.name | default('unknown') }}"
+    binding_namespace: "{{ item.metadata.namespace | default('') }}"
+    binding_scope: "{{ 'cluster-wide' if (binding_namespace | length == 0) else ('namespace ' ~ binding_namespace) }}"
+    grant_source: "{{ (binding_kind ~ '/' ~ binding_name) if (binding_namespace | length == 0) else (binding_kind ~ '/' ~ binding_namespace ~ '/' ~ binding_name) }}"
+    role_kind: "{{ item.roleRef.kind | default('') }}"
+    role_name: "{{ item.roleRef.name | default('') }}"
+    subjects: "{{ item.subjects | default([]) }}"
+    privileged_subjects: "{{ subjects if (role_kind == 'ClusterRole' and role_name == 'cluster-admin') else [] }}"
+    non_system_serviceaccounts: >-
+      {{
+        privileged_subjects
+        | selectattr('kind', 'equalto', 'ServiceAccount')
+        | rejectattr('namespace', 'undefined')
+        | rejectattr('namespace', 'match', user_namespaces_exclude_regex)
+        | list
+      }}
+    non_system_users: >-
+      {{
+        privileged_subjects
+        | selectattr('kind', 'equalto', 'User')
+        | rejectattr('name', 'match', '^(system:|kube:|openshift:)')
+        | list
+      }}
+    non_system_groups: >-
+      {{
+        privileged_subjects
+        | selectattr('kind', 'equalto', 'Group')
+        | rejectattr('name', 'match', '^(system:|kube:|openshift:)')
+        | list
+      }}
+    privileged_serviceaccount_entries: >-
+      {{
+        non_system_serviceaccounts
+        | map('combine', {
+          'binding_name': binding_name,
+          'grant_source': grant_source,
+          'binding_scope': binding_scope,
+          'access_role': 'cluster-admin',
+          'access_level': 'privileged'
+        })
+        | list
+      }}
+    privileged_user_entries: >-
+      {{
+        non_system_users
+        | map('combine', {
+          'binding_name': binding_name,
+          'grant_source': grant_source,
+          'binding_scope': binding_scope,
+          'access_role': 'cluster-admin',
+          'access_level': 'privileged'
+        })
+        | list
+      }}
+    privileged_group_entries: >-
+      {{
+        non_system_groups
+        | map('combine', {
+          'binding_name': binding_name,
+          'grant_source': grant_source,
+          'binding_scope': binding_scope,
+          'access_role': 'cluster-admin',
+          'access_level': 'privileged'
+        })
+        | list
+      }}
+  changed_when: false
+
+- name: Build namespaced CRD count targets
+  ansible.builtin.set_fact:
+    namespaced_crd_count_targets: "{{ (namespaced_crd_count_targets | default([])) + [crd_count_target] }}"
+  loop: "{{ (analysis_graph.crds | default({})).get('items', []) }}"
+  vars:
+    crd_count_target:
+      name: "{{ item.metadata.name | default('') }}"
+      group: "{{ item.spec.group | default('') }}"
+      plural: "{{ item.spec.names.plural | default('') }}"
+  when:
+    - item.spec is defined
+    - item.spec.names is defined
+    - item.spec.group is defined
+    - item.spec.scope | default('Namespaced') == 'Namespaced'
+  changed_when: false
+
+- name: Check CRD instance counts
+  block:
+    - name: Create temporary CRD instance count input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-crd-counts-
+        suffix: .json
+      register: crd_instance_count_input_file
+
+    - name: Write CRD instance count input data
+      ansible.builtin.copy:
+        dest: "{{ crd_instance_count_input_file.path }}"
+        content: >-
+          {{
+            {
+              "kube_cli": kube_cli | default('oc'),
+              "timeout_seconds": collection_command_timeout_seconds | default(300),
+              "parallelism": effective_analysis_parallelism | default(analysis_parallelism | default(collection_parallelism | default(4))),
+              "crds": namespaced_crd_count_targets | default([])
+            } | to_json
+          }}
+        mode: "0600"
+
+    - name: Run batched CRD instance count helper
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/batch_crd_instance_counts.py"
+          - "{{ crd_instance_count_input_file.path }}"
+      register: crd_instance_count_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove temporary CRD instance count input file
+      ansible.builtin.file:
+        path: "{{ crd_instance_count_input_file.path }}"
+        state: absent
+      when: crd_instance_count_input_file is defined and (crd_instance_count_input_file.path | default('') | length > 0)
+
+- name: Build likely unused custom resource definitions
+  ansible.builtin.set_fact:
+    likely_unused_crds: "{{ likely_unused_crds | default([]) + crd_issue_entry }}"
+  loop: "{{ (crd_instance_count_cmd.stdout | from_json).results if (crd_instance_count_cmd.rc == 0 and (crd_instance_count_cmd.stdout | default('') | length > 0)) else [] }}"
+  vars:
+    crd_issue_entry: >-
+      {{
+        [{
+          'name': item.name | default(''),
+          'group': item.group | default(''),
+          'plural': item.plural | default(''),
+          'count': (item.count | default(0) | int)
+        }]
+        if (
+          (item.rc | default(1) | int) == 0
+          and (item.count | default(0) | int) == 0
+          and not ((item.group | default('')) is match('^(openshift.io|operator.openshift.io|config.openshift.io|machine.openshift.io|monitoring.coreos.com|apiextensions.k8s.io|rbac.authorization.k8s.io|authorization.openshift.io|route.openshift.io|image.openshift.io|build.openshift.io|apps.openshift.io|project.openshift.io|template.openshift.io|k8s.io)$'))
+        ) else []
+      }}
+  changed_when: false
+

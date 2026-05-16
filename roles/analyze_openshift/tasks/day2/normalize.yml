@@ -1,0 +1,184 @@
+---
+- name: Remove production Day 2 posture input file
+  ansible.builtin.file:
+    path: "{{ day2_posture_input_file.path }}"
+    state: absent
+  when: day2_posture_input_file is defined and (day2_posture_input_file.path | default('') | length > 0)
+  changed_when: false
+
+- name: Normalize production Day 2 posture summary
+  vars:
+    day2_posture_payload: >-
+      {{
+        day2_posture_cmd.stdout | from_json
+        if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0))
+        else {
+          'assessment_state': 'failed',
+          'assessment_error': (
+            day2_posture_cmd.stderr | default('') | trim
+            or ('production Day 2 posture analyzer returned rc=' ~ (day2_posture_cmd.rc | default(-1) | string) ~ ' without JSON output')
+          ),
+          'day2_posture_checks': [],
+          'day2_posture_findings': [],
+          'scored_day2_posture_findings': [],
+          'capability_sections': [],
+          'day2_posture_summary': {
+            'capability_assessment_state': 'failed',
+            'capability_assessment_error': (
+              day2_posture_cmd.stderr | default('') | trim
+              or ('production Day 2 posture analyzer returned rc=' ~ (day2_posture_cmd.rc | default(-1) | string) ~ ' without JSON output')
+            ),
+            'checks_total': 0,
+            'checks_warn': 0,
+            'scored_findings_count': 0,
+            'baseline_profile': {},
+            'gitops_present': false,
+            'gitops_operational': false,
+            'gitops_automated_sync_present': false,
+            'argocd_count': 0,
+            'gitops_application_count': 0,
+            'gitops_repo_backed_application_count': 0,
+            'gitops_automated_sync_application_count': 0,
+            'gitops_appproject_count': 0,
+            'namespace_onboarding_controls_present': false,
+            'project_request_template_name': '',
+            'project_request_template_present': false,
+            'project_request_template_guardrail_count': 0,
+            'project_request_message_configured': false,
+            'self_provisioning_restricted': false,
+            'self_provisioner_autoupdate_false': false,
+            'onboarding_gitops_application_count': 0,
+            'team_rbac_namespace_count': 0,
+            'team_rbac_group_count': 0,
+            'known_team_group_count': 0,
+            'namespaces_with_all_baseline_guardrails': 0,
+            'namespaces_with_all_namespace_governance_guardrails': 0,
+            'external_secret_store_count': 0,
+            'external_secret_count': 0,
+            'clusterautoscaler_count': 0,
+            'clusterautoscaler_expected': false,
+            'hostedcluster_count': 0,
+            'nodepool_count': 0,
+            'hostedcluster_autoscaling_present': false,
+            'nodepool_autoscaling_present': false,
+            'machinehealthcheck_count': 0,
+            'machinehealthcheck_expected': false,
+            'acm_managed': false,
+            'acm_klusterlet_count': 0,
+            'acm_managedclusteraddon_count': 0,
+            'acm_agent_namespace_count': 0,
+            'enable_user_workload_monitoring': false,
+            'servicemonitor_count': 0,
+            'podmonitor_count': 0,
+            'grafana_present': false,
+            'grafana_dashboard_configmap_count': 0,
+            'grafana_dashboard_present': false,
+            'workloads_using_external_private_registries_present': false,
+            'external_private_registry_count': 0,
+            'credentialed_public_registry_count': 0,
+            'workloads_with_image_pull_secret': 0,
+            'cluster_image_mirror_configuration_present': false,
+            'image_mirror_resource_count': 0,
+            'disconnected_cluster_image_sources_present': false,
+            'disconnected_catalogsource_count': 0,
+            'ovn_ipsec_encryption': false,
+            'ipsec_mode': 'Disabled',
+            'etcd_encryption': false,
+            'etcd_encryption_type': 'unknown',
+            'etcd_encryption_complete': false,
+            'etcd_encryption_reported_component_count': 0,
+            'etcd_encryption_completed_component_count': 0,
+            'cluster_proxy_configured': false,
+            'custom_ca_trust_configured': false,
+            'workload_vulnerability_scanning_present': false,
+            'monitoring_persistent_storage_configured': false,
+            'external_log_forwarding_output_count': 0,
+            'external_alert_delivery_configured': false,
+            'external_alert_receiver_count': 0,
+            'external_cluster_metrics_remote_write_count': 0,
+            'external_user_workload_metrics_remote_write_count': 0,
+            'backup_schedule_count': 0,
+            'successful_backup_count': 0,
+            'secondary_site_disaster_recovery_present': false,
+            'secondary_site_disaster_recovery_healthy': false,
+            'drpolicy_count': 0,
+            'valid_drpolicy_count': 0,
+            'drcluster_count': 0,
+            'drplacementcontrol_count': 0,
+            'volumereplicationgroup_count': 0,
+            'volumereplicationclass_count': 0,
+            'secondary_site_dr_problem_drcluster_count': 0,
+            'secondary_site_dr_problem_drpc_count': 0,
+            'secondary_site_dr_problem_vrg_count': 0,
+            'cluster_hosted_cicd_runners_present': false,
+            'openshift_data_foundation_present': false,
+            'openshift_virtualization_present': false,
+            'openshift_virtualization_healthy': false,
+            'openshift_ai_present': false,
+            'service_mesh_control_plane_present': false,
+            'service_mesh_control_plane_healthy': false,
+            'openshift_serverless_present': false,
+            'openshift_serverless_healthy': false,
+            'windows_container_workloads_present': false,
+            'windows_container_workloads_healthy': false,
+            'gpu_accelerated_workloads_present': false,
+            'gpu_accelerated_workloads_healthy': false,
+            'sandboxed_container_workloads_present': false,
+            'sandboxed_container_workloads_healthy': false,
+            'node_tuning_operator_present': false,
+            'node_tuning_operator_healthy': false,
+            'kubernetes_nmstate_networking_present': false,
+            'kubernetes_nmstate_networking_healthy': false,
+            'cost_management_operator_present': false,
+            'cost_management_operator_healthy': false,
+            'descheduler_operator_present': false,
+            'descheduler_operator_healthy': false,
+            'namespace_network_policy_baseline_present': false,
+            'namespace_egress_controls_present': false,
+            'namespace_egress_controls_healthy': false,
+            'compliancesuite_count': 0,
+            'identity_provider_count': 0,
+            'insights_healthy': false
+          }
+        }
+      }}
+  ansible.builtin.set_fact:
+    day2_posture_data: "{{ day2_posture_payload }}"
+    day2_capability_sections_fallback: >-
+      {%- set sections = [] -%}
+      {%- set resolved_capability_profile = ((cluster_health_profile | default({})).get('capabilities', {})) -%}
+      {%- for item in (resolved_capability_profile | dict2items) -%}
+        {%- set cap = item.value if item.value is mapping else {} -%}
+        {%- if (cap.get('enabled', true) | bool) -%}
+        {%- set _ = sections.append({
+          'key': item.key,
+          'title': (item.key | replace('_', ' ') | trim),
+          'required': (cap.get('required', false) | bool),
+          'criticality': (cap.get('criticality', 'medium') | string | lower | trim),
+          'expected_state': (cap.get('expected_state', 'present') | string | lower | trim),
+          'owner': (cap.get('owner', 'platform') | string | trim or 'platform'),
+          'evidence_required': ((cap.get('evidence_required', []) or []) | map('string') | map('trim') | reject('equalto', '') | list),
+          'notes': (cap.get('notes', '') | string | trim),
+          'docs': (
+            (cap.get('docs', []) or [])
+            if (cap.get('docs', []) is sequence and cap.get('docs', []) is not string and cap.get('docs', []) is not mapping)
+            else ([cap.get('docs', '') | string | trim] if (cap.get('docs', '') | string | trim | length > 0) else [])
+          ),
+          'verification': (
+            (cap.get('verification', []) or [])
+            if (cap.get('verification', []) is sequence and cap.get('verification', []) is not string and cap.get('verification', []) is not mapping)
+            else ([cap.get('verification', '') | string | trim] if (cap.get('verification', '') | string | trim | length > 0) else [])
+          ),
+          'status': 'not-assessed',
+          'accounting_state': 'not-assessed',
+          'check_count': 0,
+          'finding_count': 0,
+          'checks': [],
+          'findings': [],
+          'recommended_action': 'Collect or review the expected evidence for this capability and remediate any gaps.',
+          'top_detail': 'No collected capability check was produced in this run. Review the expected evidence sources and rerun the report.'
+        }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ sections }}
+

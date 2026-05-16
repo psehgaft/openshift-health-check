@@ -13,6 +13,8 @@
     report_generate_html: true
     report_generate_pdf: true
     report_run_mode: fresh
+    report_artifact_schema_version: "1"
+    report_repo_contract_version: "openshift-artifact-workspace-v1"
     collect_live_support_artifacts: true
     live_support_collection_profile: all
     allow_mutating_live_collectors: true
@@ -21,6 +23,8 @@
     collect_live_cluster_compare: true
     collect_live_insights_archive: true
     collect_live_sosreport: true
+    collect_live_managed_gates: false
+    collect_live_advisor_export: false
     collection_parallelism: 4
     rbac_check_service_account_namespace: openshift-health-check
     rbac_check_service_account_name: health-check-runner
@@ -43,6 +47,8 @@
     warn_on_ingress_without_class: false
     cluster_health_profile_source_path: "{{ playbook_dir }}/../inputs/openshift-cluster-health-profile.yml"
     cluster_health_profile_override_source_path: ""
+    selected_postures: ""
+    selected_capabilities: ""
     case_bundle_path: ""
     must_gather_path: ""
     cluster_compare_path: ""
@@ -186,6 +192,14 @@
       ansible.builtin.set_fact:
         report_resume_state_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}"
         report_resume_manifest_path: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-latest.json"
+        report_run_workspace_root: "{{ report_output_dir }}/.run-state/{{ platform_family }}"
+        report_run_workspace_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-artifacts"
+        report_run_workspace_manifest_path: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-artifacts/manifest.json"
+        report_run_workspace_shared_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-artifacts/shared"
+        report_run_workspace_postures_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-artifacts/postures"
+        report_run_workspace_capabilities_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-artifacts/capabilities"
+        report_run_workspace_report_dir: "{{ report_output_dir }}/.run-state/{{ platform_family }}/{{ report_mode_resolved }}-artifacts/report"
+        report_run_id: "{{ platform_family }}-{{ report_mode_resolved }}-{{ ansible_date_time.iso8601_basic_short }}"
 
     - name: Reset prior run checkpoint state for fresh run
       ansible.builtin.file:
@@ -231,6 +245,19 @@
         report_resume_manifest: "{{ report_resume_manifest_parse.data if (report_resume_manifest_parse.ok | default(false)) else {} }}"
       when: report_run_mode | default('fresh') == 'resume_last_failure'
 
+    - name: Restore run workspace metadata from resume manifest
+      ansible.builtin.set_fact:
+        report_run_id: "{{ report_resume_manifest.run_id | default(report_run_id) }}"
+        report_run_workspace_dir: "{{ report_resume_manifest.run_workspace_dir | default(report_run_workspace_dir) }}"
+        report_run_workspace_manifest_path: "{{ report_resume_manifest.run_workspace_manifest_path | default(report_run_workspace_manifest_path) }}"
+        report_run_workspace_shared_dir: "{{ report_resume_manifest.run_workspace_shared_dir | default(report_run_workspace_shared_dir) }}"
+        report_run_workspace_postures_dir: "{{ report_resume_manifest.run_workspace_postures_dir | default(report_run_workspace_postures_dir) }}"
+        report_run_workspace_capabilities_dir: "{{ report_resume_manifest.run_workspace_capabilities_dir | default(report_run_workspace_capabilities_dir) }}"
+        report_run_workspace_report_dir: "{{ report_resume_manifest.run_workspace_report_dir | default(report_run_workspace_report_dir) }}"
+        report_workspace_completed_artifacts: "{{ report_resume_manifest.completed_artifacts | default([]) }}"
+        report_workspace_failed_artifacts: "{{ report_resume_manifest.failed_artifacts | default([]) }}"
+      when: report_run_mode | default('fresh') == 'resume_last_failure'
+
     - name: Validate resume manifest JSON
       ansible.builtin.assert:
         that:
@@ -247,6 +274,233 @@
           - (report_resume_manifest.resume_next_stage | default('') | length) > 0
         fail_msg: "The last saved checkpoint is not resumable for this report mode. Use report_run_mode=fresh."
       when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+    - name: Preserve resolved OpenShift cluster health profile before selector scoping
+      ansible.builtin.set_fact:
+        cluster_health_profile_unscoped: "{{ cluster_health_profile | default({}) }}"
+
+    - name: Resolve requested selector sources for this run
+      ansible.builtin.set_fact:
+        selected_postures_source: >-
+          {{
+            (selected_postures | default(''))
+            if (
+              ((selected_postures | default('')) is sequence and (selected_postures | default('')) is not string and ((selected_postures | default('')) | length) > 0)
+              or ((selected_postures | default('')) is string and ((selected_postures | default('') | trim | length) > 0))
+            )
+            else (
+              report_resume_manifest.selected_postures
+              if (
+                (report_run_mode | default('fresh')) == 'resume_last_failure'
+                and (report_resume_manifest.selected_postures | default([]) | length) > 0
+              )
+              else []
+            )
+          }}
+        selected_capabilities_source: >-
+          {{
+            (selected_capabilities | default(''))
+            if (
+              ((selected_capabilities | default('')) is sequence and (selected_capabilities | default('')) is not string and ((selected_capabilities | default('')) | length) > 0)
+              or ((selected_capabilities | default('')) is string and ((selected_capabilities | default('') | trim | length) > 0))
+            )
+            else (
+              report_resume_manifest.selected_capabilities
+              if (
+                (report_run_mode | default('fresh')) == 'resume_last_failure'
+                and (report_resume_manifest.selected_capabilities | default([]) | length) > 0
+              )
+              else []
+            )
+          }}
+
+    - name: Normalize requested posture and capability selectors
+      ansible.builtin.set_fact:
+        selected_postures_list: >-
+          {{
+            (
+              selected_postures_source
+              if (selected_postures_source is sequence and selected_postures_source is not string)
+              else (selected_postures_source | default('') | split(','))
+            )
+            | map('string')
+            | map('trim')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+        selected_capabilities_list: >-
+          {{
+            (
+              selected_capabilities_source
+              if (selected_capabilities_source is sequence and selected_capabilities_source is not string)
+              else (selected_capabilities_source | default('') | split(','))
+            )
+            | map('string')
+            | map('trim')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+
+    - name: Compute effective selector scope
+      vars:
+        requested_posture_unknown: "{{ selected_postures_list | difference((cluster_health_profile_unscoped.get('postures', {}) | default({}) | dict2items | map(attribute='key') | list)) }}"
+        requested_capability_unknown: "{{ selected_capabilities_list | difference((cluster_health_profile_unscoped.get('capabilities', {}) | default({}) | dict2items | map(attribute='key') | list)) }}"
+        requested_posture_disabled: >-
+          {%- set disabled = [] -%}
+          {%- for key in selected_postures_list -%}
+          {%-   if not (cluster_health_profile_unscoped.get('postures', {}).get(key, {}).get('enabled', false)) -%}
+          {%-     set _ = disabled.append(key) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ disabled }}
+        requested_capability_disabled: >-
+          {%- set disabled = [] -%}
+          {%- for key in selected_capabilities_list -%}
+          {%-   if not (cluster_health_profile_unscoped.get('capabilities', {}).get(key, {}).get('enabled', false)) -%}
+          {%-     set _ = disabled.append(key) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ disabled }}
+        selector_active: "{{ ((selected_postures_list | length) + (selected_capabilities_list | length)) > 0 }}"
+        posture_execution_dependency_map:
+          capacity_planning_snapshot:
+            - platform_architecture_and_lifecycle
+          day2_production_readiness:
+            - platform_architecture_and_lifecycle
+            - backup_and_disaster_recovery
+            - observability
+            - security_and_governance
+            - declarative_operations
+        capability_execution_dependency_map: {}
+        effective_selected_postures_computed: >-
+          {{
+            (
+              selected_postures_list
+              + (['day2_production_readiness'] if (selected_capabilities_list | length) > 0 else [])
+            )
+            | unique
+            | list
+          }}
+        effective_execution_postures_computed: >-
+          {%- set auto_included_postures = (['day2_production_readiness'] if (selected_capabilities_list | length) > 0 else []) -%}
+          {%- set ns = namespace(postures=((selected_postures_list + auto_included_postures) | unique | list)) -%}
+          {%- for key in selected_postures_list | unique | list -%}
+            {%- for dep in (posture_execution_dependency_map.get(key, [])) -%}
+              {%- if dep not in ns.postures -%}
+                {%- set _ = ns.postures.append(dep) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for key in selected_capabilities_list | unique | list -%}
+            {%- for dep in (capability_execution_dependency_map.get(key, [])) -%}
+              {%- if dep not in ns.postures -%}
+                {%- set _ = ns.postures.append(dep) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ ns.postures }}
+      ansible.builtin.set_fact:
+        report_requested_postures: "{{ selected_postures_list }}"
+        report_requested_capabilities: "{{ selected_capabilities_list }}"
+        report_unknown_postures: "{{ requested_posture_unknown }}"
+        report_unknown_capabilities: "{{ requested_capability_unknown }}"
+        report_disabled_postures: "{{ requested_posture_disabled }}"
+        report_disabled_capabilities: "{{ requested_capability_disabled }}"
+        report_selector_scope_active: "{{ selector_active | bool }}"
+        report_effective_selected_postures: "{{ effective_selected_postures_computed }}"
+        report_execution_selected_postures: "{{ effective_execution_postures_computed }}"
+        report_effective_selected_capabilities: "{{ selected_capabilities_list }}"
+        report_effective_section_scope:
+          postures: "{{ effective_selected_postures_computed }}"
+          capabilities: "{{ selected_capabilities_list }}"
+
+    - name: Validate requested posture and capability selectors
+      ansible.builtin.assert:
+        that:
+          - (report_unknown_postures | default([]) | length) == 0
+          - (report_unknown_capabilities | default([]) | length) == 0
+          - (report_disabled_postures | default([]) | length) == 0
+          - (report_disabled_capabilities | default([]) | length) == 0
+          - (not (report_selector_scope_active | default(false) | bool)) or (((report_effective_selected_postures | default([]) | length) + (report_effective_selected_capabilities | default([]) | length)) > 0)
+        fail_msg: >-
+          Invalid selective execution request.
+          unknown postures={{ report_unknown_postures | default([]) }},
+          unknown capabilities={{ report_unknown_capabilities | default([]) }},
+          disabled postures={{ report_disabled_postures | default([]) }},
+          disabled capabilities={{ report_disabled_capabilities | default([]) }}.
+
+    - name: Apply selector-scoped OpenShift cluster health profile
+      vars:
+        scoped_postures: >-
+          {%- set scoped = {} -%}
+          {%- for item in (cluster_health_profile_unscoped.get('postures', {}) | dict2items) -%}
+          {%-   set _ = scoped.update({item.key: (item.value | combine({'enabled': (item.key in (report_effective_selected_postures | default([])))}, recursive=True))}) -%}
+          {%- endfor -%}
+          {{ scoped }}
+        execution_scoped_postures: >-
+          {%- set scoped = {} -%}
+          {%- for item in (cluster_health_profile_unscoped.get('postures', {}) | dict2items) -%}
+          {%-   set _ = scoped.update({item.key: (item.value | combine({'enabled': (item.key in (report_execution_selected_postures | default(report_effective_selected_postures | default([]))))}, recursive=True))}) -%}
+          {%- endfor -%}
+          {{ scoped }}
+        scoped_capabilities: >-
+          {%- set scoped = {} -%}
+          {%- for item in (cluster_health_profile_unscoped.get('capabilities', {}) | dict2items) -%}
+          {%-   set _ = scoped.update({item.key: (item.value | combine({'enabled': (item.key in (report_effective_selected_capabilities | default([])))}, recursive=True))}) -%}
+          {%- endfor -%}
+          {{ scoped }}
+      ansible.builtin.set_fact:
+        cluster_health_profile: >-
+          {{
+            cluster_health_profile_unscoped
+            if not (report_selector_scope_active | default(false) | bool)
+            else (
+              cluster_health_profile_unscoped
+              | combine(
+                  {
+                    'postures': scoped_postures,
+                    'capabilities': scoped_capabilities
+                  },
+                  recursive=True
+                )
+            )
+          }}
+        cluster_health_profile_execution: >-
+          {{
+            cluster_health_profile_unscoped
+            if not (report_selector_scope_active | default(false) | bool)
+            else (
+              cluster_health_profile_unscoped
+              | combine(
+                  {
+                    'postures': execution_scoped_postures,
+                    'capabilities': scoped_capabilities
+                  },
+                  recursive=True
+                )
+            )
+          }}
+
+    - name: Resolve selector-scope dependency contract
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml"
+
+    - name: Reduce optional support-evidence scope for selected runs
+      ansible.builtin.set_fact:
+        collect_live_cluster_compare: false
+        collect_live_managed_gates: false
+        collect_live_advisor_export: false
+        collect_live_insights_archive: false
+        collect_live_sosreport: false
+        cluster_compare_path: ""
+        managed_gates_path: ""
+        advisor_export_path: ""
+        insights_archive_path: ""
+        sosreport_paths: []
+      when:
+        - report_selector_scope_active | default(false) | bool
+        - not (report_scope_requires_optional_support_evidence | default(true) | bool)
 
     - name: Read resume checkpoint snapshot
       ansible.builtin.slurp:
@@ -348,6 +602,28 @@
         report_resume_last_resume_next_stage: "{{ report_resume_manifest.resume_next_stage | default('') }}"
       when: report_run_mode | default('fresh') == 'resume_last_failure'
 
+    - name: Ensure run workspace directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ report_run_workspace_dir }}"
+        - "{{ report_run_workspace_shared_dir }}"
+        - "{{ report_run_workspace_postures_dir }}"
+        - "{{ report_run_workspace_capabilities_dir }}"
+        - "{{ report_run_workspace_report_dir }}"
+
+    - name: Initialize run workspace artifact tracking
+      ansible.builtin.set_fact:
+        report_workspace_completed_artifacts: "{{ report_workspace_completed_artifacts | default([]) }}"
+        report_workspace_failed_artifacts: "{{ report_workspace_failed_artifacts | default([]) }}"
+
+    - name: Resolve artifact-granular resume plan
+      ansible.builtin.include_role:
+        name: report_common
+        tasks_from: resolve_openshift_resume_artifact_plan.yml
+
     - name: Run live OpenShift health workflow
       when:
         - report_mode_resolved == 'live'
@@ -383,15 +659,23 @@
           ansible.builtin.include_role:
             name: analyze_openshift
             tasks_from: core.yml
+          when: report_scope_requires_optional_support_evidence | default(true) | bool
 
         - name: Derive targeted node debug candidates
           ansible.builtin.include_role:
             name: analyze_openshift
             tasks_from: node_debug_targets.yml
+          when: report_scope_requires_optional_support_evidence | default(true) | bool
 
         - name: Collect live support artifacts
           ansible.builtin.include_role:
             name: collect_live_support_evidence
+          when: report_scope_requires_optional_support_evidence | default(true) | bool
+
+        - name: Persist shared collection and analysis artifacts for live run
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: persist_openshift_shared_artifacts.yml
 
         - name: Save live collection checkpoint
           ansible.builtin.include_role:
@@ -434,6 +718,171 @@
         - name: Analyze OpenShift-specific data
           ansible.builtin.include_role:
             name: analyze_openshift
+
+        - name: Build and persist evidence and supportability posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_evidence_and_supportability
+          when: (cluster_health_profile_execution.postures.evidence_and_supportability.enabled | default(true)) | bool
+
+        - name: Build and persist platform health posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_platform_health
+          when: (cluster_health_profile_execution.postures.platform_health.enabled | default(true)) | bool
+
+        - name: Build and persist node health and capacity posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_node_health_and_capacity
+          when: (cluster_health_profile_execution.postures.node_health_and_capacity.enabled | default(true)) | bool
+
+        - name: Build and persist application access and network isolation posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_application_access_and_network_isolation
+          when: (cluster_health_profile_execution.postures.application_access_and_network_isolation.enabled | default(true)) | bool
+
+        - name: Build and persist backup and disaster recovery posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_backup_and_disaster_recovery
+          when: (cluster_health_profile_execution.postures.backup_and_disaster_recovery.enabled | default(true)) | bool
+
+        - name: Build and persist observability posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_observability
+          when: (cluster_health_profile_execution.postures.observability.enabled | default(true)) | bool
+
+        - name: Build and persist security and governance posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_security_and_governance
+          when: (cluster_health_profile_execution.postures.security_and_governance.enabled | default(true)) | bool
+
+        - name: Build and persist workload health posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_workload_health
+          when: (cluster_health_profile_execution.postures.workload_health.enabled | default(true)) | bool
+
+        - name: Build and persist platform architecture and lifecycle posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_platform_architecture_and_lifecycle
+          when: (cluster_health_profile_execution.postures.platform_architecture_and_lifecycle.enabled | default(true)) | bool
+
+        - name: Build and persist capacity planning snapshot posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_capacity_planning_snapshot
+          when: (cluster_health_profile_execution.postures.capacity_planning_snapshot.enabled | default(true)) | bool
+
+        - name: Build and persist declarative operations posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_declarative_operations
+          when: (cluster_health_profile_execution.postures.declarative_operations.enabled | default(true)) | bool
+
+        - name: Build and persist container platform adoption and release engineering posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_container_platform_adoption_and_release_engineering
+          when: (cluster_health_profile_execution.postures.container_platform_adoption_and_release_engineering.enabled | default(true)) | bool
+
+        - name: Build and persist day 2 production readiness posture artifact for live run
+          ansible.builtin.include_role:
+            name: posture_day2_production_readiness
+          when: (cluster_health_profile_execution.postures.day2_production_readiness.enabled | default(true)) | bool
+
+        - name: Build and persist oauth external identity provider capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_oauth_external_identity_provider
+          when: (cluster_health_profile.capabilities.oauth_external_identity_provider.enabled | default(true)) | bool
+
+        - name: Build and persist declarative GitOps operations capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_declarative_gitops_operations
+          when: (cluster_health_profile.capabilities.declarative_gitops_operations.enabled | default(true)) | bool
+
+        - name: Build and persist control plane backup and recovery readiness capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_control_plane_backup_and_recovery_readiness
+          when: (cluster_health_profile.capabilities.control_plane_backup_and_recovery_readiness.enabled | default(true)) | bool
+
+        - name: Build and persist external alert delivery capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_external_alert_delivery
+          when: (cluster_health_profile.capabilities.external_alert_delivery.enabled | default(true)) | bool
+
+        - name: Build and persist machine health check remediation capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_machine_health_check_remediation
+          when: (cluster_health_profile.capabilities.machine_health_check_remediation.enabled | default(true)) | bool
+
+        - name: Build and persist custom CA trust bundle capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_custom_ca_trust_bundle
+          when: (cluster_health_profile.capabilities.custom_ca_trust_bundle.enabled | default(true)) | bool
+
+        - name: Build and persist namespace network policy baseline capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_namespace_network_policy_baseline
+          when: (cluster_health_profile.capabilities.namespace_network_policy_baseline.enabled | default(true)) | bool
+
+        - name: Build and persist multi-tenant namespace governance capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_multi_tenant_namespace_governance
+          when: (cluster_health_profile.capabilities.multi_tenant_namespace_governance.enabled | default(true)) | bool
+
+        - name: Build and persist namespace egress controls capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_namespace_egress_controls
+          when: (cluster_health_profile.capabilities.namespace_egress_controls.enabled | default(true)) | bool
+
+        - name: Build and persist etcd encryption capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_etcd_encryption
+          when: (cluster_health_profile.capabilities.etcd_encryption.enabled | default(true)) | bool
+
+        - name: Build and persist workload vulnerability scanning capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_workload_vulnerability_scanning
+          when: (cluster_health_profile.capabilities.workload_vulnerability_scanning.enabled | default(true)) | bool
+
+        - name: Build and persist advanced cluster management capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_advanced_cluster_management
+          when: (cluster_health_profile.capabilities.advanced_cluster_management.enabled | default(true)) | bool
+
+        - name: Build and persist advanced cluster security capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_advanced_cluster_security
+          when: (cluster_health_profile.capabilities.advanced_cluster_security.enabled | default(true)) | bool
+
+        - name: Build and persist OpenShift Data Foundation capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_openshift_data_foundation
+          when: (cluster_health_profile.capabilities.openshift_data_foundation.enabled | default(true)) | bool
+
+        - name: Build and persist secondary-site disaster recovery capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_secondary_site_disaster_recovery
+          when: (cluster_health_profile.capabilities.secondary_site_disaster_recovery.enabled | default(true)) | bool
+
+        - name: Build and persist workloads using external private registries capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_workloads_using_external_private_registries
+          when: (cluster_health_profile.capabilities.workloads_using_external_private_registries.enabled | default(true)) | bool
+
+        - name: Build and persist CyberArk Conjur secrets management capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_cyberark_conjur_secrets_management
+          when: (cluster_health_profile.capabilities.cyberark_conjur_secrets_management.enabled | default(true)) | bool
+
+        - name: Build and persist Dynatrace observability capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_dynatrace_observability
+          when: (cluster_health_profile.capabilities.dynatrace_observability.enabled | default(true)) | bool
+
+        - name: Build and persist compliance requirements validation capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_compliance_requirements_validation
+          when: (cluster_health_profile.capabilities.compliance_requirements_validation.enabled | default(true)) | bool
+
+        - name: Build and persist OVN IPsec encryption capability artifact for live run
+          ansible.builtin.include_role:
+            name: capability_ovn_ipsec_encryption
+          when: (cluster_health_profile.capabilities.ovn_ipsec_encryption.enabled | default(true)) | bool
 
         - name: Save live analysis checkpoint
           ansible.builtin.include_role:
@@ -521,6 +970,142 @@
             - name: Analyze OpenShift-specific data
               ansible.builtin.include_role:
                 name: analyze_openshift
+            - name: Build and persist evidence and supportability posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_evidence_and_supportability
+              when: (cluster_health_profile_execution.postures.evidence_and_supportability.enabled | default(true)) | bool
+            - name: Build and persist platform health posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_platform_health
+              when: (cluster_health_profile_execution.postures.platform_health.enabled | default(true)) | bool
+            - name: Build and persist node health and capacity posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_node_health_and_capacity
+              when: (cluster_health_profile_execution.postures.node_health_and_capacity.enabled | default(true)) | bool
+            - name: Build and persist application access and network isolation posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_application_access_and_network_isolation
+              when: (cluster_health_profile_execution.postures.application_access_and_network_isolation.enabled | default(true)) | bool
+            - name: Build and persist backup and disaster recovery posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_backup_and_disaster_recovery
+              when: (cluster_health_profile_execution.postures.backup_and_disaster_recovery.enabled | default(true)) | bool
+            - name: Build and persist observability posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_observability
+              when: (cluster_health_profile_execution.postures.observability.enabled | default(true)) | bool
+            - name: Build and persist security and governance posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_security_and_governance
+              when: (cluster_health_profile_execution.postures.security_and_governance.enabled | default(true)) | bool
+            - name: Build and persist workload health posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_workload_health
+              when: (cluster_health_profile_execution.postures.workload_health.enabled | default(true)) | bool
+            - name: Build and persist platform architecture and lifecycle posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_platform_architecture_and_lifecycle
+              when: (cluster_health_profile_execution.postures.platform_architecture_and_lifecycle.enabled | default(true)) | bool
+            - name: Build and persist capacity planning snapshot posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_capacity_planning_snapshot
+              when: (cluster_health_profile_execution.postures.capacity_planning_snapshot.enabled | default(true)) | bool
+            - name: Build and persist declarative operations posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_declarative_operations
+              when: (cluster_health_profile_execution.postures.declarative_operations.enabled | default(true)) | bool
+            - name: Build and persist container platform adoption and release engineering posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_container_platform_adoption_and_release_engineering
+              when: (cluster_health_profile_execution.postures.container_platform_adoption_and_release_engineering.enabled | default(true)) | bool
+            - name: Build and persist day 2 production readiness posture artifact for resumed live run
+              ansible.builtin.include_role:
+                name: posture_day2_production_readiness
+              when: (cluster_health_profile_execution.postures.day2_production_readiness.enabled | default(true)) | bool
+            - name: Build and persist oauth external identity provider capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_oauth_external_identity_provider
+              when: (cluster_health_profile.capabilities.oauth_external_identity_provider.enabled | default(true)) | bool
+            - name: Build and persist declarative GitOps operations capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_declarative_gitops_operations
+              when: (cluster_health_profile.capabilities.declarative_gitops_operations.enabled | default(true)) | bool
+            - name: Build and persist control plane backup and recovery readiness capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_control_plane_backup_and_recovery_readiness
+              when: (cluster_health_profile.capabilities.control_plane_backup_and_recovery_readiness.enabled | default(true)) | bool
+            - name: Build and persist external alert delivery capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_external_alert_delivery
+              when: (cluster_health_profile.capabilities.external_alert_delivery.enabled | default(true)) | bool
+            - name: Build and persist machine health check remediation capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_machine_health_check_remediation
+              when: (cluster_health_profile.capabilities.machine_health_check_remediation.enabled | default(true)) | bool
+            - name: Build and persist custom CA trust bundle capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_custom_ca_trust_bundle
+              when: (cluster_health_profile.capabilities.custom_ca_trust_bundle.enabled | default(true)) | bool
+            - name: Build and persist namespace network policy baseline capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_namespace_network_policy_baseline
+              when: (cluster_health_profile.capabilities.namespace_network_policy_baseline.enabled | default(true)) | bool
+            - name: Build and persist multi-tenant namespace governance capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_multi_tenant_namespace_governance
+              when: (cluster_health_profile.capabilities.multi_tenant_namespace_governance.enabled | default(true)) | bool
+            - name: Build and persist namespace egress controls capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_namespace_egress_controls
+              when: (cluster_health_profile.capabilities.namespace_egress_controls.enabled | default(true)) | bool
+            - name: Build and persist etcd encryption capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_etcd_encryption
+              when: (cluster_health_profile.capabilities.etcd_encryption.enabled | default(true)) | bool
+            - name: Build and persist workload vulnerability scanning capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_workload_vulnerability_scanning
+              when: (cluster_health_profile.capabilities.workload_vulnerability_scanning.enabled | default(true)) | bool
+            - name: Build and persist advanced cluster management capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_advanced_cluster_management
+              when: (cluster_health_profile.capabilities.advanced_cluster_management.enabled | default(true)) | bool
+            - name: Build and persist advanced cluster security capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_advanced_cluster_security
+              when: (cluster_health_profile.capabilities.advanced_cluster_security.enabled | default(true)) | bool
+            - name: Build and persist OpenShift Data Foundation capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_openshift_data_foundation
+              when: (cluster_health_profile.capabilities.openshift_data_foundation.enabled | default(true)) | bool
+            - name: Build and persist secondary-site disaster recovery capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_secondary_site_disaster_recovery
+              when: (cluster_health_profile.capabilities.secondary_site_disaster_recovery.enabled | default(true)) | bool
+            - name: Build and persist workloads using external private registries capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_workloads_using_external_private_registries
+              when: (cluster_health_profile.capabilities.workloads_using_external_private_registries.enabled | default(true)) | bool
+            - name: Build and persist CyberArk Conjur secrets management capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_cyberark_conjur_secrets_management
+              when: (cluster_health_profile.capabilities.cyberark_conjur_secrets_management.enabled | default(true)) | bool
+            - name: Build and persist Dynatrace observability capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_dynatrace_observability
+              when: (cluster_health_profile.capabilities.dynatrace_observability.enabled | default(true)) | bool
+            - name: Build and persist compliance requirements validation capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_compliance_requirements_validation
+              when: (cluster_health_profile.capabilities.compliance_requirements_validation.enabled | default(true)) | bool
+            - name: Build and persist OVN IPsec encryption capability artifact for resumed live run
+              ansible.builtin.include_role:
+                name: capability_ovn_ipsec_encryption
+              when: (cluster_health_profile.capabilities.ovn_ipsec_encryption.enabled | default(true)) | bool
+            - name: Persist shared collection and analysis artifacts for resumed live run
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: persist_openshift_shared_artifacts.yml
             - name: Save resumed live analysis checkpoint
               ansible.builtin.include_role:
                 name: report_common
@@ -612,6 +1197,176 @@
           ansible.builtin.include_role:
             name: analyze_openshift
             tasks_from: finalize_collected_supportability.yml
+
+        - name: Build and persist evidence and supportability posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_evidence_and_supportability
+          when: (cluster_health_profile_execution.postures.evidence_and_supportability.enabled | default(true)) | bool
+
+        - name: Build and persist platform health posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_platform_health
+          when: (cluster_health_profile_execution.postures.platform_health.enabled | default(true)) | bool
+
+        - name: Build and persist node health and capacity posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_node_health_and_capacity
+          when: (cluster_health_profile_execution.postures.node_health_and_capacity.enabled | default(true)) | bool
+
+        - name: Build and persist application access and network isolation posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_application_access_and_network_isolation
+          when: (cluster_health_profile_execution.postures.application_access_and_network_isolation.enabled | default(true)) | bool
+
+        - name: Build and persist backup and disaster recovery posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_backup_and_disaster_recovery
+          when: (cluster_health_profile_execution.postures.backup_and_disaster_recovery.enabled | default(true)) | bool
+
+        - name: Build and persist observability posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_observability
+          when: (cluster_health_profile_execution.postures.observability.enabled | default(true)) | bool
+
+        - name: Build and persist security and governance posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_security_and_governance
+          when: (cluster_health_profile_execution.postures.security_and_governance.enabled | default(true)) | bool
+
+        - name: Build and persist workload health posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_workload_health
+          when: (cluster_health_profile_execution.postures.workload_health.enabled | default(true)) | bool
+
+        - name: Build and persist platform architecture and lifecycle posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_platform_architecture_and_lifecycle
+          when: (cluster_health_profile_execution.postures.platform_architecture_and_lifecycle.enabled | default(true)) | bool
+
+        - name: Build and persist capacity planning snapshot posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_capacity_planning_snapshot
+          when: (cluster_health_profile_execution.postures.capacity_planning_snapshot.enabled | default(true)) | bool
+
+        - name: Build and persist declarative operations posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_declarative_operations
+          when: (cluster_health_profile_execution.postures.declarative_operations.enabled | default(true)) | bool
+
+        - name: Build and persist container platform adoption and release engineering posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_container_platform_adoption_and_release_engineering
+          when: (cluster_health_profile_execution.postures.container_platform_adoption_and_release_engineering.enabled | default(true)) | bool
+
+        - name: Build and persist day 2 production readiness posture artifact for collected run
+          ansible.builtin.include_role:
+            name: posture_day2_production_readiness
+          when: (cluster_health_profile_execution.postures.day2_production_readiness.enabled | default(true)) | bool
+
+        - name: Build and persist oauth external identity provider capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_oauth_external_identity_provider
+          when: (cluster_health_profile.capabilities.oauth_external_identity_provider.enabled | default(true)) | bool
+
+        - name: Build and persist declarative GitOps operations capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_declarative_gitops_operations
+          when: (cluster_health_profile.capabilities.declarative_gitops_operations.enabled | default(true)) | bool
+
+        - name: Build and persist control plane backup and recovery readiness capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_control_plane_backup_and_recovery_readiness
+          when: (cluster_health_profile.capabilities.control_plane_backup_and_recovery_readiness.enabled | default(true)) | bool
+
+        - name: Build and persist external alert delivery capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_external_alert_delivery
+          when: (cluster_health_profile.capabilities.external_alert_delivery.enabled | default(true)) | bool
+
+        - name: Build and persist machine health check remediation capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_machine_health_check_remediation
+          when: (cluster_health_profile.capabilities.machine_health_check_remediation.enabled | default(true)) | bool
+
+        - name: Build and persist custom CA trust bundle capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_custom_ca_trust_bundle
+          when: (cluster_health_profile.capabilities.custom_ca_trust_bundle.enabled | default(true)) | bool
+
+        - name: Build and persist namespace network policy baseline capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_namespace_network_policy_baseline
+          when: (cluster_health_profile.capabilities.namespace_network_policy_baseline.enabled | default(true)) | bool
+
+        - name: Build and persist multi-tenant namespace governance capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_multi_tenant_namespace_governance
+          when: (cluster_health_profile.capabilities.multi_tenant_namespace_governance.enabled | default(true)) | bool
+
+        - name: Build and persist namespace egress controls capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_namespace_egress_controls
+          when: (cluster_health_profile.capabilities.namespace_egress_controls.enabled | default(true)) | bool
+
+        - name: Build and persist etcd encryption capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_etcd_encryption
+          when: (cluster_health_profile.capabilities.etcd_encryption.enabled | default(true)) | bool
+
+        - name: Build and persist workload vulnerability scanning capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_workload_vulnerability_scanning
+          when: (cluster_health_profile.capabilities.workload_vulnerability_scanning.enabled | default(true)) | bool
+
+        - name: Build and persist advanced cluster management capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_advanced_cluster_management
+          when: (cluster_health_profile.capabilities.advanced_cluster_management.enabled | default(true)) | bool
+
+        - name: Build and persist advanced cluster security capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_advanced_cluster_security
+          when: (cluster_health_profile.capabilities.advanced_cluster_security.enabled | default(true)) | bool
+
+        - name: Build and persist OpenShift Data Foundation capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_openshift_data_foundation
+          when: (cluster_health_profile.capabilities.openshift_data_foundation.enabled | default(true)) | bool
+
+        - name: Build and persist secondary-site disaster recovery capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_secondary_site_disaster_recovery
+          when: (cluster_health_profile.capabilities.secondary_site_disaster_recovery.enabled | default(true)) | bool
+
+        - name: Build and persist workloads using external private registries capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_workloads_using_external_private_registries
+          when: (cluster_health_profile.capabilities.workloads_using_external_private_registries.enabled | default(true)) | bool
+
+        - name: Build and persist CyberArk Conjur secrets management capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_cyberark_conjur_secrets_management
+          when: (cluster_health_profile.capabilities.cyberark_conjur_secrets_management.enabled | default(true)) | bool
+
+        - name: Build and persist Dynatrace observability capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_dynatrace_observability
+          when: (cluster_health_profile.capabilities.dynatrace_observability.enabled | default(true)) | bool
+
+        - name: Build and persist compliance requirements validation capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_compliance_requirements_validation
+          when: (cluster_health_profile.capabilities.compliance_requirements_validation.enabled | default(true)) | bool
+
+        - name: Build and persist OVN IPsec encryption capability artifact for collected run
+          ansible.builtin.include_role:
+            name: capability_ovn_ipsec_encryption
+          when: (cluster_health_profile.capabilities.ovn_ipsec_encryption.enabled | default(true)) | bool
+
+        - name: Persist shared collection and analysis artifacts for collected run
+          ansible.builtin.include_role:
+            name: report_common
+            tasks_from: persist_openshift_shared_artifacts.yml
 
         - name: Save collected analysis checkpoint
           ansible.builtin.include_role:
@@ -711,6 +1466,142 @@
               ansible.builtin.include_role:
                 name: analyze_openshift
                 tasks_from: finalize_collected_supportability.yml
+            - name: Build and persist node health and capacity posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_node_health_and_capacity
+              when: (cluster_health_profile_execution.postures.node_health_and_capacity.enabled | default(true)) | bool
+            - name: Build and persist application access and network isolation posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_application_access_and_network_isolation
+              when: (cluster_health_profile_execution.postures.application_access_and_network_isolation.enabled | default(true)) | bool
+            - name: Build and persist backup and disaster recovery posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_backup_and_disaster_recovery
+              when: (cluster_health_profile_execution.postures.backup_and_disaster_recovery.enabled | default(true)) | bool
+            - name: Build and persist observability posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_observability
+              when: (cluster_health_profile_execution.postures.observability.enabled | default(true)) | bool
+            - name: Build and persist security and governance posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_security_and_governance
+              when: (cluster_health_profile_execution.postures.security_and_governance.enabled | default(true)) | bool
+            - name: Build and persist evidence and supportability posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_evidence_and_supportability
+              when: (cluster_health_profile_execution.postures.evidence_and_supportability.enabled | default(true)) | bool
+            - name: Build and persist platform health posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_platform_health
+              when: (cluster_health_profile_execution.postures.platform_health.enabled | default(true)) | bool
+            - name: Build and persist workload health posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_workload_health
+              when: (cluster_health_profile_execution.postures.workload_health.enabled | default(true)) | bool
+            - name: Build and persist platform architecture and lifecycle posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_platform_architecture_and_lifecycle
+              when: (cluster_health_profile_execution.postures.platform_architecture_and_lifecycle.enabled | default(true)) | bool
+            - name: Build and persist capacity planning snapshot posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_capacity_planning_snapshot
+              when: (cluster_health_profile_execution.postures.capacity_planning_snapshot.enabled | default(true)) | bool
+            - name: Build and persist declarative operations posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_declarative_operations
+              when: (cluster_health_profile_execution.postures.declarative_operations.enabled | default(true)) | bool
+            - name: Build and persist container platform adoption and release engineering posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_container_platform_adoption_and_release_engineering
+              when: (cluster_health_profile_execution.postures.container_platform_adoption_and_release_engineering.enabled | default(true)) | bool
+            - name: Build and persist day 2 production readiness posture artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: posture_day2_production_readiness
+              when: (cluster_health_profile_execution.postures.day2_production_readiness.enabled | default(true)) | bool
+            - name: Build and persist oauth external identity provider capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_oauth_external_identity_provider
+              when: (cluster_health_profile.capabilities.oauth_external_identity_provider.enabled | default(true)) | bool
+            - name: Build and persist declarative GitOps operations capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_declarative_gitops_operations
+              when: (cluster_health_profile.capabilities.declarative_gitops_operations.enabled | default(true)) | bool
+            - name: Build and persist control plane backup and recovery readiness capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_control_plane_backup_and_recovery_readiness
+              when: (cluster_health_profile.capabilities.control_plane_backup_and_recovery_readiness.enabled | default(true)) | bool
+            - name: Build and persist external alert delivery capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_external_alert_delivery
+              when: (cluster_health_profile.capabilities.external_alert_delivery.enabled | default(true)) | bool
+            - name: Build and persist machine health check remediation capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_machine_health_check_remediation
+              when: (cluster_health_profile.capabilities.machine_health_check_remediation.enabled | default(true)) | bool
+            - name: Build and persist custom CA trust bundle capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_custom_ca_trust_bundle
+              when: (cluster_health_profile.capabilities.custom_ca_trust_bundle.enabled | default(true)) | bool
+            - name: Build and persist namespace network policy baseline capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_namespace_network_policy_baseline
+              when: (cluster_health_profile.capabilities.namespace_network_policy_baseline.enabled | default(true)) | bool
+            - name: Build and persist multi-tenant namespace governance capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_multi_tenant_namespace_governance
+              when: (cluster_health_profile.capabilities.multi_tenant_namespace_governance.enabled | default(true)) | bool
+            - name: Build and persist namespace egress controls capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_namespace_egress_controls
+              when: (cluster_health_profile.capabilities.namespace_egress_controls.enabled | default(true)) | bool
+            - name: Build and persist etcd encryption capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_etcd_encryption
+              when: (cluster_health_profile.capabilities.etcd_encryption.enabled | default(true)) | bool
+            - name: Build and persist workload vulnerability scanning capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_workload_vulnerability_scanning
+              when: (cluster_health_profile.capabilities.workload_vulnerability_scanning.enabled | default(true)) | bool
+            - name: Build and persist advanced cluster management capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_advanced_cluster_management
+              when: (cluster_health_profile.capabilities.advanced_cluster_management.enabled | default(true)) | bool
+            - name: Build and persist advanced cluster security capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_advanced_cluster_security
+              when: (cluster_health_profile.capabilities.advanced_cluster_security.enabled | default(true)) | bool
+            - name: Build and persist OpenShift Data Foundation capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_openshift_data_foundation
+              when: (cluster_health_profile.capabilities.openshift_data_foundation.enabled | default(true)) | bool
+            - name: Build and persist secondary-site disaster recovery capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_secondary_site_disaster_recovery
+              when: (cluster_health_profile.capabilities.secondary_site_disaster_recovery.enabled | default(true)) | bool
+            - name: Build and persist workloads using external private registries capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_workloads_using_external_private_registries
+              when: (cluster_health_profile.capabilities.workloads_using_external_private_registries.enabled | default(true)) | bool
+            - name: Build and persist CyberArk Conjur secrets management capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_cyberark_conjur_secrets_management
+              when: (cluster_health_profile.capabilities.cyberark_conjur_secrets_management.enabled | default(true)) | bool
+            - name: Build and persist Dynatrace observability capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_dynatrace_observability
+              when: (cluster_health_profile.capabilities.dynatrace_observability.enabled | default(true)) | bool
+            - name: Build and persist compliance requirements validation capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_compliance_requirements_validation
+              when: (cluster_health_profile.capabilities.compliance_requirements_validation.enabled | default(true)) | bool
+            - name: Build and persist OVN IPsec encryption capability artifact for resumed collected run
+              ansible.builtin.include_role:
+                name: capability_ovn_ipsec_encryption
+              when: (cluster_health_profile.capabilities.ovn_ipsec_encryption.enabled | default(true)) | bool
+            - name: Persist shared collection and analysis artifacts for resumed collected run
+              ansible.builtin.include_role:
+                name: report_common
+                tasks_from: persist_openshift_shared_artifacts.yml
             - name: Save resumed collected analysis checkpoint
               ansible.builtin.include_role:
                 name: report_common

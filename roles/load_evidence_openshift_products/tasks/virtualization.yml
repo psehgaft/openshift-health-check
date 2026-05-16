@@ -1,0 +1,78 @@
+---
+- name: Build virtualization product evidence summary
+  vars:
+    kubevirt_items: "{{ (product_graph_current.kubevirts | default({'items': []})).get('items', []) }}"
+    hyperconverged_items: "{{ (product_graph_current.hyperconvergeds | default({'items': []})).get('items', []) }}"
+    ssp_items: "{{ (product_graph_current.ssps | default({'items': []})).get('items', []) }}"
+    cdi_items: "{{ (product_graph_current.cdis | default({'items': []})).get('items', []) }}"
+    datavolume_items: "{{ (product_graph_current.datavolumes | default({'items': []})).get('items', []) }}"
+    virtualmachine_items: "{{ (product_graph_current.virtualmachines | default({'items': []})).get('items', []) }}"
+    virtualmachineinstance_items: "{{ (product_graph_current.virtualmachineinstances | default({'items': []})).get('items', []) }}"
+    virtualization_sources: >-
+      {{
+        (
+          (kubevirt_items + hyperconverged_items + ssp_items + cdi_items + datavolume_items + virtualmachine_items + virtualmachineinstance_items)
+          | map(attribute='_evidence_sources')
+          | list
+          | flatten
+          | unique
+        )
+        if (
+          (
+            (kubevirt_items + hyperconverged_items + ssp_items + cdi_items + datavolume_items + virtualmachine_items + virtualmachineinstance_items)
+            | map(attribute='_evidence_sources')
+            | list
+            | flatten
+            | unique
+            | length
+          ) > 0
+        )
+        else (['oc get'] if ((kubevirt_items | length > 0) or (hyperconverged_items | length > 0) or (virtualmachine_items | length > 0) or (virtualmachineinstance_items | length > 0)) else [])
+      }}
+  ansible.builtin.set_fact:
+    assessment_product_evidence: >-
+      {{
+        assessment_product_evidence | combine({
+          'virtualization': {
+            'installed': ((kubevirt_items | length) > 0) or ((hyperconverged_items | length) > 0) or ((virtualmachine_items | length) > 0) or ((virtualmachineinstance_items | length) > 0),
+            'health_applicable': ((kubevirt_items | length) > 0) or ((hyperconverged_items | length) > 0) or ((virtualmachine_items | length) > 0) or ((virtualmachineinstance_items | length) > 0),
+            'present': ((kubevirt_items | length) > 0) or ((hyperconverged_items | length) > 0) or ((virtualmachine_items | length) > 0) or ((virtualmachineinstance_items | length) > 0),
+            'kubevirt_count': (kubevirt_items | length),
+            'hyperconverged_count': (hyperconverged_items | length),
+            'ssp_count': (ssp_items | length),
+            'cdi_count': (cdi_items | length),
+            'virtualmachine_count': (virtualmachine_items | length),
+            'virtualmachineinstance_count': (virtualmachineinstance_items | length),
+            'datavolume_count': (datavolume_items | length),
+            'unhealthy_kubevirt_count': (
+              kubevirt_items
+              | map(attribute='status.conditions')
+              | map('default', [])
+              | map('to_json')
+              | reject('search', '"type": "Available", "status": "True"')
+              | list
+              | length
+            ),
+            'unhealthy_hyperconverged_count': (
+              hyperconverged_items
+              | map(attribute='status.conditions')
+              | map('default', [])
+              | map('to_json')
+              | reject('search', '"type": "Available", "status": "True"')
+              | list
+              | length
+            ),
+            'nonrunning_vmi_count': (
+              (virtualmachineinstance_items | rejectattr('status.phase', 'defined') | list | length)
+              + (
+                virtualmachineinstance_items
+                | selectattr('status.phase', 'defined')
+                | rejectattr('status.phase', 'equalto', 'Running')
+                | list
+                | length
+              )
+            ),
+            'evidence_sources': virtualization_sources
+          }
+        }, recursive=True)
+      }}

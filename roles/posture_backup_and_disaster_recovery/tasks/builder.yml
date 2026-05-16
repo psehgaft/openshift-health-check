@@ -1,0 +1,43 @@
+---
+- name: Build backup and disaster recovery posture artifact facts
+  ansible.builtin.set_fact:
+    posture_artifact_key: backup_and_disaster_recovery
+    posture_artifact_analysis_summary: "{{ backup_recovery_summary | default({}) }}"
+    posture_artifact_findings:
+      backup_posture: "{{ backup_posture_findings | default([]) }}"
+      machine_remediation: "{{ machine_healthcheck_findings | default([]) }}"
+      pv_issues: "{{ pv_issues | default([]) }}"
+      pvc_issues: "{{ pvc_issues | default([]) }}"
+    posture_artifact_render_inputs:
+      backup_posture_findings: "{{ top_backup_posture_findings | default(backup_posture_findings | default([])) }}"
+      backup_storage_locations: "{{ backup_storage_location_summary | default([]) }}"
+      backup_schedules: "{{ backup_schedule_summary | default([]) }}"
+      recent_backups: "{{ backup_summary | default([]) }}"
+      recent_restores: "{{ restore_summary | default([]) }}"
+      machinehealthcheck_summary: "{{ machinehealthcheck_summary | default([]) }}"
+      machine_healthcheck_findings: "{{ top_machine_healthcheck_findings | default(machine_healthcheck_findings | default([])) }}"
+      pv_issues: "{{ top_pv_issues | default(pv_issues | default([])) }}"
+      pvc_issues: "{{ top_pvc_issues | default(pvc_issues | default([])) }}"
+    posture_artifact_collection_inputs:
+      backup_storage_location_count: "{{ (backup_storage_location_summary | default([])) | length }}"
+      backup_schedule_count: "{{ (backup_schedule_summary | default([])) | length }}"
+      backup_count: "{{ (backup_summary | default([])) | length }}"
+      restore_count: "{{ (restore_summary | default([])) | length }}"
+      machinehealthcheck_count: "{{ (machinehealthcheck_summary | default([])) | length }}"
+      backup_posture_finding_count: "{{ (backup_posture_findings | default([])) | length }}"
+      machine_remediation_finding_count: "{{ (machine_healthcheck_findings | default([])) | length }}"
+    posture_artifact_section_fields:
+      summary: "{{ backup_recovery_summary | default({}) }}"
+      recommendations: "{{ (backup_recovery_summary | default({})).get('recommendation', 'Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.') }}"
+      storage:
+        pv_issues: "{{ top_pv_issues | default(pv_issues | default([])) }}"
+        pvc_issues: "{{ top_pvc_issues | default(pvc_issues | default([])) }}"
+      backup:
+        findings: "{{ top_backup_posture_findings | default(backup_posture_findings | default([])) }}"
+        storage_locations: "{{ backup_storage_location_summary | default([]) }}"
+        schedules: "{{ backup_schedule_summary | default([]) }}"
+        recent_backups: "{{ backup_summary | default([]) }}"
+        recent_restores: "{{ restore_summary | default([]) }}"
+      machine_remediation:
+        summary: "{{ machinehealthcheck_summary | default([]) }}"
+        findings: "{{ top_machine_healthcheck_findings | default(machine_healthcheck_findings | default([])) }}"

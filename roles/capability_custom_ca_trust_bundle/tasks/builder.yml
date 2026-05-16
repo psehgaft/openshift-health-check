@@ -1,0 +1,53 @@
+---
+- name: Build custom CA trust bundle capability artifact facts
+  vars:
+    custom_ca_day2_section_current: >-
+      {{
+        ((day2_capability_sections_resolved | default([]))
+        | selectattr('key', 'equalto', 'custom_ca_trust_bundle')
+        | list
+        | first) | default({})
+      }}
+    custom_ca_proxy_spec_current: "{{ ((analysis_graph | default({})).get('proxy_config', {}) | default({})).get('spec', {}) | default({}) }}"
+    custom_ca_image_spec_current: "{{ ((analysis_graph | default({})).get('image_config', {}) | default({})).get('spec', {}) | default({}) }}"
+    custom_ca_http_proxy_current: "{{ custom_ca_proxy_spec_current.httpProxy | default('') }}"
+    custom_ca_https_proxy_current: "{{ custom_ca_proxy_spec_current.httpsProxy | default('') }}"
+    custom_ca_proxy_trusted_ca_name_current: "{{ custom_ca_proxy_spec_current.trustedCA.name | default('') }}"
+    custom_ca_image_trusted_ca_name_current: "{{ custom_ca_image_spec_current.additionalTrustedCA.name | default('') }}"
+    custom_ca_cluster_proxy_configured_current: "{{ ((custom_ca_http_proxy_current | length) > 0) or ((custom_ca_https_proxy_current | length) > 0) }}"
+    custom_ca_no_proxy_entries_current: "{{ ((custom_ca_proxy_spec_current.noProxy | default('')).split(',') | map('trim') | reject('equalto', '') | list) if ((custom_ca_proxy_spec_current.noProxy | default('') | length) > 0) else [] }}"
+    custom_ca_missing_no_proxy_current: "{{ ['.svc', '.cluster.local'] | difference(custom_ca_no_proxy_entries_current | default([])) if (custom_ca_cluster_proxy_configured_current | bool) else [] }}"
+    custom_ca_trusted_configured_current: "{{ ((custom_ca_proxy_trusted_ca_name_current | length) > 0) or ((custom_ca_image_trusted_ca_name_current | length) > 0) }}"
+    custom_ca_status_current: "{{ 'OK' if custom_ca_trusted_configured_current else 'WARNING' }}"
+    custom_ca_reason_current: >-
+      {{
+        (
+          custom_ca_day2_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'proxyConfigured=' ~ (custom_ca_cluster_proxy_configured_current | string)
+          ~ ', proxyTrustedCA=' ~ ((custom_ca_proxy_trusted_ca_name_current | string) or 'none')
+          ~ ', imageAdditionalTrustedCA=' ~ ((custom_ca_image_trusted_ca_name_current | string) or 'none')
+          ~ ', missingNoProxy=' ~ ((custom_ca_missing_no_proxy_current | join(',')) or 'none')
+        )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: custom_ca_trust_bundle
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      network_architecture_status: "{{ custom_ca_status_current }}"
+      network_architecture_reason_summary: "{{ custom_ca_reason_current }}"
+    capability_artifact_render_inputs:
+      day2_custom_ca_trust_bundle_section: "{{ custom_ca_day2_section_current }}"
+      proxy_config: "{{ (analysis_graph | default({})).get('proxy_config', {}) }}"
+      image_config: "{{ (analysis_graph | default({})).get('image_config', {}) }}"
+    capability_artifact_collection_inputs:
+      cluster_proxy_configured: "{{ custom_ca_cluster_proxy_configured_current | bool }}"
+      trusted_ca_configured: "{{ custom_ca_trusted_configured_current | bool }}"
+      proxy_trusted_ca_name: "{{ custom_ca_proxy_trusted_ca_name_current }}"
+      image_additional_trusted_ca_name: "{{ custom_ca_image_trusted_ca_name_current }}"
+      no_proxy_entry_count: "{{ (custom_ca_no_proxy_entries_current | length) | int }}"
+      proxy_missing_internal_no_proxy_entries: "{{ custom_ca_missing_no_proxy_current }}"

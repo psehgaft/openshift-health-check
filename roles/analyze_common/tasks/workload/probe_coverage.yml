@@ -1,0 +1,63 @@
+---
+- name: Build deployment probe coverage findings
+  ansible.builtin.set_fact:
+    workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
+  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    workload_name: "{{ item.metadata.name | default('') }}"
+    containers: "{{ item.spec.template.spec.containers | default([]) }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
+    missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
+    missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
+    probe_findings: >-
+      {{
+        ([] +
+        ([{'kind': 'Deployment', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-liveness-probe', 'containers': missing_liveness_containers, 'detail': missing_liveness_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
+        ([{'kind': 'Deployment', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-readiness-probe', 'containers': missing_readiness_containers, 'detail': missing_readiness_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
+        ([{'kind': 'Deployment', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-startup-probe', 'containers': missing_startup_containers, 'detail': missing_startup_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
+      }}
+  changed_when: false
+
+- name: Build statefulset probe coverage findings
+  ansible.builtin.set_fact:
+    workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
+  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    workload_name: "{{ item.metadata.name | default('') }}"
+    containers: "{{ item.spec.template.spec.containers | default([]) }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
+    missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
+    missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
+    probe_findings: >-
+      {{
+        ([] +
+        ([{'kind': 'StatefulSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-liveness-probe', 'containers': missing_liveness_containers, 'detail': missing_liveness_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
+        ([{'kind': 'StatefulSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-readiness-probe', 'containers': missing_readiness_containers, 'detail': missing_readiness_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
+        ([{'kind': 'StatefulSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-startup-probe', 'containers': missing_startup_containers, 'detail': missing_startup_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
+      }}
+  changed_when: false
+
+- name: Build daemonset probe coverage findings
+  ansible.builtin.set_fact:
+    workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
+  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
+  vars:
+    ns_name: "{{ item.metadata.namespace | default('') }}"
+    workload_name: "{{ item.metadata.name | default('') }}"
+    containers: "{{ item.spec.template.spec.containers | default([]) }}"
+    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
+    missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
+    missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
+    missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
+    probe_findings: >-
+      {{
+        ([] +
+        ([{'kind': 'DaemonSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-liveness-probe', 'containers': missing_liveness_containers, 'detail': missing_liveness_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
+        ([{'kind': 'DaemonSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-readiness-probe', 'containers': missing_readiness_containers, 'detail': missing_readiness_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
+        ([{'kind': 'DaemonSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-startup-probe', 'containers': missing_startup_containers, 'detail': missing_startup_containers | join(', ')}] if (is_user_namespace | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
+      }}
+  changed_when: false

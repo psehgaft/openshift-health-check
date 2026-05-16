@@ -1,0 +1,322 @@
+- name: Detect vendor-managed telemetry evidence
+  block:
+    - name: Create vendor-managed telemetry input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-vendor-telemetry-
+        suffix: .json
+      register: observability_vendor_telemetry_input_file
+      changed_when: false
+
+    - name: Write vendor-managed telemetry input data
+      ansible.builtin.copy:
+        dest: "{{ observability_vendor_telemetry_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'dynakubes': ((analysis_graph.dynakubes | default({})).get('items', [])),
+          'edgeconnects': ((analysis_graph.edgeconnects | default({})).get('items', [])),
+          'datadogagents': ((analysis_graph.datadogagents | default({})).get('items', [])),
+          'clusteragents': ((analysis_graph.clusteragents | default({})).get('items', [])),
+          'infravizs': ((analysis_graph.infravizs | default({})).get('items', [])),
+          'lokistacks': ((analysis_graph.lokistacks | default({})).get('items', [])),
+          'crds': ((analysis_graph.crds | default({})).get('items', [])),
+          'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
+          'pods': ((analysis_graph.pods | default({})).get('items', [])),
+          'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+          'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+          'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', []))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run vendor-managed telemetry detection
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_vendor_managed_telemetry.py"
+          - "{{ observability_vendor_telemetry_input_file.path }}"
+      register: observability_vendor_telemetry_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove vendor-managed telemetry input file
+      ansible.builtin.file:
+        path: "{{ observability_vendor_telemetry_input_file.path }}"
+        state: absent
+      when: observability_vendor_telemetry_input_file is defined and (observability_vendor_telemetry_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize vendor-managed telemetry evidence
+  ansible.builtin.set_fact:
+    observability_vendor_telemetry_data: "{{ observability_vendor_telemetry_cmd.stdout | from_json if (observability_vendor_telemetry_cmd.rc == 0 and (observability_vendor_telemetry_cmd.stdout | default('') | length > 0)) else {'vendor_managed_metrics_forwarding_present': false, 'vendor_managed_log_forwarding_present': false, 'metrics_vendor_names': [], 'log_vendor_names': []} }}"
+
+- name: Build log forwarding findings
+  block:
+    - name: Create log forwarding input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-log-forwarding-
+        suffix: .json
+      register: observability_log_forwarding_input_file
+      changed_when: false
+
+    - name: Write log forwarding input data
+      ansible.builtin.copy:
+        dest: "{{ observability_log_forwarding_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'items': ((analysis_graph.clusterlogforwarders | default({})).get('items', [])),
+          'vendor_managed_present': (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)),
+          'vendor_names': (observability_vendor_telemetry_data.log_vendor_names | default([])),
+          'require_cluster_log_forwarder': (require_cluster_log_forwarder | bool)
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run log forwarding analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_log_forwarding_findings.py"
+          - "{{ observability_log_forwarding_input_file.path }}"
+      register: observability_log_forwarding_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove log forwarding input file
+      ansible.builtin.file:
+        path: "{{ observability_log_forwarding_input_file.path }}"
+        state: absent
+      when: observability_log_forwarding_input_file is defined and (observability_log_forwarding_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize log forwarding findings
+  ansible.builtin.set_fact:
+    observability_log_forwarding_data: "{{ observability_log_forwarding_cmd.stdout | from_json if (observability_log_forwarding_cmd.rc == 0 and (observability_log_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'outputs': [], 'external_outputs': [], 'pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}, 'external_pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}} }}"
+
+- name: Build metrics forwarding findings
+  block:
+    - name: Create metrics forwarding input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-metrics-forwarding-
+        suffix: .json
+      register: observability_metrics_forwarding_input_file
+      changed_when: false
+
+    - name: Write metrics forwarding input data
+      ansible.builtin.copy:
+        dest: "{{ observability_metrics_forwarding_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'cluster_remote_write': (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([]))),
+          'user_remote_write': (((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([]))),
+          'vendor_managed_present': (observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false)),
+          'vendor_names': (observability_vendor_telemetry_data.metrics_vendor_names | default([])),
+          'require_external_metrics_remote_write': (require_external_metrics_remote_write | bool)
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run metrics forwarding analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_metrics_forwarding_findings.py"
+          - "{{ observability_metrics_forwarding_input_file.path }}"
+      register: observability_metrics_forwarding_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove metrics forwarding input file
+      ansible.builtin.file:
+        path: "{{ observability_metrics_forwarding_input_file.path }}"
+        state: absent
+      when: observability_metrics_forwarding_input_file is defined and (observability_metrics_forwarding_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize metrics forwarding findings
+  ansible.builtin.set_fact:
+    observability_metrics_forwarding_data: "{{ observability_metrics_forwarding_cmd.stdout | from_json if (observability_metrics_forwarding_cmd.rc == 0 and (observability_metrics_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'cluster_external_count': 0, 'user_external_count': 0} }}"
+
+- name: Build external alert delivery findings
+  block:
+    - name: Create external alert delivery input file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: cluster-health-alert-delivery-
+        suffix: .json
+      register: observability_alert_delivery_input_file
+      changed_when: false
+
+    - name: Write external alert delivery input data
+      ansible.builtin.copy:
+        dest: "{{ observability_alert_delivery_input_file.path }}"
+        mode: "0600"
+        content: "{{ {
+          'items': ((analysis_graph.alertmanagerconfigs | default({})).get('items', [])),
+          'cluster_alertmanager_additional_configs': ((((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([])))),
+          'user_workload_alertmanager_additional_configs': ((((user_workload_monitoring_config_parsed.alertmanager | default({})).additionalAlertmanagerConfigs | default([]))))
+        } | to_json }}"
+      changed_when: false
+
+    - name: Run external alert delivery analysis
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/build_external_alert_delivery_findings.py"
+          - "{{ observability_alert_delivery_input_file.path }}"
+      register: observability_alert_delivery_cmd
+      changed_when: false
+      failed_when: false
+  always:
+    - name: Remove external alert delivery input file
+      ansible.builtin.file:
+        path: "{{ observability_alert_delivery_input_file.path }}"
+        state: absent
+      when: observability_alert_delivery_input_file is defined and (observability_alert_delivery_input_file.path | default('') | length > 0)
+      changed_when: false
+
+- name: Normalize external alert delivery findings
+  ansible.builtin.set_fact:
+    observability_alert_delivery_data: "{{ observability_alert_delivery_cmd.stdout | from_json if (observability_alert_delivery_cmd.rc == 0 and (observability_alert_delivery_cmd.stdout | default('') | length > 0)) else {'findings': [], 'receivers': [], 'config_sources': [], 'alert_delivery_source_count': 0, 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false, 'alert_routing_to_external_receiver_configured': false, 'alertmanagerconfigs_with_external_routes': 0, 'alertmanagerconfigs_without_route_receivers': 0} }}"
+
+- name: Build observability findings and summary
+  ansible.builtin.set_fact:
+    observability_findings: "{{ (observability_log_forwarding_data.findings | default([])) + (observability_metrics_forwarding_data.findings | default([])) + (observability_alert_delivery_data.findings | default([])) + observability_platform_findings }}"
+    observability_forwarding_summary: "{{ observability_forwarding_summary | combine(observability_forwarding_updates, recursive=True) }}"
+  vars:
+    observability_platform_findings: >-
+      {{
+        ([] +
+        ([{'issue': 'monitoring-operator-not-healthy', 'detail': 'monitoring cluster operator is unavailable or degraded'}] if (clusteroperator_status_map.monitoring.available | default('Unknown')) != 'True' or (clusteroperator_status_map.monitoring.degraded | default('False')) == 'True' else []))
+      }}
+    observability_forwarding_updates:
+      vendor_managed_log_forwarding_present: "{{ observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false) }}"
+      vendor_managed_metrics_forwarding_present: "{{ observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false) }}"
+      log_forwarding_vendor_names: "{{ observability_vendor_telemetry_data.log_vendor_names | default([]) }}"
+      metrics_forwarding_vendor_names: "{{ observability_vendor_telemetry_data.metrics_vendor_names | default([]) }}"
+      log_forwarding_outputs: "{{ observability_log_forwarding_data.outputs | default([]) }}"
+      external_log_forwarding_outputs: "{{ observability_log_forwarding_data.external_outputs | default([]) }}"
+      application_log_pipeline_count: "{{ (observability_log_forwarding_data.pipeline_counts | default({})).application | default(0) }}"
+      infrastructure_log_pipeline_count: "{{ (observability_log_forwarding_data.pipeline_counts | default({})).infrastructure | default(0) }}"
+      audit_log_pipeline_count: "{{ (observability_log_forwarding_data.pipeline_counts | default({})).audit | default(0) }}"
+      application_logs_collected: "{{ ((((observability_log_forwarding_data.pipeline_counts | default({})).application | default(0)) | int) > 0) or (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)) }}"
+      infrastructure_logs_collected: "{{ ((((observability_log_forwarding_data.pipeline_counts | default({})).infrastructure | default(0)) | int) > 0) or (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)) }}"
+      audit_logs_collected: "{{ ((((observability_log_forwarding_data.pipeline_counts | default({})).audit | default(0)) | int) > 0) or (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)) }}"
+      application_logs_exported_external: "{{ ((((observability_log_forwarding_data.external_pipeline_counts | default({})).application | default(0)) | int) > 0) or (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)) }}"
+      infrastructure_logs_exported_external: "{{ ((((observability_log_forwarding_data.external_pipeline_counts | default({})).infrastructure | default(0)) | int) > 0) or (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)) }}"
+      audit_logs_exported_external: "{{ ((((observability_log_forwarding_data.external_pipeline_counts | default({})).audit | default(0)) | int) > 0) or (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)) }}"
+      application_logs_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((((observability_log_forwarding_data.external_pipeline_counts | default({})).application | default(0)) | int) > 0)
+          else (
+            'vendor-managed-not-verified'
+            if (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false))
+            else (
+            'cluster-local-only'
+            if ((((observability_log_forwarding_data.pipeline_counts | default({})).application | default(0)) | int) > 0)
+            else 'not-collected'
+            )
+          )
+        }}
+      infrastructure_logs_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((((observability_log_forwarding_data.external_pipeline_counts | default({})).infrastructure | default(0)) | int) > 0)
+          else (
+            'vendor-managed-not-verified'
+            if (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false))
+            else (
+            'cluster-local-only'
+            if ((((observability_log_forwarding_data.pipeline_counts | default({})).infrastructure | default(0)) | int) > 0)
+            else 'not-collected'
+            )
+          )
+        }}
+      audit_logs_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((((observability_log_forwarding_data.external_pipeline_counts | default({})).audit | default(0)) | int) > 0)
+          else (
+            'vendor-managed-not-verified'
+            if (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false))
+            else (
+            'cluster-local-only'
+            if ((((observability_log_forwarding_data.pipeline_counts | default({})).audit | default(0)) | int) > 0)
+            else 'not-collected'
+            )
+          )
+        }}
+      logs_delivery_verification_status: >-
+        {{
+          'not-verified'
+          if (((observability_log_forwarding_data.outputs | default([]) | length) > 0) or (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)))
+          else 'not-configured'
+        }}
+      external_alert_receivers: "{{ observability_alert_delivery_data.receivers | default([]) }}"
+      alert_delivery_config_sources: "{{ observability_alert_delivery_data.config_sources | default([]) }}"
+      alert_delivery_source_count: "{{ observability_alert_delivery_data.alert_delivery_source_count | default(0) }}"
+      external_alert_receiver_count: "{{ observability_alert_delivery_data.external_alert_receiver_count | default(0) }}"
+      external_alert_delivery_configured: "{{ observability_alert_delivery_data.external_alert_delivery_configured | default(false) }}"
+      alert_routing_to_external_receiver_configured: "{{ observability_alert_delivery_data.alert_routing_to_external_receiver_configured | default(false) }}"
+      alertmanagerconfigs_with_external_routes: "{{ observability_alert_delivery_data.alertmanagerconfigs_with_external_routes | default(0) }}"
+      alertmanagerconfigs_without_route_receivers: "{{ observability_alert_delivery_data.alertmanagerconfigs_without_route_receivers | default(0) }}"
+      external_cluster_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.cluster_external_count | default(0) }}"
+      external_user_workload_metrics_remote_write_count: "{{ observability_metrics_forwarding_data.user_external_count | default(0) }}"
+      alert_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if (
+            (observability_alert_delivery_data.external_alert_receiver_count | default(0) | int) > 0
+            and (observability_alert_delivery_data.alert_routing_to_external_receiver_configured | default(false))
+          )
+          else (
+            'configuration-present-external-not-proven'
+            if ((observability_alert_delivery_data.alert_delivery_source_count | default(0) | int) > 0)
+            else 'not-configured'
+          )
+        }}
+      alert_delivery_verification_status: >-
+        {{
+          'not-verified'
+          if ((observability_alert_delivery_data.alert_delivery_source_count | default(0) | int) > 0)
+          else 'not-configured'
+        }}
+      cluster_metrics_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((observability_metrics_forwarding_data.cluster_external_count | default(0) | int) > 0)
+          else (
+            'vendor-managed-not-verified'
+            if (observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false))
+            else (
+            'cluster-local-only'
+            if ((observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) | int) > 0)
+            else 'not-configured'
+            )
+          )
+        }}
+      user_workload_metrics_delivery_state: >-
+        {{
+          'externally-configured-not-verified'
+          if ((observability_metrics_forwarding_data.user_external_count | default(0) | int) > 0)
+          else (
+            'vendor-managed-not-verified'
+            if (observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false))
+            else (
+            'cluster-local-only'
+            if ((observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) | int) > 0)
+            else 'not-configured'
+            )
+          )
+        }}
+      metrics_delivery_verification_status: >-
+        {{
+          'not-verified'
+          if (
+            (observability_forwarding_summary.cluster_metrics_remote_write_count | default(0) | int) > 0
+            or (observability_forwarding_summary.user_workload_metrics_remote_write_count | default(0) | int) > 0
+            or (observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false))
+          )
+          else 'not-configured'
+        }}
+

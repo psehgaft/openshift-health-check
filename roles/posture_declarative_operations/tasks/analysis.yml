@@ -1,0 +1,72 @@
+---
+- name: Build declarative operations summary
+  vars:
+    declarative_identity_provider_count: "{{ auth_posture_summary.identity_provider_count | default(day2_posture_summary.identity_provider_count | default(0)) }}"
+    declarative_backup_schedule_count: "{{ backup_recovery_summary.backup_schedule_count | default(day2_posture_summary.backup_schedule_count | default(0)) }}"
+    declarative_successful_backup_count: "{{ backup_recovery_summary.clean_successful_backup_count | default(backup_recovery_summary.successful_backup_count | default(day2_posture_summary.successful_backup_count | default(0))) }}"
+    declarative_machinehealthcheck_count: "{{ backup_recovery_summary.machine_healthcheck_count | default(day2_posture_summary.machinehealthcheck_count | default(0)) }}"
+    declarative_machinehealthcheck_expected: "{{ day2_posture_summary.machinehealthcheck_expected | default(false) }}"
+    declarative_operations_status: >-
+      {{
+        'WARNING'
+        if (
+          not (day2_posture_summary.gitops_present | default(false))
+          or
+          (
+            (day2_posture_summary.gitops_present | default(false))
+            and (
+              (day2_posture_summary.gitops_application_count | default(0) | int) == 0
+              or not (day2_posture_summary.gitops_operational | default(false))
+            )
+          )
+          or (
+            (day2_posture_summary.gitops_application_count | default(0) | int) > 0
+            and not (day2_posture_summary.gitops_automated_sync_present | default(false))
+          )
+        )
+        else 'HEALTHY'
+      }}
+    declarative_operations_reason_summary: >-
+      {{
+        (
+          []
+          + (['GitOps present=' ~ ((day2_posture_summary.gitops_present | default(false)) | string)] if (day2_posture_summary.gitops_present | default(false)) else ['GitOps not detected'])
+          + (['GitOps applications=' ~ ((day2_posture_summary.gitops_application_count | default(0) | int) | string)] if ((day2_posture_summary.gitops_application_count | default(0) | int) > 0) else [])
+          + (['repo-backed=' ~ ((day2_posture_summary.gitops_repo_backed_application_count | default(0) | int) | string)] if ((day2_posture_summary.gitops_application_count | default(0) | int) > 0) else [])
+          + (['automated-sync=' ~ ((day2_posture_summary.gitops_automated_sync_application_count | default(0) | int) | string)] if ((day2_posture_summary.gitops_application_count | default(0) | int) > 0) else [])
+          + (['ArgoCD instances=' ~ ((day2_posture_summary.argocd_count | default(0) | int) | string)] if ((day2_posture_summary.argocd_count | default(0) | int) > 0) else [])
+          + (['AppProjects=' ~ ((day2_posture_summary.appproject_count | default(0) | int) | string)] if ((day2_posture_summary.appproject_count | default(0) | int) > 0) else [])
+          + (['identity providers=' ~ ((declarative_identity_provider_count | int) | string)] if (declarative_identity_provider_count | int) > 0 else [])
+          + (['backup schedules=' ~ ((declarative_backup_schedule_count | int) | string)] if (declarative_backup_schedule_count | int) > 0 else [])
+          + (['successful backups=' ~ ((declarative_successful_backup_count | int) | string)] if (declarative_successful_backup_count | int) > 0 else [])
+          + (['MachineHealthChecks=' ~ ((declarative_machinehealthcheck_count | int) | string)] if ((declarative_machinehealthcheck_count | int) > 0 or (declarative_machinehealthcheck_expected | bool)) else [])
+          + (['day2 checks=' ~ ((day2_posture_summary.day2_check_count | default(0) | int) | string)] if ((day2_posture_summary.day2_check_count | default(0) | int) > 0) else [])
+        ) | join('; ')
+      }}
+    declarative_operations_recommendation: >-
+      {{
+        (
+          'Strengthen declarative operations first: confirm GitOps is present, ensure applications are repo-backed, and enable automated sync before treating Day 2 operations as mature.'
+          if declarative_operations_status == 'WARNING'
+          else 'Declarative operations evidence is acceptable for this run. Keep GitOps application inventory, repo backing, sync automation, and supporting Day 2 controls under normal review.'
+        )
+      }}
+  ansible.builtin.set_fact:
+    declarative_operations_summary:
+      status: "{{ declarative_operations_status }}"
+      reason_summary: "{{ declarative_operations_reason_summary }}"
+      recommendation: "{{ declarative_operations_recommendation }}"
+      gitops_present: "{{ day2_posture_summary.gitops_present | default(false) }}"
+      gitops_operational: "{{ day2_posture_summary.gitops_operational | default(false) }}"
+      gitops_application_count: "{{ day2_posture_summary.gitops_application_count | default(0) }}"
+      gitops_repo_backed_application_count: "{{ day2_posture_summary.gitops_repo_backed_application_count | default(0) }}"
+      gitops_automated_sync_application_count: "{{ day2_posture_summary.gitops_automated_sync_application_count | default(0) }}"
+      argocd_count: "{{ day2_posture_summary.argocd_count | default(0) }}"
+      appproject_count: "{{ day2_posture_summary.appproject_count | default(0) }}"
+      identity_provider_count: "{{ declarative_identity_provider_count }}"
+      backup_schedule_count: "{{ declarative_backup_schedule_count }}"
+      successful_backup_count: "{{ declarative_successful_backup_count }}"
+      machinehealthcheck_count: "{{ declarative_machinehealthcheck_count }}"
+      machinehealthcheck_expected: "{{ declarative_machinehealthcheck_expected }}"
+      day2_check_count: "{{ day2_posture_summary.day2_check_count | default(0) }}"
+      capability_check_warning_count: "{{ day2_posture_summary.capability_check_warning_count | default(0) }}"

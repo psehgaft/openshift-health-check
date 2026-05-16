@@ -1,0 +1,80 @@
+---
+- name: Build supportability evidence findings
+  vars:
+    live_support_parsed: "{{ (live_support_data | default({})).get('parsed', {}) }}"
+    support_evidence_parsed: >-
+      {{
+        {
+          'etcd_ocp_diag': (live_support_parsed.etcd_ocp_diag | default(etcd_ocp_diag_data | default({}))),
+          'omc': (live_support_parsed.omc | default(omc_data | default({}))),
+          'cluster_compare': (live_support_parsed.cluster_compare | default(cluster_compare_data | default({}))),
+          'inspect': (live_support_parsed.inspect | default(inspect_data | default({}))),
+          'managed_gates': (live_support_parsed.managed_gates | default(managed_gates_data | default({}))),
+          'advisor_export': (live_support_parsed.advisor_export | default(advisor_export_data | default({}))),
+          'insights_archive': (live_support_parsed.insights_archive | default(insights_archive_data | default({}))),
+          'sosreport': (live_support_parsed.sosreport | default(sosreport_data | default({})))
+        }
+      }}
+    support_evidence_coverage: "{{ live_evidence_coverage | default(evidence_coverage | default({})) }}"
+    inspect_coverage_value: "{{ support_evidence_coverage.inspect | default('missing') }}"
+    sosreport_coverage_value: "{{ support_evidence_coverage.sosreport | default(support_evidence_coverage.node_diagnostics | default('missing')) }}"
+    inspect_expected: >-
+      {{
+        (
+          ((inspect_coverage_value.requested | default(false)) | bool)
+          and ((inspect_coverage_value.applicable | default(false)) | bool)
+        )
+        if (inspect_coverage_value is mapping)
+        else (inspect_coverage_value not in ['missing', 'unknown', 'not-requested', 'not-applicable', 'disabled'])
+      }}
+    sosreport_expected: >-
+      {{
+        (
+          ((sosreport_coverage_value.requested | default(false)) | bool)
+          and ((sosreport_coverage_value.applicable | default(false)) | bool)
+          and (
+            ((sosreport_coverage_value.collected | default(false)) | bool)
+            or ((sosreport_coverage_value.target_nodes | default([])) | length > 0)
+            or ((sosreport_coverage_value.status | default('')) in ['failed', 'timed-out'])
+          )
+        )
+        if (sosreport_coverage_value is mapping)
+        else (sosreport_coverage_value not in ['missing', 'unknown', 'not-requested', 'not-applicable', 'disabled'])
+      }}
+  ansible.builtin.set_fact:
+    reference_compliance_findings: >-
+      {{
+        []
+        + ([{'severity': 'critical', 'area': 'cluster-compare', 'detail': 'Baseline comparison reported missing resources: ' ~ (reference_compliance_summary.missing_count | string)}] if (reference_compliance_summary.missing_count | int) > 0 else [])
+        + ([{'severity': 'critical', 'area': 'cluster-compare', 'detail': 'Baseline comparison reported errors: ' ~ (reference_compliance_summary.error_count | string)}] if (reference_compliance_summary.error_count | int) > 0 else [])
+        + ([{'severity': 'info', 'area': 'cluster-compare', 'detail': 'Baseline comparison reported diffs: ' ~ (reference_compliance_summary.diff_count | string)}] if (reference_compliance_summary.diff_count | int) > 0 else [])
+        + ([{'severity': 'info', 'area': 'cluster-compare', 'detail': 'Baseline comparison reported warnings: ' ~ (reference_compliance_summary.warning_count | string)}] if (reference_compliance_summary.warning_count | int) > 0 else [])
+      }}
+    etcd_ocp_diag_findings: "{{ support_evidence_parsed.etcd_ocp_diag.findings | default([]) }}"
+    omc_findings: "{{ support_evidence_parsed.omc.findings | default([]) }}"
+    node_diagnostics_findings: >-
+      {{
+        []
+        + ([{'severity': 'warning', 'area': 'inspect', 'detail': 'No `oc adm inspect` evidence was collected.'}] if (inspect_expected and not (node_diagnostics_summary.inspect_present | default(false) | bool)) else [])
+        + ([{'severity': 'warning', 'area': 'inspect', 'detail': '`oc adm inspect` evidence does not appear to include node-related content.'}] if ((node_diagnostics_summary.inspect_present | default(false) | bool) and ((node_diagnostics_summary.inspect_resource_markers.nodes | default(0) | int) == 0)) else [])
+        + ([{'severity': 'warning', 'area': 'oc-debug-node-sosreport', 'detail': 'No `oc debug node/<node>` sosreport archive was collected for node-level diagnostics. Use `oc debug node/<node>`, `toolbox`, and `sos report` when node-specific OS, kubelet, CRI-O, journal, podman, or network evidence is required.'}] if (sosreport_expected and not (node_diagnostics_summary.sosreport_present | default(false) | bool)) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show kubelet log coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show CRI-O log coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_crio_logs | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show journal coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_journal | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show network-data coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_network_data | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
+      }}
+    advisor_findings: >-
+      {{
+        []
+        + ([{'severity': 'critical', 'area': 'advisor', 'detail': 'Advisor critical recommendations: ' ~ (advisor_summary.critical_count | string)}] if (advisor_summary.critical_count | int) > 0 else [])
+        + ([{'severity': 'warning', 'area': 'advisor', 'detail': 'Advisor high-severity recommendations: ' ~ (advisor_summary.high_count | string)}] if (advisor_summary.high_count | int) > 0 else [])
+        + ([{'severity': 'warning', 'area': 'advisor', 'detail': 'Advisor moderate recommendations: ' ~ (advisor_summary.moderate_count | string)}] if (advisor_summary.moderate_count | int) > 0 else [])
+      }}
+    insights_archive_findings: "{{ support_evidence_parsed.insights_archive.findings | default([]) }}"
+    managed_gate_findings: >-
+      {{
+        []
+        + ([{'severity': 'critical', 'area': 'managed-gates', 'detail': 'Managed service blocked items: ' ~ (managed_gate_summary.blocked_count | string)}] if (managed_gate_summary.blocked_count | int) > 0 else [])
+        + ([{'severity': 'warning', 'area': 'managed-gates', 'detail': 'Managed service pending items: ' ~ (managed_gate_summary.pending_count | string)}] if (managed_gate_summary.pending_count | int) > 0 else [])
+        + ([{'severity': 'warning', 'area': 'managed-gates', 'detail': 'Managed service warning items: ' ~ (managed_gate_summary.warning_count | string)}] if (managed_gate_summary.warning_count | int) > 0 else [])
+      }}

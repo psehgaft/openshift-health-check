@@ -1,0 +1,110 @@
+- name: Normalize warning event timestamps
+  ansible.builtin.set_fact:
+    warning_event_items_unsorted: "{{ warning_event_items_unsorted | default([]) + [item | combine({'_sort_timestamp': ((item.lastTimestamp | default(item.eventTime | default(item.metadata.creationTimestamp | default('')))) | string)})] }}"
+  loop: "{{ (analysis_graph.events | default({})).get('items', []) }}"
+  changed_when: false
+
+- name: Sort warning events
+  ansible.builtin.set_fact:
+    warning_event_items: "{{ (warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list }}"
+    recent_warning_events: "{{ ((warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list)[:warning_event_limit] }}"
+
+- name: Create Prometheus query input file
+  ansible.builtin.tempfile:
+    state: file
+    prefix: openshift-prom-query-
+    suffix: .json
+  register: prom_query_input_file
+
+- name: Write Prometheus query input
+  ansible.builtin.copy:
+    dest: "{{ prom_query_input_file.path }}"
+    mode: "0600"
+    content: >-
+      {{
+        {
+          "route_host": (thanos_route_cmd.stdout | default('') | trim),
+          "bearer_token": (oc_token_cmd.stdout | default('') | trim),
+          "timeout_seconds": 30,
+          "queries": [
+            {"name": "firing_alerts", "query": prom_queries.firing_alerts},
+            {"name": "etcd_wal_fsync", "query": prom_queries.etcd_wal_fsync_p99_ms},
+            {"name": "etcd_backend_commit", "query": prom_queries.etcd_backend_commit_p99_ms},
+            {"name": "etcd_leader_changes", "query": prom_queries.etcd_leader_changes_5m},
+            {"name": "etcd_members_reporting_leader", "query": prom_queries.etcd_members_reporting_leader},
+            {"name": "etcd_leader_count", "query": prom_queries.etcd_leader_count},
+            {"name": "etcd_peer_rtt", "query": prom_queries.etcd_peer_rtt_p99_ms},
+            {"name": "apiserver_latency", "query": prom_queries.apiserver_request_p99_seconds},
+            {"name": "apiserver_5xx_rate", "query": prom_queries.apiserver_request_5xx_rate},
+            {"name": "apiserver_read_rate", "query": prom_queries.apiserver_request_read_rate},
+            {"name": "apiserver_write_rate", "query": prom_queries.apiserver_request_write_rate},
+            {"name": "apiserver_read_inflight", "query": prom_queries.apiserver_current_read_inflight},
+            {"name": "apiserver_write_inflight", "query": prom_queries.apiserver_current_write_inflight},
+            {"name": "apiserver_storage_objects", "query": prom_queries.apiserver_storage_objects_total},
+            {"name": "node_cpu_utilization", "query": prom_queries.node_cpu_utilization},
+            {"name": "node_memory_utilization", "query": prom_queries.node_memory_utilization},
+            {"name": "node_disk_utilization", "query": prom_queries.node_disk_utilization},
+            {"name": "kubelet_pod_density", "query": prom_queries.kubelet_pod_density},
+            {"name": "top_pod_cpu_usage", "query": prom_queries.top_pod_cpu_usage},
+            {"name": "top_pod_memory_usage", "query": prom_queries.top_pod_memory_usage},
+            {"name": "pod_cpu_usage_all", "query": prom_queries.pod_cpu_usage_all},
+            {"name": "pod_memory_usage_all", "query": prom_queries.pod_memory_usage_all},
+            {"name": "controlplane_to_worker_network_latency", "query": prom_queries.controlplane_to_worker_network_latency_ms | default('')},
+            {"name": "worker_to_worker_network_latency", "query": prom_queries.worker_to_worker_network_latency_ms | default('')}
+          ]
+        } | to_json
+      }}
+
+- name: Run Prometheus signal helper
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/query_prometheus_signals.py"
+      - "{{ prom_query_input_file.path }}"
+  register: prom_query_helper_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Remove Prometheus query input file
+  ansible.builtin.file:
+    path: "{{ prom_query_input_file.path }}"
+    state: absent
+  when: prom_query_input_file is defined and (prom_query_input_file.path | default('') | length > 0)
+  changed_when: false
+
+- name: Normalize Prometheus helper output
+  ansible.builtin.set_fact:
+    prom_query_helper_data: "{{ prom_query_helper_cmd.stdout | from_json if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {'prom_available': false, 'transport': 'unavailable', 'route_working': false, 'proxy_working': false, 'route_error': '', 'proxy_error': '', 'results': {}, 'query_errors': {}, 'query_statuses': {}} }}"
+    prom_available: "{{ ((prom_query_helper_cmd.stdout | from_json).prom_available) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else false }}"
+    prom_result_map: "{{ ((prom_query_helper_cmd.stdout | from_json).results) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
+    prom_query_error_map: "{{ ((prom_query_helper_cmd.stdout | from_json).query_errors) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
+    prom_query_status_map: "{{ ((prom_query_helper_cmd.stdout | from_json).query_statuses) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
+    prom_collection_transport: "{{ ((prom_query_helper_cmd.stdout | from_json).transport) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else 'unavailable' }}"
+
+- name: Build Prometheus evidence summary
+  ansible.builtin.set_fact:
+    prometheus_evidence_summary:
+      applicable: "{{ (report_mode_resolved | default('live')) == 'live' }}"
+      collected: "{{ prom_available | default(false) | bool }}"
+      status: "{{ 'collected' if (prom_available | default(false) | bool) else 'unavailable' }}"
+      transport: "{{ prom_collection_transport | default('unavailable') }}"
+      route_working: "{{ prom_query_helper_data.route_working | default(false) }}"
+      proxy_working: "{{ prom_query_helper_data.proxy_working | default(false) }}"
+      query_count: "{{ prom_result_map | default({}) | length }}"
+      non_empty_result_count: "{{ (prom_result_map | default({}) | dict2items | rejectattr('value', 'equalto', []) | list | length) }}"
+      source: "openshift-monitoring/thanos-querier"
+      collection_method: "{{ 'route' if (prom_collection_transport | default('unavailable')) == 'route' else ('oc get --raw service proxy' if (prom_collection_transport | default('unavailable')) == 'oc-proxy' else 'not-collected') }}"
+      source_order_note: "Prometheus/Thanos is one of the official cluster data sources and is used where time-series metrics improve accuracy; object and configuration evidence still follows must-gather, inspect, oc get, then insights."
+      metric_scopes:
+        - alerting
+        - api-server
+        - etcd
+        - node-utilization
+        - pod-usage
+        - pod-density
+        - optional-network-latency
+      route_error: "{{ prom_query_helper_data.route_error | default('') }}"
+      proxy_error: "{{ prom_query_helper_data.proxy_error | default('') }}"
+      query_errors: "{{ prom_query_error_map | default({}) }}"
+      query_statuses: "{{ prom_query_status_map | default({}) }}"
+

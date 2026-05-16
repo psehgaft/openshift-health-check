@@ -1,0 +1,49 @@
+---
+- name: Build OVN IPsec encryption capability artifact facts
+  vars:
+    ovn_ipsec_day2_section_current: >-
+      {{
+        ((day2_capability_sections_resolved | default([]))
+        | selectattr('key', 'equalto', 'ovn_ipsec_encryption')
+        | list
+        | first) | default({})
+      }}
+    ovn_ipsec_network_config_current: "{{ (analysis_graph | default({})).get('network_config', {}) | default({}) }}"
+    ovn_ipsec_default_network_current: "{{ ((ovn_ipsec_network_config_current.get('spec') or {}).get('defaultNetwork') or {}) }}"
+    ovn_ipsec_ovn_config_current: "{{ ovn_ipsec_default_network_current.get('ovnKubernetesConfig') or {} }}"
+    ovn_ipsec_ipsec_config_current: "{{ ovn_ipsec_ovn_config_current.get('ipsecConfig') }}"
+    ovn_ipsec_network_type_current: "{{ (((ovn_ipsec_network_config_current.get('status') or {}).get('networkType') or ovn_ipsec_default_network_current.get('type') or 'unknown') | string) }}"
+    ovn_ipsec_is_ovn_current: "{{ (ovn_ipsec_network_type_current | lower) == 'ovnkubernetes' }}"
+    ovn_ipsec_mode_current: "{{ (((ovn_ipsec_ipsec_config_current or {}).get('mode') or ('Full' if (ovn_ipsec_ipsec_config_current is mapping) else 'Disabled')) | string | trim) }}"
+    ovn_ipsec_enabled_current: "{{ (ovn_ipsec_is_ovn_current and (ovn_ipsec_ipsec_config_current is mapping) and ((ovn_ipsec_mode_current | lower) != 'disabled')) | bool }}"
+    ovn_ipsec_status_current: "{{ 'OK' if ovn_ipsec_enabled_current else 'WARNING' }}"
+    ovn_ipsec_reason_current: >-
+      {{
+        (
+          ovn_ipsec_day2_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'networkType=' ~ (ovn_ipsec_network_type_current | string)
+          ~ ' ovnNetwork=' ~ (ovn_ipsec_is_ovn_current | string)
+          ~ ' ipsecConfigPresent=' ~ ((ovn_ipsec_ipsec_config_current is mapping) | string)
+          ~ ' mode=' ~ (ovn_ipsec_mode_current | string)
+        )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: ovn_ipsec_encryption
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      network_architecture_status: "{{ ovn_ipsec_status_current }}"
+      network_architecture_reason_summary: "{{ ovn_ipsec_reason_current }}"
+    capability_artifact_render_inputs:
+      day2_ovn_ipsec_encryption_section: "{{ ovn_ipsec_day2_section_current }}"
+      network_config: "{{ ovn_ipsec_network_config_current }}"
+    capability_artifact_collection_inputs:
+      network_type: "{{ ovn_ipsec_network_type_current }}"
+      ovn_network: "{{ ovn_ipsec_is_ovn_current | bool }}"
+      ipsec_config_present: "{{ (ovn_ipsec_ipsec_config_current is mapping) | bool }}"
+      ipsec_mode: "{{ ovn_ipsec_mode_current }}"
+      ovn_ipsec_encryption: "{{ ovn_ipsec_enabled_current | bool }}"

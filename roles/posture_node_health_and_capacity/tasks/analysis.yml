@@ -1,0 +1,72 @@
+---
+- name: Build node health and capacity posture summary
+  vars:
+    node_diagnostics_evidence_gap: "{{ (node_diagnostics_summary.verdict | default('insufficient-evidence')) not in ['supported', 'basic-supported', 'node-level-not-requested', 'node-level-no-targets'] }}"
+    node_capacity_status: >-
+      {{
+        'CRITICAL'
+        if (
+          (not_ready_nodes | default([]) | length) > 0
+          or (critical_pod_density_nodes | default([]) | length) > 0
+        )
+        else (
+          'WARNING'
+          if (
+            (pressure_nodes | default([]) | length) > 0
+            or (high_pod_density_nodes | default([]) | length) > 0
+            or (quota_pressure_findings | default([]) | length) > 0
+            or (high_cpu_nodes | default([]) | length) > 0
+            or (high_memory_nodes | default([]) | length) > 0
+            or (high_disk_nodes | default([]) | length) > 0
+            or node_diagnostics_evidence_gap
+          )
+          else 'HEALTHY'
+        )
+      }}
+    node_capacity_reason_summary: >-
+      {{
+        (
+          []
+          + (['not ready nodes=' ~ ((not_ready_nodes | default([]) | length) | string)] if ((not_ready_nodes | default([]) | length) > 0) else [])
+          + (['nodes under pressure=' ~ ((pressure_nodes | default([]) | length) | string)] if ((pressure_nodes | default([]) | length) > 0) else [])
+          + (['critical pod density nodes=' ~ ((critical_pod_density_nodes | default([]) | length) | string)] if ((critical_pod_density_nodes | default([]) | length) > 0) else [])
+          + (['high pod density nodes=' ~ ((high_pod_density_nodes | default([]) | length) | string)] if ((high_pod_density_nodes | default([]) | length) > 0) else [])
+          + (['quota pressure findings=' ~ ((quota_pressure_findings | default([]) | length) | string)] if ((quota_pressure_findings | default([]) | length) > 0) else [])
+          + (['high CPU nodes=' ~ ((high_cpu_nodes | default([]) | length) | string)] if ((high_cpu_nodes | default([]) | length) > 0) else [])
+          + (['high memory nodes=' ~ ((high_memory_nodes | default([]) | length) | string)] if ((high_memory_nodes | default([]) | length) > 0) else [])
+          + (['high disk nodes=' ~ ((high_disk_nodes | default([]) | length) | string)] if ((high_disk_nodes | default([]) | length) > 0) else [])
+          + (['node diagnostics evidence=' ~ (node_diagnostics_summary.verdict | default('unknown'))] if node_diagnostics_evidence_gap else [])
+        ) | join('; ')
+      }}
+    node_capacity_recommendation: >-
+      {{
+        (
+          'Stabilize node health first: restore NotReady nodes, relieve the most saturated nodes, and do not treat node capacity as healthy until critical density issues are cleared.'
+          if node_capacity_status == 'CRITICAL'
+          else (
+            'Reduce node and capacity risk next: address node pressure, quota pressure, and high utilization or density hotspots. Review node-level diagnostics coverage so future node investigations and capacity planning stay credible.'
+            if node_capacity_status == 'WARNING'
+            else 'Node health and capacity posture look acceptable for this run. Keep readiness, pressure, density, utilization, and diagnostics coverage under normal review as workloads grow.'
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    node_health_capacity_summary:
+      status: "{{ node_capacity_status }}"
+      reason_summary: "{{ node_capacity_reason_summary }}"
+      recommendation: "{{ node_capacity_recommendation }}"
+      not_ready_node_count: "{{ not_ready_nodes | default([]) | length }}"
+      node_pressure_count: "{{ pressure_nodes | default([]) | length }}"
+      high_pod_density_node_count: "{{ high_pod_density_nodes | default([]) | length }}"
+      critical_pod_density_node_count: "{{ critical_pod_density_nodes | default([]) | length }}"
+      quota_pressure_finding_count: "{{ quota_pressure_findings | default([]) | length }}"
+      high_cpu_node_count: "{{ high_cpu_nodes | default([]) | length }}"
+      high_memory_node_count: "{{ high_memory_nodes | default([]) | length }}"
+      high_disk_node_count: "{{ high_disk_nodes | default([]) | length }}"
+      low_cpu_node_count: "{{ low_cpu_nodes | default([]) | length }}"
+      low_memory_node_count: "{{ low_memory_nodes | default([]) | length }}"
+      diagnostics_verdict: "{{ node_diagnostics_summary.verdict | default('insufficient-evidence') }}"
+      diagnostics_sosreport_count: "{{ node_diagnostics_summary.sosreport_count | default(0) }}"
+      diagnostics_inspect_present: "{{ node_diagnostics_summary.inspect_present | default(false) }}"
+      external_storage_provider_detected: "{{ storage_posture_summary.has_external_storage_provider | default(false) }}"
+      local_or_ephemeral_only_risk: "{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}"

@@ -1,0 +1,158 @@
+---
+- name: Build CyberArk Conjur secrets management capability artifact facts
+  ansible.builtin.set_fact:
+    capability_artifact_key: cyberark_conjur_secrets_management
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      cyberark_conjur_present: >-
+        {{
+          (
+            (
+              (namespace_names | default([]))
+              | map('string')
+              | map('lower')
+              | select('in', ['conjur', 'conjur-server', 'cyberark-conjur'])
+              | list
+              | length
+            ) > 0
+            or (
+              (all_workload_blobs | default([]))
+              | map('string')
+              | map('lower')
+              | select('search', 'conjur|conjur-oss|conjur-follower|conjur-appliance|authn-k8s|conjur-authn|secretless|secrets-provider-for-k8s|conjur-csi-provider')
+              | list
+              | length
+            ) > 0
+            or (
+              ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([]))
+              | selectattr('spec', 'defined')
+              | selectattr('spec.parameters', 'defined')
+              | map(attribute='spec')
+              | map('to_json')
+              | map('lower')
+              | select('search', 'conjur.org|cyberark')
+              | list
+              | length
+            ) > 0
+            or (
+              ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([]))
+              | selectattr('spec', 'defined')
+              | map(attribute='spec.provider')
+              | map('default', '')
+              | map('string')
+              | map('lower')
+              | select('equalto', 'conjur')
+              | list
+              | length
+            ) > 0
+          ) | bool
+        }}
+      cyberark_conjur_healthy: >-
+        {{
+          (
+            (
+              (all_workload_blobs | default([]))
+              | map('string')
+              | map('lower')
+              | select('search', 'conjur|conjur-oss|conjur-follower|conjur-appliance|authn-k8s|conjur-authn|secretless|secrets-provider-for-k8s|conjur-csi-provider')
+              | list
+              | length
+            ) > 0
+            or (
+              ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([]))
+              | selectattr('spec', 'defined')
+              | selectattr('spec.parameters', 'defined')
+              | map(attribute='spec')
+              | map('to_json')
+              | map('lower')
+              | select('search', 'conjur.org|cyberark')
+              | list
+              | length
+            ) > 0
+            or (
+              ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([]))
+              | selectattr('spec', 'defined')
+              | map(attribute='spec.provider')
+              | map('default', '')
+              | map('string')
+              | map('lower')
+              | select('equalto', 'conjur')
+              | list
+              | length
+            ) > 0
+          ) | bool
+        }}
+      conjur_secretproviderclass_count: >-
+        {{
+          (
+            (
+              ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([]))
+              | selectattr('spec', 'defined')
+              | selectattr('spec.parameters', 'defined')
+              | map(attribute='spec')
+              | map('to_json')
+              | map('lower')
+              | select('search', 'conjur.org|cyberark')
+              | list
+              | length
+            )
+            +
+            (
+              ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([]))
+              | selectattr('spec', 'defined')
+              | map(attribute='spec.provider')
+              | map('default', '')
+              | map('string')
+              | map('lower')
+              | select('equalto', 'conjur')
+              | list
+              | length
+            )
+          ) | int
+        }}
+    capability_artifact_render_inputs:
+      conjur_namespace_present: >-
+        {{
+          (
+            (namespace_names | default([]))
+            | map('string')
+            | map('lower')
+            | select('in', ['conjur', 'conjur-server', 'cyberark-conjur'])
+            | list
+            | length
+          ) > 0
+        }}
+      conjur_workload_present: >-
+        {{
+          (
+            (all_workload_blobs | default([]))
+            | map('string')
+            | map('lower')
+            | select('search', 'conjur|conjur-oss|conjur-follower|conjur-appliance|authn-k8s|conjur-authn|secretless|secrets-provider-for-k8s|conjur-csi-provider')
+            | list
+            | length
+          ) > 0
+        }}
+    capability_artifact_collection_inputs:
+      conjur_namespace_present: >-
+        {{
+          (
+            (namespace_names | default([]))
+            | map('string')
+            | map('lower')
+            | select('in', ['conjur', 'conjur-server', 'cyberark-conjur'])
+            | list
+            | length
+          ) > 0
+        }}
+      conjur_workload_present: >-
+        {{
+          (
+            (all_workload_blobs | default([]))
+            | map('string')
+            | map('lower')
+            | select('search', 'conjur|conjur-oss|conjur-follower|conjur-appliance|authn-k8s|conjur-authn|secretless|secrets-provider-for-k8s|conjur-csi-provider')
+            | list
+            | length
+          ) > 0
+        }}

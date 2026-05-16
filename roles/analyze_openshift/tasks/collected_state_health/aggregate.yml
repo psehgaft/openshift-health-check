@@ -1,0 +1,64 @@
+---
+- name: Build combined collected-state health findings
+  ansible.builtin.set_fact:
+    assessment_health_findings: >-
+      {{
+        (assessment_core_health_findings | default([]))
+        + (connected_cluster_findings | default([]))
+        + (node_diagnostics_findings | default([]))
+        + (advisor_findings | default([]))
+        + (managed_gate_findings | default([]))
+      }}
+
+- name: Build collected-state health summary
+  ansible.builtin.set_fact:
+    assessment_health_summary: "{{ (health_summary | default({})) | combine({
+      'cluster_version_available': cv_available | default('Unknown'),
+      'cluster_version_progressing': cv_progressing | default('Unknown'),
+      'cluster_version_failing': cv_failing | default('Unknown'),
+      'degraded_operators': (health_summary.operators_degraded | default(0)),
+      'unavailable_operators': (health_summary.operators_unavailable | default(0)),
+      'progressing_operators': (health_summary.operators_progressing | default(0)),
+      'nodes_under_pressure': (health_summary.node_pressure_count | default(0)),
+      'mcps_total': ((analysis_graph.machineconfigpools | default({'items': []})).get('items', []) | length),
+      'mcps_degraded': (degraded_mcps | default([]) | length),
+      'routes_total': ((analysis_graph.routes | default({'items': []})).get('items', []) | length),
+      'routes_not_admitted': (assessment_route_issues | length),
+      'identity_provider_count': (cluster_profile.identity_provider_count | default(0)),
+      'user_namespaces': (user_namespace_names | default([]) | length),
+      'platform_pod_issues': (platform_pod_issues | default([]) | length),
+      'unhealthy_user_pods': (unhealthy_user_pods | default([]) | length),
+      'high_restart_pods': (pod_restart_hotspots | default([]) | map(attribute='restarts') | map('int') | select('ge', 5) | list | length),
+      'workload_health_issues': (workload_health_issues | default([]) | length),
+      'high_replica_workloads': (high_replica_workloads | default([]) | length),
+      'workload_probe_findings': (workload_probe_findings | default([]) | length),
+      'namespaces_without_networkpolicy': (namespaces_without_networkpolicy | default([]) | length),
+      'namespaces_without_resourcequota': (namespaces_without_resourcequota | default([]) | length),
+      'namespaces_without_limitrange': (namespaces_without_limitrange | default([]) | length),
+      'empty_user_namespaces': (empty_user_namespaces | default([]) | length),
+      'pv_issues': (pv_issues | default([]) | length),
+      'pvc_issues': (pvc_issues | default([]) | length),
+      'warning_events': (((analysis_graph.events | default({'items': []})).get('items', []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Warning') | list) | length),
+      'infrastructure_component_issues': (infrastructure_component_issues | default([]) | length),
+      'ingresscontroller_issues': (ingresscontroller_issues | default([]) | length),
+      'image_registry_findings': (image_registry_findings | default([]) | length),
+      'feature_findings': (feature_findings | default([]) | length),
+      'apiservice_issues': (apiservice_issues | default([]) | length),
+      'failed_pipelineruns': (failed_pipelineruns | default([]) | length),
+      'buildconfigs_without_triggers': (buildconfigs_without_triggers | default([]) | length),
+      'compliance_findings': ((compliance_suite_findings | default([]) | length) + (compliance_standards_findings | default([]) | length)),
+      'backup_findings': (backup_posture_findings | default([]) | length),
+      'machine_healthcheck_findings': (machine_healthcheck_findings | default([]) | length),
+      'day2_posture_findings': (day2_posture_findings | default([]) | length),
+      'critical_findings': (assessment_core_health_findings | default([]) | selectattr('severity', 'defined') | selectattr('severity', 'equalto', 'critical') | list | length),
+      'warning_findings': (assessment_core_health_findings | default([]) | selectattr('severity', 'defined') | selectattr('severity', 'equalto', 'warning') | list | length),
+      'status': (
+        'CRITICAL'
+        if ((assessment_core_health_findings | default([]) | selectattr('severity', 'defined') | selectattr('severity', 'equalto', 'critical') | list | length) > 0)
+        else (
+          'WARNING'
+          if ((assessment_core_health_findings | default([]) | selectattr('severity', 'defined') | selectattr('severity', 'equalto', 'warning') | list | length) > 0)
+          else 'HEALTHY'
+        )
+      )
+    }, recursive=True) }}"

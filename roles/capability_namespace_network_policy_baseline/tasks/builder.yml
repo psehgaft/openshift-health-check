@@ -1,0 +1,35 @@
+---
+- name: Build namespace network policy baseline capability artifact facts
+  vars:
+    namespace_policy_user_namespace_count: "{{ (user_namespace_names | default([]) | length) | int }}"
+    namespace_policy_missing_count: "{{ (namespaces_without_networkpolicy | default([]) | length) | int }}"
+    namespace_policy_present: "{{ (((user_namespace_names | default([]) | difference(namespaces_without_networkpolicy | default([]))) | length) | int) > 0 }}"
+    namespace_policy_healthy: "{{ ((namespace_policy_user_namespace_count | int) == 0) or ((namespace_policy_missing_count | int) == 0) }}"
+    namespace_policy_status_current: >-
+      {{
+        'OK'
+        if namespace_policy_healthy
+        else ('WARNING' if (namespace_policy_present or (namespace_policy_user_namespace_count | int) > 0) else 'INFO')
+      }}
+    namespace_policy_reason_current: >-
+      {{
+        'userNamespaces=' ~ (namespace_policy_user_namespace_count | string)
+        ~ ' namespacesWithDefaultDenyNetworkPolicy=' ~ ((((user_namespace_names | default([]) | difference(namespaces_without_networkpolicy | default([]))) | length) | int) | string)
+        ~ ' missingNamespaces=' ~ (namespace_policy_missing_count | string)
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: namespace_network_policy_baseline
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      security_governance_status: "{{ namespace_policy_status_current }}"
+      security_governance_reason_summary: "{{ namespace_policy_reason_current }}"
+    capability_artifact_render_inputs:
+      user_namespace_names: "{{ user_namespace_names | default([]) }}"
+      namespaces_with_default_deny_networkpolicy: "{{ namespaces_with_default_deny_networkpolicy | default([]) }}"
+      namespaces_with_networkpolicy: "{{ namespaces_with_networkpolicy | default([]) }}"
+      namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) }}"
+    capability_artifact_collection_inputs:
+      user_namespace_count: "{{ namespace_policy_user_namespace_count | int }}"
+      namespaces_with_default_deny_networkpolicy_count: "{{ (namespaces_with_default_deny_networkpolicy | default([]) | length) | int }}"
+      namespaces_with_networkpolicy_count: "{{ (namespaces_with_networkpolicy | default([]) | length) | int }}"
+      namespaces_without_networkpolicy_count: "{{ namespace_policy_missing_count | int }}"

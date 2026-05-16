@@ -1,0 +1,44 @@
+---
+- name: Find OpenShift capability artifacts
+  ansible.builtin.find:
+    paths: "{{ report_run_workspace_capabilities_dir }}"
+    patterns: "*.json"
+    file_type: file
+  register: openshift_capability_artifact_files
+
+- name: Initialize loaded OpenShift capability artifacts
+  ansible.builtin.set_fact:
+    openshift_capability_artifacts: "{{ openshift_capability_artifacts | default({}) }}"
+
+- name: Read OpenShift capability artifact files
+  ansible.builtin.slurp:
+    path: "{{ item.path }}"
+  loop: "{{ openshift_capability_artifact_files.files | default([]) }}"
+  register: openshift_capability_artifact_raw_results
+  when: (openshift_capability_artifact_files.matched | default(0) | int) > 0
+
+- name: Merge OpenShift capability artifacts
+  ansible.builtin.set_fact:
+    openshift_capability_artifacts: >-
+      {{
+        (openshift_capability_artifacts | default({}))
+        | combine(
+            {
+              (capability_artifact.key | default((item.item.path | basename | regex_replace('\.json$', '')))): capability_artifact
+            },
+            recursive=True
+          )
+      }}
+  vars:
+    capability_artifact: >-
+      {{
+        (
+          item.content | b64decode | from_json
+        )
+        if (item.content | default('') | length > 0)
+        else {}
+      }}
+  loop: "{{ openshift_capability_artifact_raw_results.results | default([]) }}"
+  when:
+    - not (item.skipped | default(false))
+    - (item.content | default('') | length) > 0

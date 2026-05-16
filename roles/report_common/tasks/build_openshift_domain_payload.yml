@@ -1,196 +1,418 @@
----
+- name: Resolve shared OpenShift artifact facts
+  vars:
+    openshift_shared_collection_artifact: "{{ (openshift_shared_artifacts | default({})).get('collection', {}) }}"
+    openshift_shared_analysis_graph_artifact: "{{ (openshift_shared_artifacts | default({})).get('analysis_graph', {}) }}"
+  ansible.builtin.set_fact:
+    openshift_shared_collection_artifact: "{{ openshift_shared_collection_artifact }}"
+    openshift_shared_analysis_graph_artifact: "{{ openshift_shared_analysis_graph_artifact }}"
+    openshift_artifact_backed_cluster_profile: >-
+      {{
+        (openshift_shared_analysis_graph_artifact.cluster_profile | default({}))
+        if ((openshift_shared_analysis_graph_artifact.cluster_profile | default({})) | length > 0)
+        else (
+          (openshift_shared_collection_artifact.cluster_profile | default({}))
+          if ((openshift_shared_collection_artifact.cluster_profile | default({})) | length > 0)
+          else (cluster_profile | default({}))
+        )
+      }}
+
+- name: Resolve evidence and supportability posture artifact facts
+  vars:
+    supportability_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('evidence_and_supportability', {}) }}"
+  ansible.builtin.set_fact:
+    supportability_posture_artifact: "{{ supportability_posture_artifact }}"
+    supportability_posture_render_inputs: "{{ supportability_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve platform health posture artifact facts
+  vars:
+    platform_health_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('platform_health', {}) }}"
+  ansible.builtin.set_fact:
+    platform_health_posture_artifact: "{{ platform_health_posture_artifact }}"
+    platform_health_posture_render_inputs: "{{ platform_health_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve node health posture artifact facts
+  vars:
+    node_health_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('node_health_and_capacity', {}) }}"
+  ansible.builtin.set_fact:
+    node_health_posture_artifact: "{{ node_health_posture_artifact }}"
+    node_health_posture_render_inputs: "{{ node_health_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve network access posture artifact facts
+  vars:
+    network_access_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('application_access_and_network_isolation', {}) }}"
+  ansible.builtin.set_fact:
+    network_access_posture_artifact: "{{ network_access_posture_artifact }}"
+    network_access_posture_render_inputs: "{{ network_access_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve backup and disaster recovery posture artifact facts
+  vars:
+    backup_recovery_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('backup_and_disaster_recovery', {}) }}"
+  ansible.builtin.set_fact:
+    backup_recovery_posture_artifact: "{{ backup_recovery_posture_artifact }}"
+    backup_recovery_posture_render_inputs: "{{ backup_recovery_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve observability posture artifact facts
+  vars:
+    observability_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('observability', {}) }}"
+  ansible.builtin.set_fact:
+    observability_posture_artifact: "{{ observability_posture_artifact }}"
+    observability_posture_render_inputs: "{{ observability_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve security and governance posture artifact facts
+  vars:
+    security_governance_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('security_and_governance', {}) }}"
+  ansible.builtin.set_fact:
+    security_governance_posture_artifact: "{{ security_governance_posture_artifact }}"
+    security_governance_posture_render_inputs: "{{ security_governance_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve workload health posture artifact facts
+  vars:
+    workload_health_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('workload_health', {}) }}"
+  ansible.builtin.set_fact:
+    workload_health_posture_artifact: "{{ workload_health_posture_artifact }}"
+    workload_health_posture_render_inputs: "{{ workload_health_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve platform architecture and lifecycle posture artifact facts
+  vars:
+    architecture_lifecycle_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('platform_architecture_and_lifecycle', {}) }}"
+  ansible.builtin.set_fact:
+    architecture_lifecycle_posture_artifact: "{{ architecture_lifecycle_posture_artifact }}"
+    architecture_lifecycle_posture_render_inputs: "{{ architecture_lifecycle_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve capacity planning snapshot posture artifact facts
+  vars:
+    capacity_snapshot_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('capacity_planning_snapshot', {}) }}"
+  ansible.builtin.set_fact:
+    capacity_snapshot_posture_artifact: "{{ capacity_snapshot_posture_artifact }}"
+    capacity_snapshot_posture_render_inputs: "{{ capacity_snapshot_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve declarative operations posture artifact facts
+  vars:
+    declarative_operations_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('declarative_operations', {}) }}"
+  ansible.builtin.set_fact:
+    declarative_operations_posture_artifact: "{{ declarative_operations_posture_artifact }}"
+    declarative_operations_posture_render_inputs: "{{ declarative_operations_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve release engineering posture artifact facts
+  vars:
+    release_engineering_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('container_platform_adoption_and_release_engineering', {}) }}"
+  ansible.builtin.set_fact:
+    release_engineering_posture_artifact: "{{ release_engineering_posture_artifact }}"
+    release_engineering_posture_render_inputs: "{{ release_engineering_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve day 2 production readiness posture artifact facts
+  vars:
+    day2_readiness_posture_artifact: "{{ (openshift_posture_artifacts | default({})).get('day2_production_readiness', {}) }}"
+  ansible.builtin.set_fact:
+    day2_readiness_posture_artifact: "{{ day2_readiness_posture_artifact }}"
+    day2_readiness_posture_render_inputs: "{{ day2_readiness_posture_artifact.render_inputs | default({}) }}"
+
+- name: Resolve capability artifact backed Day 2 sections
+  ansible.builtin.set_fact:
+    capability_artifact_sections_by_key: >-
+      {%- set resolved = {} -%}
+      {%- for key, value in (openshift_capability_artifacts | default({})).items() -%}
+      {%- set section = (value | default({})).get('section', {}) -%}
+      {%- if (section | length) > 0 -%}
+      {%- set _ = resolved.update({key: section}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ resolved }}
+
+- name: Apply capability artifact sections to Day 2 capability list
+  ansible.builtin.set_fact:
+    day2_capability_sections_artifact_resolved: >-
+      {%- set resolved = [] -%}
+      {%- set artifact_sections = capability_artifact_sections_by_key | default({}) -%}
+      {%- for section in (day2_capability_sections | default([])) -%}
+      {%- set section_key = section.key | default('') -%}
+      {%- if section_key and (artifact_sections.get(section_key, {}) | length) > 0 -%}
+      {%- set _ = resolved.append(artifact_sections.get(section_key)) -%}
+      {%- else -%}
+      {%- set _ = resolved.append(section) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ resolved }}
+
 - name: Build shared OpenShift domain payload for collected-state reporting
   ansible.builtin.set_fact:
     openshift_report_domain_payload:
+      evidence_and_supportability:
+        summary: "{{ supportability_posture_artifact.summary | default(supportability_posture_render_inputs.supportability_summary | default(supportability_summary | default({}))) }}"
+        recommendations: "{{ supportability_posture_artifact.recommendations | default('Resolve the named unsupported, review-required, or incomplete supportability conditions before using lower-priority sections for final sign-off.') }}"
+        diagnostics_coverage: "{{ supportability_posture_artifact.diagnostics_coverage | default(supportability_posture_render_inputs.diagnostics_coverage | default(diagnostics_coverage | default({}))) }}"
+        product_evidence: "{{ supportability_posture_artifact.product_evidence | default(supportability_posture_render_inputs.product_evidence | default(assessment_product_evidence | default({}))) }}"
+        product_evidence_findings: "{{ supportability_posture_artifact.product_evidence_findings | default(supportability_posture_render_inputs.product_evidence_findings | default(assessment_product_evidence_findings | default([]))) }}"
+        connected_cluster_posture: "{{ supportability_posture_artifact.connected_cluster_posture | default(supportability_posture_render_inputs.connected_cluster_posture | default(assessment_connected_cluster_posture | default(connected_cluster_posture | default({})))) }}"
+        connected_cluster_findings: "{{ supportability_posture_artifact.connected_cluster_findings | default(supportability_posture_render_inputs.connected_cluster_findings | default(assessment_connected_cluster_findings | default(connected_cluster_findings | default([])))) }}"
+        connected_cluster_advisor_summary: "{{ supportability_posture_artifact.connected_cluster_advisor_summary | default(supportability_posture_render_inputs.connected_cluster_advisor_summary | default(advisor_summary | default({}))) }}"
+        node_diagnostics_summary: "{{ supportability_posture_artifact.node_diagnostics_summary | default(supportability_posture_render_inputs.node_diagnostics_summary | default(node_diagnostics_summary | default({}))) }}"
+        node_diagnostics_findings: "{{ supportability_posture_artifact.node_diagnostics_findings | default(supportability_posture_render_inputs.node_diagnostics_findings | default(node_diagnostics_findings | default([]))) }}"
+        advisor_summary: "{{ supportability_posture_artifact.advisor_summary | default(supportability_posture_render_inputs.advisor_summary | default(advisor_summary | default({}))) }}"
+        advisor_findings: "{{ supportability_posture_artifact.advisor_findings | default(supportability_posture_render_inputs.advisor_findings | default(advisor_findings | default([]))) }}"
+        insights_archive_summary: "{{ supportability_posture_artifact.insights_archive_summary | default(supportability_posture_render_inputs.insights_archive_summary | default(insights_archive_summary | default({}))) }}"
+        insights_archive_findings: "{{ supportability_posture_artifact.insights_archive_findings | default(supportability_posture_render_inputs.insights_archive_findings | default(insights_archive_findings | default([]))) }}"
+        evidence_coverage: "{{ supportability_posture_artifact.evidence_coverage | default(supportability_posture_render_inputs.evidence_coverage | default(evidence_coverage | default({}))) }}"
       platform_health:
-        summary: "{{ core_platform_health_summary | default(assessment_health_summary | default({})) }}"
-        recommendations: >-
-          {{
-            (
-              'Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.'
-              if ((core_platform_health_summary | default(assessment_health_summary | default({}))).status | default('unknown')) == 'CRITICAL'
-              else (
-                'Reduce platform warning conditions next: review high-impact progressing operators, API or etcd runtime degradation, node pressure, and route or APIService warnings before treating the cluster as steady state.'
-                if ((core_platform_health_summary | default(assessment_health_summary | default({}))).status | default('unknown')) == 'WARNING'
-                else 'Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.'
-              )
-            )
-          }}
-        findings: "{{ core_platform_health_findings | default(assessment_health_findings | default([])) }}"
-        operators: "{{ assessment_operator_status_summary | default([]) }}"
-        infrastructure_components:
-          summary: "{{ infrastructure_component_summary | default([]) }}"
-          issues: "{{ infrastructure_component_issues | default([]) }}"
-        etcd_ocp_diag_summary: "{{ etcd_ocp_diag_summary | default({}) }}"
-        etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
-        omc_summary: "{{ omc_summary | default({}) }}"
-        omc_findings: "{{ omc_findings | default([]) }}"
-        apiservice_issues: "{{ apiservice_issues | default([]) }}"
-        image_registry:
-          findings: "{{ image_registry_findings | default([]) }}"
-          feature_findings: "{{ feature_findings | default([]) }}"
-          internal_registry_workloads: "{{ internal_registry_workloads | default([]) }}"
+        summary: "{{ platform_health_posture_artifact.summary | default(platform_health_posture_render_inputs.summary | default(core_platform_health_summary | default(assessment_health_summary | default({})))) }}"
+        recommendations: "{{ platform_health_posture_artifact.recommendations | default('Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.') }}"
+        findings: "{{ platform_health_posture_artifact.findings | default(platform_health_posture_render_inputs.findings | default(core_platform_health_findings | default(assessment_health_findings | default([])))) }}"
+        operators: "{{ platform_health_posture_artifact.operators | default(platform_health_posture_render_inputs.operators | default(assessment_operator_status_summary | default([]))) }}"
+        infrastructure_components: "{{ platform_health_posture_artifact.infrastructure_components | default({'summary': platform_health_posture_render_inputs.infrastructure_component_summary | default(infrastructure_component_summary | default([])), 'issues': platform_health_posture_render_inputs.infrastructure_component_issues | default(infrastructure_component_issues | default([]))}) }}"
+        etcd_ocp_diag_summary: "{{ platform_health_posture_artifact.etcd_ocp_diag_summary | default(platform_health_posture_render_inputs.etcd_ocp_diag_summary | default(etcd_ocp_diag_summary | default({}))) }}"
+        etcd_ocp_diag_findings: "{{ platform_health_posture_artifact.etcd_ocp_diag_findings | default(platform_health_posture_render_inputs.etcd_ocp_diag_findings | default(etcd_ocp_diag_findings | default([]))) }}"
+        omc_summary: "{{ platform_health_posture_artifact.omc_summary | default(platform_health_posture_render_inputs.omc_summary | default(omc_summary | default({}))) }}"
+        omc_findings: "{{ platform_health_posture_artifact.omc_findings | default(platform_health_posture_render_inputs.omc_findings | default(omc_findings | default([]))) }}"
+        apiservice_issues: "{{ platform_health_posture_artifact.apiservice_issues | default(platform_health_posture_render_inputs.apiservice_issues | default(apiservice_issues | default([]))) }}"
+        image_registry: "{{ platform_health_posture_artifact.image_registry | default({'findings': platform_health_posture_render_inputs.image_registry_findings | default(image_registry_findings | default([])), 'feature_findings': platform_health_posture_render_inputs.feature_findings | default(feature_findings | default([])), 'internal_registry_workloads': platform_health_posture_render_inputs.internal_registry_workloads | default(internal_registry_workloads | default([]))}) }}"
       observability:
-        summary: "{{ observability_summary | default({}) }}"
-        recommendations: "{{ (observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}"
-        forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
-        prometheus_query: "{{ prometheus_evidence_summary | default({}) }}"
-        findings: "{{ observability_findings | default([]) }}"
-        connected_cluster_posture: "{{ assessment_connected_cluster_posture | default(connected_cluster_posture | default({})) }}"
-        connected_cluster_findings: "{{ assessment_connected_cluster_findings | default(connected_cluster_findings | default([])) }}"
-        advisor_summary: "{{ advisor_summary | default({}) }}"
-        advisor_findings: "{{ advisor_findings | default([]) }}"
-        insights_archive_summary: "{{ insights_archive_summary | default({}) }}"
-        insights_archive_findings: "{{ insights_archive_findings | default([]) }}"
+        summary: "{{ observability_posture_artifact.summary | default(observability_summary | default({})) }}"
+        recommendations: "{{ observability_posture_artifact.recommendations | default((observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.')) }}"
+        forwarding_summary: "{{ observability_posture_artifact.forwarding_summary | default(observability_posture_render_inputs.forwarding_summary | default(observability_forwarding_summary | default({}))) }}"
+        prometheus_query: "{{ observability_posture_artifact.prometheus_query | default(observability_posture_render_inputs.prometheus_query | default(prometheus_evidence_summary | default({}))) }}"
+        findings: "{{ observability_posture_artifact.findings | default(observability_posture_render_inputs.findings | default(observability_findings | default([]))) }}"
+        connected_cluster_posture: "{{ observability_posture_artifact.connected_cluster_posture | default(observability_posture_render_inputs.connected_cluster_posture | default(assessment_connected_cluster_posture | default(connected_cluster_posture | default({})))) }}"
+        connected_cluster_findings: "{{ observability_posture_artifact.connected_cluster_findings | default(observability_posture_render_inputs.connected_cluster_findings | default(assessment_connected_cluster_findings | default(connected_cluster_findings | default([])))) }}"
+        advisor_summary: "{{ observability_posture_artifact.advisor_summary | default(observability_posture_render_inputs.advisor_summary | default(advisor_summary | default({}))) }}"
+        advisor_findings: "{{ observability_posture_artifact.advisor_findings | default(observability_posture_render_inputs.advisor_findings | default(advisor_findings | default([]))) }}"
+        insights_archive_summary: "{{ observability_posture_artifact.insights_archive_summary | default(observability_posture_render_inputs.insights_archive_summary | default(insights_archive_summary | default({}))) }}"
+        insights_archive_findings: "{{ observability_posture_artifact.insights_archive_findings | default(observability_posture_render_inputs.insights_archive_findings | default(insights_archive_findings | default([]))) }}"
       node_health_and_capacity:
-        summary: "{{ node_health_capacity_summary | default({}) }}"
-        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, quota pressure, metric-backed utilization, and node diagnostics coverage before treating node capacity as healthy.') }}"
-        diagnostics_summary: "{{ node_diagnostics_summary | default({}) }}"
-        diagnostics_findings: "{{ node_diagnostics_findings | default([]) }}"
-        machineconfigpools: "{{ assessment_mcp_summary | default([]) }}"
+        summary: "{{ node_health_posture_artifact.summary | default(node_health_capacity_summary | default({})) }}"
+        recommendations: "{{ node_health_posture_artifact.recommendations | default((node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, quota pressure, metric-backed utilization, and node diagnostics coverage before treating node capacity as healthy.')) }}"
+        diagnostics_summary: "{{ node_health_posture_artifact.diagnostics_summary | default(node_diagnostics_summary | default({})) }}"
+        diagnostics_findings: "{{ node_health_posture_artifact.diagnostics_findings | default(node_diagnostics_findings | default([])) }}"
+        machineconfigpools: "{{ node_health_posture_artifact.machineconfigpools | default(node_health_posture_render_inputs.machineconfigpools | default(assessment_mcp_summary | default([]))) }}"
+        nodes: "{{ node_health_posture_artifact.nodes | default(node_health_posture_render_inputs.nodes | default(openshift_node_items | default([]))) }}"
+        quota_pressure_findings: "{{ node_health_posture_artifact.quota_pressure_findings | default(node_health_posture_render_inputs.quota_pressure_findings | default(top_quota_pressure_findings | default([]))) }}"
+        node_capacity_summary_by_density_desc: "{{ node_health_posture_artifact.node_capacity_summary_by_density_desc | default(node_health_posture_render_inputs.node_capacity_summary_by_density_desc | default(node_capacity_summary_by_density_desc | default([]))) }}"
+        node_capacity_summary_by_density_asc: "{{ node_health_posture_artifact.node_capacity_summary_by_density_asc | default(node_health_posture_render_inputs.node_capacity_summary_by_density_asc | default(node_capacity_summary_by_density_asc | default([]))) }}"
+        high_pod_density_nodes: "{{ node_health_posture_artifact.high_pod_density_nodes | default(node_health_posture_render_inputs.high_pod_density_nodes | default(high_pod_density_nodes | default([]))) }}"
+        high_cpu_nodes: "{{ node_health_posture_artifact.high_cpu_nodes | default(node_health_posture_render_inputs.high_cpu_nodes | default(high_cpu_nodes | default([]))) }}"
+        high_memory_nodes: "{{ node_health_posture_artifact.high_memory_nodes | default(node_health_posture_render_inputs.high_memory_nodes | default(high_memory_nodes | default([]))) }}"
+        high_disk_nodes: "{{ node_health_posture_artifact.high_disk_nodes | default(node_health_posture_render_inputs.high_disk_nodes | default(high_disk_nodes | default([]))) }}"
       upgrade_and_lifecycle_risk:
-        architecture_lifecycle_summary: "{{ architecture_lifecycle_summary | default({}) }}"
-        upgrade_readiness_summary: "{{ upgrade_readiness_summary | default({}) }}"
-        recommendations: "{{ (architecture_lifecycle_summary | default({})).get('recommendation', 'Review lifecycle support status, upgrade readiness, and failure-domain spread before treating the architecture posture as production-ready.') }}"
-        reference_compliance_summary: "{{ reference_compliance_summary | default({}) }}"
-        reference_compliance_findings: "{{ reference_compliance_findings | default([]) }}"
-        managed_gate_summary: "{{ managed_gate_summary | default({}) }}"
-        managed_gate_findings: "{{ managed_gate_findings | default([]) }}"
+        summary: "{{ architecture_lifecycle_posture_artifact.summary | default(architecture_lifecycle_summary | default({})) }}"
+        architecture_lifecycle_summary: "{{ architecture_lifecycle_posture_artifact.summary | default(architecture_lifecycle_summary | default({})) }}"
+        upgrade_readiness_summary: "{{ architecture_lifecycle_posture_artifact.upgrade_readiness_summary | default(architecture_lifecycle_posture_render_inputs.upgrade_readiness_summary | default(upgrade_readiness_summary | default({}))) }}"
+        recommendations: "{{ architecture_lifecycle_posture_artifact.recommendations | default((architecture_lifecycle_summary | default({})).get('recommendation', 'Review lifecycle support status, upgrade readiness, and failure-domain spread before treating the architecture posture as production-ready.')) }}"
+        reference_compliance_summary: "{{ architecture_lifecycle_posture_artifact.reference_compliance_summary | default(architecture_lifecycle_posture_render_inputs.reference_compliance_summary | default(reference_compliance_summary | default({}))) }}"
+        reference_compliance_findings: "{{ architecture_lifecycle_posture_artifact.reference_compliance_findings | default(architecture_lifecycle_posture_render_inputs.reference_compliance_findings | default(reference_compliance_findings | default([]))) }}"
+        managed_gate_summary: "{{ architecture_lifecycle_posture_artifact.managed_gate_summary | default(architecture_lifecycle_posture_render_inputs.managed_gate_summary | default(managed_gate_summary | default({}))) }}"
+        managed_gate_findings: "{{ architecture_lifecycle_posture_artifact.managed_gate_findings | default(architecture_lifecycle_posture_render_inputs.managed_gate_findings | default(managed_gate_findings | default([]))) }}"
+        topology_resilience: "{{ architecture_lifecycle_posture_artifact.topology_resilience | default(architecture_lifecycle_posture_render_inputs.topology_resilience | default(topology_resilience | default({}))) }}"
+        available_updates: "{{ architecture_lifecycle_posture_artifact.available_updates | default(architecture_lifecycle_posture_render_inputs.available_updates | default(available_updates | default([]))) }}"
+        conditional_updates: "{{ architecture_lifecycle_posture_artifact.conditional_updates | default(architecture_lifecycle_posture_render_inputs.conditional_updates | default(conditional_updates | default([]))) }}"
+        cluster_update_history: "{{ architecture_lifecycle_posture_artifact.cluster_update_history | default(architecture_lifecycle_posture_render_inputs.cluster_update_history | default(cluster_update_history | default([]))) }}"
+        deprecated_crd_findings: "{{ architecture_lifecycle_posture_artifact.deprecated_crd_findings | default(architecture_lifecycle_posture_render_inputs.deprecated_crd_findings | default(top_deprecated_crd_findings | default([]))) }}"
+        deprecated_api_lines: "{{ architecture_lifecycle_posture_artifact.deprecated_api_lines | default(architecture_lifecycle_posture_render_inputs.deprecated_api_lines | default(top_deprecated_api_lines | default([]))) }}"
+        cluster_compare_findings: "{{ architecture_lifecycle_posture_artifact.cluster_compare_findings | default(architecture_lifecycle_posture_render_inputs.cluster_compare_findings | default(top_live_cluster_compare_findings | default([]))) }}"
+        managed_gate_top_findings: "{{ architecture_lifecycle_posture_artifact.managed_gate_top_findings | default(architecture_lifecycle_posture_render_inputs.managed_gate_top_findings | default(top_live_managed_gate_findings | default([]))) }}"
+      capacity_planning_snapshot:
+        summary: "{{ capacity_snapshot_posture_artifact.summary | default({}) }}"
+        recommendations: "{{ capacity_snapshot_posture_artifact.recommendations | default('Use the baseline and growth tables to plan scaling, upgrades, and workload placement.') }}"
+        cluster_current_state: "{{ capacity_snapshot_posture_artifact.cluster_current_state | default(capacity_snapshot_posture_render_inputs.cluster_current_state | default(cluster_current_state | default({}))) }}"
+        cluster_profile: "{{ capacity_snapshot_posture_artifact.cluster_profile | default(capacity_snapshot_posture_render_inputs.cluster_profile | default(openshift_artifact_backed_cluster_profile | default(cluster_profile | default({})))) }}"
+        architecture_lifecycle_summary: "{{ capacity_snapshot_posture_artifact.architecture_lifecycle_summary | default(capacity_snapshot_posture_render_inputs.architecture_lifecycle_summary | default(architecture_lifecycle_summary | default({}))) }}"
+        cluster_current_state_sanity_findings: "{{ capacity_snapshot_posture_artifact.cluster_current_state_sanity_findings | default(capacity_snapshot_posture_render_inputs.cluster_current_state_sanity_findings | default(cluster_current_state_sanity_findings | default([]))) }}"
+        cluster_current_state_build_error: "{{ capacity_snapshot_posture_artifact.cluster_current_state_build_error | default(capacity_snapshot_posture_render_inputs.cluster_current_state_build_error | default(cluster_current_state_build_error | default(''))) }}"
+        runtime_signal_resolution_map: "{{ capacity_snapshot_posture_artifact.runtime_signal_resolution_map | default(capacity_snapshot_posture_render_inputs.runtime_signal_resolution_map | default(runtime_signal_resolution_map | default({}))) }}"
+      declarative_operations:
+        summary: "{{ declarative_operations_posture_artifact.summary | default(declarative_operations_summary | default({})) }}"
+        declarative_operations_summary: "{{ declarative_operations_posture_artifact.declarative_operations_summary | default(declarative_operations_posture_render_inputs.declarative_operations_summary | default(declarative_operations_summary | default({}))) }}"
+        recommendations: "{{ declarative_operations_posture_artifact.recommendations | default((declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.')) }}"
+      container_platform_adoption_and_release_engineering:
+        summary: "{{ release_engineering_posture_artifact.summary | default(release_engineering_adoption_summary | default({})) }}"
+        release_engineering_adoption_summary: "{{ release_engineering_posture_artifact.release_engineering_adoption_summary | default(release_engineering_posture_render_inputs.release_engineering_adoption_summary | default(release_engineering_adoption_summary | default({}))) }}"
+        recommendations: "{{ release_engineering_posture_artifact.recommendations | default((release_engineering_adoption_summary | default({})).get('recommendation', 'Review failed pipelines, build-automation ownership, and cluster-hosted runner health before treating release engineering as healthy.')) }}"
+        cicd_runner_summary: "{{ release_engineering_posture_artifact.cicd_runner_summary | default(release_engineering_posture_render_inputs.cicd_runner_summary | default((release_engineering_adoption_summary | default({})).get('runner_summary', {}))) }}"
+        cicd_runner_findings: "{{ release_engineering_posture_artifact.cicd_runner_findings | default(release_engineering_posture_render_inputs.cicd_runner_findings | default((release_engineering_adoption_summary | default({})).get('runner_findings', []))) }}"
+        buildconfig_strategy_counts: "{{ release_engineering_posture_artifact.buildconfig_strategy_counts | default(release_engineering_posture_render_inputs.buildconfig_strategy_counts | default(buildconfig_strategy_counts | default({}))) }}"
+        pipelinerun_status_counts: "{{ release_engineering_posture_artifact.pipelinerun_status_counts | default(release_engineering_posture_render_inputs.pipelinerun_status_counts | default(pipelinerun_status_counts | default({}))) }}"
+        failed_pipelineruns: "{{ release_engineering_posture_artifact.failed_pipelineruns | default(release_engineering_posture_render_inputs.failed_pipelineruns | default(top_failed_pipelineruns | default([]))) }}"
+        buildconfigs_without_triggers: "{{ release_engineering_posture_artifact.buildconfigs_without_triggers | default(release_engineering_posture_render_inputs.buildconfigs_without_triggers | default(top_buildconfigs_without_triggers | default([]))) }}"
       production_day2_readiness:
-        summary: "{{ day2_posture_summary | default({}) }}"
-        declarative_operations_summary: "{{ declarative_operations_summary | default({}) }}"
-        day2_production_readiness_summary: "{{ day2_production_readiness_summary | default({}) }}"
-        operations_recommendations: "{{ (declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.') }}"
-        recommendations: "{{ (declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.') }}"
-        release_engineering_adoption_summary: "{{ release_engineering_adoption_summary | default({}) }}"
-        checks: "{{ day2_posture_checks | default([]) }}"
-        findings: "{{ day2_posture_findings | default([]) }}"
-        capability_sections: "{{ day2_capability_sections | default([]) }}"
-        capability_assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-        capability_assessment_error: "{{ (day2_posture_summary | default({})).get('capability_assessment_error', '') }}"
-        product_evidence: "{{ assessment_product_evidence | default({}) }}"
-        product_evidence_findings: "{{ assessment_product_evidence_findings | default([]) }}"
+        summary: "{{ day2_readiness_posture_artifact.summary | default(day2_readiness_posture_render_inputs.day2_production_readiness_summary | default(day2_production_readiness_summary | default({}))) }}"
+        declarative_operations_summary: "{{ declarative_operations_posture_artifact.declarative_operations_summary | default(declarative_operations_posture_render_inputs.declarative_operations_summary | default(declarative_operations_summary | default({}))) }}"
+        day2_posture_summary: "{{ day2_readiness_posture_artifact.day2_posture_summary | default(day2_readiness_posture_render_inputs.day2_posture_summary | default(day2_posture_summary | default({}))) }}"
+        day2_production_readiness_summary: "{{ day2_readiness_posture_artifact.day2_production_readiness_summary | default(day2_readiness_posture_render_inputs.day2_production_readiness_summary | default(day2_production_readiness_summary | default({}))) }}"
+        operations_recommendations: "{{ declarative_operations_posture_artifact.recommendations | default((declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.')) }}"
+        recommendations: "{{ day2_readiness_posture_artifact.recommendations | default((day2_production_readiness_summary | default({})).get('recommendation', 'Use the owning posture sections and capability sections as the remediation queue, and rerun the assessment when blockers or incomplete evidence are cleared.')) }}"
+        release_engineering_adoption_summary: "{{ release_engineering_posture_artifact.release_engineering_adoption_summary | default(release_engineering_posture_render_inputs.release_engineering_adoption_summary | default(release_engineering_adoption_summary | default({}))) }}"
+        checks: "{{ day2_readiness_posture_artifact.checks | default(day2_readiness_posture_render_inputs.checks | default(day2_posture_checks | default([]))) }}"
+        findings: "{{ day2_readiness_posture_artifact.findings | default(day2_readiness_posture_render_inputs.findings | default(day2_posture_findings | default([]))) }}"
+        capability_sections: "{{ day2_readiness_posture_artifact.capability_sections | default(day2_readiness_posture_render_inputs.capability_sections | default(day2_capability_sections_artifact_resolved | default(day2_capability_sections | default([])))) }}"
+        capability_assessment_state: "{{ day2_readiness_posture_artifact.capability_assessment_state | default(day2_readiness_posture_render_inputs.capability_assessment_state | default((day2_posture_summary | default({})).get('capability_assessment_state', 'unknown'))) }}"
+        capability_assessment_error: "{{ day2_readiness_posture_artifact.capability_assessment_error | default(day2_readiness_posture_render_inputs.capability_assessment_error | default((day2_posture_summary | default({})).get('capability_assessment_error', ''))) }}"
+        product_evidence: "{{ day2_readiness_posture_artifact.product_evidence | default(day2_readiness_posture_render_inputs.product_evidence | default(assessment_product_evidence | default({}))) }}"
+        product_evidence_findings: "{{ day2_readiness_posture_artifact.product_evidence_findings | default(day2_readiness_posture_render_inputs.product_evidence_findings | default(assessment_product_evidence_findings | default([]))) }}"
         builds:
-          buildconfigs_without_triggers: "{{ buildconfigs_without_triggers | default([]) }}"
+          buildconfigs_without_triggers: "{{ release_engineering_posture_artifact.buildconfigs_without_triggers | default(release_engineering_posture_render_inputs.buildconfigs_without_triggers | default(buildconfigs_without_triggers | default([]))) }}"
         pipelines:
-          failed_pipelineruns: "{{ failed_pipelineruns | default([]) }}"
+          failed_pipelineruns: "{{ release_engineering_posture_artifact.failed_pipelineruns | default(release_engineering_posture_render_inputs.failed_pipelineruns | default(failed_pipelineruns | default([]))) }}"
       security_and_governance:
-        summary: "{{ security_compliance_summary | default({}) }}"
-        recommendations: "{{ (security_compliance_summary | default({})).get('recommendation', 'Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.') }}"
-        auth_posture_summary: "{{ auth_posture_summary | default({}) }}"
+        summary: "{{ security_governance_posture_artifact.summary | default(security_compliance_summary | default({})) }}"
+        recommendations: "{{ security_governance_posture_artifact.recommendations | default((security_compliance_summary | default({})).get('recommendation', 'Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.')) }}"
+        auth_posture_summary: "{{ security_governance_posture_artifact.auth_posture_summary | default(auth_posture_summary | default({})) }}"
+        auth_findings: "{{ security_governance_posture_artifact.auth_findings | default(security_governance_posture_render_inputs.auth_findings | default(auth_findings | default([]))) }}"
         namespace_hygiene:
-          user_namespaces: "{{ user_namespace_names | default([]) }}"
-          namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) }}"
-          namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) }}"
-          namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) }}"
-          empty_user_namespaces: "{{ empty_user_namespaces | default([]) }}"
+          user_namespaces: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('user_namespaces', user_namespace_names | default([])) }}"
+          namespaces_without_networkpolicy: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_without_networkpolicy', namespaces_without_networkpolicy | default([])) }}"
+          namespaces_without_resourcequota: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_without_resourcequota', namespaces_without_resourcequota | default([])) }}"
+          namespaces_without_limitrange: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_without_limitrange', namespaces_without_limitrange | default([])) }}"
+          empty_user_namespaces: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('empty_user_namespaces', empty_user_namespaces | default([])) }}"
+          namespaces_missing_ingress_policies: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_missing_ingress_policies', namespaces_missing_ingress_policies | default([])) }}"
+          namespaces_missing_egress_policies: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_missing_egress_policies', namespaces_missing_egress_policies | default([])) }}"
+          metadata_governance_findings: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('metadata_governance_findings', security_governance_posture_render_inputs.namespace_metadata_governance_findings | default(top_namespace_metadata_governance_findings | default([]))) }}"
+        pod_security:
+          issue_type_counts: "{{ (security_governance_posture_artifact.pod_security | default({})).get('issue_type_counts', security_governance_posture_render_inputs.pod_security_issue_type_counts | default(security_issue_type_counts | default({}))) }}"
+          findings: "{{ (security_governance_posture_artifact.pod_security | default({})).get('findings', security_governance_posture_render_inputs.pod_security_findings | default(top_security_findings | default([]))) }}"
+          findings_total: "{{ (security_governance_posture_artifact.pod_security | default({})).get('findings_total', security_governance_posture_render_inputs.pod_security_findings_count | default((security_findings | default([])) | length)) }}"
+        privileged_access:
+          serviceaccounts: "{{ (security_governance_posture_artifact.privileged_access | default({})).get('serviceaccounts', security_governance_posture_render_inputs.privileged_serviceaccount_access | default(top_privileged_serviceaccount_access | default([]))) }}"
+          users: "{{ (security_governance_posture_artifact.privileged_access | default({})).get('users', security_governance_posture_render_inputs.privileged_user_access | default(top_privileged_user_access | default([]))) }}"
+          groups: "{{ (security_governance_posture_artifact.privileged_access | default({})).get('groups', security_governance_posture_render_inputs.privileged_group_access | default(top_privileged_group_access | default([]))) }}"
         compliance:
-          summary: "{{ compliance_suite_summary | default([]) }}"
-          findings: "{{ compliance_suite_findings | default([]) }}"
-          operator_summary: "{{ compliance_operator_summary | default({}) }}"
-          standards_summary: "{{ compliance_standards_summary | default([]) }}"
-          standards_findings: "{{ compliance_standards_findings | default([]) }}"
+          summary: "{{ (security_governance_posture_artifact.compliance | default({})).get('summary', compliance_suite_summary | default([])) }}"
+          findings: "{{ (security_governance_posture_artifact.compliance | default({})).get('findings', compliance_suite_findings | default([])) }}"
+          operator_summary: "{{ (security_governance_posture_artifact.compliance | default({})).get('operator_summary', compliance_operator_summary | default({})) }}"
+          standards_summary: "{{ (security_governance_posture_artifact.compliance | default({})).get('standards_summary', compliance_standards_summary | default([])) }}"
+          standards_findings: "{{ (security_governance_posture_artifact.compliance | default({})).get('standards_findings', compliance_standards_findings | default([])) }}"
+          result_counts: "{{ (security_governance_posture_artifact.compliance | default({})).get('result_counts', compliance_result_counts | default({})) }}"
         access_review:
-          likely_unused_serviceaccounts: "{{ stale_access_review_serviceaccounts | default([]) }}"
-          stale_users: "{{ stale_access_review_users | default([]) }}"
-          stale_groups: "{{ stale_access_review_groups | default([]) }}"
+          likely_unused_serviceaccounts: "{{ (security_governance_posture_artifact.access_review | default({})).get('likely_unused_serviceaccounts', security_governance_posture_render_inputs.access_review_serviceaccounts | default(stale_access_review_serviceaccounts | default([]))) }}"
+          stale_users: "{{ (security_governance_posture_artifact.access_review | default({})).get('stale_users', security_governance_posture_render_inputs.access_review_users | default(stale_access_review_users | default([]))) }}"
+          stale_groups: "{{ (security_governance_posture_artifact.access_review | default({})).get('stale_groups', security_governance_posture_render_inputs.access_review_groups | default(stale_access_review_groups | default([]))) }}"
+        scc:
+          item_count: "{{ (security_governance_posture_artifact.scc | default({})).get('item_count', security_governance_posture_render_inputs.scc_item_count | default((securitycontextconstraints_items | default([])) | length)) }}"
+          pod_findings: "{{ (security_governance_posture_artifact.scc | default({})).get('pod_findings', security_governance_posture_render_inputs.scc_pod_findings | default(top_scc_pod_findings | default([]))) }}"
+          grant_findings: "{{ (security_governance_posture_artifact.scc | default({})).get('grant_findings', security_governance_posture_render_inputs.scc_grant_findings | default(top_scc_grant_findings | default([]))) }}"
+        secret_inventory:
+          likely_unused_secrets: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('likely_unused_secrets', security_governance_posture_render_inputs.likely_unused_secrets | default(likely_unused_secrets | default([]))) }}"
+          secret_type_counts: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('secret_type_counts', security_governance_posture_render_inputs.secret_type_counts | default(secret_type_counts | default({}))) }}"
+          expiring_certificates_warning: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('expiring_certificates_warning', security_governance_posture_render_inputs.expiring_certificates_warning | default(expiring_certificates_warning | default([]))) }}"
+          expiring_certificates_critical: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('expiring_certificates_critical', security_governance_posture_render_inputs.expiring_certificates_critical | default(expiring_certificates_critical | default([]))) }}"
+        image_registry:
+          findings: "{{ (security_governance_posture_artifact.image_registry | default({})).get('findings', security_governance_posture_render_inputs.image_registry_findings | default(top_image_registry_findings | default([]))) }}"
+          internal_registry_workloads: "{{ (security_governance_posture_artifact.image_registry | default({})).get('internal_registry_workloads', security_governance_posture_render_inputs.internal_registry_workloads | default(top_internal_registry_workloads | default([]))) }}"
+        workload_protection:
+          vulnerability_scanning: "{{ (security_governance_posture_artifact.workload_protection | default({})).get('vulnerability_scanning', security_governance_posture_render_inputs.workload_vulnerability_scanning_section | default({})) }}"
+          advanced_cluster_security: "{{ (security_governance_posture_artifact.workload_protection | default({})).get('advanced_cluster_security', security_governance_posture_render_inputs.advanced_cluster_security_section | default({})) }}"
+        secret_management:
+          external_secrets_operator: "{{ (security_governance_posture_artifact.secret_management | default({})).get('external_secrets_operator', security_governance_posture_render_inputs.external_secrets_operator_section | default({})) }}"
+          cyberark_conjur_secrets_management: "{{ (security_governance_posture_artifact.secret_management | default({})).get('cyberark_conjur_secrets_management', security_governance_posture_render_inputs.cyberark_conjur_secrets_management_section | default({})) }}"
       network_and_application_access:
-        summary: "{{ network_architecture_summary | default({}) }}"
-        recommendations: "{{ (network_architecture_summary | default({})).get('recommendation', 'Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.') }}"
+        summary: "{{ network_access_posture_artifact.summary | default(network_architecture_summary | default({})) }}"
+        recommendations: "{{ network_access_posture_artifact.recommendations | default((network_architecture_summary | default({})).get('recommendation', 'Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.')) }}"
+        route_object_count: "{{ network_access_posture_artifact.route_object_count | default(network_access_posture_render_inputs.route_object_count | default((assessment_route_summary | default([])) | length)) }}"
+        ingress_object_count: "{{ network_access_posture_artifact.ingress_object_count | default(network_access_posture_render_inputs.ingress_object_count | default((((analysis_graph.ingresses | default({})).get('items', [])) | length))) }}"
         routes: "{{ assessment_route_summary | default([]) }}"
-        route_issues: "{{ assessment_route_issues | default([]) }}"
-        route_host_conflicts: "{{ route_host_conflicts | default([]) }}"
-        ingress_issues: "{{ ingress_issues | default([]) }}"
-        ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) }}"
-        route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
-        services_without_endpoints: "{{ services_without_endpoints | default([]) }}"
+        route_issues: "{{ network_access_posture_artifact.route_issues | default(network_access_posture_render_inputs.route_issues | default(assessment_route_issues | default([]))) }}"
+        route_host_conflicts: "{{ network_access_posture_artifact.route_host_conflicts | default(network_access_posture_render_inputs.route_host_conflicts | default(route_host_conflicts | default([]))) }}"
+        ingress_issues: "{{ network_access_posture_artifact.ingress_issues | default(network_access_posture_render_inputs.ingress_issues | default(ingress_issues | default([]))) }}"
+        ingress_host_conflicts: "{{ network_access_posture_artifact.ingress_host_conflicts | default(network_access_posture_render_inputs.ingress_host_conflicts | default(ingress_host_conflicts | default([]))) }}"
+        route_ingress_host_conflicts: "{{ network_access_posture_artifact.route_ingress_host_conflicts | default(network_access_posture_render_inputs.route_ingress_host_conflicts | default(route_ingress_host_conflicts | default([]))) }}"
+        services_without_endpoints: "{{ network_access_posture_artifact.services_without_endpoints | default(network_access_posture_render_inputs.services_without_endpoints | default(services_without_endpoints | default([]))) }}"
         ingresscontrollers:
-          summary: "{{ ingresscontroller_summary | default([]) }}"
-          issues: "{{ ingresscontroller_issues | default([]) }}"
+          summary: "{{ (network_access_posture_artifact.ingresscontrollers | default({})).get('summary', network_access_posture_render_inputs.ingresscontrollers_summary | default(ingresscontroller_summary | default([]))) }}"
+          issues: "{{ (network_access_posture_artifact.ingresscontrollers | default({})).get('issues', network_access_posture_render_inputs.ingresscontrollers_issues | default(ingresscontroller_issues | default([]))) }}"
       workload_health:
-        summary: "{{ workload_health_summary | default({}) }}"
-        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, probe coverage, resource hygiene, ownership, labels, and rightsizing context before treating workload posture as healthy.') }}"
-        platform_pod_issues: "{{ platform_pod_issues | default([]) }}"
-        unhealthy_user_pods: "{{ unhealthy_user_pods | default([]) }}"
-        restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:15] }}"
-        workload_health_issues: "{{ workload_health_issues | default([]) }}"
-        high_replica_workloads: "{{ high_replica_workloads | default([]) }}"
-        orphan_pods: "{{ orphan_pods | default([]) }}"
-        workload_label_governance_findings: "{{ workload_label_governance_findings | default([]) }}"
-        workload_resource_findings: "{{ workload_resource_findings | default([]) }}"
-        workload_probe_findings: "{{ workload_probe_findings | default([]) }}"
-        overprovisioned_pods: "{{ overprovisioned_pods | default([]) }}"
-        services_without_endpoints: "{{ services_without_endpoints | default([]) }}"
+        summary: "{{ workload_health_posture_artifact.summary | default(workload_health_summary | default({})) }}"
+        recommendations: "{{ workload_health_posture_artifact.recommendations | default((workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, probe coverage, resource hygiene, ownership, labels, and rightsizing context before treating workload posture as healthy.')) }}"
+        metric_source_status: "{{ workload_health_posture_artifact.metric_source_status | default(workload_health_posture_render_inputs.metric_source_status | default((audit_report.domains.observability.prometheus_query | default({})).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected')))) }}"
+        platform_pod_issues: "{{ workload_health_posture_artifact.platform_pod_issues | default(workload_health_posture_render_inputs.platform_pod_issues | default(platform_pod_issues | default([]))) }}"
+        unhealthy_user_pods: "{{ workload_health_posture_artifact.unhealthy_user_pods | default(workload_health_posture_render_inputs.unhealthy_user_pods | default(unhealthy_user_pods | default([]))) }}"
+        restart_hotspots: "{{ workload_health_posture_artifact.restart_hotspots | default(workload_health_posture_render_inputs.restart_hotspots | default((pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:15])) }}"
+        workload_health_issues: "{{ workload_health_posture_artifact.workload_health_issues | default(workload_health_posture_render_inputs.workload_health_issues | default(workload_health_issues | default([]))) }}"
+        high_replica_workloads: "{{ workload_health_posture_artifact.high_replica_workloads | default(workload_health_posture_render_inputs.high_replica_workloads | default(high_replica_workloads | default([]))) }}"
+        orphan_pods: "{{ workload_health_posture_artifact.orphan_pods | default(workload_health_posture_render_inputs.orphan_pods | default(orphan_pods | default([]))) }}"
+        workload_label_governance_findings: "{{ workload_health_posture_artifact.workload_label_governance_findings | default(workload_health_posture_render_inputs.workload_label_governance_findings | default(workload_label_governance_findings | default([]))) }}"
+        workload_resource_findings: "{{ workload_health_posture_artifact.workload_resource_findings | default(workload_health_posture_render_inputs.workload_resource_findings | default(workload_resource_findings | default([]))) }}"
+        workload_probe_issue_type_counts: "{{ workload_health_posture_artifact.workload_probe_issue_type_counts | default(workload_health_posture_render_inputs.workload_probe_issue_type_counts | default(workload_probe_issue_type_counts | default({}))) }}"
+        workload_probe_findings: "{{ workload_health_posture_artifact.workload_probe_findings | default(workload_health_posture_render_inputs.workload_probe_findings | default(workload_probe_findings | default([]))) }}"
+        overprovisioned_pods: "{{ workload_health_posture_artifact.overprovisioned_pods | default(workload_health_posture_render_inputs.overprovisioned_pods | default(overprovisioned_pods | default([]))) }}"
+        services_without_endpoints: "{{ workload_health_posture_artifact.services_without_endpoints | default(workload_health_posture_render_inputs.services_without_endpoints | default(services_without_endpoints | default([]))) }}"
+        top_pod_cpu_usage_summary: "{{ workload_health_posture_artifact.top_pod_cpu_usage_summary | default(workload_health_posture_render_inputs.top_pod_cpu_usage_summary | default(top_pod_cpu_usage_summary | default([]))) }}"
+        top_pod_memory_usage_summary: "{{ workload_health_posture_artifact.top_pod_memory_usage_summary | default(workload_health_posture_render_inputs.top_pod_memory_usage_summary | default(top_pod_memory_usage_summary | default([]))) }}"
       storage_and_resilience:
-        summary: "{{ backup_recovery_summary | default({}) }}"
-        recommendations: "{{ (backup_recovery_summary | default({})).get('recommendation', 'Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.') }}"
+        summary: "{{ backup_recovery_posture_artifact.summary | default(backup_recovery_summary | default({})) }}"
+        recommendations: "{{ backup_recovery_posture_artifact.recommendations | default((backup_recovery_summary | default({})).get('recommendation', 'Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.')) }}"
         storage:
-          pv_issues: "{{ pv_issues | default([]) }}"
-          pvc_issues: "{{ pvc_issues | default([]) }}"
+          pv_issues: "{{ (backup_recovery_posture_artifact.storage | default({})).get('pv_issues', backup_recovery_posture_render_inputs.pv_issues | default(pv_issues | default([]))) }}"
+          pvc_issues: "{{ (backup_recovery_posture_artifact.storage | default({})).get('pvc_issues', backup_recovery_posture_render_inputs.pvc_issues | default(pvc_issues | default([]))) }}"
         backup:
-          findings: "{{ backup_posture_findings | default([]) }}"
-          storage_locations: "{{ backup_storage_location_summary | default([]) }}"
-          schedules: "{{ backup_schedule_summary | default([]) }}"
-          recent_backups: "{{ backup_summary | default([]) }}"
-          recent_restores: "{{ restore_summary | default([]) }}"
+          findings: "{{ (backup_recovery_posture_artifact.backup | default({})).get('findings', backup_recovery_posture_render_inputs.backup_posture_findings | default(backup_posture_findings | default([]))) }}"
+          storage_locations: "{{ (backup_recovery_posture_artifact.backup | default({})).get('storage_locations', backup_recovery_posture_render_inputs.backup_storage_locations | default(backup_storage_location_summary | default([]))) }}"
+          schedules: "{{ (backup_recovery_posture_artifact.backup | default({})).get('schedules', backup_recovery_posture_render_inputs.backup_schedules | default(backup_schedule_summary | default([]))) }}"
+          recent_backups: "{{ (backup_recovery_posture_artifact.backup | default({})).get('recent_backups', backup_recovery_posture_render_inputs.recent_backups | default(backup_summary | default([]))) }}"
+          recent_restores: "{{ (backup_recovery_posture_artifact.backup | default({})).get('recent_restores', backup_recovery_posture_render_inputs.recent_restores | default(restore_summary | default([]))) }}"
         machine_remediation:
-          summary: "{{ machinehealthcheck_summary | default([]) }}"
-          findings: "{{ machine_healthcheck_findings | default([]) }}"
+          summary: "{{ (backup_recovery_posture_artifact.machine_remediation | default({})).get('summary', backup_recovery_posture_render_inputs.machinehealthcheck_summary | default(machinehealthcheck_summary | default([]))) }}"
+          findings: "{{ (backup_recovery_posture_artifact.machine_remediation | default({})).get('findings', backup_recovery_posture_render_inputs.machine_healthcheck_findings | default(machine_healthcheck_findings | default([]))) }}"
   when: report_mode_resolved | default('live') == 'collected'
 
 - name: Build shared OpenShift domain payload for live reporting
   ansible.builtin.set_fact:
     openshift_report_domain_payload:
+      evidence_and_supportability:
+        summary: "{{ supportability_posture_artifact.summary | default(supportability_posture_render_inputs.supportability_summary | default(live_supportability_summary | default({}))) }}"
+        recommendations: "{{ supportability_posture_artifact.recommendations | default('Resolve the named unsupported, review-required, or incomplete supportability conditions before using lower-priority sections for final sign-off.') }}"
+        diagnostics_coverage: "{{ supportability_posture_artifact.diagnostics_coverage | default(supportability_posture_render_inputs.diagnostics_coverage | default(diagnostics_coverage | default({}))) }}"
+        product_evidence: "{{ supportability_posture_artifact.product_evidence | default(supportability_posture_render_inputs.product_evidence | default({})) }}"
+        product_evidence_findings: "{{ supportability_posture_artifact.product_evidence_findings | default(supportability_posture_render_inputs.product_evidence_findings | default([])) }}"
+        connected_cluster_posture: "{{ supportability_posture_artifact.connected_cluster_posture | default(supportability_posture_render_inputs.connected_cluster_posture | default(assessment_connected_cluster_posture | default(connected_cluster_posture | default({})))) }}"
+        connected_cluster_findings: "{{ supportability_posture_artifact.connected_cluster_findings | default(supportability_posture_render_inputs.connected_cluster_findings | default(assessment_connected_cluster_findings | default(connected_cluster_findings | default([])))) }}"
+        connected_cluster_advisor_summary: "{{ supportability_posture_artifact.connected_cluster_advisor_summary | default(supportability_posture_render_inputs.connected_cluster_advisor_summary | default(live_support_data.parsed.advisor_export.summary | default(advisor_summary | default({})))) }}"
+        node_diagnostics_summary: "{{ supportability_posture_artifact.node_diagnostics_summary | default(supportability_posture_render_inputs.node_diagnostics_summary | default(node_diagnostics_summary | default({}))) }}"
+        node_diagnostics_findings: "{{ supportability_posture_artifact.node_diagnostics_findings | default(supportability_posture_render_inputs.node_diagnostics_findings | default(node_diagnostics_findings | default([]))) }}"
+        advisor_summary: "{{ supportability_posture_artifact.advisor_summary | default(supportability_posture_render_inputs.advisor_summary | default(live_support_data.parsed.advisor_export.summary | default(advisor_summary | default({})))) }}"
+        advisor_findings: "{{ supportability_posture_artifact.advisor_findings | default(supportability_posture_render_inputs.advisor_findings | default(advisor_findings | default([]))) }}"
+        insights_archive_summary: "{{ supportability_posture_artifact.insights_archive_summary | default(supportability_posture_render_inputs.insights_archive_summary | default(insights_archive_summary | default({}))) }}"
+        insights_archive_findings: "{{ supportability_posture_artifact.insights_archive_findings | default(supportability_posture_render_inputs.insights_archive_findings | default(insights_archive_findings | default([]))) }}"
+        evidence_coverage: "{{ supportability_posture_artifact.evidence_coverage | default(supportability_posture_render_inputs.evidence_coverage | default(evidence_coverage | default({}))) }}"
       platform_health:
-        summary: "{{ core_platform_health_summary | default(health_summary | default({})) }}"
-        recommendations: >-
-          {{
-            (
-              'Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.'
-              if ((core_platform_health_summary | default(health_summary | default({}))).status | default('unknown')) == 'CRITICAL'
-              else (
-                'Reduce platform warning conditions next: review ' ~ (((core_platform_health_summary | default(health_summary | default({}))).core_platform_runtime_reason_summary | default('')) or 'high-impact progressing operators, runtime degradation, and node or route warnings') ~ ' before treating the cluster as steady state.'
-                if ((core_platform_health_summary | default(health_summary | default({}))).status | default('unknown')) == 'WARNING'
-                else 'Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.'
-              )
-            )
-          }}
-        findings: "{{ core_platform_health_findings | default([]) }}"
-        operators: []
-        infrastructure_components:
-          summary: "{{ infrastructure_component_summary | default([]) }}"
-          issues: "{{ infrastructure_component_issues | default([]) }}"
-        etcd_ocp_diag_summary: "{{ etcd_ocp_diag_summary | default({}) }}"
-        etcd_ocp_diag_findings: "{{ etcd_ocp_diag_findings | default([]) }}"
-        omc_summary: "{{ omc_summary | default({}) }}"
-        omc_findings: "{{ top_live_omc_findings | default([]) }}"
-        apiservice_issues: "{{ top_apiservice_issues | default([]) }}"
-        image_registry:
-          findings: "{{ top_image_registry_findings | default([]) }}"
-          feature_findings: "{{ top_feature_findings | default([]) }}"
-          internal_registry_workloads: "{{ top_internal_registry_workloads | default([]) }}"
+        summary: "{{ platform_health_posture_artifact.summary | default(platform_health_posture_render_inputs.summary | default(core_platform_health_summary | default(health_summary | default({})))) }}"
+        recommendations: "{{ platform_health_posture_artifact.recommendations | default('Core platform health is acceptable for this run. Keep operator availability, node readiness, routing, and control-plane runtime signals under normal review while you work lower-priority posture items.') }}"
+        findings: "{{ platform_health_posture_artifact.findings | default(platform_health_posture_render_inputs.findings | default(core_platform_health_findings | default([]))) }}"
+        operators: "{{ platform_health_posture_artifact.operators | default(platform_health_posture_render_inputs.operators | default([])) }}"
+        infrastructure_components: "{{ platform_health_posture_artifact.infrastructure_components | default({'summary': platform_health_posture_render_inputs.infrastructure_component_summary | default(infrastructure_component_summary | default([])), 'issues': platform_health_posture_render_inputs.infrastructure_component_issues | default(infrastructure_component_issues | default([]))}) }}"
+        etcd_ocp_diag_summary: "{{ platform_health_posture_artifact.etcd_ocp_diag_summary | default(platform_health_posture_render_inputs.etcd_ocp_diag_summary | default(etcd_ocp_diag_summary | default({}))) }}"
+        etcd_ocp_diag_findings: "{{ platform_health_posture_artifact.etcd_ocp_diag_findings | default(platform_health_posture_render_inputs.etcd_ocp_diag_findings | default(etcd_ocp_diag_findings | default([]))) }}"
+        omc_summary: "{{ platform_health_posture_artifact.omc_summary | default(platform_health_posture_render_inputs.omc_summary | default(omc_summary | default({}))) }}"
+        omc_findings: "{{ platform_health_posture_artifact.omc_findings | default(platform_health_posture_render_inputs.omc_findings | default(top_live_omc_findings | default([]))) }}"
+        apiservice_issues: "{{ platform_health_posture_artifact.apiservice_issues | default(platform_health_posture_render_inputs.apiservice_issues | default(top_apiservice_issues | default([]))) }}"
+        image_registry: "{{ platform_health_posture_artifact.image_registry | default({'findings': platform_health_posture_render_inputs.image_registry_findings | default(top_image_registry_findings | default([])), 'feature_findings': platform_health_posture_render_inputs.feature_findings | default(top_feature_findings | default([])), 'internal_registry_workloads': platform_health_posture_render_inputs.internal_registry_workloads | default(top_internal_registry_workloads | default([]))}) }}"
       observability:
-        summary: "{{ observability_summary | default({}) }}"
-        recommendations: "{{ (observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.') }}"
-        forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
-        prometheus_query: "{{ prometheus_evidence_summary | default({}) }}"
-        findings: "{{ top_observability_findings | default([]) }}"
-        connected_cluster_posture: {}
-        connected_cluster_findings: []
-        advisor_summary: "{{ live_support_data.parsed.advisor_export.summary | default({}) }}"
-        advisor_findings: "{{ top_live_advisor_findings | default([]) }}"
-        insights_archive_summary: "{{ insights_archive_summary | default({}) }}"
-        insights_archive_findings: "{{ insights_archive_findings | default([]) }}"
+        summary: "{{ observability_posture_artifact.summary | default(observability_summary | default({})) }}"
+        recommendations: "{{ observability_posture_artifact.recommendations | default((observability_summary | default({})).get('recommendation', 'Review monitoring health, alert-routing, log forwarding, and metrics forwarding before treating observability as production-ready.')) }}"
+        forwarding_summary: "{{ observability_posture_artifact.forwarding_summary | default(observability_posture_render_inputs.forwarding_summary | default(observability_forwarding_summary | default({}))) }}"
+        prometheus_query: "{{ observability_posture_artifact.prometheus_query | default(observability_posture_render_inputs.prometheus_query | default(prometheus_evidence_summary | default({}))) }}"
+        findings: "{{ observability_posture_artifact.findings | default(observability_posture_render_inputs.findings | default(top_observability_findings | default([]))) }}"
+        connected_cluster_posture: "{{ observability_posture_artifact.connected_cluster_posture | default(observability_posture_render_inputs.connected_cluster_posture | default({})) }}"
+        connected_cluster_findings: "{{ observability_posture_artifact.connected_cluster_findings | default(observability_posture_render_inputs.connected_cluster_findings | default([])) }}"
+        advisor_summary: "{{ observability_posture_artifact.advisor_summary | default(observability_posture_render_inputs.advisor_summary | default(live_support_data.parsed.advisor_export.summary | default({}))) }}"
+        advisor_findings: "{{ observability_posture_artifact.advisor_findings | default(observability_posture_render_inputs.advisor_findings | default(top_live_advisor_findings | default([]))) }}"
+        insights_archive_summary: "{{ observability_posture_artifact.insights_archive_summary | default(observability_posture_render_inputs.insights_archive_summary | default(insights_archive_summary | default({}))) }}"
+        insights_archive_findings: "{{ observability_posture_artifact.insights_archive_findings | default(observability_posture_render_inputs.insights_archive_findings | default(insights_archive_findings | default([]))) }}"
       node_health_and_capacity:
-        summary: "{{ node_health_capacity_summary | default({}) }}"
-        recommendations: "{{ (node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, quota pressure, metric-backed utilization, and node diagnostics coverage before treating node capacity as healthy.') }}"
-        diagnostics_summary: "{{ node_diagnostics_summary | default({}) }}"
-        diagnostics_findings: "{{ (top_live_inspect_findings | default([])) + (top_live_sosreport_findings | default([])) }}"
-        machineconfigpools: "{{ cluster_current_state.machineconfigpools | default([]) }}"
+        summary: "{{ node_health_posture_artifact.summary | default(node_health_capacity_summary | default({})) }}"
+        recommendations: "{{ node_health_posture_artifact.recommendations | default((node_health_capacity_summary | default({})).get('recommendation', 'Review node readiness, pressure, pod density, capacity hotspots, quota pressure, metric-backed utilization, and node diagnostics coverage before treating node capacity as healthy.')) }}"
+        diagnostics_summary: "{{ node_health_posture_artifact.diagnostics_summary | default(node_diagnostics_summary | default({})) }}"
+        diagnostics_findings: "{{ node_health_posture_artifact.diagnostics_findings | default((top_live_inspect_findings | default([])) + (top_live_sosreport_findings | default([]))) }}"
+        machineconfigpools: "{{ node_health_posture_artifact.machineconfigpools | default(node_health_posture_render_inputs.machineconfigpools | default(cluster_current_state.machineconfigpools | default([]))) }}"
+        nodes: "{{ node_health_posture_artifact.nodes | default(node_health_posture_render_inputs.nodes | default(openshift_node_items | default([]))) }}"
+        quota_pressure_findings: "{{ node_health_posture_artifact.quota_pressure_findings | default(node_health_posture_render_inputs.quota_pressure_findings | default(top_quota_pressure_findings | default([]))) }}"
+        node_capacity_summary_by_density_desc: "{{ node_health_posture_artifact.node_capacity_summary_by_density_desc | default(node_health_posture_render_inputs.node_capacity_summary_by_density_desc | default(node_capacity_summary_by_density_desc | default([]))) }}"
+        node_capacity_summary_by_density_asc: "{{ node_health_posture_artifact.node_capacity_summary_by_density_asc | default(node_health_posture_render_inputs.node_capacity_summary_by_density_asc | default(node_capacity_summary_by_density_asc | default([]))) }}"
+        high_pod_density_nodes: "{{ node_health_posture_artifact.high_pod_density_nodes | default(node_health_posture_render_inputs.high_pod_density_nodes | default(high_pod_density_nodes | default([]))) }}"
+        high_cpu_nodes: "{{ node_health_posture_artifact.high_cpu_nodes | default(node_health_posture_render_inputs.high_cpu_nodes | default(high_cpu_nodes | default([]))) }}"
+        high_memory_nodes: "{{ node_health_posture_artifact.high_memory_nodes | default(node_health_posture_render_inputs.high_memory_nodes | default(high_memory_nodes | default([]))) }}"
+        high_disk_nodes: "{{ node_health_posture_artifact.high_disk_nodes | default(node_health_posture_render_inputs.high_disk_nodes | default(high_disk_nodes | default([]))) }}"
       upgrade_and_lifecycle_risk:
-        architecture_lifecycle_summary: "{{ architecture_lifecycle_summary | default({}) }}"
-        upgrade_readiness_summary: "{{ upgrade_readiness_summary | default({}) }}"
-        recommendations: "{{ (architecture_lifecycle_summary | default({})).get('recommendation', 'Review lifecycle support status, upgrade readiness, and failure-domain spread before treating the architecture posture as production-ready.') }}"
+        summary: "{{ architecture_lifecycle_posture_artifact.summary | default(architecture_lifecycle_summary | default({})) }}"
+        architecture_lifecycle_summary: "{{ architecture_lifecycle_posture_artifact.summary | default(architecture_lifecycle_summary | default({})) }}"
+        upgrade_readiness_summary: "{{ architecture_lifecycle_posture_artifact.upgrade_readiness_summary | default(architecture_lifecycle_posture_render_inputs.upgrade_readiness_summary | default(upgrade_readiness_summary | default({}))) }}"
+        recommendations: "{{ architecture_lifecycle_posture_artifact.recommendations | default((architecture_lifecycle_summary | default({})).get('recommendation', 'Review lifecycle support status, upgrade readiness, and failure-domain spread before treating the architecture posture as production-ready.')) }}"
         reference_compliance_summary:
           evidence_present: "{{ live_support_data.parsed.cluster_compare.summary is defined }}"
           comparison_count: "{{ live_support_data.parsed.cluster_compare.summary.comparison_count | default(0) }}"
@@ -198,7 +420,7 @@
           missing_count: "{{ live_support_data.parsed.cluster_compare.summary.missing_count | default(0) }}"
           error_count: "{{ live_support_data.parsed.cluster_compare.summary.error_count | default(0) }}"
           warning_count: "{{ live_support_data.parsed.cluster_compare.summary.warning_count | default(0) }}"
-        reference_compliance_findings: "{{ top_live_cluster_compare_findings | default([]) }}"
+        reference_compliance_findings: "{{ architecture_lifecycle_posture_artifact.reference_compliance_findings | default(architecture_lifecycle_posture_render_inputs.reference_compliance_findings | default(top_live_cluster_compare_findings | default([]))) }}"
         managed_gate_summary:
           present: "{{ live_support_data.parsed.managed_gates.summary is defined }}"
           item_count: "{{ live_support_data.parsed.managed_gates.summary.item_count | default(0) }}"
@@ -207,85 +429,154 @@
           warning_count: "{{ live_support_data.parsed.managed_gates.summary.warning_count | default(0) }}"
           allowed_count: "{{ live_support_data.parsed.managed_gates.summary.allowed_count | default(0) }}"
           top_categories: "{{ live_support_data.parsed.managed_gates.summary.top_categories | default([]) }}"
-        managed_gate_findings: "{{ top_live_managed_gate_findings | default([]) }}"
+        managed_gate_findings: "{{ architecture_lifecycle_posture_artifact.managed_gate_findings | default(architecture_lifecycle_posture_render_inputs.managed_gate_findings | default(top_live_managed_gate_findings | default([]))) }}"
+        topology_resilience: "{{ architecture_lifecycle_posture_artifact.topology_resilience | default(architecture_lifecycle_posture_render_inputs.topology_resilience | default(topology_resilience | default({}))) }}"
+        available_updates: "{{ architecture_lifecycle_posture_artifact.available_updates | default(architecture_lifecycle_posture_render_inputs.available_updates | default(available_updates | default([]))) }}"
+        conditional_updates: "{{ architecture_lifecycle_posture_artifact.conditional_updates | default(architecture_lifecycle_posture_render_inputs.conditional_updates | default(conditional_updates | default([]))) }}"
+        cluster_update_history: "{{ architecture_lifecycle_posture_artifact.cluster_update_history | default(architecture_lifecycle_posture_render_inputs.cluster_update_history | default(cluster_update_history | default([]))) }}"
+        deprecated_crd_findings: "{{ architecture_lifecycle_posture_artifact.deprecated_crd_findings | default(architecture_lifecycle_posture_render_inputs.deprecated_crd_findings | default(top_deprecated_crd_findings | default([]))) }}"
+        deprecated_api_lines: "{{ architecture_lifecycle_posture_artifact.deprecated_api_lines | default(architecture_lifecycle_posture_render_inputs.deprecated_api_lines | default(top_deprecated_api_lines | default([]))) }}"
+        cluster_compare_findings: "{{ architecture_lifecycle_posture_artifact.cluster_compare_findings | default(architecture_lifecycle_posture_render_inputs.cluster_compare_findings | default(top_live_cluster_compare_findings | default([]))) }}"
+        managed_gate_top_findings: "{{ architecture_lifecycle_posture_artifact.managed_gate_top_findings | default(architecture_lifecycle_posture_render_inputs.managed_gate_top_findings | default(top_live_managed_gate_findings | default([]))) }}"
+      capacity_planning_snapshot:
+        summary: "{{ capacity_snapshot_posture_artifact.summary | default({}) }}"
+        recommendations: "{{ capacity_snapshot_posture_artifact.recommendations | default('Use the baseline and growth tables to plan scaling, upgrades, and workload placement.') }}"
+        cluster_current_state: "{{ capacity_snapshot_posture_artifact.cluster_current_state | default(capacity_snapshot_posture_render_inputs.cluster_current_state | default(cluster_current_state | default({}))) }}"
+        cluster_profile: "{{ capacity_snapshot_posture_artifact.cluster_profile | default(capacity_snapshot_posture_render_inputs.cluster_profile | default(openshift_artifact_backed_cluster_profile | default(cluster_profile | default({})))) }}"
+        architecture_lifecycle_summary: "{{ capacity_snapshot_posture_artifact.architecture_lifecycle_summary | default(capacity_snapshot_posture_render_inputs.architecture_lifecycle_summary | default(architecture_lifecycle_summary | default({}))) }}"
+        cluster_current_state_sanity_findings: "{{ capacity_snapshot_posture_artifact.cluster_current_state_sanity_findings | default(capacity_snapshot_posture_render_inputs.cluster_current_state_sanity_findings | default(cluster_current_state_sanity_findings | default([]))) }}"
+        cluster_current_state_build_error: "{{ capacity_snapshot_posture_artifact.cluster_current_state_build_error | default(capacity_snapshot_posture_render_inputs.cluster_current_state_build_error | default(cluster_current_state_build_error | default(''))) }}"
+        runtime_signal_resolution_map: "{{ capacity_snapshot_posture_artifact.runtime_signal_resolution_map | default(capacity_snapshot_posture_render_inputs.runtime_signal_resolution_map | default(runtime_signal_resolution_map | default({}))) }}"
+      declarative_operations:
+        summary: "{{ declarative_operations_posture_artifact.summary | default(declarative_operations_summary | default({})) }}"
+        declarative_operations_summary: "{{ declarative_operations_posture_artifact.declarative_operations_summary | default(declarative_operations_posture_render_inputs.declarative_operations_summary | default(declarative_operations_summary | default({}))) }}"
+        recommendations: "{{ declarative_operations_posture_artifact.recommendations | default((declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.')) }}"
+      container_platform_adoption_and_release_engineering:
+        summary: "{{ release_engineering_posture_artifact.summary | default(release_engineering_adoption_summary | default({})) }}"
+        release_engineering_adoption_summary: "{{ release_engineering_posture_artifact.release_engineering_adoption_summary | default(release_engineering_posture_render_inputs.release_engineering_adoption_summary | default(release_engineering_adoption_summary | default({}))) }}"
+        recommendations: "{{ release_engineering_posture_artifact.recommendations | default((release_engineering_adoption_summary | default({})).get('recommendation', 'Review failed pipelines, build-automation ownership, and cluster-hosted runner health before treating release engineering as healthy.')) }}"
+        cicd_runner_summary: "{{ release_engineering_posture_artifact.cicd_runner_summary | default(release_engineering_posture_render_inputs.cicd_runner_summary | default((release_engineering_adoption_summary | default({})).get('runner_summary', {}))) }}"
+        cicd_runner_findings: "{{ release_engineering_posture_artifact.cicd_runner_findings | default(release_engineering_posture_render_inputs.cicd_runner_findings | default((release_engineering_adoption_summary | default({})).get('runner_findings', []))) }}"
+        buildconfig_strategy_counts: "{{ release_engineering_posture_artifact.buildconfig_strategy_counts | default(release_engineering_posture_render_inputs.buildconfig_strategy_counts | default(buildconfig_strategy_counts | default({}))) }}"
+        pipelinerun_status_counts: "{{ release_engineering_posture_artifact.pipelinerun_status_counts | default(release_engineering_posture_render_inputs.pipelinerun_status_counts | default(pipelinerun_status_counts | default({}))) }}"
+        failed_pipelineruns: "{{ release_engineering_posture_artifact.failed_pipelineruns | default(release_engineering_posture_render_inputs.failed_pipelineruns | default(top_failed_pipelineruns | default([]))) }}"
+        buildconfigs_without_triggers: "{{ release_engineering_posture_artifact.buildconfigs_without_triggers | default(release_engineering_posture_render_inputs.buildconfigs_without_triggers | default(top_buildconfigs_without_triggers | default([]))) }}"
       production_day2_readiness:
-        summary: "{{ day2_posture_summary | default({}) }}"
-        declarative_operations_summary: "{{ declarative_operations_summary | default({}) }}"
-        day2_production_readiness_summary: "{{ day2_production_readiness_summary | default({}) }}"
-        operations_recommendations: "{{ (declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.') }}"
-        recommendations: "{{ (declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.') }}"
-        release_engineering_adoption_summary: "{{ release_engineering_adoption_summary | default({}) }}"
-        checks: "{{ day2_posture_checks | default([]) }}"
-        findings: "{{ day2_posture_findings | default([]) }}"
-        capability_sections: "{{ day2_capability_sections | default([]) }}"
-        capability_assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-        capability_assessment_error: "{{ (day2_posture_summary | default({})).get('capability_assessment_error', '') }}"
-        product_evidence: "{{ assessment_product_evidence | default({}) }}"
-        product_evidence_findings: "{{ assessment_product_evidence_findings | default([]) }}"
+        summary: "{{ day2_readiness_posture_artifact.summary | default(day2_readiness_posture_render_inputs.day2_production_readiness_summary | default(day2_production_readiness_summary | default({}))) }}"
+        declarative_operations_summary: "{{ declarative_operations_posture_artifact.declarative_operations_summary | default(declarative_operations_posture_render_inputs.declarative_operations_summary | default(declarative_operations_summary | default({}))) }}"
+        day2_posture_summary: "{{ day2_readiness_posture_artifact.day2_posture_summary | default(day2_readiness_posture_render_inputs.day2_posture_summary | default(day2_posture_summary | default({}))) }}"
+        day2_production_readiness_summary: "{{ day2_readiness_posture_artifact.day2_production_readiness_summary | default(day2_readiness_posture_render_inputs.day2_production_readiness_summary | default(day2_production_readiness_summary | default({}))) }}"
+        operations_recommendations: "{{ declarative_operations_posture_artifact.recommendations | default((declarative_operations_summary | default({})).get('recommendation', 'Review declarative operations evidence, managed-cluster registration, and supporting identity, backup, machine-remediation, and lifecycle context before treating declarative operations as strong.')) }}"
+        recommendations: "{{ day2_readiness_posture_artifact.recommendations | default((day2_production_readiness_summary | default({})).get('recommendation', 'Use the owning posture sections and capability sections as the remediation queue, and rerun the assessment when blockers or incomplete evidence are cleared.')) }}"
+        release_engineering_adoption_summary: "{{ release_engineering_posture_artifact.release_engineering_adoption_summary | default(release_engineering_posture_render_inputs.release_engineering_adoption_summary | default(release_engineering_adoption_summary | default({}))) }}"
+        checks: "{{ day2_readiness_posture_artifact.checks | default(day2_readiness_posture_render_inputs.checks | default(day2_posture_checks | default([]))) }}"
+        findings: "{{ day2_readiness_posture_artifact.findings | default(day2_readiness_posture_render_inputs.findings | default(day2_posture_findings | default([]))) }}"
+        capability_sections: "{{ day2_readiness_posture_artifact.capability_sections | default(day2_readiness_posture_render_inputs.capability_sections | default(day2_capability_sections_artifact_resolved | default(day2_capability_sections | default([])))) }}"
+        capability_assessment_state: "{{ day2_readiness_posture_artifact.capability_assessment_state | default(day2_readiness_posture_render_inputs.capability_assessment_state | default((day2_posture_summary | default({})).get('capability_assessment_state', 'unknown'))) }}"
+        capability_assessment_error: "{{ day2_readiness_posture_artifact.capability_assessment_error | default(day2_readiness_posture_render_inputs.capability_assessment_error | default((day2_posture_summary | default({})).get('capability_assessment_error', ''))) }}"
+        product_evidence: "{{ day2_readiness_posture_artifact.product_evidence | default(day2_readiness_posture_render_inputs.product_evidence | default(assessment_product_evidence | default({}))) }}"
+        product_evidence_findings: "{{ day2_readiness_posture_artifact.product_evidence_findings | default(day2_readiness_posture_render_inputs.product_evidence_findings | default(assessment_product_evidence_findings | default([]))) }}"
         builds:
-          buildconfigs_without_triggers: "{{ top_buildconfigs_without_triggers | default([]) }}"
+          buildconfigs_without_triggers: "{{ release_engineering_posture_artifact.buildconfigs_without_triggers | default(release_engineering_posture_render_inputs.buildconfigs_without_triggers | default(top_buildconfigs_without_triggers | default([]))) }}"
         pipelines:
-          failed_pipelineruns: "{{ top_failed_pipelineruns | default([]) }}"
+          failed_pipelineruns: "{{ release_engineering_posture_artifact.failed_pipelineruns | default(release_engineering_posture_render_inputs.failed_pipelineruns | default(top_failed_pipelineruns | default([]))) }}"
       security_and_governance:
-        summary: "{{ security_compliance_summary | default({}) }}"
-        recommendations: "{{ (security_compliance_summary | default({})).get('recommendation', 'Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.') }}"
-        auth_posture_summary: "{{ auth_posture_summary | default({}) }}"
+        summary: "{{ security_governance_posture_artifact.summary | default(security_compliance_summary | default({})) }}"
+        recommendations: "{{ security_governance_posture_artifact.recommendations | default((security_compliance_summary | default({})).get('recommendation', 'Review identity posture, privileged access, certificate hygiene, and active compliance standards before treating security and governance as production-ready.')) }}"
+        auth_posture_summary: "{{ security_governance_posture_artifact.auth_posture_summary | default(auth_posture_summary | default({})) }}"
+        auth_findings: "{{ security_governance_posture_artifact.auth_findings | default(security_governance_posture_render_inputs.auth_findings | default(auth_findings | default([]))) }}"
         namespace_hygiene:
-          user_namespaces: "{{ user_namespace_names | default([]) }}"
-          namespaces_without_networkpolicy: "{{ namespaces_without_networkpolicy | default([]) }}"
-          namespaces_without_resourcequota: "{{ namespaces_without_resourcequota | default([]) }}"
-          namespaces_without_limitrange: "{{ namespaces_without_limitrange | default([]) }}"
-          empty_user_namespaces: "{{ empty_user_namespaces | default([]) }}"
+          user_namespaces: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('user_namespaces', user_namespace_names | default([])) }}"
+          namespaces_without_networkpolicy: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_without_networkpolicy', namespaces_without_networkpolicy | default([])) }}"
+          namespaces_without_resourcequota: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_without_resourcequota', namespaces_without_resourcequota | default([])) }}"
+          namespaces_without_limitrange: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_without_limitrange', namespaces_without_limitrange | default([])) }}"
+          empty_user_namespaces: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('empty_user_namespaces', empty_user_namespaces | default([])) }}"
+          namespaces_missing_ingress_policies: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_missing_ingress_policies', namespaces_missing_ingress_policies | default([])) }}"
+          namespaces_missing_egress_policies: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('namespaces_missing_egress_policies', namespaces_missing_egress_policies | default([])) }}"
+          metadata_governance_findings: "{{ (security_governance_posture_artifact.namespace_hygiene | default({})).get('metadata_governance_findings', security_governance_posture_render_inputs.namespace_metadata_governance_findings | default(top_namespace_metadata_governance_findings | default([]))) }}"
+        pod_security:
+          issue_type_counts: "{{ (security_governance_posture_artifact.pod_security | default({})).get('issue_type_counts', security_governance_posture_render_inputs.pod_security_issue_type_counts | default(security_issue_type_counts | default({}))) }}"
+          findings: "{{ (security_governance_posture_artifact.pod_security | default({})).get('findings', security_governance_posture_render_inputs.pod_security_findings | default(top_security_findings | default([]))) }}"
+          findings_total: "{{ (security_governance_posture_artifact.pod_security | default({})).get('findings_total', security_governance_posture_render_inputs.pod_security_findings_count | default((security_findings | default([])) | length)) }}"
+        privileged_access:
+          serviceaccounts: "{{ (security_governance_posture_artifact.privileged_access | default({})).get('serviceaccounts', security_governance_posture_render_inputs.privileged_serviceaccount_access | default(top_privileged_serviceaccount_access | default([]))) }}"
+          users: "{{ (security_governance_posture_artifact.privileged_access | default({})).get('users', security_governance_posture_render_inputs.privileged_user_access | default(top_privileged_user_access | default([]))) }}"
+          groups: "{{ (security_governance_posture_artifact.privileged_access | default({})).get('groups', security_governance_posture_render_inputs.privileged_group_access | default(top_privileged_group_access | default([]))) }}"
         compliance:
-          summary: "{{ compliance_suite_summary | default([]) }}"
-          findings: "{{ top_compliance_suite_findings | default([]) }}"
-          operator_summary: "{{ compliance_operator_summary | default({}) }}"
-          standards_summary: "{{ compliance_standards_summary | default([]) }}"
-          standards_findings: "{{ top_compliance_standards_findings | default([]) }}"
+          summary: "{{ (security_governance_posture_artifact.compliance | default({})).get('summary', compliance_suite_summary | default([])) }}"
+          findings: "{{ (security_governance_posture_artifact.compliance | default({})).get('findings', top_compliance_suite_findings | default([])) }}"
+          operator_summary: "{{ (security_governance_posture_artifact.compliance | default({})).get('operator_summary', compliance_operator_summary | default({})) }}"
+          standards_summary: "{{ (security_governance_posture_artifact.compliance | default({})).get('standards_summary', compliance_standards_summary | default([])) }}"
+          standards_findings: "{{ (security_governance_posture_artifact.compliance | default({})).get('standards_findings', top_compliance_standards_findings | default([])) }}"
+          result_counts: "{{ (security_governance_posture_artifact.compliance | default({})).get('result_counts', compliance_result_counts | default({})) }}"
         access_review:
-          likely_unused_serviceaccounts: "{{ top_likely_unused_serviceaccounts | default([]) }}"
-          stale_users: "{{ top_stale_access_review_users | default([]) }}"
-          stale_groups: "{{ top_stale_access_review_groups | default([]) }}"
+          likely_unused_serviceaccounts: "{{ (security_governance_posture_artifact.access_review | default({})).get('likely_unused_serviceaccounts', security_governance_posture_render_inputs.access_review_serviceaccounts | default(top_stale_access_review_serviceaccounts | default([]))) }}"
+          stale_users: "{{ (security_governance_posture_artifact.access_review | default({})).get('stale_users', security_governance_posture_render_inputs.access_review_users | default(top_stale_access_review_users | default([]))) }}"
+          stale_groups: "{{ (security_governance_posture_artifact.access_review | default({})).get('stale_groups', security_governance_posture_render_inputs.access_review_groups | default(top_stale_access_review_groups | default([]))) }}"
+        scc:
+          item_count: "{{ (security_governance_posture_artifact.scc | default({})).get('item_count', security_governance_posture_render_inputs.scc_item_count | default((securitycontextconstraints_items | default([])) | length)) }}"
+          pod_findings: "{{ (security_governance_posture_artifact.scc | default({})).get('pod_findings', security_governance_posture_render_inputs.scc_pod_findings | default(top_scc_pod_findings | default([]))) }}"
+          grant_findings: "{{ (security_governance_posture_artifact.scc | default({})).get('grant_findings', security_governance_posture_render_inputs.scc_grant_findings | default(top_scc_grant_findings | default([]))) }}"
+        secret_inventory:
+          likely_unused_secrets: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('likely_unused_secrets', security_governance_posture_render_inputs.likely_unused_secrets | default(likely_unused_secrets | default([]))) }}"
+          secret_type_counts: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('secret_type_counts', security_governance_posture_render_inputs.secret_type_counts | default(secret_type_counts | default({}))) }}"
+          expiring_certificates_warning: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('expiring_certificates_warning', security_governance_posture_render_inputs.expiring_certificates_warning | default(expiring_certificates_warning | default([]))) }}"
+          expiring_certificates_critical: "{{ (security_governance_posture_artifact.secret_inventory | default({})).get('expiring_certificates_critical', security_governance_posture_render_inputs.expiring_certificates_critical | default(expiring_certificates_critical | default([]))) }}"
+        image_registry:
+          findings: "{{ (security_governance_posture_artifact.image_registry | default({})).get('findings', security_governance_posture_render_inputs.image_registry_findings | default(top_image_registry_findings | default([]))) }}"
+          internal_registry_workloads: "{{ (security_governance_posture_artifact.image_registry | default({})).get('internal_registry_workloads', security_governance_posture_render_inputs.internal_registry_workloads | default(top_internal_registry_workloads | default([]))) }}"
+        workload_protection:
+          vulnerability_scanning: "{{ (security_governance_posture_artifact.workload_protection | default({})).get('vulnerability_scanning', security_governance_posture_render_inputs.workload_vulnerability_scanning_section | default({})) }}"
+          advanced_cluster_security: "{{ (security_governance_posture_artifact.workload_protection | default({})).get('advanced_cluster_security', security_governance_posture_render_inputs.advanced_cluster_security_section | default({})) }}"
+        secret_management:
+          external_secrets_operator: "{{ (security_governance_posture_artifact.secret_management | default({})).get('external_secrets_operator', security_governance_posture_render_inputs.external_secrets_operator_section | default({})) }}"
+          cyberark_conjur_secrets_management: "{{ (security_governance_posture_artifact.secret_management | default({})).get('cyberark_conjur_secrets_management', security_governance_posture_render_inputs.cyberark_conjur_secrets_management_section | default({})) }}"
       network_and_application_access:
-        summary: "{{ network_architecture_summary | default({}) }}"
-        recommendations: "{{ (network_architecture_summary | default({})).get('recommendation', 'Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.') }}"
+        summary: "{{ network_access_posture_artifact.summary | default(network_architecture_summary | default({})) }}"
+        recommendations: "{{ network_access_posture_artifact.recommendations | default((network_architecture_summary | default({})).get('recommendation', 'Review route and ingress health, exposed-namespace isolation, and proxy or egress posture before treating network access as production-ready.')) }}"
+        route_object_count: "{{ network_access_posture_artifact.route_object_count | default(network_access_posture_render_inputs.route_object_count | default((assessment_route_summary | default([])) | length)) }}"
+        ingress_object_count: "{{ network_access_posture_artifact.ingress_object_count | default(network_access_posture_render_inputs.ingress_object_count | default((ingresses_items | default([])) | length)) }}"
         routes: []
-        route_issues: "{{ top_route_issues | default([]) }}"
-        route_host_conflicts: "{{ top_route_host_conflicts | default([]) }}"
-        ingress_issues: "{{ top_ingress_issues | default([]) }}"
-        ingress_host_conflicts: "{{ top_ingress_host_conflicts | default([]) }}"
-        route_ingress_host_conflicts: "{{ route_ingress_host_conflicts | default([]) }}"
-        services_without_endpoints: "{{ top_services_without_endpoints | default([]) }}"
+        route_issues: "{{ network_access_posture_artifact.route_issues | default(network_access_posture_render_inputs.route_issues | default(top_route_issues | default([]))) }}"
+        route_host_conflicts: "{{ network_access_posture_artifact.route_host_conflicts | default(network_access_posture_render_inputs.route_host_conflicts | default(top_route_host_conflicts | default([]))) }}"
+        ingress_issues: "{{ network_access_posture_artifact.ingress_issues | default(network_access_posture_render_inputs.ingress_issues | default(top_ingress_issues | default([]))) }}"
+        ingress_host_conflicts: "{{ network_access_posture_artifact.ingress_host_conflicts | default(network_access_posture_render_inputs.ingress_host_conflicts | default(top_ingress_host_conflicts | default([]))) }}"
+        route_ingress_host_conflicts: "{{ network_access_posture_artifact.route_ingress_host_conflicts | default(network_access_posture_render_inputs.route_ingress_host_conflicts | default(route_ingress_host_conflicts | default([]))) }}"
+        services_without_endpoints: "{{ network_access_posture_artifact.services_without_endpoints | default(network_access_posture_render_inputs.services_without_endpoints | default(top_services_without_endpoints | default([]))) }}"
         ingresscontrollers:
-          summary: "{{ ingresscontroller_summary | default([]) }}"
-          issues: "{{ ingresscontroller_issues | default([]) }}"
+          summary: "{{ (network_access_posture_artifact.ingresscontrollers | default({})).get('summary', network_access_posture_render_inputs.ingresscontrollers_summary | default(ingresscontroller_summary | default([]))) }}"
+          issues: "{{ (network_access_posture_artifact.ingresscontrollers | default({})).get('issues', network_access_posture_render_inputs.ingresscontrollers_issues | default(ingresscontroller_issues | default([]))) }}"
       workload_health:
-        summary: "{{ workload_health_summary | default({}) }}"
-        recommendations: "{{ (workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, probe coverage, resource hygiene, ownership, labels, and rightsizing context before treating workload posture as healthy.') }}"
-        platform_pod_issues: "{{ platform_pod_issues | default([]) }}"
-        unhealthy_user_pods: "{{ top_unhealthy_user_pods | default([]) }}"
-        restart_hotspots: "{{ top_high_restart_pods | default([]) }}"
-        workload_health_issues: "{{ top_workload_health_issues | default([]) }}"
-        high_replica_workloads: "{{ top_high_replica_workloads | default([]) }}"
-        orphan_pods: "{{ top_orphan_pods | default([]) }}"
-        workload_label_governance_findings: "{{ top_workload_label_governance_findings | default([]) }}"
-        workload_resource_findings: "{{ top_workload_resource_findings | default([]) }}"
-        workload_probe_findings: "{{ top_workload_probe_findings | default([]) }}"
-        overprovisioned_pods: "{{ top_overprovisioned_pods | default([]) }}"
-        services_without_endpoints: "{{ top_services_without_endpoints | default([]) }}"
+        summary: "{{ workload_health_posture_artifact.summary | default(workload_health_summary | default({})) }}"
+        recommendations: "{{ workload_health_posture_artifact.recommendations | default((workload_health_summary | default({})).get('recommendation', 'Review unhealthy user pods, rollout failures, restart hotspots, probe coverage, resource hygiene, ownership, labels, and rightsizing context before treating workload posture as healthy.')) }}"
+        metric_source_status: "{{ workload_health_posture_artifact.metric_source_status | default(workload_health_posture_render_inputs.metric_source_status | default((audit_report.domains.observability.prometheus_query | default({})).get('status', (prometheus_evidence_summary | default({})).get('status', 'not-collected')))) }}"
+        platform_pod_issues: "{{ workload_health_posture_artifact.platform_pod_issues | default(workload_health_posture_render_inputs.platform_pod_issues | default(platform_pod_issues | default([]))) }}"
+        unhealthy_user_pods: "{{ workload_health_posture_artifact.unhealthy_user_pods | default(workload_health_posture_render_inputs.unhealthy_user_pods | default(top_unhealthy_user_pods | default([]))) }}"
+        restart_hotspots: "{{ workload_health_posture_artifact.restart_hotspots | default(workload_health_posture_render_inputs.restart_hotspots | default(top_high_restart_pods | default([]))) }}"
+        workload_health_issues: "{{ workload_health_posture_artifact.workload_health_issues | default(workload_health_posture_render_inputs.workload_health_issues | default(top_workload_health_issues | default([]))) }}"
+        high_replica_workloads: "{{ workload_health_posture_artifact.high_replica_workloads | default(workload_health_posture_render_inputs.high_replica_workloads | default(top_high_replica_workloads | default([]))) }}"
+        orphan_pods: "{{ workload_health_posture_artifact.orphan_pods | default(workload_health_posture_render_inputs.orphan_pods | default(top_orphan_pods | default([]))) }}"
+        workload_label_governance_findings: "{{ workload_health_posture_artifact.workload_label_governance_findings | default(workload_health_posture_render_inputs.workload_label_governance_findings | default(top_workload_label_governance_findings | default([]))) }}"
+        workload_resource_findings: "{{ workload_health_posture_artifact.workload_resource_findings | default(workload_health_posture_render_inputs.workload_resource_findings | default(top_workload_resource_findings | default([]))) }}"
+        workload_probe_issue_type_counts: "{{ workload_health_posture_artifact.workload_probe_issue_type_counts | default(workload_health_posture_render_inputs.workload_probe_issue_type_counts | default(workload_probe_issue_type_counts | default({}))) }}"
+        workload_probe_findings: "{{ workload_health_posture_artifact.workload_probe_findings | default(workload_health_posture_render_inputs.workload_probe_findings | default(top_workload_probe_findings | default([]))) }}"
+        overprovisioned_pods: "{{ workload_health_posture_artifact.overprovisioned_pods | default(workload_health_posture_render_inputs.overprovisioned_pods | default(top_overprovisioned_pods | default([]))) }}"
+        services_without_endpoints: "{{ workload_health_posture_artifact.services_without_endpoints | default(workload_health_posture_render_inputs.services_without_endpoints | default(top_services_without_endpoints | default([]))) }}"
+        top_pod_cpu_usage_summary: "{{ workload_health_posture_artifact.top_pod_cpu_usage_summary | default(workload_health_posture_render_inputs.top_pod_cpu_usage_summary | default(top_pod_cpu_usage_summary | default([]))) }}"
+        top_pod_memory_usage_summary: "{{ workload_health_posture_artifact.top_pod_memory_usage_summary | default(workload_health_posture_render_inputs.top_pod_memory_usage_summary | default(top_pod_memory_usage_summary | default([]))) }}"
       storage_and_resilience:
-        summary: "{{ backup_recovery_summary | default({}) }}"
-        recommendations: "{{ (backup_recovery_summary | default({})).get('recommendation', 'Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.') }}"
+        summary: "{{ backup_recovery_posture_artifact.summary | default(backup_recovery_summary | default({})) }}"
+        recommendations: "{{ backup_recovery_posture_artifact.recommendations | default((backup_recovery_summary | default({})).get('recommendation', 'Review backup tooling, successful backup evidence, restore evidence, and machine remediation posture before treating disaster recovery as credible.')) }}"
         storage:
-          pv_issues: "{{ top_pv_issues | default([]) }}"
-          pvc_issues: "{{ top_pvc_issues | default([]) }}"
+          pv_issues: "{{ (backup_recovery_posture_artifact.storage | default({})).get('pv_issues', backup_recovery_posture_render_inputs.pv_issues | default(top_pv_issues | default([]))) }}"
+          pvc_issues: "{{ (backup_recovery_posture_artifact.storage | default({})).get('pvc_issues', backup_recovery_posture_render_inputs.pvc_issues | default(top_pvc_issues | default([]))) }}"
         backup:
-          findings: "{{ top_backup_posture_findings | default([]) }}"
-          storage_locations: "{{ backup_storage_location_summary | default([]) }}"
-          schedules: "{{ backup_schedule_summary | default([]) }}"
-          recent_backups: "{{ backup_summary | default([]) }}"
-          recent_restores: "{{ restore_summary | default([]) }}"
+          findings: "{{ (backup_recovery_posture_artifact.backup | default({})).get('findings', backup_recovery_posture_render_inputs.backup_posture_findings | default(top_backup_posture_findings | default([]))) }}"
+          storage_locations: "{{ (backup_recovery_posture_artifact.backup | default({})).get('storage_locations', backup_recovery_posture_render_inputs.backup_storage_locations | default(backup_storage_location_summary | default([]))) }}"
+          schedules: "{{ (backup_recovery_posture_artifact.backup | default({})).get('schedules', backup_recovery_posture_render_inputs.backup_schedules | default(backup_schedule_summary | default([]))) }}"
+          recent_backups: "{{ (backup_recovery_posture_artifact.backup | default({})).get('recent_backups', backup_recovery_posture_render_inputs.recent_backups | default(backup_summary | default([]))) }}"
+          recent_restores: "{{ (backup_recovery_posture_artifact.backup | default({})).get('recent_restores', backup_recovery_posture_render_inputs.recent_restores | default(restore_summary | default([]))) }}"
         machine_remediation:
-          summary: "{{ machinehealthcheck_summary | default([]) }}"
-          findings: "{{ top_machine_healthcheck_findings | default([]) }}"
+          summary: "{{ (backup_recovery_posture_artifact.machine_remediation | default({})).get('summary', backup_recovery_posture_render_inputs.machinehealthcheck_summary | default(machinehealthcheck_summary | default([]))) }}"
+          findings: "{{ (backup_recovery_posture_artifact.machine_remediation | default({})).get('findings', backup_recovery_posture_render_inputs.machine_healthcheck_findings | default(top_machine_healthcheck_findings | default([]))) }}"
   when: report_mode_resolved | default('live') != 'collected'

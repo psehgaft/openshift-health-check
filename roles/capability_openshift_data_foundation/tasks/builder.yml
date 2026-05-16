@@ -1,0 +1,29 @@
+---
+- name: Build OpenShift Data Foundation capability artifact facts
+  ansible.builtin.set_fact:
+    capability_artifact_key: openshift_data_foundation
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      openshift_data_foundation_present: "{{ ((day2_posture_summary | default({})).get('openshift_data_foundation_present', false)) | bool }}"
+      openshift_data_foundation_healthy: >-
+        {{
+          (
+            ((((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) > 0)
+            and (
+              ((((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) > 0)
+              or ((((analysis_graph.noobaas | default({})).get('items', []) | length) | int) > 0)
+            )
+          ) | bool
+        }}
+      storagecluster_count: "{{ (((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) }}"
+      cephcluster_count: "{{ (((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) }}"
+      noobaa_count: "{{ (((analysis_graph.noobaas | default({})).get('items', []) | length) | int) }}"
+    capability_artifact_render_inputs:
+      odf_operator_subscription_present: "{{ (('odf-operator' in (subscription_packages | default([]))) or ('ocs-operator' in (subscription_packages | default([])))) | bool }}"
+      openshift_storage_namespace_present: "{{ ('openshift-storage' in (namespace_names | default([]))) | bool }}"
+    capability_artifact_collection_inputs:
+      odf_operator_subscription_present: "{{ (('odf-operator' in (subscription_packages | default([]))) or ('ocs-operator' in (subscription_packages | default([])))) | bool }}"
+      openshift_storage_namespace_present: "{{ ('openshift-storage' in (namespace_names | default([]))) | bool }}"
+      storagecluster_count: "{{ (((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) }}"
+      cephcluster_count: "{{ (((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) }}"
+      noobaa_count: "{{ (((analysis_graph.noobaas | default({})).get('items', []) | length) | int) }}"
