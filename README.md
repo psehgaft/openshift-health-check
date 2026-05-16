@@ -65,6 +65,8 @@ sudo bash scripts/setup-bastion-ubuntu.sh
 sudo bash scripts/setup-bastion-centos.sh
 ```
 
+Those bastion scripts are safe to run with `sudo`. They install system packages as `root`, then bootstrap the repo-local `.venv` and `.ansible/tmp` as the invoking non-root user when possible so later `ansible-playbook` runs do not fail on root-owned repo runtime files.
+
 If you are trying the repo for the first time, start with OpenShift. OpenShift is the original cluster type this solution was designed around, and `playbooks/openshift_cluster_health_report.yml` remains the primary entrypoint and deepest report path in the repo.
 
 For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and defaults to the full live support collection profile. That includes API and metric evidence, live `inspect`, Insights archive copy, optional `cluster-compare`, `must-gather`, and node diagnostics when they apply.
@@ -788,7 +790,7 @@ Those scripts install the common runtime tools used by this repo, including:
 - `pandoc`
 - `wkhtmltopdf`
 
-They also call `scripts/setup-ansible-venv.sh` so the repo-local `.venv` is ready when the script is run from the checked-out repository.
+They also call `scripts/setup-ansible-venv.sh` so the repo-local `.venv` is ready when the script is run from the checked-out repository. When the bastion bootstrap itself is run with `sudo`, it still repairs ownership and creates the repo-local `.venv` and `.ansible/tmp` as the invoking non-root user when possible.
 
 ## Python Virtual Environment
 

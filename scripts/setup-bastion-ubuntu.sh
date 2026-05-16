@@ -43,6 +43,46 @@ log() {
   printf '[setup-bastion-ubuntu] %s\n' "$*"
 }
 
+resolve_bootstrap_user() {
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    printf '%s\n' "${SUDO_USER}"
+    return
+  fi
+
+  local repo_owner
+  repo_owner="$(stat -c '%U' "${REPO_ROOT}")"
+  if [[ -n "${repo_owner}" && "${repo_owner}" != "root" ]]; then
+    printf '%s\n' "${repo_owner}"
+    return
+  fi
+
+  printf '%s\n' ""
+}
+
+bootstrap_repo_runtime() {
+  local bootstrap_user="$1"
+
+  if [[ ! -x "${REPO_ROOT}/scripts/setup-ansible-venv.sh" ]]; then
+    log "Repo-local setup-ansible-venv.sh not found; skipping .venv bootstrap"
+    return
+  fi
+
+  if [[ -z "${bootstrap_user}" ]]; then
+    log "Could not determine a non-root repo user; skipping .venv bootstrap to avoid creating root-owned runtime files"
+    return
+  fi
+
+  log "Preparing repo-local runtime ownership for ${bootstrap_user}"
+  mkdir -p "${REPO_ROOT}/.ansible/tmp"
+  chown -R "${bootstrap_user}:${bootstrap_user}" "${REPO_ROOT}/.ansible"
+  if [[ -e "${REPO_ROOT}/.venv" ]]; then
+    chown -R "${bootstrap_user}:${bootstrap_user}" "${REPO_ROOT}/.venv"
+  fi
+
+  log "Bootstrapping repo-local Python virtual environment as ${bootstrap_user}"
+  runuser -u "${bootstrap_user}" -- bash "${REPO_ROOT}/scripts/setup-ansible-venv.sh"
+}
+
 log "Refreshing apt metadata"
 apt-get update
 
@@ -62,12 +102,8 @@ tar -C "${TMP_DIR}" -xzf "${TMP_DIR}/openshift-client-linux.tar.gz"
 install -m 0755 "${TMP_DIR}/oc" /usr/local/bin/oc
 install -m 0755 "${TMP_DIR}/kubectl" /usr/local/bin/kubectl
 
-if [[ -x "${REPO_ROOT}/scripts/setup-ansible-venv.sh" ]]; then
-  log "Bootstrapping repo-local Python virtual environment"
-  bash "${REPO_ROOT}/scripts/setup-ansible-venv.sh"
-else
-  log "Repo-local setup-ansible-venv.sh not found; skipping .venv bootstrap"
-fi
+BOOTSTRAP_USER="$(resolve_bootstrap_user)"
+bootstrap_repo_runtime "${BOOTSTRAP_USER}"
 
 cat <<EOF
 
@@ -84,6 +120,7 @@ Installed core commands:
   wkhtmltopdf
 
 Next steps:
+  cd "${REPO_ROOT}"
   source "${REPO_ROOT}/.venv/bin/activate"
   oc login ...
   ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
