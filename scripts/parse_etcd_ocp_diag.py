@@ -105,7 +105,9 @@ def main() -> int:
     pattern_counts = Counter()
     pod_pattern_counts = defaultdict(Counter)
     apply_took_too_long_ms = []  # type: List[float]
+    apply_took_too_long_expected_ms = []  # type: List[float]
     slow_fsync_ms = []  # type: List[float]
+    slow_fsync_expected_ms = []  # type: List[float]
     pod_summaries = []
     total_log_files = 0
     total_rotated_logs = 0
@@ -155,11 +157,17 @@ def main() -> int:
                         duration = parse_duration_ms(str(result.get("took", "")))
                         if duration is not None:
                             apply_took_too_long_ms.append(duration)
+                        expected_duration = parse_duration_ms(str(result.get("expected-duration", "")))
+                        if expected_duration is not None:
+                            apply_took_too_long_expected_ms.append(expected_duration)
                 if "slow fdatasync" in line:
                     for result in vendor.extract_json_objects(line):
                         duration = parse_duration_ms(str(result.get("took", "")))
                         if duration is not None:
                             slow_fsync_ms.append(duration)
+                        expected_duration = parse_duration_ms(str(result.get("expected-duration", "")))
+                        if expected_duration is not None:
+                            slow_fsync_expected_ms.append(expected_duration)
 
         pod_summaries.append(
             {
@@ -248,7 +256,9 @@ def main() -> int:
             "buffer_full_count": pattern_counts["buffer_full_count"],
             "overloaded_count": pattern_counts["overloaded_count"],
             "apply_took_too_long_stats": summarize_metric(apply_took_too_long_ms),
+            "apply_took_too_long_expected_stats": summarize_metric(apply_took_too_long_expected_ms),
             "slow_fsync_stats": summarize_metric(slow_fsync_ms),
+            "slow_fsync_expected_stats": summarize_metric(slow_fsync_expected_ms),
             "source": "vendored-etcd-ocp-diag",
         },
         "findings": findings,

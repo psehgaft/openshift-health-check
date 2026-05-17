@@ -414,6 +414,36 @@ def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity, fa
     }
 
 
+def compute_effective_ip_growth(service_ip_capacity, pod_ip_capacity, total_pod_capacity, total_pods_scheduled):
+    service_summary = dict(service_ip_capacity or {})
+    pod_summary = dict(pod_ip_capacity or {})
+
+    service_available = service_summary.get("available_ips", "unknown")
+    if isinstance(service_available, bool):
+        service_available = "unknown"
+    effective_additional_services = int(service_available) if isinstance(service_available, (int, float)) else "unknown"
+
+    remaining_pod_slots = "unknown"
+    if isinstance(total_pod_capacity, int) and total_pod_capacity >= 0 and isinstance(total_pods_scheduled, int) and total_pods_scheduled >= 0:
+        remaining_pod_slots = max(total_pod_capacity - total_pods_scheduled, 0)
+
+    pod_available = pod_summary.get("available_ips", "unknown")
+    if isinstance(pod_available, bool):
+        pod_available = "unknown"
+    if isinstance(pod_available, (int, float)) and isinstance(remaining_pod_slots, int):
+        effective_additional_pods = min(int(pod_available), remaining_pod_slots)
+    elif isinstance(pod_available, (int, float)):
+        effective_additional_pods = int(pod_available)
+    else:
+        effective_additional_pods = remaining_pod_slots if isinstance(remaining_pod_slots, int) else "unknown"
+
+    service_summary["effective_additional_services"] = effective_additional_services
+    pod_summary["pod_capacity_on_current_nodes"] = total_pod_capacity if isinstance(total_pod_capacity, int) and total_pod_capacity >= 0 else "unknown"
+    pod_summary["remaining_pod_slots_on_current_nodes"] = remaining_pod_slots
+    pod_summary["effective_additional_pods"] = effective_additional_pods
+    return service_summary, pod_summary
+
+
 def main():
     with open(sys.argv[1], "r", encoding="utf-8") as fh:
         data = json.load(fh)
@@ -508,6 +538,7 @@ def main():
     total_memory_bytes = 0.0
     total_disk_bytes = 0.0
     total_pods_scheduled = 0
+    total_pod_capacity = 0
     master_nodes = 0
     worker_nodes = 0
     infra_nodes = 0
@@ -574,6 +605,10 @@ def main():
         memory_bytes = parse_binary_bytes(allocatable.get("memory", "0"))
         total_memory_bytes += memory_bytes
         total_disk_bytes += parse_binary_bytes(allocatable.get("ephemeral-storage", "0"))
+        try:
+            total_pod_capacity += int(allocatable.get("pods", 0) or 0)
+        except Exception:
+            pass
         scheduled_pods = int(node_pod_count_map.get(node_name, 0) or 0)
         total_pods_scheduled += scheduled_pods
         cpu_util_pct = cpu_util_by_node.get(node_name)
@@ -755,6 +790,12 @@ def main():
         data.get("node_ip_capacity_summary") or {},
         install_config_networks.get("cluster_networks", []),
     )
+    service_ip_capacity, pod_ip_capacity = compute_effective_ip_growth(
+        data.get("service_ip_capacity_summary") or {},
+        data.get("pod_ip_capacity_summary") or {},
+        total_pod_capacity,
+        total_pods_scheduled,
+    )
     node_resource_rows.sort(
         key=lambda item: (
             -(item.get("memory_utilization_pct") if item.get("memory_utilization_pct") is not None else -1),
@@ -870,8 +911,8 @@ def main():
             "unhealthy_pod_ratio_pct": unhealthy_pod_ratio_pct,
         },
         "ip_capacity": {
-            "services": data.get("service_ip_capacity_summary", {}) or {},
-            "pods": data.get("pod_ip_capacity_summary", {}) or {},
+            "services": service_ip_capacity,
+            "pods": pod_ip_capacity,
             "nodes": data.get("node_ip_capacity_summary", {}) or {},
         },
         "node_growth_capacity": node_growth_capacity,

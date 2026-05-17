@@ -108,22 +108,30 @@ def main() -> int:
 
         team_hint = f"platform-{role_slug}"
         cost_center_hint = f"cc-{(normalize_slug(instance_type_hint) or 'platform-node').upper()}"
+        recommended_labels = (
+            ([] if "team" not in missing_parts else [f"team={team_hint}"])
+            + ([] if "owner" not in missing_parts else [f"owner={team_hint}"])
+            + ([] if "cost-center" not in missing_parts else [f"cost-center={cost_center_hint}"])
+            + ([] if "business-unit" not in missing_parts else ["business-unit=PLATFORM"])
+        )
+        recommended_annotations = (
+            ([] if "owner.email" not in missing_parts else [f"owner.email=platform-{role_slug}@example.com"])
+            + ([] if "owner.contact" not in missing_parts else [f"owner.contact=#platform-{role_slug}"])
+            + ([] if "description" not in missing_parts else [f"description={primary_role} node in {zone_hint} for {instance_type_hint}"])
+        )
         findings.append(
             {
                 "kind": "Node",
                 "namespace": "cluster-scoped",
                 "name": node_name,
-                "recommended_label_values": (
-                    ([] if "team" not in missing_parts else [f"team={team_hint}"])
-                    + ([] if "owner" not in missing_parts else [f"owner={team_hint}"])
-                    + ([] if "cost-center" not in missing_parts else [f"cost-center={cost_center_hint}"])
-                    + ([] if "business-unit" not in missing_parts else ["business-unit=PLATFORM"])
-                ),
-                "recommended_annotation_values": (
-                    ([] if "owner.email" not in missing_parts else [f"owner.email=platform-{role_slug}@example.com"])
-                    + ([] if "owner.contact" not in missing_parts else [f"owner.contact=#platform-{role_slug}"])
-                    + ([] if "description" not in missing_parts else [f"description={primary_role} node in {zone_hint} for {instance_type_hint}"])
-                ),
+                "roles": roles,
+                "roles_display": ", ".join(roles),
+                "primary_role": primary_role,
+                "zone": zone_hint,
+                "instance_type": instance_type_hint,
+                "missing_governance_metadata": missing_parts,
+                "recommended_label_values": recommended_labels,
+                "recommended_annotation_values": recommended_annotations,
             }
         )
 

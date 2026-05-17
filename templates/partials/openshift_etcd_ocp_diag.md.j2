@@ -11,15 +11,28 @@
 | Leader election count | `{{ etcd_diag_summary.leader_election_count | default(0) }}` |
 | Lost leader count | `{{ etcd_diag_summary.lost_leader_count | default(0) }}` |
 
-{% if etcd_diag_summary.apply_took_too_long_stats.count | default(0) | int > 0 %}
-- `apply request took too long`: max=`{{ etcd_diag_summary.apply_took_too_long_stats.max_ms | default(0) }}`ms median=`{{ etcd_diag_summary.apply_took_too_long_stats.median_ms | default(0) }}`ms
-{% endif %}
-{% if etcd_diag_summary.slow_fsync_stats.count | default(0) | int > 0 %}
-- `slow fdatasync`: max=`{{ etcd_diag_summary.slow_fsync_stats.max_ms | default(0) }}`ms median=`{{ etcd_diag_summary.slow_fsync_stats.median_ms | default(0) }}`ms
-{% endif %}
+{% set apply_threshold_ms = etcd_diag_summary.apply_took_too_long_expected_stats.max_ms | default(0) | float %}
+{% set apply_max_ms = etcd_diag_summary.apply_took_too_long_stats.max_ms | default(0) | float %}
+{% set apply_median_ms = etcd_diag_summary.apply_took_too_long_stats.median_ms | default(0) | float %}
+{% set apply_in_range = (apply_threshold_ms > 0) and (apply_max_ms <= apply_threshold_ms) and (apply_median_ms <= apply_threshold_ms) %}
+{% set slow_fsync_threshold_ms = etcd_diag_summary.slow_fsync_expected_stats.max_ms | default(0) | float %}
+{% set slow_fsync_max_ms = etcd_diag_summary.slow_fsync_stats.max_ms | default(0) | float %}
+{% set slow_fsync_median_ms = etcd_diag_summary.slow_fsync_stats.median_ms | default(0) | float %}
+{% set slow_fsync_in_range = (slow_fsync_threshold_ms > 0) and (slow_fsync_max_ms <= slow_fsync_threshold_ms) and (slow_fsync_median_ms <= slow_fsync_threshold_ms) %}
+{% set lost_leader_count = etcd_diag_summary.lost_leader_count | default(0) | int %}
+{% set apply_warning_count = etcd_diag_summary.apply_took_too_long_count | default(0) | int %}
+{% set slow_fsync_count = etcd_diag_summary.slow_fsync_count | default(0) | int %}
+{% set leader_election_count = etcd_diag_summary.leader_election_count | default(0) | int %}
+{% set heartbeat_failure_count = etcd_diag_summary.heartbeat_failure_count | default(0) | int %}
+{% set buffer_full_count = etcd_diag_summary.buffer_full_count | default(0) | int %}
+{% set overloaded_count = etcd_diag_summary.overloaded_count | default(0) | int %}
 
-{% if etcd_diag_findings | default([]) | length > 0 %}
-{% for item in etcd_diag_findings %}
-- `{{ item.severity | upper }}` `{{ item.area }}`: {{ item.detail }}
-{% endfor %}
-{% endif %}
+| Signal | Value | Min-max range | Verdict |
+| --- | --- | --- | --- |
+| Apply request latency | `max={{ etcd_diag_summary.apply_took_too_long_stats.max_ms | default(0) }} ms; median={{ etcd_diag_summary.apply_took_too_long_stats.median_ms | default(0) }} ms` | `0-{{ etcd_diag_summary.apply_took_too_long_expected_stats.max_ms | default(0) }} ms` | {{ status_badge('OK' if apply_in_range else ('WARN' if (etcd_diag_summary.apply_took_too_long_stats.count | default(0) | int) > 0 else 'INFO')) }} |
+| Slow fdatasync latency | `max={{ etcd_diag_summary.slow_fsync_stats.max_ms | default(0) }} ms; median={{ etcd_diag_summary.slow_fsync_stats.median_ms | default(0) }} ms` | `0-{{ etcd_diag_summary.slow_fsync_expected_stats.max_ms | default(0) }} ms` | {{ status_badge('OK' if slow_fsync_in_range else ('WARN' if (etcd_diag_summary.slow_fsync_stats.count | default(0) | int) > 0 else 'INFO')) }} |
+| Lost leader events | `{{ lost_leader_count }}` | `0-0` | {{ status_badge('CRITICAL' if lost_leader_count > 0 else 'OK') }} |
+| Apply request latency warnings | `{{ apply_warning_count }}` | `0-0` | {{ status_badge('WARN' if apply_warning_count > 0 else 'OK') }} |
+| Slow fdatasync warnings | `{{ slow_fsync_count }}` | `0-0` | {{ status_badge('WARN' if slow_fsync_count > 0 else 'OK') }} |
+| Leader election messages | `{{ leader_election_count }}` | `0-0` | {{ status_badge('WARN' if leader_election_count > 0 else 'OK') }} |
+| Log pressure signals | `heartbeat failures={{ heartbeat_failure_count }}; buffer full={{ buffer_full_count }}; overloaded={{ overloaded_count }}` | `0-0 for each signal` | {{ status_badge('WARN' if (heartbeat_failure_count > 0 or buffer_full_count > 0 or overloaded_count > 0) else 'OK') }} |

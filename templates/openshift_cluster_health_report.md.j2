@@ -645,28 +645,26 @@ Platform engineering and SRE
 
 #### Leadership Readout
 
-- Decision: {{ executive_status_phrase(health_summary.status | default('unknown')) }}.
-- Current position: overall health is `{{ health_summary.status | default('unknown') }}` with score `{{ cluster_health_score }}/100`.
-- What matters now: `{{ top_risk_areas[:3] | join('; ') or 'no major risk themes were detected in this run' }}`.
-- Operating guidance: use the action plan below for owners and sequencing, then use the domain sections for technical evidence and fix details.
+- Executive summary: {{ executive_status_phrase(health_summary.status | default('unknown')) }}. Overall health is `{{ health_summary.status | default('unknown') }}` with score `{{ cluster_health_score }}/100`, `{{ derived_priority_count }}` priority actions, and main risks `{{ top_risk_areas[:3] | join('; ') or 'none identified' }}`.
+- Next step: {{ first_recommended_action }}.
 
 #### Top Priorities
 
 {% if top_priority_items | length == 0 and (top_risk_areas | length) == 0 %}
-| Priority | Recommended Action | Admin Guidance |
-| --- | --- | --- |
-| `none` | No immediate or next-step remediation items were generated for this run. | Continue normal review cadence and use posture sections for supporting evidence. |
+| Priority | Recommended Action |
+| --- | --- |
+| `none` | No immediate or next-step remediation items were generated for this run. |
 {% elif top_priority_items | length == 0 %}
-| Priority | Recommended Action | Admin Guidance |
-| --- | --- | --- |
+| Priority | Recommended Action |
+| --- | --- |
 {% for item in top_risk_areas[:3] %}
-| `derived-{{ loop.index }}` | Review the owning posture section for `{{ item }}` and assign a remediation owner. | Use the domain findings and operating questions below to convert this cross-domain risk into a tracked owner action. |
+| `derived-{{ loop.index }}` | Review the owning posture section for `{{ item }}` and assign a remediation owner. |
 {% endfor %}
 {% else %}
-| Priority | Recommended Action | Admin Guidance |
-| --- | --- | --- |
+| Priority | Recommended Action |
+| --- | --- |
 {% for item in top_priority_items[:5] %}
-| `{{ item.priority }}` | {{ item.summary }} | {{ item.detail }} |
+| `{{ item.priority }}` | {{ item.summary }} |
 {% endfor %}
 {% endif %}
 
@@ -689,8 +687,6 @@ Platform engineering and SRE
 | `{{ action_timeline(item.priority) }}` | {{ item.summary }} | {{ item.detail }} | `{{ action_owner(item.priority) }}` | {{ action_success_signal(item.priority, item.summary) }} |
 {% endfor %}
 {% endif %}
-
-Every major posture section below follows the same operating model: define the gap, explain why it matters, propose the action, identify the likely owner, and state how the team can tell the issue is fixed.
 
 ### Control Plane Signals
 
@@ -1795,7 +1791,7 @@ Every major posture section below follows the same operating model: define the g
 | Workload vulnerability scanning | `{{ vulnerability_scanning_section.status | default('unknown') }}` | {{ status_badge('WARN' if vulnerability_scanning_gap else (vulnerability_scanning_status if (vulnerability_scanning_section | length) > 0 else 'UNKNOWN')) }} |
 | Secret management integration | `{{ secret_management_label }}: {{ secret_management_section.status | default('unknown') }}` | {{ status_badge('WARN' if secret_management_gap else (secret_management_status if (secret_management_section | length) > 0 else 'UNKNOWN')) }} |
 | Active compliance standards needing review | `{{ security_governance_summary.compliance_active_standards_review_count | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.compliance_active_standards_review_count | default(0) | int) > 0 else 'OK') }} |
-| Configured but inactive standards | `{{ security_governance_summary.compliance_configured_inactive_standard_count | default(0) }}` | {{ status_badge('INFO' if (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 else 'OK') }} |
+| Configured compliance standards without active scans | `{{ security_governance_summary.compliance_configured_inactive_standard_count | default(0) }}` | {{ status_badge('INFO' if (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 else 'OK') }} |
 | Invalid compliance profile bundles | `{{ security_governance_summary.compliance_invalid_profilebundle_count | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.compliance_invalid_profilebundle_count | default(0) | int) > 0 else 'OK') }} |
 
 ### Recommendations
@@ -1865,14 +1861,16 @@ Every major posture section below follows the same operating model: define the g
 {% endfor %}
 {% endif %}
 
-{% if top_node_metadata_governance_gaps | default([]) | length > 0 %}
 #### Node Ownership And Chargeback Metadata
 
-| Node | Missing Metadata | Present Ownership Labels | Present Ownership Annotations | Present Cost Labels | Recommended Ownership Metadata | Recommended Chargeback Metadata |
-| --- | --- | --- | --- | --- | --- | --- |
+| Node | Missing Metadata | Present Ownership Tags | Present Cost Tags | Recommended Ownership Metadata | Recommended Chargeback Metadata |
+| --- | --- | --- | --- | --- | --- |
+{% if top_node_metadata_governance_gaps | default([]) | length > 0 %}
 {% for item in top_node_metadata_governance_gaps %}
-| `{{ item.node }}` | `{{ item.missing_metadata | default([]) | join(', ') }}` | `{{ item.present_owner_labels | default([]) | join(', ') or 'none' }}` | `{{ item.present_owner_annotations | default([]) | join(', ') or 'none' }}` | `{{ item.present_cost_labels | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_owner_values | default([]) | join(', ') }}` | `{{ item.recommended_cost_values | default([]) | join(', ') }}` |
+| `{{ item.node }}` | `{{ item.missing_metadata | default([]) | join(', ') }}` | `{{ ((item.present_owner_labels | default([])) + (item.present_owner_annotations | default([]))) | join(', ') or 'none' }}` | `{{ item.present_cost_labels | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_owner_values | default([]) | join(', ') }}` | `{{ item.recommended_cost_values | default([]) | join(', ') }}` |
 {% endfor %}
+{% else %}
+| `none` | `none` | `none required` | `none required` | `none required` | `none required` |
 {% endif %}
 
 {% if (security_issue_type_counts_section | default({}) | length) > 0 %}
@@ -2297,14 +2295,16 @@ Showing up to the top 100 pods with more than 3 restarts.
 {% endfor %}
 {% endif %}
 
-{% if top_node_label_governance_findings_section | default([]) | length > 0 %}
 #### Node Label Governance
 
-| Kind | Scope | Name | Recommended Labels | Recommended Annotations |
-| --- | --- | --- | --- | --- |
+| Node | Roles | Zone | Instance Type | Missing Governance Metadata | Recommended Labels | Recommended Annotations |
+| --- | --- | --- | --- | --- | --- | --- |
+{% if top_node_label_governance_findings_section | default([]) | length > 0 %}
 {% for item in top_node_label_governance_findings_section %}
-| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.recommended_label_values | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_annotation_values | default([]) | join(', ') or 'none' }}` |
+| `{{ item.name }}` | `{{ item.roles_display | default((item.roles | default([])) | join(', ')) or 'worker' }}` | `{{ item.zone | default('unknown') }}` | `{{ item.instance_type | default('unknown') }}` | `{{ item.missing_governance_metadata | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_label_values | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_annotation_values | default([]) | join(', ') or 'none' }}` |
 {% endfor %}
+{% else %}
+| `none` | `n/a` | `n/a` | `n/a` | `none` | `none required` | `none required` |
 {% endif %}
 
 {% if top_workload_resource_findings_section | default([]) | length > 0 %}
@@ -2785,9 +2785,8 @@ Cluster update history was not returned.
 | Namespaces | `{{ capacity_object_counts.namespaces | default(0) }}` |
 | Pods | `{{ capacity_object_counts.pods | default(0) }}` |
 | Running pods | `{{ capacity_object_counts.running_pods | default(0) }}` |
-| Healthy pods | `{{ capacity_object_counts.healthy_pods | default(0) }}` |
-| Unhealthy pods | `{{ capacity_object_counts.unhealthy_pods | default(0) }}` |
-| Healthy vs unhealthy pod ratio | `{% if (capacity_object_counts.pods | default(0) | int) > 0 %}healthy=`{{ capacity_object_counts.healthy_pods | default(0) }}` (`{{ capacity_resources.healthy_pod_ratio_pct | default('not-derived') }}`%), unhealthy=`{{ capacity_object_counts.unhealthy_pods | default(0) }}` (`{{ capacity_resources.unhealthy_pod_ratio_pct | default('not-derived') }}`%){% else %}not-derived{% endif %}` |
+| Healthy pods | `{% if (capacity_object_counts.pods | default(0) | int) > 0 %}{{ capacity_object_counts.healthy_pods | default(0) }} - {{ capacity_resources.healthy_pod_ratio_pct | default('not-derived') }}%{% else %}{{ capacity_object_counts.healthy_pods | default(0) }} - not-derived{% endif %}` |
+| Unhealthy pods | `{% if (capacity_object_counts.pods | default(0) | int) > 0 %}{{ capacity_object_counts.unhealthy_pods | default(0) }} - {{ capacity_resources.unhealthy_pod_ratio_pct | default('not-derived') }}%{% else %}{{ capacity_object_counts.unhealthy_pods | default(0) }} - not-derived{% endif %}` |
 | Deployments | `{{ capacity_object_counts.deployments | default(0) }}` |
 | StatefulSets | `{{ capacity_object_counts.statefulsets | default(0) }}` |
 | DaemonSets | `{{ capacity_object_counts.daemonsets | default(0) }}` |
@@ -2844,9 +2843,11 @@ Cluster update history was not returned.
 | Service IP ranges | `{{ capacity_service_ip.range_list | default([]) | join(', ') or 'not-derived' }}` |
 | Service IPs taken | `{{ capacity_service_ip.taken_ips | default(0) }}` |
 | Service IPs available | `{{ 'not-derived' if (capacity_service_ip.available_ips | default('unknown')) == 'unknown' else (capacity_service_ip.available_ips | default('unknown')) }}` |
+| Effective additional services limited by service IP capacity | `{{ 'not-derived' if (capacity_service_ip.effective_additional_services | default('unknown')) == 'unknown' else (capacity_service_ip.effective_additional_services | default('unknown')) }}` |
 | Pod IP ranges | `{{ capacity_pod_ip.range_list | default([]) | join(', ') or 'not-derived' }}` |
 | Pod IPs taken | `{{ capacity_pod_ip.taken_ips | default(0) }}` |
 | Pod IPs available | `{{ 'not-derived' if (capacity_pod_ip.available_ips | default('unknown')) == 'unknown' else (capacity_pod_ip.available_ips | default('unknown')) }}` |
+| Effective additional pods limited by pod IP capacity and max pods per node | `{{ 'not-derived' if (capacity_pod_ip.effective_additional_pods | default('unknown')) == 'unknown' else (capacity_pod_ip.effective_additional_pods | default('unknown')) }}` |
 | Node IP ranges | `{{ capacity_node_ip.range_list | default([]) | join(', ') or 'not-derived' }}` |
 | Node IPs taken | `{{ capacity_node_ip.taken_ips | default(0) }}` |
 | Node IPs available | `{{ 'not-derived' if (capacity_node_ip.available_ips | default('unknown')) == 'unknown' else (capacity_node_ip.available_ips | default('unknown')) }}` |
@@ -3246,10 +3247,8 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 
 #### Leadership Readout
 
-- Decision: {{ executive_status_phrase(day2_status) }}.
-- Production-readiness call: `{{ day2_status }}` with evidence confidence `{{ day2_evidence_confidence }}`.
-- Required capability risk: `{{ ns_day2.required_gaps }}` required capabilities are not yet cleanly satisfied.
-- What technical teams should use: {% if day2_capability_assessment_state == 'completed' %}the capability sections below are the work queue for ownership, evidence, and remediation planning.{% else %}fix the capability assessment failure first, then rerun so the capability sections become collected assessment output instead of placeholders.{% endif %}
+- Executive summary: {{ executive_status_phrase(day2_status) }}. Production readiness is `{{ day2_status }}` with evidence confidence `{{ day2_evidence_confidence }}` and `{{ ns_day2.required_gaps }}` required capabilities at risk.
+- Next step: {% if day2_capability_assessment_state == 'completed' %}use the capability sections below as the owner work queue for evidence, remediation, and sign-off.{% else %}fix the capability assessment failure first, then rerun so the capability sections become collected assessment output instead of placeholders.{% endif %}
 
 #### Capability Summary
 
