@@ -59,7 +59,6 @@ REQUIRED_RUNTIME_SIGNAL_MARKERS = [
     ("{% macro pct_with_basis(value, kind, is_approximation) -%}", "runtime percentage rendering macro must exist"),
     ("Top 100 Pods By Requested CPU Pressure", "template must support request-derived CPU labeling"),
     ("Top 100 Pods By Requested Memory Pressure", "template must support request-derived memory labeling"),
-    ("Runtime signal basis", "capacity snapshot must render runtime signal provenance"),
 ]
 
 

@@ -112,7 +112,13 @@
     dest: "{{ node_metadata_governance_input_file.path }}"
     mode: "0600"
     content: "{{ {
-      'nodes': ((analysis_graph.nodes | default({})).get('items', []))
+      'nodes': (openshift_node_items | default(
+        ((analysis_graph.nodes | default({})).get('items', [])) | default(
+          ((collected_resource_graph | default({})).get('nodes', {})).get('items', []),
+          true
+        ),
+        true
+      ))
     } | to_json }}"
   changed_when: false
   when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool

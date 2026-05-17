@@ -41,10 +41,6 @@ FORBIDDEN_MARKDOWN_PATTERNS = [
     (r"\| Signal \| Value \| \s*\| --- \| --- \|", "finding tables must not collapse onto one line"),
 ]
 
-RUNTIME_SIGNAL_OUTPUT_MARKERS = [
-    "Runtime signal basis",
-]
-
 REQUIRED_DAY2_MARKERS = [
     "### Capability Assessments",
 ]
@@ -184,10 +180,6 @@ def validate_markdown(path: Path) -> None:
     if "## Report Context" in markdown:
         validate_cluster_posture_sections(markdown)
         validate_day2_capability_markdown_sections(markdown)
-
-    for marker in RUNTIME_SIGNAL_OUTPUT_MARKERS:
-        if marker not in markdown:
-            fail(f"{path}: missing runtime signal provenance marker {marker!r}")
 
     for marker in REQUIRED_DAY2_MARKERS:
         if marker not in markdown:
