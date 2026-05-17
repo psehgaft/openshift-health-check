@@ -163,18 +163,30 @@
   register: node_label_governance_input_file
   changed_when: false
 
+- name: Resolve node label governance source nodes
+  ansible.builtin.set_fact:
+    node_label_governance_source_nodes: >-
+      {{
+        openshift_node_items
+        if (openshift_node_items is defined and (openshift_node_items | length) > 0)
+        else (
+          ((analysis_graph.nodes | default({})).get('items', []))
+          if (((analysis_graph.nodes | default({})).get('items', []) | length) > 0)
+          else (
+            ((nodes | default({})).get('items', []))
+            if (((nodes | default({})).get('items', []) | length) > 0)
+            else (((collected_resource_graph | default({})).get('nodes', {})).get('items', []))
+          )
+        )
+      }}
+  changed_when: false
+
 - name: Write node label governance input
   ansible.builtin.copy:
     dest: "{{ node_label_governance_input_file.path }}"
     mode: "0600"
     content: "{{ {
-      'nodes': (openshift_node_items | default(
-        ((analysis_graph.nodes | default({})).get('items', [])) | default(
-          ((collected_resource_graph | default({})).get('nodes', {})).get('items', []),
-          true
-        ),
-        true
-      ))
+      'nodes': (node_label_governance_source_nodes | default([]))
     } | to_json }}"
   changed_when: false
 

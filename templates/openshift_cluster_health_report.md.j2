@@ -1078,7 +1078,7 @@ Platform engineering and SRE
 | Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
 | --- | --- | --- | --- | --- | --- |
 {% set highest_density_seen = namespace(nodes=[]) %}
-{% for item in node_capacity_summary_by_density_desc_section[:10] %}
+{% for item in node_capacity_summary_by_density_desc_section[:node_density_table_limit] %}
 {% if (item.name | default('unknown')) not in highest_density_seen.nodes %}
 {% set highest_density_seen.nodes = highest_density_seen.nodes + [item.name | default('unknown')] %}
 {% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
@@ -1091,7 +1091,7 @@ Platform engineering and SRE
 | Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
 | --- | --- | --- | --- | --- | --- |
 {% set lowest_density_seen = namespace(nodes=[]) %}
-{% for item in node_capacity_summary_by_density_asc_section[:10] %}
+{% for item in node_capacity_summary_by_density_asc_section[:node_density_table_limit] %}
 {% if (item.name | default('unknown')) not in lowest_density_seen.nodes %}
 {% set lowest_density_seen.nodes = lowest_density_seen.nodes + [item.name | default('unknown')] %}
 {% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
@@ -1474,7 +1474,7 @@ Platform engineering and SRE
 
 | Host | Route Owners | Ingress Owners |
 | --- | --- | --- |
-{% for item in route_ingress_host_conflicts_section[:15] %}
+{% for item in route_ingress_host_conflicts_section[:(top_workload_issue_limit | default(12) | int)] %}
 | `{{ item.host }}` | `{{ item.route_owners | join(', ') }}` | `{{ item.ingress_owners | join(', ') }}` |
 {% endfor %}
 {% endif %}
@@ -1623,7 +1623,7 @@ Platform engineering and SRE
 
 | Namespace | AlertmanagerConfig | Receiver | Type | Target |
 | --- | --- | --- | --- | --- |
-{% for item in (observability_forwarding_summary_section.external_alert_receivers | default([]))[:15] %}
+{% for item in (observability_forwarding_summary_section.external_alert_receivers | default([]))[:(top_external_delivery_table_limit | default(10) | int)] %}
 | `{{ item.namespace }}` | `{{ item.alertmanagerconfig }}` | `{{ item.receiver }}` | `{{ item.type }}` | `{{ item.target }}` |
 {% endfor %}
 {% endif %}
@@ -1633,7 +1633,7 @@ Platform engineering and SRE
 
 | Namespace | ClusterLogForwarder | Output | Type | Target |
 | --- | --- | --- | --- | --- |
-{% for item in (observability_forwarding_summary_section.external_log_forwarding_outputs | default([]))[:15] %}
+{% for item in (observability_forwarding_summary_section.external_log_forwarding_outputs | default([]))[:(top_external_delivery_table_limit | default(10) | int)] %}
 | `{{ item.namespace }}` | `{{ item.clusterlogforwarder }}` | `{{ item.name }}` | `{{ item.type }}` | `{{ item.target or 'not-shown' }}` |
 {% endfor %}
 {% endif %}
@@ -1813,13 +1813,13 @@ Platform engineering and SRE
 
 ### Findings
 
-{% set top_namespace_networkpolicy_gaps = (namespaces_without_networkpolicy_section | default([]))[:10] %}
-{% set top_namespace_ingress_policy_gaps = (namespaces_missing_ingress_policies_section | default([]))[:10] %}
-{% set top_namespace_egress_policy_gaps = (namespaces_missing_egress_policies_section | default([]))[:10] %}
-{% set top_namespace_resourcequota_gaps = (namespaces_without_resourcequota_section | default([]))[:10] %}
-{% set top_namespace_limitrange_gaps = (namespaces_without_limitrange_section | default([]))[:10] %}
-{% set top_namespace_metadata_governance_gaps = (namespace_metadata_governance_findings_section | default([]))[:10] %}
-{% set top_node_metadata_governance_gaps = (node_metadata_governance_findings_section | default([]))[:10] %}
+{% set top_namespace_networkpolicy_gaps = (namespaces_without_networkpolicy_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
+{% set top_namespace_ingress_policy_gaps = (namespaces_missing_ingress_policies_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
+{% set top_namespace_egress_policy_gaps = (namespaces_missing_egress_policies_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
+{% set top_namespace_resourcequota_gaps = (namespaces_without_resourcequota_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
+{% set top_namespace_limitrange_gaps = (namespaces_without_limitrange_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
+{% set top_namespace_metadata_governance_gaps = (namespace_metadata_governance_findings_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
+{% set top_node_metadata_governance_gaps = (node_metadata_governance_findings_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
 {% set compliance_domain = security_domain.compliance | default({}) %}
 {% set compliance_suite_summary_section = compliance_domain.summary | default(compliance_suite_summary | default([])) %}
 {% set compliance_result_counts_section = compliance_domain.result_counts | default(compliance_result_counts | default({})) %}
@@ -2143,6 +2143,8 @@ Platform engineering and SRE
 {% set top_overprovisioned_pods_section = workload_domain.overprovisioned_pods | default(top_overprovisioned_pods | default(overprovisioned_pods | default([]))) %}
 {% set top_pod_cpu_usage_summary_section = workload_domain.top_pod_cpu_usage_summary | default(top_pod_cpu_usage_summary | default([])) %}
 {% set top_pod_memory_usage_summary_section = workload_domain.top_pod_memory_usage_summary | default(top_pod_memory_usage_summary | default([])) %}
+{% set node_density_table_limit = top_node_density_table_limit | default(8) | int %}
+{% set pod_usage_table_limit = top_pod_usage_table_limit | default(40) | int %}
 {% set workload_soft_hygiene_count = (workload_summary.high_replica_workload_count | default(0) | int) + (workload_summary.orphan_pod_count | default(0) | int) + (workload_summary.workload_label_governance_count | default(0) | int) + (workload_summary.workload_resource_finding_count | default(0) | int) %}
 {% set workload_runtime_issue_count = (workload_summary.unhealthy_user_pod_count | default(0) | int) + (workload_summary.workload_health_issue_count | default(0) | int) %}
 {% set workload_has_remediation = (workload_runtime_issue_count | int) > 0 or (workload_summary.high_restart_pod_count | default(0) | int) > 0 or (workload_summary.workload_probe_finding_count | default(0) | int) > 0 or (workload_soft_hygiene_count | int) > 0 %}
@@ -2349,30 +2351,30 @@ Showing up to the top 100 pods with more than 3 restarts.
 
 {% if top_pod_cpu_usage_summary_section | default([]) | length > 0 %}
 {% set top_pod_cpu_signal = (runtime_signal_resolution_map | default({})).get('top_pod_cpu_usage', {}) %}
-#### {% if top_pod_cpu_signal.get('status') == 'derived' %}Top 100 Pods By Requested CPU Pressure{% else %}Top 100 Pods By CPU Utilization{% endif %}
+#### {% if top_pod_cpu_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested CPU Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By CPU Utilization{% endif %}
 
-Showing up to the top 100 pods from the available CPU signal.
+Showing up to the top {{ pod_usage_table_limit }} pods from the available CPU signal.
 
 {{ runtime_signal_basis(top_pod_cpu_signal) }}
 
 | Namespace | Pod | {% if top_pod_cpu_signal.get('status') == 'derived' %}Requested CPU m{% else %}CPU Usage m{% endif %} |
 | --- | --- | --- |
-{% for item in top_pod_cpu_usage_summary_section[:100] %}
+{% for item in top_pod_cpu_usage_summary_section[:pod_usage_table_limit] %}
 | `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) * 1000) | round(1) }}`{% if top_pod_cpu_signal.get('status') == 'derived' %} `requested`{% endif %} |
 {% endfor %}
 {% endif %}
 
 {% if top_pod_memory_usage_summary_section | default([]) | length > 0 %}
 {% set top_pod_memory_signal = (runtime_signal_resolution_map | default({})).get('top_pod_memory_usage', {}) %}
-#### {% if top_pod_memory_signal.get('status') == 'derived' %}Top 100 Pods By Requested Memory Pressure{% else %}Top 100 Pods By Memory Utilization{% endif %}
+#### {% if top_pod_memory_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested Memory Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By Memory Utilization{% endif %}
 
-Showing up to the top 100 pods from the available memory signal.
+Showing up to the top {{ pod_usage_table_limit }} pods from the available memory signal.
 
 {{ runtime_signal_basis(top_pod_memory_signal) }}
 
 | Namespace | Pod | {% if top_pod_memory_signal.get('status') == 'derived' %}Requested Memory MiB{% else %}Memory Usage MiB{% endif %} |
 | --- | --- | --- |
-{% for item in top_pod_memory_usage_summary_section[:100] %}
+{% for item in top_pod_memory_usage_summary_section[:pod_usage_table_limit] %}
 | `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}`{% if top_pod_memory_signal.get('status') == 'derived' %} `requested`{% endif %} |
 {% endfor %}
 {% endif %}
@@ -2499,7 +2501,7 @@ Showing up to the top 100 pods from the available memory signal.
 #### Available Updates
 | Version | Image |
 | --- | --- |
-{% for item in available_updates[:10] %}
+{% for item in available_updates[:(top_release_table_limit | default(10) | int)] %}
 | `{{ item.version | default('unknown') }}` | `{{ item.image | default('unknown') }}` |
 {% endfor %}
 {% endif %}
@@ -2508,7 +2510,7 @@ Showing up to the top 100 pods from the available memory signal.
 #### Conditional Update Risks
 | Version | Risk |
 | --- | --- |
-{% for item in conditional_updates[:10] %}
+{% for item in conditional_updates[:(top_release_table_limit | default(10) | int)] %}
 | `{{ item.release.version | default('unknown') }}` | `{{ item.risks[0].name | default('unknown') if (item.risks | default([]) | length > 0) else 'unknown' }}` |
 {% endfor %}
 {% endif %}
@@ -2837,11 +2839,11 @@ Cluster update history was not returned.
 | Service IP ranges | `{{ capacity_service_ip.range_list | default([]) | join(', ') or 'not-derived' }}` |
 | Service IPs taken | `{{ capacity_service_ip.taken_ips | default(0) }}` |
 | Service IPs available | `{{ 'not-derived' if (capacity_service_ip.available_ips | default('unknown')) == 'unknown' else (capacity_service_ip.available_ips | default('unknown')) }}` |
-| Effective additional services limited by service IP capacity | `{{ 'not-derived' if (capacity_service_ip.effective_additional_services | default('unknown')) == 'unknown' else (capacity_service_ip.effective_additional_services | default('unknown')) }}` |
+| Max additional services the cluster can host | `{{ 'not-derived' if (capacity_service_ip.effective_additional_services | default('unknown')) == 'unknown' else (capacity_service_ip.effective_additional_services | default('unknown')) }}` |
 | Pod IP ranges | `{{ capacity_pod_ip.range_list | default([]) | join(', ') or 'not-derived' }}` |
 | Pod IPs taken | `{{ capacity_pod_ip.taken_ips | default(0) }}` |
 | Pod IPs available | `{{ 'not-derived' if (capacity_pod_ip.available_ips | default('unknown')) == 'unknown' else (capacity_pod_ip.available_ips | default('unknown')) }}` |
-| Effective additional pods limited by pod IP capacity and max pods per node | `{{ 'not-derived' if (capacity_pod_ip.effective_additional_pods | default('unknown')) == 'unknown' else (capacity_pod_ip.effective_additional_pods | default('unknown')) }}` |
+| Max additional workload pods the cluster can host on current workload nodes | `{{ 'not-derived' if (capacity_pod_ip.max_additional_hostable_pods | default('unknown')) == 'unknown' else (capacity_pod_ip.max_additional_hostable_pods | default('unknown')) }}` |
 | Node IP ranges | `{{ capacity_node_ip.range_list | default([]) | join(', ') or 'not-derived' }}` |
 | Node IPs taken | `{{ capacity_node_ip.taken_ips | default(0) }}` |
 | Node IPs available | `{{ 'not-derived' if (capacity_node_ip.available_ips | default('unknown')) == 'unknown' else (capacity_node_ip.available_ips | default('unknown')) }}` |
@@ -2907,19 +2909,19 @@ Cluster update history was not returned.
 | Kubernetes versions | `{% for item in capacity_cluster_current_state.kubernetes_versions %}{{ item.version }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.instance_types | default([]) | length > 0 %}
-| Cloud instance types | `{% for item in capacity_cluster_current_state.instance_types[:10] %}{{ item.instance_type }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| Cloud instance types | `{% for item in capacity_cluster_current_state.instance_types[:(top_capacity_summary_limit | default(10) | int)] %}{{ item.instance_type }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.node_shapes | default([]) | length > 0 %}
-| Node shapes | `{% for item in capacity_cluster_current_state.node_shapes[:12] %}{{ ('not-derived' if (item.shape | default('unknown')) in ['unknown', 'not-assessed'] or (item.shape | default('unknown')) | regex_search('-unknown$|not-assessed$') else item.shape) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| Node shapes | `{% for item in capacity_cluster_current_state.node_shapes[:(top_capacity_shape_summary_limit | default(12) | int)] %}{{ ('not-derived' if (item.shape | default('unknown')) in ['unknown', 'not-assessed'] or (item.shape | default('unknown')) | regex_search('-unknown$|not-assessed$') else item.shape) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.provider_types | default([]) | length > 0 %}
 | Node providers | `{% for item in capacity_cluster_current_state.provider_types %}{{ item.provider }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.os_images | default([]) | length > 0 %}
-| OS images | `{% for item in capacity_cluster_current_state.os_images[:10] %}{{ ('not-derived' if (item.os_image | default('unknown')) in ['unknown', 'not-assessed'] else item.os_image) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| OS images | `{% for item in capacity_cluster_current_state.os_images[:(top_capacity_summary_limit | default(10) | int)] %}{{ ('not-derived' if (item.os_image | default('unknown')) in ['unknown', 'not-assessed'] else item.os_image) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.container_runtimes | default([]) | length > 0 %}
-| Container runtimes | `{% for item in capacity_cluster_current_state.container_runtimes[:10] %}{{ ('not-derived' if (item.runtime | default('unknown')) in ['unknown', 'not-assessed'] else item.runtime) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| Container runtimes | `{% for item in capacity_cluster_current_state.container_runtimes[:(top_capacity_summary_limit | default(10) | int)] %}{{ ('not-derived' if (item.runtime | default('unknown')) in ['unknown', 'not-assessed'] else item.runtime) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.top_node_features | default([]) | length > 0 %}
 | Top node features | `{% for item in capacity_cluster_current_state.top_node_features %}{{ item.feature }}={{ item.node_count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
@@ -3388,15 +3390,15 @@ Showing up to the top {{ top_namespace_issue_summary | length }} namespaces that
 {% if report_collection_failures_list | length > 0 %}
 #### Collection Failures
 
-Showing up to the top 10 collection failures that can affect confidence in the report.
+Showing up to the top {{ top_collection_failure_limit | default(10) | int }} collection failures that can affect confidence in the report.
 
 | Command | Status | Detail |
 | --- | --- | --- |
-{% for item in (report_collection_failures_list | default([]))[:10] %}
+{% for item in (report_collection_failures_list | default([]))[:(top_collection_failure_limit | default(10) | int)] %}
 | `{{ item.name | default('unknown') }}` | `{{ 'timed-out' if (item.timed_out | default(false)) else 'failed' }}` | `{{ item.stderr | default(item.detail | default('No error detail captured.')) | replace('|', '\\|') }}` |
 {% endfor %}
-{% if (report_collection_failures_list | length) > 10 %}
-| `additional failures omitted` | `{{ (report_collection_failures_list | length) - 10 }}` | `See collection summary for full failure accounting.` |
+{% if (report_collection_failures_list | length) > (top_collection_failure_limit | default(10) | int) %}
+| `additional failures omitted` | `{{ (report_collection_failures_list | length) - (top_collection_failure_limit | default(10) | int) }}` | `See collection summary for full failure accounting.` |
 {% endif %}
 {% endif %}
 

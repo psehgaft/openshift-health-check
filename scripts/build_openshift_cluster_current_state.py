@@ -414,7 +414,12 @@ def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity, fa
     }
 
 
-def compute_effective_ip_growth(service_ip_capacity, pod_ip_capacity, total_pod_capacity, total_pods_scheduled):
+def compute_effective_ip_growth(
+    service_ip_capacity,
+    pod_ip_capacity,
+    workload_node_pod_capacity,
+    workload_node_scheduled_pods,
+):
     service_summary = dict(service_ip_capacity or {})
     pod_summary = dict(pod_ip_capacity or {})
 
@@ -423,24 +428,40 @@ def compute_effective_ip_growth(service_ip_capacity, pod_ip_capacity, total_pod_
         service_available = "unknown"
     effective_additional_services = int(service_available) if isinstance(service_available, (int, float)) else "unknown"
 
-    remaining_pod_slots = "unknown"
-    if isinstance(total_pod_capacity, int) and total_pod_capacity >= 0 and isinstance(total_pods_scheduled, int) and total_pods_scheduled >= 0:
-        remaining_pod_slots = max(total_pod_capacity - total_pods_scheduled, 0)
+    remaining_workload_pod_slots = "unknown"
+    if (
+        isinstance(workload_node_pod_capacity, int)
+        and workload_node_pod_capacity >= 0
+        and isinstance(workload_node_scheduled_pods, int)
+        and workload_node_scheduled_pods >= 0
+    ):
+        remaining_workload_pod_slots = max(workload_node_pod_capacity - workload_node_scheduled_pods, 0)
 
     pod_available = pod_summary.get("available_ips", "unknown")
     if isinstance(pod_available, bool):
         pod_available = "unknown"
-    if isinstance(pod_available, (int, float)) and isinstance(remaining_pod_slots, int):
-        effective_additional_pods = min(int(pod_available), remaining_pod_slots)
+    if isinstance(pod_available, (int, float)) and isinstance(remaining_workload_pod_slots, int):
+        effective_additional_pods = min(int(pod_available), remaining_workload_pod_slots)
     elif isinstance(pod_available, (int, float)):
         effective_additional_pods = int(pod_available)
     else:
-        effective_additional_pods = remaining_pod_slots if isinstance(remaining_pod_slots, int) else "unknown"
+        effective_additional_pods = (
+            remaining_workload_pod_slots if isinstance(remaining_workload_pod_slots, int) else "unknown"
+        )
 
     service_summary["effective_additional_services"] = effective_additional_services
-    pod_summary["pod_capacity_on_current_nodes"] = total_pod_capacity if isinstance(total_pod_capacity, int) and total_pod_capacity >= 0 else "unknown"
-    pod_summary["remaining_pod_slots_on_current_nodes"] = remaining_pod_slots
-    pod_summary["effective_additional_pods"] = effective_additional_pods
+    pod_summary["workload_node_pod_capacity"] = (
+        workload_node_pod_capacity
+        if isinstance(workload_node_pod_capacity, int) and workload_node_pod_capacity >= 0
+        else "unknown"
+    )
+    pod_summary["workload_node_scheduled_pods"] = (
+        workload_node_scheduled_pods
+        if isinstance(workload_node_scheduled_pods, int) and workload_node_scheduled_pods >= 0
+        else "unknown"
+    )
+    pod_summary["remaining_workload_pod_slots"] = remaining_workload_pod_slots
+    pod_summary["max_additional_hostable_pods"] = effective_additional_pods
     return service_summary, pod_summary
 
 
@@ -450,6 +471,10 @@ def main():
 
     pod_items = normalize_items(data.get("pods"))
     resourcequota_items = normalize_items(data.get("resourcequotas"))
+    try:
+        cluster_max_pods_per_node_default = int(data.get("cluster_max_pods_per_node_default", 250) or 250)
+    except Exception:
+        cluster_max_pods_per_node_default = 250
     node_pod_count_map = dict(data.get("node_pod_counts") or {})
     derived_node_pod_counts = Counter()
     for pod in pod_items:
@@ -539,6 +564,8 @@ def main():
     total_disk_bytes = 0.0
     total_pods_scheduled = 0
     total_pod_capacity = 0
+    workload_node_pod_capacity = 0
+    workload_node_scheduled_pods = 0
     master_nodes = 0
     worker_nodes = 0
     infra_nodes = 0
@@ -590,6 +617,10 @@ def main():
         allocatable = status.get("allocatable", {}) or {}
         cpu_cores = parse_cpu(allocatable.get("cpu", "0"))
         memory_gib = parse_binary_bytes(allocatable.get("memory", "0")) / (1024 ** 3)
+        try:
+            pods_allocatable = int(allocatable.get("pods", cluster_max_pods_per_node_default) or cluster_max_pods_per_node_default)
+        except Exception:
+            pods_allocatable = int(cluster_max_pods_per_node_default)
         node_shape, node_shape_source = build_node_shape(instance_type, cpu_cores, memory_gib, arch)
         node_shape_counts[node_shape] += 1
         if primary_role == "worker":
@@ -605,12 +636,24 @@ def main():
         memory_bytes = parse_binary_bytes(allocatable.get("memory", "0"))
         total_memory_bytes += memory_bytes
         total_disk_bytes += parse_binary_bytes(allocatable.get("ephemeral-storage", "0"))
+        node_is_workload_hosting = (
+            primary_role not in {"master", "control-plane", "infra"}
+            and not bool(spec.get("unschedulable", False))
+            and any(
+                (condition or {}).get("type") == "Ready" and (condition or {}).get("status") == "True"
+                for condition in (status.get("conditions") or [])
+            )
+        )
         try:
-            total_pod_capacity += int(allocatable.get("pods", 0) or 0)
+            total_pod_capacity += pods_allocatable
+            if node_is_workload_hosting:
+                workload_node_pod_capacity += pods_allocatable
         except Exception:
             pass
         scheduled_pods = int(node_pod_count_map.get(node_name, 0) or 0)
         total_pods_scheduled += scheduled_pods
+        if node_is_workload_hosting:
+            workload_node_scheduled_pods += scheduled_pods
         cpu_util_pct = cpu_util_by_node.get(node_name)
         memory_util_pct = mem_util_by_node.get(node_name)
         cpu_available_millicores = None
@@ -793,8 +836,8 @@ def main():
     service_ip_capacity, pod_ip_capacity = compute_effective_ip_growth(
         data.get("service_ip_capacity_summary") or {},
         data.get("pod_ip_capacity_summary") or {},
-        total_pod_capacity,
-        total_pods_scheduled,
+        workload_node_pod_capacity,
+        workload_node_scheduled_pods,
     )
     node_resource_rows.sort(
         key=lambda item: (

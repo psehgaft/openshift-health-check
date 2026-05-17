@@ -127,13 +127,20 @@
         or labels.get('team')
         or labels.get('owner')
         or annotations.get('owner.team')
-        or annotations.get('owner.contact')
         or namespace_labels.get('app.kubernetes.io/owner')
         or namespace_labels.get('app.kubernetes.io/team')
         or namespace_labels.get('team')
         or namespace_labels.get('owner')
         or namespace_annotations.get('owner.team')
         or ns_name
+      }}
+    managed_by_hint: >-
+      {{
+        labels.get('app.kubernetes.io/managed-by')
+        or annotations.get('app.kubernetes.io/managed-by')
+        or namespace_labels.get('app.kubernetes.io/managed-by')
+        or namespace_annotations.get('app.kubernetes.io/managed-by')
+        or owner_label_hint
       }}
     cost_center_hint: >-
       {{
@@ -153,7 +160,7 @@
         or namespace_labels.get('chargeback')
         or namespace_labels.get('chargeback-code')
         or namespace_labels.get('chargeback_code')
-        or '<set-cost-center>'
+        or ('cc-' ~ ((ns_name | upper) | regex_replace('[^A-Z0-9]+', '-')))
       }}
     business_unit_hint: >-
       {{
@@ -163,13 +170,13 @@
         or namespace_labels.get('business-unit')
         or namespace_labels.get('business_unit')
         or namespace_labels.get('department')
-        or '<set-business-unit>'
+        or (ns_name | regex_replace('^([^-]+).*', '\1') | upper)
       }}
     owner_email_hint: >-
       {{
         annotations.get('owner.email')
         or namespace_annotations.get('owner.email')
-        or '<set-owner-email>'
+        or (((owner_label_hint | regex_replace('[^a-zA-Z0-9-]+', '-') | lower | regex_replace('(^-+|-+$)', '')) ) ~ '@example.com')
       }}
     owner_contact_hint: >-
       {{
@@ -177,12 +184,12 @@
         or annotations.get('contact')
         or namespace_annotations.get('owner.contact')
         or namespace_annotations.get('contact')
-        or '<set-owner-contact>'
+        or ('#team-' ~ ((owner_label_hint | regex_replace('[^a-zA-Z0-9-]+', '-') | lower | regex_replace('(^-+|-+$)', ''))))
       }}
     description_hint: >-
       {{
         annotations.get('description')
-        or ('<describe-' ~ workload_name ~ '-purpose>')
+        or ('Workload ' ~ workload_name ~ ' in namespace ' ~ ns_name)
       }}
     missing_parts: >-
       {{
@@ -238,7 +245,7 @@
         (['app.kubernetes.io/instance=' ~ (labels.get('app.kubernetes.io/instance') if (labels.get('app.kubernetes.io/instance', '') | length) > 0 else ns_name)] if ('app.kubernetes.io/instance' in missing_parts) else []) +
         (['app.kubernetes.io/component=' ~ (labels.get('app.kubernetes.io/component') if (labels.get('app.kubernetes.io/component', '') | length) > 0 else (workload_kind | lower))] if ('app.kubernetes.io/component' in missing_parts) else []) +
         (['app.kubernetes.io/part-of=' ~ (labels.get('app.kubernetes.io/part-of') if (labels.get('app.kubernetes.io/part-of', '') | length) > 0 else ns_name)] if ('app.kubernetes.io/part-of' in missing_parts) else []) +
-        (['app.kubernetes.io/managed-by=' ~ (labels.get('app.kubernetes.io/managed-by') if (labels.get('app.kubernetes.io/managed-by', '') | length) > 0 else '<set-managing-controller-or-team>')] if ('app.kubernetes.io/managed-by' in missing_parts) else []) +
+        (['app.kubernetes.io/managed-by=' ~ managed_by_hint] if ('app.kubernetes.io/managed-by' in missing_parts) else []) +
         (['app.kubernetes.io/owner=' ~ owner_label_hint] if ('app.kubernetes.io/owner' in missing_parts) else []) +
         (['app.kubernetes.io/team=' ~ owner_label_hint] if ('app.kubernetes.io/team' in missing_parts) else []) +
         (['cost-center=' ~ cost_center_hint] if ('cost-center' in missing_parts) else []) +
@@ -265,6 +272,71 @@
           'recommended_annotation_values': recommended_annotation_values
         }]
         if ((is_user_namespace | bool) and not (is_operator_managed_workload | bool) and (missing_parts | length > 0)) else []
+      }}
+  changed_when: false
+
+- name: Build workload resource requirement findings
+  ansible.builtin.set_fact:
+    node_label_governance_source_nodes: >-
+      {{
+        (
+          (analysis_graph.nodes | default({})).get('items', [])
+        )
+        if (((analysis_graph.nodes | default({})).get('items', []) | length) > 0)
+        else (
+          ((nodes | default({})).get('items', []))
+          if (((nodes | default({})).get('items', []) | length) > 0)
+          else (
+            ((collected_resource_graph | default({})).get('nodes', {})).get('items', [])
+          )
+        )
+      }}
+  changed_when: false
+
+- name: Create node label governance input file
+  ansible.builtin.tempfile:
+    state: file
+    suffix: node-label-governance.json
+  register: node_label_governance_input_file
+  changed_when: false
+
+- name: Write node label governance input
+  ansible.builtin.copy:
+    dest: "{{ node_label_governance_input_file.path }}"
+    mode: "0600"
+    content: "{{ {'nodes': (node_label_governance_source_nodes | default([]))} | to_json }}"
+  changed_when: false
+
+- name: Build node label governance findings
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/build_node_label_governance_findings.py"
+      - "{{ node_label_governance_input_file.path }}"
+  register: node_label_governance_cmd
+  changed_when: false
+
+- name: Remove node label governance input file
+  ansible.builtin.file:
+    path: "{{ node_label_governance_input_file.path }}"
+    state: absent
+  when: node_label_governance_input_file is defined and (node_label_governance_input_file.path | default('') | length > 0)
+  changed_when: false
+
+- name: Normalize node label governance findings
+  ansible.builtin.set_fact:
+    node_label_governance_findings: >-
+      {{
+        (
+          (
+            node_label_governance_cmd.stdout
+            | default('{}', true)
+            | trim
+            | default('{}', true)
+            | from_json
+          ).node_label_governance_findings
+          | default([])
+        )
       }}
   changed_when: false
 

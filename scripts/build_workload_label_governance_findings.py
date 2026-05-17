@@ -49,6 +49,14 @@ def annotations_of(obj):
     return ((obj.get("metadata") or {}).get("annotations")) or {}
 
 
+def normalize_slug(text):
+    return re.sub(r"[^a-zA-Z0-9-]+", "-", str(text or "").strip()).strip("-").lower()
+
+
+def normalize_token(text):
+    return re.sub(r"[^a-zA-Z0-9-]+", "-", str(text or "").strip()).strip("-")
+
+
 def first_present_value(keys, labels, annotations, related_objects):
     for key in keys:
         value = str(labels.get(key, "")).strip()
@@ -76,6 +84,47 @@ def present_owner_keys(labels):
         if str(labels.get(key, "")).strip():
             keys.append(key)
     return keys
+
+
+def managed_by_hint(labels, annotations, related_objects, owner_value):
+    for key in ["app.kubernetes.io/managed-by"]:
+        value = str(labels.get(key, "")).strip() or str(annotations.get(key, "")).strip()
+        if value:
+            return value
+    for obj in related_objects:
+        obj_labels = labels_of(obj)
+        obj_annotations = annotations_of(obj)
+        for key in ["app.kubernetes.io/managed-by"]:
+            value = str(obj_labels.get(key, "")).strip() or str(obj_annotations.get(key, "")).strip()
+            if value:
+                return value
+    return owner_value or "platform-team"
+
+
+def owner_email_hint(owner_value, ns_name):
+    owner_slug = normalize_slug(owner_value or ns_name) or "platform-team"
+    return f"{owner_slug}@example.com"
+
+
+def owner_contact_hint(owner_value, workload_name_hint):
+    contact_slug = normalize_slug(owner_value or workload_name_hint) or "platform-team"
+    return f"#team-{contact_slug}"
+
+
+def cost_center_hint(namespace_cost_value, ns_name):
+    if namespace_cost_value:
+        return namespace_cost_value
+    return f"cc-{normalize_token(ns_name).upper() or 'PLATFORM'}"
+
+
+def business_unit_hint(namespace_business_unit_value, ns_name):
+    if namespace_business_unit_value:
+        return namespace_business_unit_value
+    return re.sub(r"^([^-]+).*", r"\1", ns_name).upper() or "PLATFORM"
+
+
+def description_hint(workload_name_hint, ns_name):
+    return f"Workload {workload_name_hint} in namespace {ns_name}"
 
 
 def main() -> int:
@@ -147,7 +196,7 @@ def main() -> int:
             ["owner.email"], namespace_labels, namespace_annotations, related_objects
         )
         namespace_owner_contact = first_present_value(
-            ["contact"], namespace_labels, namespace_annotations, related_objects
+            ["owner.contact", "contact"], namespace_labels, namespace_annotations, related_objects
         )
         namespace_cost_value = first_present_value(
             COST_LABEL_KEYS, namespace_labels, namespace_annotations, related_objects
@@ -166,31 +215,16 @@ def main() -> int:
                 "name": pod_name,
                 "recommended_label_values": [
                     f"team={namespace_owner_value}",
+                    f"app.kubernetes.io/managed-by={managed_by_hint(labels, {}, related_objects, namespace_owner_value)}",
                     f"app.kubernetes.io/owner={namespace_owner_value}",
                     f"app.kubernetes.io/team={namespace_owner_value}",
-                    (
-                        f"cost-center={namespace_cost_value}"
-                        if namespace_cost_value
-                        else f"cost-center=<set-cost-center-for-{ns_name}>"
-                    ),
-                    (
-                        f"business-unit={namespace_business_unit_value}"
-                        if namespace_business_unit_value
-                        else "business-unit=<set-business-unit>"
-                    ),
+                    f"cost-center={cost_center_hint(namespace_cost_value, ns_name)}",
+                    f"business-unit={business_unit_hint(namespace_business_unit_value, ns_name)}",
                 ],
                 "recommended_annotation_values": [
-                    (
-                        f"owner.email={namespace_owner_email}"
-                        if namespace_owner_email
-                        else f"owner.email=<set-email-for-{namespace_owner_value}>"
-                    ),
-                    (
-                        f"owner.contact={namespace_owner_contact}"
-                        if namespace_owner_contact
-                        else f"owner.contact=<set-contact-for-{workload_name_hint}>"
-                    ),
-                    f"description=<describe-{workload_name_hint}-purpose>",
+                    f"owner.email={namespace_owner_email or owner_email_hint(namespace_owner_value, ns_name)}",
+                    f"owner.contact={namespace_owner_contact or owner_contact_hint(namespace_owner_value, workload_name_hint)}",
+                    f"description={description_hint(workload_name_hint, ns_name)}",
                 ],
                 "present_label_keys": present_keys,
             }

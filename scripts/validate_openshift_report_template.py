@@ -57,8 +57,8 @@ FORBIDDEN_PATTERNS = [
 REQUIRED_RUNTIME_SIGNAL_MARKERS = [
     ("{% macro runtime_signal_basis(entry) -%}", "runtime signal provenance macro must exist"),
     ("{% macro pct_with_basis(value, kind, is_approximation) -%}", "runtime percentage rendering macro must exist"),
-    ("Top 100 Pods By Requested CPU Pressure", "template must support request-derived CPU labeling"),
-    ("Top 100 Pods By Requested Memory Pressure", "template must support request-derived memory labeling"),
+    ("Pods By Requested CPU Pressure", "template must support request-derived CPU labeling"),
+    ("Pods By Requested Memory Pressure", "template must support request-derived memory labeling"),
 ]
 
 

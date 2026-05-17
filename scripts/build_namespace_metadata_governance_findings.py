@@ -79,6 +79,10 @@ def present_pairs(keys, labels):
     return values
 
 
+def normalize_slug(text):
+    return re.sub(r"[^a-zA-Z0-9-]+", "-", str(text or "").strip()).strip("-").lower()
+
+
 def main() -> int:
     with open(sys.argv[1], "r", encoding="utf-8") as handle:
         data = json.load(handle)
@@ -121,8 +125,8 @@ def main() -> int:
             or f"team-{ns_name}@example.com"
         )
         owner_contact_hint = (
-            first_present_value(["contact"], labels, annotations, related_objects)
-            or f"#team-{re.sub(r'[^a-zA-Z0-9-]+', '-', ns_name)}"
+            first_present_value(["owner.contact", "contact"], labels, annotations, related_objects)
+            or f"#team-{normalize_slug(ns_name) or 'platform'}"
         )
         cost_value_hint = (
             first_present_value(COST_LABEL_KEYS, labels, annotations, related_objects)
@@ -157,7 +161,7 @@ def main() -> int:
                 "recommended_owner_values": [
                     f"team={owner_value_hint}",
                     f"owner.email={owner_email_hint}",
-                    f"contact={owner_contact_hint}",
+                    f"owner.contact={owner_contact_hint}",
                 ],
                 "recommended_cost_values": [
                     f"cost-center={cost_value_hint}",
