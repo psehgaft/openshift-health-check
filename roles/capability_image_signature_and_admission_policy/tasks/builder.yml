@@ -1,0 +1,98 @@
+---
+- name: Build image signature and admission policy capability artifact facts
+  vars:
+    day2_image_signature_and_admission_policy_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'image_signature_and_admission_policy') | list | first) | default({})) }}"
+    image_signature_and_admission_policy_present_current: "{{ ((day2_posture_summary | default({})).get('image_signature_and_admission_policy_present', false)) | bool }}"
+    image_signature_and_admission_policy_healthy_current: "{{ ((day2_posture_summary | default({})).get('image_signature_and_admission_policy_healthy', false)) | bool }}"
+    admission_policy_engine_present_current: "{{ ((day2_posture_summary | default({})).get('admission_policy_engine_present', false)) | bool }}"
+    image_registry_filter_policy_present_current: "{{ ((day2_posture_summary | default({})).get('image_registry_filter_policy_present', false)) | bool }}"
+    insecure_registry_count_current: "{{ ((day2_posture_summary | default({})).get('insecure_registry_count', 0)) | int }}"
+    image_signature_and_admission_policy_reason_summary_current: >-
+      {{
+        (
+          day2_image_signature_and_admission_policy_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'admissionPolicyEnginePresent=' ~ (admission_policy_engine_present_current | string)
+          ~ ' registryFilterPolicyPresent=' ~ (image_registry_filter_policy_present_current | string)
+          ~ ' insecureRegistries=' ~ (insecure_registry_count_current | string)
+        )
+      }}
+    image_signature_and_admission_policy_recommended_action_current: >-
+      {{
+        'Confirm trusted-image controls remain enforced and that insecure registries stay out of the intended production path.'
+        if image_signature_and_admission_policy_present_current
+        else 'If trusted-image enforcement is intended, deploy or confirm an admission policy engine or explicit image registry restriction policy.'
+      }}
+    image_signature_and_admission_policy_findings_current: >-
+      {{
+        []
+        if image_signature_and_admission_policy_healthy_current
+        else [
+          {
+            'capability': 'image_signature_and_admission_policy',
+            'issue': (
+              'prod-day2-image-signature-and-admission-policy-insecure-registries'
+              if image_signature_and_admission_policy_present_current
+              else 'prod-day2-image-signature-and-admission-policy-missing'
+            ),
+            'severity': ('warning' if image_signature_and_admission_policy_present_current else 'info'),
+            'source': 'trusted image policy and admission guardrail inventory',
+            'detail': (
+              image_signature_and_admission_policy_reason_summary_current
+              if image_signature_and_admission_policy_present_current
+              else 'no admission policy engine or image registry restriction policy signal was detected for trusted-image enforcement'
+            ),
+            'recommended_action': image_signature_and_admission_policy_recommended_action_current,
+            'docs': ((day2_image_signature_and_admission_policy_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    image_signature_and_admission_policy_section_override_current: >-
+      {{
+        (day2_image_signature_and_admission_policy_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if image_signature_and_admission_policy_healthy_current else 1),
+              'findings': image_signature_and_admission_policy_findings_current,
+              'status': (
+                'OK'
+                if image_signature_and_admission_policy_healthy_current
+                else ('WARNING' if image_signature_and_admission_policy_present_current else 'INFO')
+              ),
+              'top_detail': (
+                image_signature_and_admission_policy_reason_summary_current
+                if image_signature_and_admission_policy_present_current
+                else 'no admission policy engine or image registry restriction policy signal was detected for trusted-image enforcement'
+              ),
+              'recommended_action': image_signature_and_admission_policy_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: image_signature_and_admission_policy
+    capability_artifact_section_override: "{{ image_signature_and_admission_policy_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      image_signature_and_admission_policy_present: "{{ image_signature_and_admission_policy_present_current | bool }}"
+      image_signature_and_admission_policy_healthy: "{{ image_signature_and_admission_policy_healthy_current | bool }}"
+      admission_policy_engine_present: "{{ admission_policy_engine_present_current | bool }}"
+      image_registry_filter_policy_present: "{{ image_registry_filter_policy_present_current | bool }}"
+      insecure_registry_count: "{{ ((insecure_registry_count_current | int) | string) | from_yaml }}"
+      status_summary: "{{ image_signature_and_admission_policy_section_override_current.status }}"
+      reason_summary: "{{ image_signature_and_admission_policy_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_image_signature_and_admission_policy_section: "{{ image_signature_and_admission_policy_section_override_current }}"
+    capability_artifact_collection_inputs:
+      image_signature_and_admission_policy_present: "{{ image_signature_and_admission_policy_present_current | bool }}"
+      image_signature_and_admission_policy_healthy: "{{ image_signature_and_admission_policy_healthy_current | bool }}"
+      admission_policy_engine_present: "{{ admission_policy_engine_present_current | bool }}"
+      image_registry_filter_policy_present: "{{ image_registry_filter_policy_present_current | bool }}"
+      insecure_registry_count: "{{ ((insecure_registry_count_current | int) | string) | from_yaml }}"

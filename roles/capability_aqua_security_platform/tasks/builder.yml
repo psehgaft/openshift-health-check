@@ -1,0 +1,92 @@
+---
+- name: Build Aqua security platform capability artifact facts
+  vars:
+    day2_aqua_security_platform_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'aqua_security_platform') | list | first) | default({})) }}"
+    aqua_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_subscription_present', false)) | bool }}"
+    aqua_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_namespace_present', false)) | bool }}"
+    aqua_crd_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_crd_present', false)) | bool }}"
+    aqua_workload_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_workload_present', false)) | bool }}"
+    aqua_present_current: "{{ (aqua_subscription_present_current or aqua_namespace_present_current or aqua_crd_present_current or aqua_workload_present_current) | bool }}"
+    aqua_reason_summary_current: >-
+      {{
+        'subscription_present=' ~ (aqua_subscription_present_current | string)
+        ~ ' namespace_present=' ~ (aqua_namespace_present_current | string)
+        ~ ' crd_present=' ~ (aqua_crd_present_current | string)
+        ~ ' workload_present=' ~ (aqua_workload_present_current | string)
+      }}
+    aqua_recommended_action_current: >-
+      {{
+        'Confirm the Aqua platform footprint is healthy and that the intended enforcement path remains in service.'
+        if aqua_present_current
+        else 'If Aqua security is intended, deploy or confirm the Aqua operator, namespace, CRD, and managed workload footprint.'
+      }}
+    aqua_findings_current: >-
+      {{
+        []
+        if aqua_present_current
+        else [
+          {
+            'capability': 'aqua_security_platform',
+            'issue': 'prod-day2-aqua-security-platform-missing',
+            'severity': 'info',
+            'source': 'Aqua operator and enforcer inventory',
+            'detail': 'no Aqua platform CRD, Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected',
+            'recommended_action': aqua_recommended_action_current,
+            'docs': ((day2_aqua_security_platform_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    aqua_section_override_current: >-
+      {{
+        (day2_aqua_security_platform_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if aqua_present_current else 1),
+              'checks': [
+                {
+                  'capability': 'Aqua security platform footprint',
+                  'capability_key': 'aqua_security_platform',
+                  'detail': aqua_reason_summary_current,
+                  'level': ((day2_aqua_security_platform_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Aqua operator and enforcer inventory',
+                  'status': ('OK' if aqua_present_current else 'WARN')
+                }
+              ],
+              'findings': aqua_findings_current,
+              'status': ('OK' if aqua_present_current else 'INFO'),
+              'top_detail': (
+                aqua_reason_summary_current
+                if aqua_present_current
+                else 'no Aqua platform CRD, Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected'
+              ),
+              'recommended_action': aqua_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: aqua_security_platform
+    capability_artifact_section_override: "{{ aqua_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if aqua_present_current else 1) | int }}"
+      subscription_present: "{{ aqua_subscription_present_current | bool }}"
+      namespace_present: "{{ aqua_namespace_present_current | bool }}"
+      crd_present: "{{ aqua_crd_present_current | bool }}"
+      workload_present: "{{ aqua_workload_present_current | bool }}"
+      status: "{{ 'OK' if aqua_present_current else 'INFO' }}"
+      status_summary: "{{ 'OK' if aqua_present_current else 'INFO' }}"
+      top_detail: "{{ aqua_section_override_current.top_detail }}"
+      reason_summary: "{{ aqua_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_aqua_security_platform_section: "{{ aqua_section_override_current }}"
+    capability_artifact_collection_inputs:
+      subscription_present: "{{ aqua_subscription_present_current | bool }}"
+      namespace_present: "{{ aqua_namespace_present_current | bool }}"
+      crd_present: "{{ aqua_crd_present_current | bool }}"
+      workload_present: "{{ aqua_workload_present_current | bool }}"

@@ -28,7 +28,7 @@ That matters because the design is not only about what gets checked. It is also 
 The OpenShift path now follows a few simple principles:
 
 1. Prefer live cluster collection when access is available.
-2. Treat collected-state inputs as a first-class supported path, not a separate product.
+2. Treat collected-state inputs as a supported path, not a separate product.
 3. Normalize both paths into the same analysis graph.
 4. Keep one OpenShift report model, even when the source is `must-gather` or another collected-state input.
 5. Use optional support analyzers only when they add signal and are actually available.
@@ -229,9 +229,9 @@ That distinction matters because several important customer review topics are no
 - Platform infrastructure dependencies: `partial`
   The report can speak to platform, node shape, failure-domain spread, IP headroom, storage classes, storage posture, PV/PVC health, route and ingress health, and core platform operators. It cannot directly validate the underlying hypervisor, SAN, firewall, or upstream network design beyond the signals visible in-cluster.
 - Node and operator status: `direct`
-  This is a first-class area in the design.
+  This is a core area in the design.
 - API services and etcd health: `direct`
-  This is a first-class area in the design.
+  This is a core area in the design.
 - Capability and readiness for common disaster scenarios: `partial`
   The report helps with resilience signals such as topology, control-plane health, storage health, route and ingress continuity, and observability forwarding. It does not prove backup and restore readiness by itself.
 - Environment patching process: `partial`
@@ -246,7 +246,7 @@ That distinction matters because several important customer review topics are no
 - Cluster-hosted CI/CD runners and agents: `partial`
   The report inventories runner-like pods for GitLab Runner, Jenkins agents, GitHub Actions runners, Azure DevOps agents, and generic CI/CD runners when they are visible in cluster evidence. It reports pod health, scheduling pressure, restarts, resource-request coverage, and privileged runner pods, but queue depth, busy runner percentage, job duration, and failure-rate trends require runner-native metrics, Prometheus/Thanos, or the CI/CD product API.
 - Liveness, readiness, requests, limits, and project quotas: `direct`
-  These are already first-class checks in the report.
+  These are core checks in the report.
 - Capacity planning: `partial`
   The report shows current capacity and current stress signals. Projected growth still requires application and infrastructure planning outside the cluster report.
 
@@ -417,7 +417,7 @@ In a healthy cluster:
 Platform state also now includes topology and scaling posture because those are early indicators of resilience problems:
 
 - worker nodes should be spread across failure domains where the platform supports them
-- worker-pool groups should not collapse into a single zone unintentionally
+- worker-pool groups should not collapse into a single zone by accident
 - MachineSet replicas should not be heavily skewed across zones
 - the cluster should still have network and IP headroom to add more nodes when scale-out is needed
 

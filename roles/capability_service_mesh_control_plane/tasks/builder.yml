@@ -1,0 +1,80 @@
+---
+- name: Build service mesh control plane capability artifact facts
+  vars:
+    day2_service_mesh_control_plane_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'service_mesh_control_plane') | list | first) | default({})) }}"
+    service_mesh_present_current: "{{ ((day2_posture_summary | default({})).get('service_mesh_control_plane_present', false)) | bool }}"
+    service_mesh_healthy_current: "{{ ((day2_posture_summary | default({})).get('service_mesh_control_plane_healthy', false)) | bool }}"
+    service_mesh_reason_summary_current: >-
+      {{
+        (
+          day2_service_mesh_control_plane_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'service mesh footprint detected=' ~ (service_mesh_present_current | string)
+          ~ ' healthy=' ~ (service_mesh_healthy_current | string)
+        )
+      }}
+    service_mesh_recommended_action_current: >-
+      {{
+        'Confirm the service mesh control plane and membership footprint remain healthy and aligned with the intended workload topology.'
+        if service_mesh_present_current
+        else 'If service mesh is intended, deploy or confirm the operator, CRDs, control plane, and membership footprint.'
+      }}
+    service_mesh_findings_current: >-
+      {{
+        []
+        if service_mesh_present_current
+        else [
+          {
+            'capability': 'service_mesh_control_plane',
+            'issue': 'prod-day2-service-mesh-missing',
+            'severity': 'info',
+            'source': 'service mesh control plane inventory',
+            'detail': 'no service mesh operator, CRD, control plane, or membership footprint was detected',
+            'recommended_action': service_mesh_recommended_action_current,
+            'docs': ((day2_service_mesh_control_plane_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    service_mesh_section_override_current: >-
+      {{
+        (day2_service_mesh_control_plane_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if service_mesh_present_current else 1),
+              'findings': service_mesh_findings_current,
+              'status': (
+                'OK'
+                if (service_mesh_present_current and service_mesh_healthy_current)
+                else ('WARNING' if service_mesh_present_current else 'INFO')
+              ),
+              'top_detail': (
+                service_mesh_reason_summary_current
+                if service_mesh_present_current
+                else 'no service mesh operator, CRD, control plane, or membership footprint was detected'
+              ),
+              'recommended_action': service_mesh_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: service_mesh_control_plane
+    capability_artifact_section_override: "{{ service_mesh_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      service_mesh_control_plane_present: "{{ service_mesh_present_current | bool }}"
+      service_mesh_control_plane_healthy: "{{ service_mesh_healthy_current | bool }}"
+      status_summary: "{{ service_mesh_section_override_current.status }}"
+      reason_summary: "{{ service_mesh_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_service_mesh_control_plane_section: "{{ service_mesh_section_override_current }}"
+    capability_artifact_collection_inputs:
+      service_mesh_control_plane_present: "{{ service_mesh_present_current | bool }}"
+      service_mesh_control_plane_healthy: "{{ service_mesh_healthy_current | bool }}"

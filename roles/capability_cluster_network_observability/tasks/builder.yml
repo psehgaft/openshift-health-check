@@ -1,0 +1,94 @@
+---
+- name: Build cluster network observability capability artifact facts
+  vars:
+    day2_cluster_network_observability_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'cluster_network_observability') | list | first) | default({})) }}"
+    cluster_network_observability_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_present', false)) | bool }}"
+    cluster_network_observability_healthy_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_healthy', false)) | bool }}"
+    cluster_network_observability_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_subscription_present', false)) | bool }}"
+    cluster_network_observability_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_namespace_present', false)) | bool }}"
+    cluster_network_observability_crd_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_crd_present', false)) | bool }}"
+    cluster_network_observability_workload_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_workload_present', false)) | bool }}"
+    cluster_network_observability_reason_summary_current: >-
+      {{
+        (
+          day2_cluster_network_observability_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'subscriptionPresent=' ~ (cluster_network_observability_subscription_present_current | string)
+          ~ ' namespacePresent=' ~ (cluster_network_observability_namespace_present_current | string)
+          ~ ' crdPresent=' ~ (cluster_network_observability_crd_present_current | string)
+          ~ ' workloadPresent=' ~ (cluster_network_observability_workload_present_current | string)
+        )
+      }}
+    cluster_network_observability_recommended_action_current: >-
+      {{
+        'Confirm the network observability control plane and flow visibility path remain healthy and aligned with the intended incident-response model.'
+        if cluster_network_observability_present_current
+        else 'If cluster network observability is intended, deploy or confirm the NetObserv operator, CRDs, namespace, and flow-visibility workload footprint.'
+      }}
+    cluster_network_observability_findings_current: >-
+      {{
+        []
+        if cluster_network_observability_present_current
+        else [
+          {
+            'capability': 'cluster_network_observability',
+            'issue': 'prod-day2-cluster-network-observability-missing',
+            'severity': 'info',
+            'source': 'OpenShift network observability operator and workload inventory',
+            'detail': 'no network observability operator, CRD, namespace, or workload footprint was detected',
+            'recommended_action': cluster_network_observability_recommended_action_current,
+            'docs': ((day2_cluster_network_observability_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    cluster_network_observability_section_override_current: >-
+      {{
+        (day2_cluster_network_observability_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if cluster_network_observability_healthy_current else 1),
+              'findings': cluster_network_observability_findings_current,
+              'status': (
+                'OK'
+                if cluster_network_observability_healthy_current
+                else ('WARNING' if cluster_network_observability_present_current else 'INFO')
+              ),
+              'top_detail': (
+                cluster_network_observability_reason_summary_current
+                if cluster_network_observability_present_current
+                else 'no network observability operator, CRD, namespace, or workload footprint was detected'
+              ),
+              'recommended_action': cluster_network_observability_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: cluster_network_observability
+    capability_artifact_section_override: "{{ cluster_network_observability_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      cluster_network_observability_present: "{{ cluster_network_observability_present_current | bool }}"
+      cluster_network_observability_healthy: "{{ cluster_network_observability_healthy_current | bool }}"
+      cluster_network_observability_subscription_present: "{{ cluster_network_observability_subscription_present_current | bool }}"
+      cluster_network_observability_namespace_present: "{{ cluster_network_observability_namespace_present_current | bool }}"
+      cluster_network_observability_crd_present: "{{ cluster_network_observability_crd_present_current | bool }}"
+      cluster_network_observability_workload_present: "{{ cluster_network_observability_workload_present_current | bool }}"
+      status_summary: "{{ cluster_network_observability_section_override_current.status }}"
+      reason_summary: "{{ cluster_network_observability_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_cluster_network_observability_section: "{{ cluster_network_observability_section_override_current }}"
+    capability_artifact_collection_inputs:
+      cluster_network_observability_present: "{{ cluster_network_observability_present_current | bool }}"
+      cluster_network_observability_healthy: "{{ cluster_network_observability_healthy_current | bool }}"
+      cluster_network_observability_subscription_present: "{{ cluster_network_observability_subscription_present_current | bool }}"
+      cluster_network_observability_namespace_present: "{{ cluster_network_observability_namespace_present_current | bool }}"
+      cluster_network_observability_crd_present: "{{ cluster_network_observability_crd_present_current | bool }}"
+      cluster_network_observability_workload_present: "{{ cluster_network_observability_workload_present_current | bool }}"

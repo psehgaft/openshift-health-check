@@ -1,0 +1,111 @@
+---
+- name: Build LokiStack logging capability artifact facts
+  vars:
+    day2_loki_stack_logging_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'loki_stack_logging') | list | first) | default({})) }}"
+    loki_crd_present_current: >-
+      {{
+        (
+          ((analysis_graph.crds | default({})).get('items', []) | default([]))
+          | selectattr('metadata', 'defined')
+          | selectattr('metadata.name', 'defined')
+          | map(attribute='metadata.name')
+          | map('string')
+          | map('lower')
+          | select('in', ['lokistacks.loki.grafana.com', 'lokis.loki.grafana.com'])
+          | list
+          | length
+        ) > 0
+      }}
+    lokistack_count_current: "{{ (((analysis_graph.lokistacks | default({})).get('items', []) | length) | int) }}"
+    loki_namespace_present_current: "{{ ('openshift-logging' in (namespace_names | default([])) or 'loki' in (namespace_names | default([]))) | bool }}"
+    loki_workload_present_current: >-
+      {{
+        (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'loki|promtail|log-collector|vector')
+          | list
+          | length
+        ) > 0
+      }}
+    loki_stack_logging_present_current: "{{ (lokistack_count_current | int) > 0 or (loki_workload_present_current | bool) }}"
+    loki_reason_summary_current: >-
+      {{
+        'lokistacks=' ~ ((lokistack_count_current | int) | string)
+        ~ ' namespace_present=' ~ ((loki_namespace_present_current | bool) | string)
+        ~ ' crd_present=' ~ ((loki_crd_present_current | bool) | string)
+        ~ ' workload_present=' ~ ((loki_workload_present_current | bool) | string)
+      }}
+    loki_recommended_action_current: >-
+      {{
+        'Validate that expected log streams are reaching Loki through the intended forwarding path.'
+        if (loki_stack_logging_present_current | bool)
+        else 'If LokiStack-based centralized logging is intended, confirm the LokiStack custom resource or managed Loki workload footprint.'
+      }}
+    loki_findings_current: >-
+      {{
+        []
+        if (loki_stack_logging_present_current | bool)
+        else [
+          {
+            'capability': 'loki_stack_logging',
+            'issue': 'prod-day2-loki-stack-logging-missing',
+            'severity': 'info',
+            'source': 'LokiStack and Loki workload inventory',
+            'detail': 'no LokiStack custom resource or Loki-managed workload footprint was detected',
+            'recommended_action': loki_recommended_action_current,
+            'docs': ((day2_loki_stack_logging_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    loki_section_override_current: >-
+      {{
+        (day2_loki_stack_logging_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if (loki_stack_logging_present_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'LokiStack logging footprint',
+                  'capability_key': 'loki_stack_logging',
+                  'detail': loki_reason_summary_current,
+                  'level': ((day2_loki_stack_logging_section_current.criticality | default('low')) | string),
+                  'scored': false,
+                  'source': 'LokiStack and Loki workload inventory',
+                  'status': ('OK' if (loki_stack_logging_present_current | bool) else 'WARN')
+                }
+              ],
+              'findings': loki_findings_current,
+              'status': ('OK' if (loki_stack_logging_present_current | bool) else 'INFO'),
+              'top_detail': (
+                loki_reason_summary_current
+                if (loki_stack_logging_present_current | bool)
+                else 'no LokiStack custom resource or Loki-managed workload footprint was detected'
+              ),
+              'recommended_action': loki_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: loki_stack_logging
+    capability_artifact_section_override: "{{ loki_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if (loki_stack_logging_present_current | bool) else 1) | int }}"
+      status: "{{ 'OK' if (loki_stack_logging_present_current | bool) else 'INFO' }}"
+      status_summary: "{{ 'OK' if (loki_stack_logging_present_current | bool) else 'INFO' }}"
+      top_detail: "{{ loki_section_override_current.top_detail }}"
+      reason_summary: "{{ loki_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_loki_stack_logging_section: "{{ loki_section_override_current }}"
+    capability_artifact_collection_inputs:
+      lokistack_count: "{{ lokistack_count_current | int }}"
+      loki_namespace_present: "{{ loki_namespace_present_current | bool }}"
+      loki_crd_present: "{{ loki_crd_present_current | bool }}"
+      loki_workload_present: "{{ loki_workload_present_current | bool }}"

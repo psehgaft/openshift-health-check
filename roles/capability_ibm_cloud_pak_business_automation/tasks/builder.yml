@@ -1,0 +1,67 @@
+---
+- name: Build IBM Cloud Pak for Business Automation capability artifact facts
+  vars:
+    day2_ibm_cloud_pak_business_automation_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'ibm_cloud_pak_business_automation') | list | first) | default({})) }}"
+    ibm_cloud_pak_business_automation_present_current: "{{ ((day2_posture_summary | default({})).get('ibm_cloud_pak_business_automation_present', false)) | bool }}"
+    ibm_cloud_pak_business_automation_healthy_current: "{{ ((day2_posture_summary | default({})).get('ibm_cloud_pak_business_automation_healthy', false)) | bool }}"
+    ibm_cp4ba_recommended_action_current: >-
+      {{
+        'Confirm the CP4BA control-plane footprint remains healthy and aligned with the intended automation and workflow platform design.'
+        if ibm_cloud_pak_business_automation_present_current
+        else 'If IBM Cloud Pak for Business Automation is intended, deploy or confirm the operator, custom resource, and managed platform footprint.'
+      }}
+    ibm_cp4ba_findings_current: >-
+      {{
+        []
+        if ibm_cloud_pak_business_automation_present_current
+        else [
+          {
+            'capability': 'ibm_cloud_pak_business_automation',
+            'issue': 'prod-day2-ibm-cloud-pak-business-automation-missing',
+            'severity': 'info',
+            'source': 'IBM Cloud Pak for Business Automation operator and custom resource inventory',
+            'detail': 'no IBM Cloud Pak for Business Automation Icp4aCluster custom resource or operator footprint was detected',
+            'recommended_action': ibm_cp4ba_recommended_action_current,
+            'docs': ((day2_ibm_cloud_pak_business_automation_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    ibm_cp4ba_section_override_current: >-
+      {{
+        (day2_ibm_cloud_pak_business_automation_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if ibm_cloud_pak_business_automation_present_current else 1),
+              'findings': ibm_cp4ba_findings_current,
+              'status': (
+                'OK'
+                if (ibm_cloud_pak_business_automation_present_current and ibm_cloud_pak_business_automation_healthy_current)
+                else ('WARNING' if ibm_cloud_pak_business_automation_present_current else 'INFO')
+              ),
+              'top_detail': (
+                (day2_ibm_cloud_pak_business_automation_section_current.top_detail | default('') | string | trim)
+                if ibm_cloud_pak_business_automation_present_current
+                else 'no IBM Cloud Pak for Business Automation Icp4aCluster custom resource or operator footprint was detected'
+              ),
+              'recommended_action': ibm_cp4ba_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: ibm_cloud_pak_business_automation
+    capability_artifact_section_override: "{{ ibm_cp4ba_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      ibm_cloud_pak_business_automation_present: "{{ ibm_cloud_pak_business_automation_present_current | bool }}"
+      ibm_cloud_pak_business_automation_healthy: "{{ ibm_cloud_pak_business_automation_healthy_current | bool }}"
+      status_summary: "{{ ibm_cp4ba_section_override_current.status }}"
+      reason_summary: "{{ ibm_cp4ba_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_ibm_cloud_pak_business_automation_section: "{{ ibm_cp4ba_section_override_current }}"
+    capability_artifact_collection_inputs:
+      ibm_cloud_pak_business_automation_present: "{{ ibm_cloud_pak_business_automation_present_current | bool }}"
+      ibm_cloud_pak_business_automation_healthy: "{{ ibm_cloud_pak_business_automation_healthy_current | bool }}"

@@ -1,0 +1,122 @@
+---
+- name: Build Datadog observability capability artifact facts
+  vars:
+    day2_datadog_observability_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'datadog_observability') | list | first) | default({})) }}"
+    datadog_crd_present_current: >-
+      {{
+        (
+          ((analysis_graph.crds | default({})).get('items', []) | default([]))
+          | selectattr('metadata', 'defined')
+          | selectattr('metadata.name', 'defined')
+          | map(attribute='metadata.name')
+          | map('string')
+          | map('lower')
+          | select('in', ['datadogagents.datadoghq.com', 'datadogmetrics.datadoghq.com'])
+          | list
+          | length
+        ) > 0
+      }}
+    datadog_subscription_present_current: "{{ ('datadog-operator' in (subscription_packages | default([]))) | bool }}"
+    datadog_namespace_present_current: "{{ ('datadog' in (namespace_names | default([]))) | bool }}"
+    datadogagent_count_current: "{{ (((analysis_graph.datadogagents | default({})).get('items', []) | length) | int) }}"
+    datadog_workload_present_current: >-
+      {{
+        (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'datadog-agent|cluster-agent|datadog-cluster-agent|datadog-operator')
+          | list
+          | length
+        ) > 0
+      }}
+    datadog_observability_present_current: "{{ ((datadogagent_count_current | int) > 0) or (datadog_workload_present_current | bool) }}"
+    datadog_reason_summary_current: >-
+      {{
+        (
+          'cluster meets criteria for Datadog-managed observability: '
+          ~ 'datadogagents=' ~ ((datadogagent_count_current | int) | string)
+          ~ ' workload_present=' ~ ((datadog_workload_present_current | bool) | string)
+        )
+        if (datadog_observability_present_current | bool)
+        else (
+          'subscription_present=' ~ ((datadog_subscription_present_current | bool) | string)
+          ~ ' namespace_present=' ~ ((datadog_namespace_present_current | bool) | string)
+          ~ ' crd_present=' ~ ((datadog_crd_present_current | bool) | string)
+          ~ ' datadogagents=' ~ ((datadogagent_count_current | int) | string)
+          ~ ' workload_present=' ~ ((datadog_workload_present_current | bool) | string)
+        )
+      }}
+    datadog_recommended_action_current: >-
+      {{
+        'Validate that cluster metrics, logs, and alert routing reach Datadog through the intended telemetry path.'
+        if (datadog_observability_present_current | bool)
+        else 'If Datadog-managed observability is intended, deploy or confirm the Datadog operator, agent footprint, and telemetry delivery path.'
+      }}
+    datadog_findings_current: >-
+      {{
+        []
+        if (datadog_observability_present_current | bool)
+        else [
+          {
+            'capability': 'datadog_observability',
+            'issue': 'prod-day2-datadog-observability-missing',
+            'severity': 'info',
+            'source': 'Datadog operator and agent inventory',
+            'detail': 'no DatadogAgent custom resource or Datadog-managed agent workload footprint was detected',
+            'recommended_action': datadog_recommended_action_current,
+            'docs': ((day2_datadog_observability_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    datadog_section_override_current: >-
+      {{
+        (day2_datadog_observability_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if (datadog_observability_present_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'Datadog observability footprint',
+                  'capability_key': 'datadog_observability',
+                  'detail': datadog_reason_summary_current,
+                  'level': ((day2_datadog_observability_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Datadog operator and agent inventory',
+                  'status': ('OK' if (datadog_observability_present_current | bool) else 'WARN')
+                }
+              ],
+              'findings': datadog_findings_current,
+              'status': ('OK' if (datadog_observability_present_current | bool) else 'INFO'),
+              'top_detail': (
+                datadog_reason_summary_current
+                if (datadog_observability_present_current | bool)
+                else 'no DatadogAgent custom resource or Datadog-managed agent workload footprint was detected'
+              ),
+              'recommended_action': datadog_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: datadog_observability
+    capability_artifact_section_override: "{{ datadog_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if (datadog_observability_present_current | bool) else 1) | int }}"
+      status: "{{ 'OK' if (datadog_observability_present_current | bool) else 'INFO' }}"
+      status_summary: "{{ 'OK' if (datadog_observability_present_current | bool) else 'INFO' }}"
+      top_detail: "{{ datadog_section_override_current.top_detail }}"
+      reason_summary: "{{ datadog_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_datadog_observability_section: "{{ datadog_section_override_current }}"
+    capability_artifact_collection_inputs:
+      datadog_subscription_present: "{{ datadog_subscription_present_current | bool }}"
+      datadog_namespace_present: "{{ datadog_namespace_present_current | bool }}"
+      datadog_crd_present: "{{ datadog_crd_present_current | bool }}"
+      datadogagent_count: "{{ datadogagent_count_current | int }}"
+      datadog_workload_present: "{{ datadog_workload_present_current | bool }}"

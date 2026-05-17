@@ -556,7 +556,7 @@ For customer-specific optional platforms and vendor-managed extensions such as D
 
 The unified OpenShift profile is also the single source of truth for analyzer-supported capabilities. If Day 2 analyzer logic can emit a capability key, that key must exist in `inputs/openshift-cluster-health-profile.yml`, even when it is optional and off by default.
 
-Capability assessment is intentionally fail-closed. If the analyzer does not produce collected capability checks, the report must say the capability assessment did not complete cleanly and mark those sections as `not-assessed` placeholders instead of inflating coverage or pretending the capability was evaluated.
+Capability assessment is fail-closed. If the analyzer does not produce collected capability checks, the report must say the capability assessment did not complete cleanly and mark those sections as `not-assessed` placeholders instead of inflating coverage or pretending the capability was evaluated.
 
 Maintainer extension workflow:
 - follow [docs/cluster-health-extension-guide.md](/Users/luqman/workspace/guides/openshift-health-check/docs/cluster-health-extension-guide.md:1) when adding a posture, capability, or new scan scope
@@ -599,7 +599,7 @@ This section maps the main report signals to their reason for inclusion and the 
 
 | Signal family | Why it is collected | Main condition or reasoning |
 | --- | --- | --- |
-| ClusterVersion and update risk | upgrade safety and change readiness | `Available`, `Progressing`, `Failing`, available updates, conditional risks, and update history are first-class OpenShift lifecycle signals |
+| ClusterVersion and update risk | upgrade safety and change readiness | `Available`, `Progressing`, `Failing`, available updates, conditional risks, and update history are primary OpenShift lifecycle signals |
 | Cluster operators and infrastructure components | control-plane and platform health | operators should normally report `Available=True`, `Progressing=False`, `Degraded=False` |
 | API and etcd metrics | control-plane responsiveness and stability | latency, 5xx, inflight requests, leader changes, and peer RTT are high-signal failure predictors |
 | Prometheus/Thanos query results | metric-backed accuracy for live health checks | official metric source used for alerting, API server, etcd, node utilization, pod density, pod usage, and optional latency signals |
@@ -612,18 +612,18 @@ This section maps the main report signals to their reason for inclusion and the 
 | Namespace hygiene | noisy-neighbor protection and baseline guardrails | user namespaces should normally have `NetworkPolicy`, `ResourceQuota`, and `LimitRange` |
 | Resource requests and limits | scheduling and capacity hygiene | missing requests and limits weaken bin packing, quota control, and capacity planning |
 | Build, pipeline, and image posture | delivery discipline | OpenShift path inventories builds, pipelines, triggers, and image-registry usage to support application-delivery review |
-| Privileged access and SCC grants | least privilege review | privileged RBAC subjects and risky SCC grants are surfaced because they materially affect platform risk |
+| Privileged access and SCC grants | least privilege review | privileged RBAC subjects and risky SCC grants are surfaced because they affect platform risk |
 | Stale-access review candidates | access cleanup | these are conservative review candidates, not proofs of inactivity |
 | External log, metrics, and alert delivery | operational readiness and incident response | the report checks whether logs, metrics, and alert receivers appear to reach destinations outside the cluster |
 | Certificates and deprecated APIs | lifecycle and outage prevention | expiring certificates and deprecated APIs are early indicators of avoidable future failures |
 
 ## Repository Layout
 
-The repo no longer relies on a few large monolithic task files for the OpenShift path. The current layout is:
+The OpenShift path is split across:
 
 - shared collection, evidence loading, and analysis entrypoints
 - dedicated `roles/posture_<key>/` roles for enabled OpenShift postures
-- dedicated `roles/capability_<key>/` roles for enabled OpenShift capabilities
+- dedicated `roles/capability_<key>/` roles for every OpenShift capability in the built-in profile
 - shared artifact persistence and artifact-first resume/render helpers under `roles/report_common/tasks/`
 - helper Python scripts under `scripts/` instead of embedded Python blocks in Ansible task files
 

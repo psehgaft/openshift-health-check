@@ -1,0 +1,92 @@
+---
+- name: Build Prisma Twistlock defenders capability artifact facts
+  vars:
+    day2_prisma_twistlock_defenders_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'prisma_twistlock_defenders') | list | first) | default({})) }}"
+    prisma_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('prisma_subscription_present', false)) | bool }}"
+    prisma_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('prisma_namespace_present', false)) | bool }}"
+    prisma_crd_present_current: "{{ ((day2_posture_summary | default({})).get('prisma_crd_present', false)) | bool }}"
+    prisma_workload_present_current: "{{ ((day2_posture_summary | default({})).get('prisma_workload_present', false)) | bool }}"
+    prisma_present_current: "{{ (prisma_subscription_present_current or prisma_namespace_present_current or prisma_crd_present_current or prisma_workload_present_current) | bool }}"
+    prisma_reason_summary_current: >-
+      {{
+        'subscription_present=' ~ (prisma_subscription_present_current | string)
+        ~ ' namespace_present=' ~ (prisma_namespace_present_current | string)
+        ~ ' crd_present=' ~ (prisma_crd_present_current | string)
+        ~ ' workload_present=' ~ (prisma_workload_present_current | string)
+      }}
+    prisma_recommended_action_current: >-
+      {{
+        'Confirm the Prisma Cloud Compute or Twistlock footprint is healthy and that the intended enforcement path remains in service.'
+        if prisma_present_current
+        else 'If Prisma Cloud Compute or Twistlock is intended, deploy or confirm the operator, namespace, CRD, and defender workload footprint.'
+      }}
+    prisma_findings_current: >-
+      {{
+        []
+        if prisma_present_current
+        else [
+          {
+            'capability': 'prisma_twistlock_defenders',
+            'issue': 'prod-day2-prisma-twistlock-defenders-missing',
+            'severity': 'info',
+            'source': 'Prisma Cloud Compute inventory',
+            'detail': 'no Prisma Cloud Compute or Twistlock namespace, CRD, Console, or Defender workload footprint was detected',
+            'recommended_action': prisma_recommended_action_current,
+            'docs': ((day2_prisma_twistlock_defenders_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    prisma_section_override_current: >-
+      {{
+        (day2_prisma_twistlock_defenders_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if prisma_present_current else 1),
+              'checks': [
+                {
+                  'capability': 'Prisma Cloud Defender footprint',
+                  'capability_key': 'prisma_twistlock_defenders',
+                  'detail': prisma_reason_summary_current,
+                  'level': ((day2_prisma_twistlock_defenders_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Prisma Cloud Compute inventory',
+                  'status': ('OK' if prisma_present_current else 'WARN')
+                }
+              ],
+              'findings': prisma_findings_current,
+              'status': ('OK' if prisma_present_current else 'INFO'),
+              'top_detail': (
+                prisma_reason_summary_current
+                if prisma_present_current
+                else 'no Prisma Cloud Compute or Twistlock namespace, CRD, Console, or Defender workload footprint was detected'
+              ),
+              'recommended_action': prisma_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: prisma_twistlock_defenders
+    capability_artifact_section_override: "{{ prisma_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if prisma_present_current else 1) | int }}"
+      subscription_present: "{{ prisma_subscription_present_current | bool }}"
+      namespace_present: "{{ prisma_namespace_present_current | bool }}"
+      crd_present: "{{ prisma_crd_present_current | bool }}"
+      workload_present: "{{ prisma_workload_present_current | bool }}"
+      status: "{{ 'OK' if prisma_present_current else 'INFO' }}"
+      status_summary: "{{ 'OK' if prisma_present_current else 'INFO' }}"
+      top_detail: "{{ prisma_section_override_current.top_detail }}"
+      reason_summary: "{{ prisma_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_prisma_twistlock_defenders_section: "{{ prisma_section_override_current }}"
+    capability_artifact_collection_inputs:
+      subscription_present: "{{ prisma_subscription_present_current | bool }}"
+      namespace_present: "{{ prisma_namespace_present_current | bool }}"
+      crd_present: "{{ prisma_crd_present_current | bool }}"
+      workload_present: "{{ prisma_workload_present_current | bool }}"

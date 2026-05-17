@@ -1,0 +1,117 @@
+---
+- name: Build Splunk observability capability artifact facts
+  vars:
+    day2_splunk_observability_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'splunk_observability') | list | first) | default({})) }}"
+    splunk_crd_present_current: >-
+      {{
+        (
+          ((analysis_graph.crds | default({})).get('items', []) | default([]))
+          | selectattr('metadata', 'defined')
+          | selectattr('metadata.name', 'defined')
+          | map(attribute='metadata.name')
+          | map('string')
+          | map('lower')
+          | select('in', ['splunk.com', 'otelcollectors.opentelemetry.io', 'opentelemetrycollectors.opentelemetry.io'])
+          | list
+          | length
+        ) > 0
+      }}
+    splunk_namespace_present_current: "{{ ('splunk' in (namespace_names | default([]))) | bool }}"
+    splunk_workload_present_current: >-
+      {{
+        (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'splunk|otel-collector|opentelemetry-collector')
+          | list
+          | length
+        ) > 0
+      }}
+    splunk_observability_present_current: "{{ (splunk_crd_present_current | bool) or (splunk_workload_present_current | bool) }}"
+    splunk_reason_summary_current: >-
+      {{
+        (
+          'cluster meets criteria for Splunk-managed observability: '
+          ~ 'namespace_present=' ~ ((splunk_namespace_present_current | bool) | string)
+          ~ ' crd_present=' ~ ((splunk_crd_present_current | bool) | string)
+          ~ ' workload_present=' ~ ((splunk_workload_present_current | bool) | string)
+        )
+        if (splunk_observability_present_current | bool)
+        else (
+          'namespace_present=' ~ ((splunk_namespace_present_current | bool) | string)
+          ~ ' crd_present=' ~ ((splunk_crd_present_current | bool) | string)
+          ~ ' workload_present=' ~ ((splunk_workload_present_current | bool) | string)
+        )
+      }}
+    splunk_recommended_action_current: >-
+      {{
+        'Validate that cluster metrics, logs, and alerting signals reach Splunk through the intended collector and delivery path.'
+        if (splunk_observability_present_current | bool)
+        else 'If Splunk-managed observability is intended, confirm the OpenTelemetry or Splunk workload footprint and the expected telemetry delivery path.'
+      }}
+    splunk_findings_current: >-
+      {{
+        []
+        if (splunk_observability_present_current | bool)
+        else [
+          {
+            'capability': 'splunk_observability',
+            'issue': 'prod-day2-splunk-observability-missing',
+            'severity': 'info',
+            'source': 'Splunk OpenTelemetry and logging inventory',
+            'detail': 'no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was detected',
+            'recommended_action': splunk_recommended_action_current,
+            'docs': ((day2_splunk_observability_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    splunk_section_override_current: >-
+      {{
+        (day2_splunk_observability_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if (splunk_observability_present_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'Splunk observability footprint',
+                  'capability_key': 'splunk_observability',
+                  'detail': splunk_reason_summary_current,
+                  'level': ((day2_splunk_observability_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Splunk OpenTelemetry and logging inventory',
+                  'status': ('OK' if (splunk_observability_present_current | bool) else 'WARN')
+                }
+              ],
+              'findings': splunk_findings_current,
+              'status': ('OK' if (splunk_observability_present_current | bool) else 'INFO'),
+              'top_detail': (
+                splunk_reason_summary_current
+                if (splunk_observability_present_current | bool)
+                else 'no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was detected'
+              ),
+              'recommended_action': splunk_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: splunk_observability
+    capability_artifact_section_override: "{{ splunk_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if (splunk_observability_present_current | bool) else 1) | int }}"
+      status: "{{ 'OK' if (splunk_observability_present_current | bool) else 'INFO' }}"
+      status_summary: "{{ 'OK' if (splunk_observability_present_current | bool) else 'INFO' }}"
+      top_detail: "{{ splunk_section_override_current.top_detail }}"
+      reason_summary: "{{ splunk_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_splunk_observability_section: "{{ splunk_section_override_current }}"
+    capability_artifact_collection_inputs:
+      splunk_namespace_present: "{{ splunk_namespace_present_current | bool }}"
+      splunk_crd_present: "{{ splunk_crd_present_current | bool }}"
+      splunk_workload_present: "{{ splunk_workload_present_current | bool }}"

@@ -162,6 +162,14 @@ custom_ca_configured = bool(
 registry_sources = image_spec.get("registrySources") or {}
 mirror_resource_count = len(imagedigestmirrorsets) + len(imagetagmirrorsets) + len(imagecontentsourcepolicies)
 restricted_registry_sources = bool(registry_sources.get("allowedRegistries") or registry_sources.get("blockedRegistries"))
+allowed_imports = [
+    item for item in (image_spec.get("allowedRegistriesForImport") or [])
+    if str(item or "").strip()
+]
+insecure_registries = [
+    item for item in (registry_sources.get("insecureRegistries") or [])
+    if str(item or "").strip()
+]
 public_registry_hints = ["registry.redhat.io", "quay.io", "registry.connect.redhat.com", "registry.access.redhat.com"]
 
 def is_public_image_ref(value):
@@ -555,6 +563,20 @@ grafana_present = any_keyword(["grafana"], all_workload_blobs) or "grafana" in n
 grafana_dashboard_crd_present = crd_has("grafanadashboards", "grafana.integreatly.org", "grafana.com")
 grafana_dashboard_present = bool(len(dashboard_configmaps) > 0)
 workload_vulnerability_report_crd_present = crd_has("aquasecurity.github.io", "vulnerabilityreports")
+admission_policy_engine_present = bool(
+    "gatekeeper-system" in namespace_names
+    or "kyverno" in namespace_names
+    or crd_has("gatekeeper.sh", "kyverno.io", "validatingadmissionpolicy")
+)
+image_signature_and_admission_policy_present = bool(
+    admission_policy_engine_present
+    or len(allowed_imports) > 0
+    or restricted_registry_sources
+)
+image_signature_and_admission_policy_healthy = bool(
+    image_signature_and_admission_policy_present
+    and len(insecure_registries) == 0
+)
 workload_scanner_subscription_present = any(
     package in subscription_packages
     for package in {
@@ -741,6 +763,50 @@ datadog_context_present = bool(
 datadog_observability_present = bool(
     len(datadogagents) > 0
     or datadog_workload_present
+)
+cluster_network_observability_subscription_present = any(
+    package in subscription_packages
+    for package in {
+        "netobserv-operator",
+        "network-observability-operator",
+    }
+)
+cluster_network_observability_namespace_present = any(
+    name in namespace_names
+    for name in {
+        "netobserv",
+        "openshift-netobserv",
+        "network-observability",
+    }
+)
+cluster_network_observability_crd_present = crd_has(
+    "flows.netobserv.io",
+    "flowcollectors.flows.netobserv.io",
+    "consoleplugins.observability.openshift.io",
+    "flowmetrics.flows.netobserv.io",
+)
+cluster_network_observability_workload_present = any_keyword(
+    [
+        "netobserv",
+        "flowlogs-pipeline",
+        "flowlogs-reader",
+        "network-observability-operator",
+        "console-plugin-netobserv",
+    ],
+    all_workload_blobs,
+)
+cluster_network_observability_present = bool(
+    cluster_network_observability_subscription_present
+    or cluster_network_observability_namespace_present
+    or cluster_network_observability_crd_present
+    or cluster_network_observability_workload_present
+)
+cluster_network_observability_healthy = bool(
+    cluster_network_observability_present
+    and (
+        cluster_network_observability_crd_present
+        or cluster_network_observability_workload_present
+    )
 )
 appdynamics_subscription_present = "appdynamics-operator" in subscription_packages
 appdynamics_namespace_present = "appdynamics" in namespace_names
@@ -1535,6 +1601,7 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "External log forwarding": "cluster_log_forwarding",
         "Cluster metrics remote write": "cluster_metrics_remote_write",
         "External alert delivery": "external_alert_delivery",
+        "Cluster network observability footprint": "cluster_network_observability",
         "API server audit logging and retention": "api_server_audit_and_log_retention",
         "Application backup and restore baseline": "application_backup_and_restore_readiness",
         "Control plane backup and recovery baseline": "control_plane_backup_and_recovery_readiness",
@@ -1545,6 +1612,7 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "Worker machine remediation": "machine_health_check_remediation",
         "Cluster autoscaler": "cluster_autoscaler_configuration",
         "Registry governance baseline": "image_registry_policy_governance",
+        "Trusted image admission policy": "image_signature_and_admission_policy",
         "Cluster image mirror configuration": "cluster_image_mirror_configuration",
         "Disconnected installation image sources": "disconnected_cluster_image_sources",
         "IPsec encryption enabled": "ovn_ipsec_encryption",
@@ -1560,18 +1628,7 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "ACM managed-cluster registration": "advanced_cluster_management",
     }
     capability_key = capability_key if capability_key is not None else capability_key_map.get(capability, "")
-    if capability_key and not (
-        cap_required(capability_key)
-        or (
-            capability_key in {
-                "advanced_cluster_security",
-                "api_server_audit_and_log_retention",
-                "ingress_controller_topology_and_sharding",
-                "user_workload_alerting_and_slos",
-            }
-            and cap_enabled(capability_key)
-        )
-    ):
+    if capability_key and not cap_enabled(capability_key):
         return
     checks.append({
         "capability_key": capability_key,
@@ -1668,6 +1725,9 @@ def finding_capability_key(issue, source):
         "prod-day2-openshift-virtualization-missing": "openshift_virtualization",
         "prod-day2-openshift-ai-missing": "openshift_ai",
         "prod-day2-image-registry-policy-governance-missing": "image_registry_policy_governance",
+        "prod-day2-image-signature-and-admission-policy-missing": "image_signature_and_admission_policy",
+        "prod-day2-image-signature-and-admission-policy-insecure-registries": "image_signature_and_admission_policy",
+        "prod-day2-cluster-network-observability-missing": "cluster_network_observability",
         "prod-day2-service-mesh-missing": "service_mesh_control_plane",
         "prod-day2-serverless-missing": "openshift_serverless",
         "prod-day2-windows-container-workloads-missing": "windows_container_workloads",
@@ -1681,7 +1741,7 @@ def finding_capability_key(issue, source):
 
 def add_finding(issue, detail, severity="warning", source="general", capability_key=None):
     capability_key = capability_key if capability_key is not None else finding_capability_key(issue, source)
-    if capability_key and not cap_required(capability_key):
+    if capability_key and not cap_enabled(capability_key):
         return
     findings.append({
         "issue": issue,
@@ -2150,6 +2210,31 @@ elif cap_required("external_alert_delivery") and not external_alert_delivery_hea
         ),
         severity=cap_failure_severity("external_alert_delivery"),
         source="AlertmanagerConfig and monitoring alert delivery inventory",
+    )
+
+add_check(
+    "Cluster network observability footprint",
+    cap_status_for_presence(
+        "cluster_network_observability",
+        cluster_network_observability_present,
+        cluster_network_observability_healthy,
+    ),
+    (
+        f"subscriptionPresent={cluster_network_observability_subscription_present} "
+        f"namespacePresent={cluster_network_observability_namespace_present} "
+        f"crdPresent={cluster_network_observability_crd_present} "
+        f"workloadPresent={cluster_network_observability_workload_present}"
+    ),
+    "OpenShift network observability operator and workload inventory",
+    level=cap_level("cluster_network_observability", "informational"),
+    scored=False,
+)
+if cap_required("cluster_network_observability") and not cluster_network_observability_present:
+    add_finding(
+        "prod-day2-cluster-network-observability-missing",
+        "no network observability operator, CRD, namespace, or workload footprint was detected",
+        severity=cap_failure_severity("cluster_network_observability"),
+        source="OpenShift network observability operator and workload inventory",
     )
 
 apiserver_audit_profile = str((((apiserver_config.get("spec") or {}).get("audit") or {}).get("profile") or "")).strip().lower()
@@ -2884,6 +2969,41 @@ if cap_required("image_registry_policy_governance") and not image_policy_clean:
         ),
         severity=cap_failure_severity("image_registry_policy_governance"),
         source="registry governance guidance",
+    )
+
+add_check(
+    "Trusted image admission policy",
+    cap_status_for_presence(
+        "image_signature_and_admission_policy",
+        image_signature_and_admission_policy_present,
+        image_signature_and_admission_policy_healthy,
+    ),
+    (
+        f"admissionPolicyEnginePresent={admission_policy_engine_present} "
+        f"allowedRegistriesForImport={len(allowed_imports)} "
+        f"registryFilterPolicyPresent={restricted_registry_sources} "
+        f"insecureRegistries={len(insecure_registries)}"
+    ),
+    "trusted image policy and admission guardrail inventory",
+    level=cap_level("image_signature_and_admission_policy", "recommended"),
+    scored=False,
+)
+if cap_required("image_signature_and_admission_policy") and not image_signature_and_admission_policy_present:
+    add_finding(
+        "prod-day2-image-signature-and-admission-policy-missing",
+        "no admission policy engine or image registry restriction policy signal was detected for trusted-image enforcement",
+        severity=cap_failure_severity("image_signature_and_admission_policy"),
+        source="trusted image policy and admission guardrail inventory",
+    )
+elif cap_required("image_signature_and_admission_policy") and not image_signature_and_admission_policy_healthy:
+    add_finding(
+        "prod-day2-image-signature-and-admission-policy-insecure-registries",
+        (
+            "trusted-image policy is incomplete because insecure registries are configured: "
+            + ", ".join(insecure_registries)
+        ),
+        severity=cap_failure_severity("image_signature_and_admission_policy"),
+        source="trusted image policy and admission guardrail inventory",
     )
 
 add_check(
@@ -4189,6 +4309,10 @@ print(json.dumps({
         "namespaces_with_all_namespace_governance_guardrails": len(namespaces_with_all_namespace_governance_guardrails),
         "external_secret_store_count": ext_secret_store_count,
         "external_secret_count": len(externalsecrets),
+        "external_secret_ready_store_count": len(ready_secret_stores),
+        "external_secret_ready_count": len(ready_external_secrets),
+        "external_secrets_namespace_present": ext_secrets_namespace_present,
+        "external_secrets_healthy": ext_secrets_healthy,
         "clusterautoscaler_count": len(clusterautoscalers),
         "clusterautoscaler_expected": autoscaler_expected,
         "hostedcluster_count": len(hostedclusters),
@@ -4218,6 +4342,11 @@ print(json.dumps({
         "workloads_with_image_pull_secret": workloads_with_pull_secret,
         "cluster_image_mirror_configuration_present": cluster_image_mirror_configuration_present,
         "image_mirror_resource_count": mirror_resource_count,
+        "image_signature_and_admission_policy_present": image_signature_and_admission_policy_present,
+        "image_signature_and_admission_policy_healthy": image_signature_and_admission_policy_healthy,
+        "admission_policy_engine_present": admission_policy_engine_present,
+        "image_registry_filter_policy_present": bool(len(allowed_imports) > 0 or restricted_registry_sources),
+        "insecure_registry_count": len(insecure_registries),
         "disconnected_cluster_image_sources_present": disconnected_cluster_image_sources_present,
         "disconnected_catalogsource_count": disconnected_catalog_count,
         "ovn_ipsec_encryption": ovn_ipsec_encryption,
@@ -4234,13 +4363,24 @@ print(json.dumps({
         "external_log_forwarding_output_count": len(obs.get("external_log_forwarding_outputs") or []),
         "external_alert_delivery_configured": external_alert_delivery_present,
         "external_alert_receiver_count": int(obs.get("external_alert_receiver_count") or 0),
+        "cluster_network_observability_present": cluster_network_observability_present,
+        "cluster_network_observability_healthy": cluster_network_observability_healthy,
+        "cluster_network_observability_subscription_present": cluster_network_observability_subscription_present,
+        "cluster_network_observability_namespace_present": cluster_network_observability_namespace_present,
+        "cluster_network_observability_crd_present": cluster_network_observability_crd_present,
+        "cluster_network_observability_workload_present": cluster_network_observability_workload_present,
         "external_cluster_metrics_remote_write_count": cluster_remote_write,
         "external_user_workload_metrics_remote_write_count": user_remote_write,
         "apiserver_audit_profile": apiserver_audit_profile or "not-configured",
         "api_audit_logging_present": api_audit_logging_present,
         "api_audit_retention_present": api_audit_retention_present,
         "backup_schedule_count": len(schedules),
+        "backup_storage_location_count": len(backupstoragelocations),
+        "data_protection_application_count": len(dataprotectionapplications),
         "successful_backup_count": successful_backups,
+        "clean_successful_backup_count": clean_successful_backups,
+        "clean_completed_restore_count": clean_completed_restores,
+        "application_backup_ready": backup_ready,
         "secondary_site_disaster_recovery_present": secondary_site_dr_present,
         "secondary_site_disaster_recovery_healthy": secondary_site_dr_healthy,
         "drpolicy_count": len(drpolicies),
@@ -4253,6 +4393,14 @@ print(json.dumps({
         "secondary_site_dr_problem_drpc_count": len(drpcs_with_problem_status),
         "secondary_site_dr_problem_vrg_count": len(vrgs_with_problem_status),
         "cluster_hosted_cicd_runners_present": cicd_runner_present,
+        "openshift_pipeline_workflows_present": bool("openshift-pipelines-operator-rh" in subscription_packages or "openshift-pipelines" in namespace_names or "openshift-pipelines-operator-bootstrap" in gitops_application_names),
+        "openshift_pipeline_subscription_present": "openshift-pipelines-operator-rh" in subscription_packages,
+        "openshift_pipeline_namespace_present": "openshift-pipelines" in namespace_names,
+        "openshift_pipeline_gitops_app_present": "openshift-pipelines-operator-bootstrap" in gitops_application_names,
+        "cert_manager_operator_present": bool("openshift-cert-manager-operator" in subscription_packages or "cert-manager-operator" in namespace_names or "cert-manager" in namespace_names),
+        "cert_manager_subscription_present": "openshift-cert-manager-operator" in subscription_packages,
+        "cert_manager_operator_namespace_present": "cert-manager-operator" in namespace_names,
+        "cert_manager_namespace_present": "cert-manager" in namespace_names,
         "openshift_data_foundation_present": openshift_data_foundation_present,
         "openshift_virtualization_present": openshift_virtualization_present,
         "openshift_virtualization_healthy": openshift_virtualization_healthy,
@@ -4261,10 +4409,26 @@ print(json.dumps({
         "ingress_topology_signal_count": len(ingress_topology_signals),
         "ingress_topology_healthy": ingress_topology_healthy,
         "openshift_ai_present": openshift_ai_present,
+        "openshift_aap_present": openshift_aap_present,
+        "openshift_custom_metrics_autoscaler_present": openshift_custom_metrics_autoscaler_present,
+        "ibm_cloud_pak_business_automation_present": ibm_cloud_pak_business_automation_present,
+        "ibm_cloud_pak_business_automation_healthy": ibm_cloud_pak_business_automation_healthy,
         "service_mesh_control_plane_present": service_mesh_present,
         "service_mesh_control_plane_healthy": service_mesh_healthy,
         "openshift_serverless_present": serverless_present,
         "openshift_serverless_healthy": serverless_healthy,
+        "qualys_subscription_present": qualys_subscription_present,
+        "qualys_namespace_present": qualys_namespace_present,
+        "qualys_crd_present": qualys_crd_present,
+        "qualys_workload_present": qualys_workload_present,
+        "prisma_subscription_present": prisma_subscription_present,
+        "prisma_namespace_present": prisma_namespace_present,
+        "prisma_crd_present": prisma_crd_present,
+        "prisma_workload_present": prisma_workload_present,
+        "aqua_subscription_present": aqua_subscription_present,
+        "aqua_namespace_present": aqua_namespace_present,
+        "aqua_crd_present": aqua_crd_present,
+        "aqua_workload_present": aqua_workload_present,
         "windows_container_workloads_present": windows_workloads_present,
         "windows_container_workloads_healthy": windows_workloads_healthy,
         "gpu_accelerated_workloads_present": gpu_workloads_present,

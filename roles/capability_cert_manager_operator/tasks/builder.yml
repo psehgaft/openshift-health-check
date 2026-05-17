@@ -1,0 +1,75 @@
+---
+- name: Build cert-manager operator capability artifact facts
+  vars:
+    day2_cert_manager_operator_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'cert_manager_operator') | list | first) | default({})) }}"
+    cert_manager_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('cert_manager_subscription_present', false)) | bool }}"
+    cert_manager_operator_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('cert_manager_operator_namespace_present', false)) | bool }}"
+    cert_manager_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('cert_manager_namespace_present', false)) | bool }}"
+    cert_manager_present_current: "{{ ((day2_posture_summary | default({})).get('cert_manager_operator_present', false)) | bool }}"
+    cert_manager_reason_summary_current: >-
+      {{
+        'subscription_present=' ~ (cert_manager_subscription_present_current | string)
+        ~ ' cert_manager_operator_namespace=' ~ (cert_manager_operator_namespace_present_current | string)
+        ~ ' cert_manager_namespace=' ~ (cert_manager_namespace_present_current | string)
+      }}
+    cert_manager_recommended_action_current: >-
+      {{
+        'Confirm the cert-manager footprint is healthy and aligned with the intended certificate automation path.'
+        if cert_manager_present_current
+        else 'If cert-manager is intended, deploy or confirm the operator, namespace, and certificate-management footprint.'
+      }}
+    cert_manager_findings_current: >-
+      {{
+        []
+        if cert_manager_present_current
+        else [
+          {
+            'capability': 'cert_manager_operator',
+            'issue': 'prod-day2-platform-cert-manager-missing',
+            'severity': 'info',
+            'source': 'certificate management inventory',
+            'detail': 'no cert-manager operator footprint was detected',
+            'recommended_action': cert_manager_recommended_action_current,
+            'docs': ((day2_cert_manager_operator_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    cert_manager_section_override_current: >-
+      {{
+        (day2_cert_manager_operator_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if cert_manager_present_current else 1),
+              'findings': cert_manager_findings_current,
+              'status': ('OK' if cert_manager_present_current else 'INFO'),
+              'top_detail': (
+                cert_manager_reason_summary_current
+                if cert_manager_present_current
+                else 'no cert-manager operator footprint was detected'
+              ),
+              'recommended_action': cert_manager_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: cert_manager_operator
+    capability_artifact_section_override: "{{ cert_manager_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      cert_manager_operator_present: "{{ cert_manager_present_current | bool }}"
+      subscription_present: "{{ cert_manager_subscription_present_current | bool }}"
+      cert_manager_operator_namespace_present: "{{ cert_manager_operator_namespace_present_current | bool }}"
+      cert_manager_namespace_present: "{{ cert_manager_namespace_present_current | bool }}"
+      status_summary: "{{ cert_manager_section_override_current.status }}"
+      reason_summary: "{{ cert_manager_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_cert_manager_operator_section: "{{ cert_manager_section_override_current }}"
+    capability_artifact_collection_inputs:
+      subscription_present: "{{ cert_manager_subscription_present_current | bool }}"
+      cert_manager_operator_namespace_present: "{{ cert_manager_operator_namespace_present_current | bool }}"
+      cert_manager_namespace_present: "{{ cert_manager_namespace_present_current | bool }}"
+      cert_manager_operator_present: "{{ cert_manager_present_current | bool }}"

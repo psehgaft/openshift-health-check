@@ -51,7 +51,7 @@ Current mode rules:
 - `auto` resolves to `collected` when collected-state inputs are present
 - `offline` is an alias to `collected`
 - live OpenShift API validation runs only for `live`
-- collected-state is first-class and must not require a live API probe
+- collected-state is a supported path and must not require a live API probe
 
 ### Profile Contract
 
@@ -73,7 +73,7 @@ If analysis or rendering can emit a posture or capability key, that key must exi
 
 ### Posture Ownership
 
-OpenShift posture sections now live under dedicated roles:
+OpenShift posture sections live under dedicated roles:
 
 - `roles/posture_<key>/tasks/main.yml`
 - optional `roles/posture_<key>/tasks/analysis.yml`
@@ -96,10 +96,22 @@ Shared posture artifact wrapper:
 
 ### Capability Ownership
 
-OpenShift capabilities now live under dedicated roles:
+OpenShift capabilities live under dedicated roles:
 
 - `roles/capability_<key>/tasks/main.yml`
 - `roles/capability_<key>/tasks/builder.yml`
+
+Coverage:
+
+- every OpenShift capability in `inputs/openshift-cluster-health-profile.yml` has a matching `roles/capability_<key>/`
+- coverage is checked by `scripts/validate_openshift_capability_role_coverage.py`
+- the expected result is:
+  - `profile=62`
+  - `role_backed=62`
+  - `catalog_only=0`
+
+The `catalog-only` path is still available for future additions. The built-in OpenShift catalog
+does not use it.
 
 Pattern:
 
@@ -115,7 +127,7 @@ Shared capability artifact wrapper:
 
 ### Shared Analysis And Evidence Layers
 
-Large shared owners have been decomposed. Current task trees are intentionally split:
+The main shared task trees are:
 
 - `roles/analyze_common/tasks/security/`
 - `roles/analyze_common/tasks/workload/`
@@ -199,7 +211,7 @@ If you change artifact shape, keep these aligned:
 
 ## Selector-Scoped Execution
 
-OpenShift selector scope is first-class.
+OpenShift selector scope is a supported path.
 
 User-facing inputs:
 
@@ -264,7 +276,7 @@ Payload-backed render resumes also rely on:
 - `report/payload.json`
 - [roles/report_common/tasks/load_openshift_report_payload_artifact.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/load_openshift_report_payload_artifact.yml:1)
 
-Do not add new report-stage facts in a way that only exists in memory for fresh runs. If a resumed payload-backed render needs it, it should be restorable from `payload.json` or rebuilt intentionally.
+Do not add new report-stage facts in a way that only exists in memory for fresh runs. If a resumed payload-backed render needs it, it should be restorable from `payload.json` or rebuilt directly.
 
 ## Helper Script Pattern
 
@@ -392,7 +404,7 @@ Prefer existing collected resources first. Do not add a new live command when th
 
 ## Evidence And Optional Support Sources
 
-Optional support evidence is intentionally scoped now.
+Optional support evidence is scoped by the selector dependency rules.
 
 Potential sources include:
 

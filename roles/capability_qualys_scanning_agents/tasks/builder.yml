@@ -1,0 +1,92 @@
+---
+- name: Build Qualys scanning agents capability artifact facts
+  vars:
+    day2_qualys_scanning_agents_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'qualys_scanning_agents') | list | first) | default({})) }}"
+    qualys_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_subscription_present', false)) | bool }}"
+    qualys_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_namespace_present', false)) | bool }}"
+    qualys_crd_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_crd_present', false)) | bool }}"
+    qualys_workload_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_workload_present', false)) | bool }}"
+    qualys_present_current: "{{ (qualys_subscription_present_current or qualys_namespace_present_current or qualys_crd_present_current or qualys_workload_present_current) | bool }}"
+    qualys_reason_summary_current: >-
+      {{
+        'subscription_present=' ~ (qualys_subscription_present_current | string)
+        ~ ' namespace_present=' ~ (qualys_namespace_present_current | string)
+        ~ ' crd_present=' ~ (qualys_crd_present_current | string)
+        ~ ' workload_present=' ~ (qualys_workload_present_current | string)
+      }}
+    qualys_recommended_action_current: >-
+      {{
+        'Confirm the Qualys agent footprint is healthy and that the intended collection and reporting path remains in service.'
+        if qualys_present_current
+        else 'If Qualys scanning is intended, deploy or confirm the Qualys operator, namespace, CRD, and sensor workload footprint.'
+      }}
+    qualys_findings_current: >-
+      {{
+        []
+        if qualys_present_current
+        else [
+          {
+            'capability': 'qualys_scanning_agents',
+            'issue': 'prod-day2-qualys-scanning-agents-missing',
+            'severity': 'info',
+            'source': 'Qualys agent inventory',
+            'detail': 'no Qualys container sensor, cloud-agent, namespace, CRD, or workload footprint was detected',
+            'recommended_action': qualys_recommended_action_current,
+            'docs': ((day2_qualys_scanning_agents_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    qualys_section_override_current: >-
+      {{
+        (day2_qualys_scanning_agents_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if qualys_present_current else 1),
+              'checks': [
+                {
+                  'capability': 'Qualys scanning agent footprint',
+                  'capability_key': 'qualys_scanning_agents',
+                  'detail': qualys_reason_summary_current,
+                  'level': ((day2_qualys_scanning_agents_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Qualys agent inventory',
+                  'status': ('OK' if qualys_present_current else 'WARN')
+                }
+              ],
+              'findings': qualys_findings_current,
+              'status': ('OK' if qualys_present_current else 'INFO'),
+              'top_detail': (
+                qualys_reason_summary_current
+                if qualys_present_current
+                else 'no Qualys container sensor, cloud-agent, namespace, CRD, or workload footprint was detected'
+              ),
+              'recommended_action': qualys_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: qualys_scanning_agents
+    capability_artifact_section_override: "{{ qualys_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if qualys_present_current else 1) | int }}"
+      subscription_present: "{{ qualys_subscription_present_current | bool }}"
+      namespace_present: "{{ qualys_namespace_present_current | bool }}"
+      crd_present: "{{ qualys_crd_present_current | bool }}"
+      workload_present: "{{ qualys_workload_present_current | bool }}"
+      status: "{{ 'OK' if qualys_present_current else 'INFO' }}"
+      status_summary: "{{ 'OK' if qualys_present_current else 'INFO' }}"
+      top_detail: "{{ qualys_section_override_current.top_detail }}"
+      reason_summary: "{{ qualys_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_qualys_scanning_agents_section: "{{ qualys_section_override_current }}"
+    capability_artifact_collection_inputs:
+      subscription_present: "{{ qualys_subscription_present_current | bool }}"
+      namespace_present: "{{ qualys_namespace_present_current | bool }}"
+      crd_present: "{{ qualys_crd_present_current | bool }}"
+      workload_present: "{{ qualys_workload_present_current | bool }}"

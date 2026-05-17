@@ -2,19 +2,110 @@
 - name: Build API server audit and log retention capability artifact facts
   vars:
     day2_api_server_audit_and_log_retention_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'api_server_audit_and_log_retention') | list | first) | default({})) }}"
+    api_server_audit_profile_current: "{{ (day2_posture_summary | default({})).get('apiserver_audit_profile', 'not-configured') }}"
+    api_server_audit_logging_present_current: "{{ ((day2_posture_summary | default({})).get('api_audit_logging_present', false)) | bool }}"
+    api_server_audit_retention_present_current: "{{ ((day2_posture_summary | default({})).get('api_audit_retention_present', false)) | bool }}"
+    audit_logs_delivery_state_current: "{{ (observability_summary | default({})).get('audit_logs_delivery_state', 'not-configured') }}"
+    vendor_managed_log_forwarding_present_current: "{{ ((observability_summary | default({})).get('vendor_managed_log_forwarding_present', false)) | bool }}"
+    log_forwarding_vendor_names_current: "{{ (observability_summary | default({})).get('log_forwarding_vendor_names', []) }}"
+    api_server_audit_healthy_current: >-
+      {{
+        (api_server_audit_logging_present_current | bool)
+        and (api_server_audit_retention_present_current | bool)
+        and (
+          (audit_logs_delivery_state_current in ['configured', 'delivering', 'verified'])
+          or (vendor_managed_log_forwarding_present_current | bool)
+        )
+      }}
+    api_server_audit_signal_present_current: >-
+      {{
+        (api_server_audit_logging_present_current | bool)
+        or (api_server_audit_retention_present_current | bool)
+        or ((api_server_audit_profile_current | string) not in ['not-configured', 'unknown', ''])
+        or (vendor_managed_log_forwarding_present_current | bool)
+      }}
+    api_server_audit_status_current: >-
+      {{
+        'OK'
+        if (api_server_audit_healthy_current | bool)
+        else ('WARNING' if (api_server_audit_signal_present_current | bool) else 'INFO')
+      }}
+    api_server_audit_reason_current: >-
+      {{
+        'auditProfile=' ~ (api_server_audit_profile_current | string)
+        ~ ' loggingPresent=' ~ ((api_server_audit_logging_present_current | bool) | string)
+        ~ ' retentionPresent=' ~ ((api_server_audit_retention_present_current | bool) | string)
+        ~ ' deliveryState=' ~ (audit_logs_delivery_state_current | string)
+        ~ ' vendorManagedForwarding=' ~ ((vendor_managed_log_forwarding_present_current | bool) | string)
+        ~ ' vendors=' ~ (((log_forwarding_vendor_names_current | default([])) | join(',')) or 'none')
+      }}
+    api_server_audit_recommended_action_current: >-
+      {{
+        'Validate that API server audit logs are retained and delivered through the intended platform or vendor-managed path.'
+        if (api_server_audit_healthy_current | bool)
+        else 'If API audit logging is required, configure or verify the audit profile, retention path, and delivery target before treating this control as satisfied.'
+      }}
+    api_server_audit_findings_current: >-
+      {{
+        []
+        if (api_server_audit_healthy_current | bool)
+        else [
+          {
+            'capability': 'api_server_audit_and_log_retention',
+            'issue': 'prod-day2-api-server-audit-and-log-retention-gap',
+            'severity': ('warning' if (api_server_audit_signal_present_current | bool) else 'info'),
+            'source': 'API audit configuration and observability delivery inventory',
+            'detail': api_server_audit_reason_current,
+            'recommended_action': api_server_audit_recommended_action_current,
+            'docs': ((day2_api_server_audit_and_log_retention_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    api_server_audit_section_override_current: >-
+      {{
+        (day2_api_server_audit_and_log_retention_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if (api_server_audit_healthy_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'API server audit and log retention',
+                  'capability_key': 'api_server_audit_and_log_retention',
+                  'detail': api_server_audit_reason_current,
+                  'level': ((day2_api_server_audit_and_log_retention_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'API audit configuration and observability delivery inventory',
+                  'status': ('OK' if (api_server_audit_healthy_current | bool) else 'WARN')
+                }
+              ],
+              'findings': api_server_audit_findings_current,
+              'status': api_server_audit_status_current,
+              'top_detail': api_server_audit_reason_current,
+              'recommended_action': api_server_audit_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: api_server_audit_and_log_retention
+    capability_artifact_section_override: "{{ api_server_audit_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      observability_status: "{{ day2_api_server_audit_and_log_retention_section_current.status | default('unknown') }}"
-      observability_reason_summary: "{{ day2_api_server_audit_and_log_retention_section_current.top_detail | default('unknown') }}"
-      apiserver_audit_profile: "{{ (day2_posture_summary | default({})).get('apiserver_audit_profile', 'not-configured') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if (api_server_audit_healthy_current | bool) else 1) | int }}"
+      observability_status: "{{ api_server_audit_status_current }}"
+      observability_reason_summary: "{{ api_server_audit_reason_current }}"
+      top_detail: "{{ api_server_audit_reason_current }}"
+      apiserver_audit_profile: "{{ api_server_audit_profile_current }}"
     capability_artifact_render_inputs:
-      day2_api_server_audit_and_log_retention_section: "{{ day2_api_server_audit_and_log_retention_section_current }}"
+      day2_api_server_audit_and_log_retention_section: "{{ api_server_audit_section_override_current }}"
     capability_artifact_collection_inputs:
-      apiserver_audit_profile: "{{ (day2_posture_summary | default({})).get('apiserver_audit_profile', 'not-configured') }}"
-      api_audit_logging_present: "{{ ((day2_posture_summary | default({})).get('api_audit_logging_present', false)) | bool }}"
-      api_audit_retention_present: "{{ ((day2_posture_summary | default({})).get('api_audit_retention_present', false)) | bool }}"
-      audit_logs_delivery_state: "{{ (observability_summary | default({})).get('audit_logs_delivery_state', 'not-configured') }}"
-      vendor_managed_log_forwarding_present: "{{ ((observability_summary | default({})).get('vendor_managed_log_forwarding_present', false)) | bool }}"
-      log_forwarding_vendor_names: "{{ (observability_summary | default({})).get('log_forwarding_vendor_names', []) }}"
+      apiserver_audit_profile: "{{ api_server_audit_profile_current }}"
+      api_audit_logging_present: "{{ api_server_audit_logging_present_current | bool }}"
+      api_audit_retention_present: "{{ api_server_audit_retention_present_current | bool }}"
+      audit_logs_delivery_state: "{{ audit_logs_delivery_state_current }}"
+      vendor_managed_log_forwarding_present: "{{ vendor_managed_log_forwarding_present_current | bool }}"
+      log_forwarding_vendor_names: "{{ log_forwarding_vendor_names_current }}"

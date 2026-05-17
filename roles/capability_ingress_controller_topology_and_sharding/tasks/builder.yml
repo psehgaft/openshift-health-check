@@ -2,18 +2,101 @@
 - name: Build ingress controller topology and sharding capability artifact facts
   vars:
     day2_ingress_controller_topology_and_sharding_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'ingress_controller_topology_and_sharding') | list | first) | default({})) }}"
+    ingresscontroller_count_current: "{{ ((day2_posture_summary | default({})).get('ingresscontroller_count', 0)) | int }}"
+    nondefault_ingresscontroller_count_current: "{{ ((day2_posture_summary | default({})).get('nondefault_ingresscontroller_count', 0)) | int }}"
+    ingress_topology_signal_count_current: "{{ ((day2_posture_summary | default({})).get('ingress_topology_signal_count', 0)) | int }}"
+    ingress_topology_healthy_current: "{{ ((day2_posture_summary | default({})).get('ingress_topology_healthy', false)) | bool }}"
+    default_ingresscontroller_issue_count_current: "{{ ((network_architecture_summary | default({})).get('default_ingresscontroller_issue_count', 0)) | int }}"
+    ingresscontroller_issue_count_current: "{{ ((network_architecture_summary | default({})).get('ingresscontroller_issue_count', 0)) | int }}"
+    ingress_topology_present_current: "{{ (ingresscontroller_count_current | int) > 0 }}"
+    ingress_topology_fully_healthy_current: >-
+      {{
+        (ingress_topology_present_current | bool)
+        and (ingress_topology_healthy_current | bool)
+        and ((default_ingresscontroller_issue_count_current | int) == 0)
+        and ((ingresscontroller_issue_count_current | int) == 0)
+      }}
+    ingress_topology_status_current: >-
+      {{
+        'OK'
+        if (ingress_topology_fully_healthy_current | bool)
+        else ('WARNING' if (ingress_topology_present_current | bool or (ingress_topology_signal_count_current | int) > 0) else 'INFO')
+      }}
+    ingress_topology_reason_current: >-
+      {{
+        'ingressControllers=' ~ ((ingresscontroller_count_current | int) | string)
+        ~ ' nonDefaultIngressControllers=' ~ ((nondefault_ingresscontroller_count_current | int) | string)
+        ~ ' topologySignals=' ~ ((ingress_topology_signal_count_current | int) | string)
+        ~ ' topologyHealthy=' ~ ((ingress_topology_healthy_current | bool) | string)
+        ~ ' defaultIngressIssues=' ~ ((default_ingresscontroller_issue_count_current | int) | string)
+        ~ ' ingressIssues=' ~ ((ingresscontroller_issue_count_current | int) | string)
+      }}
+    ingress_topology_recommended_action_current: >-
+      {{
+        'Validate that the ingress-controller topology and any sharding model match the intended traffic and isolation design.'
+        if (ingress_topology_fully_healthy_current | bool)
+        else 'If ingress topology or sharding is required, review default and non-default ingress controller health, placement, and issue counts.'
+      }}
+    ingress_topology_findings_current: >-
+      {{
+        []
+        if (ingress_topology_fully_healthy_current | bool)
+        else [
+          {
+            'capability': 'ingress_controller_topology_and_sharding',
+            'issue': 'prod-day2-ingress-controller-topology-and-sharding-gap',
+            'severity': ('warning' if (ingress_topology_present_current | bool) else 'info'),
+            'source': 'Ingress controller topology inventory',
+            'detail': ingress_topology_reason_current,
+            'recommended_action': ingress_topology_recommended_action_current,
+            'docs': ((day2_ingress_controller_topology_and_sharding_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    ingress_topology_section_override_current: >-
+      {{
+        (day2_ingress_controller_topology_and_sharding_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if (ingress_topology_fully_healthy_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'Ingress controller topology and sharding',
+                  'capability_key': 'ingress_controller_topology_and_sharding',
+                  'detail': ingress_topology_reason_current,
+                  'level': ((day2_ingress_controller_topology_and_sharding_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Ingress controller topology inventory',
+                  'status': ('OK' if (ingress_topology_fully_healthy_current | bool) else 'WARN')
+                }
+              ],
+              'findings': ingress_topology_findings_current,
+              'status': ingress_topology_status_current,
+              'top_detail': ingress_topology_reason_current,
+              'recommended_action': ingress_topology_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: ingress_controller_topology_and_sharding
+    capability_artifact_section_override: "{{ ingress_topology_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      network_status: "{{ day2_ingress_controller_topology_and_sharding_section_current.status | default('unknown') }}"
-      network_reason_summary: "{{ day2_ingress_controller_topology_and_sharding_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if (ingress_topology_fully_healthy_current | bool) else 1) | int }}"
+      network_status: "{{ ingress_topology_status_current }}"
+      network_reason_summary: "{{ ingress_topology_reason_current }}"
+      top_detail: "{{ ingress_topology_reason_current }}"
     capability_artifact_render_inputs:
-      day2_ingress_controller_topology_and_sharding_section: "{{ day2_ingress_controller_topology_and_sharding_section_current }}"
+      day2_ingress_controller_topology_and_sharding_section: "{{ ingress_topology_section_override_current }}"
     capability_artifact_collection_inputs:
-      ingresscontroller_count: "{{ ((day2_posture_summary | default({})).get('ingresscontroller_count', 0)) | int }}"
-      nondefault_ingresscontroller_count: "{{ ((day2_posture_summary | default({})).get('nondefault_ingresscontroller_count', 0)) | int }}"
-      ingress_topology_signal_count: "{{ ((day2_posture_summary | default({})).get('ingress_topology_signal_count', 0)) | int }}"
-      ingress_topology_healthy: "{{ ((day2_posture_summary | default({})).get('ingress_topology_healthy', false)) | bool }}"
-      default_ingresscontroller_issue_count: "{{ ((network_architecture_summary | default({})).get('default_ingresscontroller_issue_count', 0)) | int }}"
-      ingresscontroller_issue_count: "{{ ((network_architecture_summary | default({})).get('ingresscontroller_issue_count', 0)) | int }}"
+      ingresscontroller_count: "{{ ingresscontroller_count_current | int }}"
+      nondefault_ingresscontroller_count: "{{ nondefault_ingresscontroller_count_current | int }}"
+      ingress_topology_signal_count: "{{ ingress_topology_signal_count_current | int }}"
+      ingress_topology_healthy: "{{ ingress_topology_healthy_current | bool }}"
+      default_ingresscontroller_issue_count: "{{ default_ingresscontroller_issue_count_current | int }}"
+      ingresscontroller_issue_count: "{{ ingresscontroller_issue_count_current | int }}"

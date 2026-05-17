@@ -122,6 +122,12 @@ log "Validating cluster health profile"
 "${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_cluster_health_profile.py" \
   "${ROOT_DIR}/inputs/openshift-cluster-health-profile.yml"
 
+log "Validating OpenShift capability role coverage"
+"${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_openshift_capability_role_coverage.py" \
+  "${ROOT_DIR}/inputs/openshift-cluster-health-profile.yml" \
+  "${ROOT_DIR}/roles" \
+  "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml"
+
 log "Validating vendor-managed telemetry detection"
 "${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_vendor_managed_telemetry.py" \
   "${ROOT_DIR}/tests/fixtures/vendor-managed-telemetry/mock-vendor-managed-telemetry.json"

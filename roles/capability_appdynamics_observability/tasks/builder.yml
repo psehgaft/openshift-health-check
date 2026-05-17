@@ -1,0 +1,126 @@
+---
+- name: Build AppDynamics observability capability artifact facts
+  vars:
+    day2_appdynamics_observability_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'appdynamics_observability') | list | first) | default({})) }}"
+    appdynamics_crd_present_current: >-
+      {{
+        (
+          ((analysis_graph.crds | default({})).get('items', []) | default([]))
+          | selectattr('metadata', 'defined')
+          | selectattr('metadata.name', 'defined')
+          | map(attribute='metadata.name')
+          | map('string')
+          | map('lower')
+          | select('in', ['clusteragents.appdynamics.com', 'infravizs.appdynamics.com', 'appdynamics.com'])
+          | list
+          | length
+        ) > 0
+      }}
+    appdynamics_subscription_present_current: "{{ ('appdynamics-operator' in (subscription_packages | default([]))) | bool }}"
+    appdynamics_namespace_present_current: "{{ ('appdynamics' in (namespace_names | default([]))) | bool }}"
+    clusteragent_count_current: "{{ (((analysis_graph.clusteragents | default({})).get('items', []) | length) | int) }}"
+    infraviz_count_current: "{{ (((analysis_graph.infravizs | default({})).get('items', []) | length) | int) }}"
+    appdynamics_workload_present_current: >-
+      {{
+        (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'appdynamics|cluster-agent|infraviz')
+          | list
+          | length
+        ) > 0
+      }}
+    appdynamics_observability_present_current: "{{ (clusteragent_count_current | int) > 0 or (infraviz_count_current | int) > 0 or (appdynamics_workload_present_current | bool) }}"
+    appdynamics_reason_summary_current: >-
+      {{
+        (
+          'cluster meets criteria for AppDynamics-managed observability: '
+          ~ 'clusteragents=' ~ ((clusteragent_count_current | int) | string)
+          ~ ' infravizs=' ~ ((infraviz_count_current | int) | string)
+          ~ ' workload_present=' ~ ((appdynamics_workload_present_current | bool) | string)
+        )
+        if (appdynamics_observability_present_current | bool)
+        else (
+          'subscription_present=' ~ ((appdynamics_subscription_present_current | bool) | string)
+          ~ ' namespace_present=' ~ ((appdynamics_namespace_present_current | bool) | string)
+          ~ ' crd_present=' ~ ((appdynamics_crd_present_current | bool) | string)
+          ~ ' clusteragents=' ~ ((clusteragent_count_current | int) | string)
+          ~ ' infravizs=' ~ ((infraviz_count_current | int) | string)
+          ~ ' workload_present=' ~ ((appdynamics_workload_present_current | bool) | string)
+        )
+      }}
+    appdynamics_recommended_action_current: >-
+      {{
+        'Validate that AppDynamics cluster metrics and topology data are reaching the intended AppDynamics path.'
+        if (appdynamics_observability_present_current | bool)
+        else 'If AppDynamics cluster visibility is intended, confirm the ClusterAgent, InfraViz, and supporting workload footprint.'
+      }}
+    appdynamics_findings_current: >-
+      {{
+        []
+        if (appdynamics_observability_present_current | bool)
+        else [
+          {
+            'capability': 'appdynamics_observability',
+            'issue': 'prod-day2-appdynamics-observability-missing',
+            'severity': 'info',
+            'source': 'AppDynamics cluster agent inventory',
+            'detail': 'no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected',
+            'recommended_action': appdynamics_recommended_action_current,
+            'docs': ((day2_appdynamics_observability_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    appdynamics_section_override_current: >-
+      {{
+        (day2_appdynamics_observability_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if (appdynamics_observability_present_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'AppDynamics observability footprint',
+                  'capability_key': 'appdynamics_observability',
+                  'detail': appdynamics_reason_summary_current,
+                  'level': ((day2_appdynamics_observability_section_current.criticality | default('low')) | string),
+                  'scored': false,
+                  'source': 'AppDynamics cluster agent inventory',
+                  'status': ('OK' if (appdynamics_observability_present_current | bool) else 'WARN')
+                }
+              ],
+              'findings': appdynamics_findings_current,
+              'status': ('OK' if (appdynamics_observability_present_current | bool) else 'INFO'),
+              'top_detail': (
+                appdynamics_reason_summary_current
+                if (appdynamics_observability_present_current | bool)
+                else 'no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected'
+              ),
+              'recommended_action': appdynamics_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: appdynamics_observability
+    capability_artifact_section_override: "{{ appdynamics_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 1
+      finding_count: "{{ (0 if (appdynamics_observability_present_current | bool) else 1) | int }}"
+      status: "{{ 'OK' if (appdynamics_observability_present_current | bool) else 'INFO' }}"
+      status_summary: "{{ 'OK' if (appdynamics_observability_present_current | bool) else 'INFO' }}"
+      top_detail: "{{ appdynamics_section_override_current.top_detail }}"
+      reason_summary: "{{ appdynamics_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_appdynamics_observability_section: "{{ appdynamics_section_override_current }}"
+    capability_artifact_collection_inputs:
+      appdynamics_operator_subscription_present: "{{ appdynamics_subscription_present_current | bool }}"
+      appdynamics_namespace_present: "{{ appdynamics_namespace_present_current | bool }}"
+      appdynamics_crd_present: "{{ appdynamics_crd_present_current | bool }}"
+      clusteragent_count: "{{ clusteragent_count_current | int }}"
+      infraviz_count: "{{ infraviz_count_current | int }}"
+      appdynamics_workload_present: "{{ appdynamics_workload_present_current | bool }}"

@@ -1,7 +1,7 @@
 ---
 - name: Resolve requested OpenShift capability section
   vars:
-    capability_artifact_section_current: >-
+    capability_artifact_section_from_day2: >-
       {{
         (
           day2_capability_sections | default([])
@@ -10,8 +10,17 @@
           | first
         ) | default({})
       }}
+    capability_artifact_section_override_current: "{{ capability_artifact_section_override | default({}) }}"
   ansible.builtin.set_fact:
-    capability_artifact_section_resolved: "{{ capability_artifact_section_current }}"
+    capability_artifact_section_resolved: >-
+      {{
+        capability_artifact_section_override_current
+        if (
+          (capability_artifact_section_override_current | length) > 0
+          and ((capability_artifact_section_override_current.get('key', '')) | string) == (capability_artifact_key | string)
+        )
+        else capability_artifact_section_from_day2
+      }}
 
 - name: Ensure capability artifact workspace exists
   ansible.builtin.file:

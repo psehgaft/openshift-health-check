@@ -1,0 +1,80 @@
+---
+- name: Build OpenShift serverless capability artifact facts
+  vars:
+    day2_openshift_serverless_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'openshift_serverless') | list | first) | default({})) }}"
+    openshift_serverless_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_serverless_present', false)) | bool }}"
+    openshift_serverless_healthy_current: "{{ ((day2_posture_summary | default({})).get('openshift_serverless_healthy', false)) | bool }}"
+    openshift_serverless_reason_summary_current: >-
+      {{
+        (
+          day2_openshift_serverless_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'serverless footprint detected=' ~ (openshift_serverless_present_current | string)
+          ~ ' healthy=' ~ (openshift_serverless_healthy_current | string)
+        )
+      }}
+    openshift_serverless_recommended_action_current: >-
+      {{
+        'Confirm the Serverless control plane remains healthy and that the intended Knative serving and eventing path is operating correctly.'
+        if openshift_serverless_present_current
+        else 'If OpenShift Serverless is intended, deploy or confirm the operator, CRDs, control plane, and workload footprint.'
+      }}
+    openshift_serverless_findings_current: >-
+      {{
+        []
+        if openshift_serverless_present_current
+        else [
+          {
+            'capability': 'openshift_serverless',
+            'issue': 'prod-day2-serverless-missing',
+            'severity': 'info',
+            'source': 'serverless control plane inventory',
+            'detail': 'no OpenShift Serverless operator, CRD, control plane, or workload footprint was detected',
+            'recommended_action': openshift_serverless_recommended_action_current,
+            'docs': ((day2_openshift_serverless_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    openshift_serverless_section_override_current: >-
+      {{
+        (day2_openshift_serverless_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 1,
+              'finding_count': (0 if openshift_serverless_present_current else 1),
+              'findings': openshift_serverless_findings_current,
+              'status': (
+                'OK'
+                if (openshift_serverless_present_current and openshift_serverless_healthy_current)
+                else ('WARNING' if openshift_serverless_present_current else 'INFO')
+              ),
+              'top_detail': (
+                openshift_serverless_reason_summary_current
+                if openshift_serverless_present_current
+                else 'no OpenShift Serverless operator, CRD, control plane, or workload footprint was detected'
+              ),
+              'recommended_action': openshift_serverless_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: openshift_serverless
+    capability_artifact_section_override: "{{ openshift_serverless_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      openshift_serverless_present: "{{ openshift_serverless_present_current | bool }}"
+      openshift_serverless_healthy: "{{ openshift_serverless_healthy_current | bool }}"
+      status_summary: "{{ openshift_serverless_section_override_current.status }}"
+      reason_summary: "{{ openshift_serverless_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_openshift_serverless_section: "{{ openshift_serverless_section_override_current }}"
+    capability_artifact_collection_inputs:
+      openshift_serverless_present: "{{ openshift_serverless_present_current | bool }}"
+      openshift_serverless_healthy: "{{ openshift_serverless_healthy_current | bool }}"
