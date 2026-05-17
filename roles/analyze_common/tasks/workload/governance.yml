@@ -98,6 +98,8 @@
     workload_kind: "{{ item.kind | default('Workload') }}"
     labels: "{{ item.metadata.labels | default({}) }}"
     annotations: "{{ item.metadata.annotations | default({}) }}"
+    namespace_labels: "{{ (((analysis_graph.namespaces | default({})).get('items', []) | selectattr('metadata.name', 'equalto', ns_name) | list | first) | default({})).metadata.labels | default({}) }}"
+    namespace_annotations: "{{ (((analysis_graph.namespaces | default({})).get('items', []) | selectattr('metadata.name', 'equalto', ns_name) | list | first) | default({})).metadata.annotations | default({}) }}"
     marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
     managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
     workload_name_lower: "{{ (workload_name | string | lower) }}"
@@ -118,6 +120,70 @@
         or ('operator-' in app_name_lower)
         or has_csv_owner
       }}
+    owner_label_hint: >-
+      {{
+        labels.get('app.kubernetes.io/owner')
+        or labels.get('app.kubernetes.io/team')
+        or labels.get('team')
+        or labels.get('owner')
+        or annotations.get('owner.team')
+        or annotations.get('owner.contact')
+        or namespace_labels.get('app.kubernetes.io/owner')
+        or namespace_labels.get('app.kubernetes.io/team')
+        or namespace_labels.get('team')
+        or namespace_labels.get('owner')
+        or namespace_annotations.get('owner.team')
+        or ns_name
+      }}
+    cost_center_hint: >-
+      {{
+        labels.get('cost-center')
+        or labels.get('cost_center')
+        or labels.get('costcenter')
+        or labels.get('billing-code')
+        or labels.get('billing_code')
+        or labels.get('chargeback')
+        or labels.get('chargeback-code')
+        or labels.get('chargeback_code')
+        or namespace_labels.get('cost-center')
+        or namespace_labels.get('cost_center')
+        or namespace_labels.get('costcenter')
+        or namespace_labels.get('billing-code')
+        or namespace_labels.get('billing_code')
+        or namespace_labels.get('chargeback')
+        or namespace_labels.get('chargeback-code')
+        or namespace_labels.get('chargeback_code')
+        or '<set-cost-center>'
+      }}
+    business_unit_hint: >-
+      {{
+        labels.get('business-unit')
+        or labels.get('business_unit')
+        or labels.get('department')
+        or namespace_labels.get('business-unit')
+        or namespace_labels.get('business_unit')
+        or namespace_labels.get('department')
+        or '<set-business-unit>'
+      }}
+    owner_email_hint: >-
+      {{
+        annotations.get('owner.email')
+        or namespace_annotations.get('owner.email')
+        or '<set-owner-email>'
+      }}
+    owner_contact_hint: >-
+      {{
+        annotations.get('owner.contact')
+        or annotations.get('contact')
+        or namespace_annotations.get('owner.contact')
+        or namespace_annotations.get('contact')
+        or '<set-owner-contact>'
+      }}
+    description_hint: >-
+      {{
+        annotations.get('description')
+        or ('<describe-' ~ workload_name ~ '-purpose>')
+      }}
     missing_parts: >-
       {{
         ([] +
@@ -125,7 +191,24 @@
         (['app.kubernetes.io/instance'] if (labels.get('app.kubernetes.io/instance', '') | length) == 0 else []) +
         (['app.kubernetes.io/component'] if (labels.get('app.kubernetes.io/component', '') | length) == 0 else []) +
         (['app.kubernetes.io/part-of'] if (labels.get('app.kubernetes.io/part-of', '') | length) == 0 else []) +
-        (['app.kubernetes.io/managed-by'] if (labels.get('app.kubernetes.io/managed-by', '') | length) == 0 else []))
+        (['app.kubernetes.io/managed-by'] if (labels.get('app.kubernetes.io/managed-by', '') | length) == 0 else []) +
+        (['app.kubernetes.io/owner'] if (labels.get('app.kubernetes.io/owner', '') | length) == 0 else []) +
+        (['app.kubernetes.io/team'] if (labels.get('app.kubernetes.io/team', '') | length) == 0 else []) +
+        (['cost-center'] if (
+            (labels.get('cost-center', '') | length) == 0
+            and (labels.get('cost_center', '') | length) == 0
+            and (labels.get('costcenter', '') | length) == 0
+            and (labels.get('billing-code', '') | length) == 0
+            and (labels.get('billing_code', '') | length) == 0
+            and (labels.get('chargeback', '') | length) == 0
+            and (labels.get('chargeback-code', '') | length) == 0
+            and (labels.get('chargeback_code', '') | length) == 0
+          ) else []) +
+        (['business-unit'] if (
+            (labels.get('business-unit', '') | length) == 0
+            and (labels.get('business_unit', '') | length) == 0
+            and (labels.get('department', '') | length) == 0
+          ) else []))
       }}
     label_context_values: >-
       {{
@@ -155,21 +238,18 @@
         (['app.kubernetes.io/instance=' ~ (labels.get('app.kubernetes.io/instance') if (labels.get('app.kubernetes.io/instance', '') | length) > 0 else ns_name)] if ('app.kubernetes.io/instance' in missing_parts) else []) +
         (['app.kubernetes.io/component=' ~ (labels.get('app.kubernetes.io/component') if (labels.get('app.kubernetes.io/component', '') | length) > 0 else (workload_kind | lower))] if ('app.kubernetes.io/component' in missing_parts) else []) +
         (['app.kubernetes.io/part-of=' ~ (labels.get('app.kubernetes.io/part-of') if (labels.get('app.kubernetes.io/part-of', '') | length) > 0 else ns_name)] if ('app.kubernetes.io/part-of' in missing_parts) else []) +
-        (['app.kubernetes.io/managed-by=' ~ (labels.get('app.kubernetes.io/managed-by') if (labels.get('app.kubernetes.io/managed-by', '') | length) > 0 else '<set-managing-controller-or-team>')] if ('app.kubernetes.io/managed-by' in missing_parts) else []))
+        (['app.kubernetes.io/managed-by=' ~ (labels.get('app.kubernetes.io/managed-by') if (labels.get('app.kubernetes.io/managed-by', '') | length) > 0 else '<set-managing-controller-or-team>')] if ('app.kubernetes.io/managed-by' in missing_parts) else []) +
+        (['app.kubernetes.io/owner=' ~ owner_label_hint] if ('app.kubernetes.io/owner' in missing_parts) else []) +
+        (['app.kubernetes.io/team=' ~ owner_label_hint] if ('app.kubernetes.io/team' in missing_parts) else []) +
+        (['cost-center=' ~ cost_center_hint] if ('cost-center' in missing_parts) else []) +
+        (['business-unit=' ~ business_unit_hint] if ('business-unit' in missing_parts) else []))
       }}
     recommended_annotation_values: >-
       {{
         [
-          (
-            'owner.email=' ~ annotations.get('owner.email')
-            if (annotations.get('owner.email', '') | length) > 0
-            else 'owner.email=<set-owner-email>'
-          ),
-          (
-            'owner.contact=' ~ (annotations.get('owner.contact') if (annotations.get('owner.contact', '') | length) > 0 else annotations.get('contact'))
-            if ((annotations.get('owner.contact', '') | length) > 0 or (annotations.get('contact', '') | length) > 0)
-            else 'owner.contact=<set-owner-contact>'
-          )
+          'owner.email=' ~ owner_email_hint,
+          'owner.contact=' ~ owner_contact_hint,
+          'description=' ~ description_hint
         ]
       }}
     label_review_entry: >-

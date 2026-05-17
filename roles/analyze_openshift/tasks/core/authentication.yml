@@ -42,76 +42,6 @@
     auth_fallback_idps: "{{ analysis_graph.oauth_config.spec.identityProviders | default([]) }}"
     auth_fallback_identity_provider_count: "{{ auth_fallback_idps | length }}"
     auth_fallback_provider_names: "{{ auth_fallback_idps | map(attribute='name') | list }}"
-    auth_fallback_local_identity_provider_count: >-
-      {{
-        (auth_fallback_idps | selectattr('htpasswd', 'defined') | list | length)
-        + (auth_fallback_idps | selectattr('basicAuth', 'defined') | list | length)
-      }}
-    auth_fallback_external_identity_provider_count: >-
-      {{
-        (
-          auth_fallback_idps
-          | rejectattr('htpasswd', 'defined')
-          | rejectattr('basicAuth', 'defined')
-          | selectattr('github', 'defined')
-          | list
-          | length
-        )
-        + (
-          auth_fallback_idps
-          | rejectattr('htpasswd', 'defined')
-          | rejectattr('basicAuth', 'defined')
-          | selectattr('gitlab', 'defined')
-          | list
-          | length
-        )
-        + (
-          auth_fallback_idps
-          | rejectattr('htpasswd', 'defined')
-          | rejectattr('basicAuth', 'defined')
-          | selectattr('google', 'defined')
-          | list
-          | length
-        )
-        + (
-          auth_fallback_idps
-          | rejectattr('htpasswd', 'defined')
-          | rejectattr('basicAuth', 'defined')
-          | selectattr('ldap', 'defined')
-          | list
-          | length
-        )
-        + (
-          auth_fallback_idps
-          | rejectattr('htpasswd', 'defined')
-          | rejectattr('basicAuth', 'defined')
-          | selectattr('keystone', 'defined')
-          | list
-          | length
-        )
-        + (
-          auth_fallback_idps
-          | rejectattr('htpasswd', 'defined')
-          | rejectattr('basicAuth', 'defined')
-          | selectattr('openID', 'defined')
-          | list
-          | length
-        )
-        + (
-          auth_fallback_idps
-          | rejectattr('htpasswd', 'defined')
-          | rejectattr('basicAuth', 'defined')
-          | selectattr('requestHeader', 'defined')
-          | list
-          | length
-        )
-      }}
-    auth_fallback_invalid_identity_provider_count: >-
-      {{
-        (auth_fallback_identity_provider_count | int)
-        - (auth_fallback_local_identity_provider_count | int)
-        - (auth_fallback_external_identity_provider_count | int)
-      }}
     auth_fallback_provider_types: >-
       {%- set provider_types = [] -%}
       {%- for item in auth_fallback_idps -%}
@@ -138,6 +68,25 @@
       {%- endif -%}
       {%- endfor -%}
       {{ provider_types }}
+    auth_fallback_provider_types_normalized: "{{ auth_fallback_provider_types | map('lower') | list }}"
+    auth_fallback_local_identity_provider_count: >-
+      {{
+        auth_fallback_provider_types_normalized
+        | select('in', ['htpasswd', 'basicauth'])
+        | list
+        | length
+      }}
+    auth_fallback_external_identity_provider_count: >-
+      {{
+        auth_fallback_provider_types_normalized
+        | select('in', ['github', 'gitlab', 'google', 'ldap', 'keystone', 'openid', 'requestheader'])
+        | list
+        | length
+      }}
+    auth_fallback_invalid_identity_provider_count: >-
+      {{
+        (auth_fallback_provider_types_normalized | reject('in', ['htpasswd', 'basicauth', 'github', 'gitlab', 'google', 'ldap', 'keystone', 'openid', 'requestheader']) | list | length)
+      }}
     auth_fallback_kubeadmin_secret_present: >-
       {{
         (

@@ -1692,6 +1692,7 @@ Every major posture section below follows the same operating model: define the g
 {% set namespaces_without_limitrange_section = namespace_hygiene_domain.namespaces_without_limitrange | default(namespaces_without_limitrange | default([])) %}
 {% set user_namespace_names_section = namespace_hygiene_domain.user_namespaces | default(user_namespace_names | default([])) %}
 {% set namespace_metadata_governance_findings_section = namespace_hygiene_domain.metadata_governance_findings | default(top_namespace_metadata_governance_findings | default([])) %}
+{% set node_metadata_governance_findings_section = namespace_hygiene_domain.node_metadata_governance_findings | default(top_node_metadata_governance_findings | default([])) %}
 {% set pod_security_domain = security_domain.pod_security | default({}) %}
 {% set security_issue_type_counts_section = pod_security_domain.issue_type_counts | default(security_issue_type_counts | default({})) %}
 {% set top_security_findings_section = pod_security_domain.findings | default(top_security_findings | default([])) %}
@@ -1822,6 +1823,7 @@ Every major posture section below follows the same operating model: define the g
 {% set top_namespace_resourcequota_gaps = (namespaces_without_resourcequota_section | default([]))[:10] %}
 {% set top_namespace_limitrange_gaps = (namespaces_without_limitrange_section | default([]))[:10] %}
 {% set top_namespace_metadata_governance_gaps = (namespace_metadata_governance_findings_section | default([]))[:10] %}
+{% set top_node_metadata_governance_gaps = (node_metadata_governance_findings_section | default([]))[:10] %}
 {% set compliance_domain = security_domain.compliance | default({}) %}
 {% set compliance_suite_summary_section = compliance_domain.summary | default(compliance_suite_summary | default([])) %}
 {% set compliance_result_counts_section = compliance_domain.result_counts | default(compliance_result_counts | default({})) %}
@@ -1860,6 +1862,16 @@ Every major posture section below follows the same operating model: define the g
 | --- | --- | --- | --- | --- | --- |
 {% for item in top_namespace_metadata_governance_gaps %}
 | `{{ item.namespace }}` | `{{ item.missing_metadata | default([]) | join(', ') }}` | `{{ item.present_owner_labels | default([]) | join(', ') or 'none' }}` | `{{ item.present_cost_labels | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_owner_values | default([]) | join(', ') }}` | `{{ item.recommended_cost_values | default([]) | join(', ') }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_node_metadata_governance_gaps | default([]) | length > 0 %}
+#### Node Ownership And Chargeback Metadata
+
+| Node | Missing Metadata | Present Ownership Labels | Present Ownership Annotations | Present Cost Labels | Recommended Ownership Metadata | Recommended Chargeback Metadata |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for item in top_node_metadata_governance_gaps %}
+| `{{ item.node }}` | `{{ item.missing_metadata | default([]) | join(', ') }}` | `{{ item.present_owner_labels | default([]) | join(', ') or 'none' }}` | `{{ item.present_owner_annotations | default([]) | join(', ') or 'none' }}` | `{{ item.present_cost_labels | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_owner_values | default([]) | join(', ') }}` | `{{ item.recommended_cost_values | default([]) | join(', ') }}` |
 {% endfor %}
 {% endif %}
 
@@ -2126,6 +2138,7 @@ Every major posture section below follows the same operating model: define the g
 {% set top_high_replica_workloads_section = workload_domain.high_replica_workloads | default(top_high_replica_workloads | default(high_replica_workloads | default([]))) %}
 {% set top_orphan_pods_section = workload_domain.orphan_pods | default(top_orphan_pods | default(orphan_pods | default([]))) %}
 {% set top_workload_label_governance_findings_section = workload_domain.workload_label_governance_findings | default(top_workload_label_governance_findings | default(workload_label_governance_findings | default([]))) %}
+{% set top_node_label_governance_findings_section = workload_domain.node_label_governance_findings | default(top_node_label_governance_findings | default(node_label_governance_findings | default([]))) %}
 {% set top_workload_resource_findings_section = workload_domain.workload_resource_findings | default(top_workload_resource_findings | default(workload_resource_findings | default([]))) %}
 {% set workload_probe_issue_type_counts_section = workload_domain.workload_probe_issue_type_counts | default(workload_probe_issue_type_counts | default({})) %}
 {% set top_workload_probe_findings_section = workload_domain.workload_probe_findings | default(top_workload_probe_findings | default(workload_probe_findings | default([]))) %}
@@ -2281,6 +2294,16 @@ Showing up to the top 100 pods with more than 3 restarts.
 | --- | --- | --- | --- | --- |
 {% for item in top_workload_label_governance_findings_section %}
 | `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.recommended_label_values | default(item.label_values | default([])) | join(', ') or 'none' }}` | `{{ item.recommended_annotation_values | default(item.annotation_values | default([])) | join(', ') or 'none' }}` |
+{% endfor %}
+{% endif %}
+
+{% if top_node_label_governance_findings_section | default([]) | length > 0 %}
+#### Node Label Governance
+
+| Kind | Scope | Name | Recommended Labels | Recommended Annotations |
+| --- | --- | --- | --- | --- |
+{% for item in top_node_label_governance_findings_section %}
+| `{{ item.kind }}` | `{{ item.namespace }}` | `{{ item.name }}` | `{{ item.recommended_label_values | default([]) | join(', ') or 'none' }}` | `{{ item.recommended_annotation_values | default([]) | join(', ') or 'none' }}` |
 {% endfor %}
 {% endif %}
 
@@ -2762,6 +2785,9 @@ Cluster update history was not returned.
 | Namespaces | `{{ capacity_object_counts.namespaces | default(0) }}` |
 | Pods | `{{ capacity_object_counts.pods | default(0) }}` |
 | Running pods | `{{ capacity_object_counts.running_pods | default(0) }}` |
+| Healthy pods | `{{ capacity_object_counts.healthy_pods | default(0) }}` |
+| Unhealthy pods | `{{ capacity_object_counts.unhealthy_pods | default(0) }}` |
+| Healthy vs unhealthy pod ratio | `{% if (capacity_object_counts.pods | default(0) | int) > 0 %}healthy=`{{ capacity_object_counts.healthy_pods | default(0) }}` (`{{ capacity_resources.healthy_pod_ratio_pct | default('not-derived') }}`%), unhealthy=`{{ capacity_object_counts.unhealthy_pods | default(0) }}` (`{{ capacity_resources.unhealthy_pod_ratio_pct | default('not-derived') }}`%){% else %}not-derived{% endif %}` |
 | Deployments | `{{ capacity_object_counts.deployments | default(0) }}` |
 | StatefulSets | `{{ capacity_object_counts.statefulsets | default(0) }}` |
 | DaemonSets | `{{ capacity_object_counts.daemonsets | default(0) }}` |

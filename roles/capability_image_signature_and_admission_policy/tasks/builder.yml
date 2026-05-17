@@ -27,29 +27,72 @@
         if image_signature_and_admission_policy_present_current
         else 'If trusted-image enforcement is intended, deploy or confirm an admission policy engine or explicit image registry restriction policy.'
       }}
+    image_signature_and_admission_policy_partial_signal_current: >-
+      {{
+        (admission_policy_engine_present_current | bool)
+        or (image_registry_filter_policy_present_current | bool)
+        or ((insecure_registry_count_current | int) > 0)
+      }}
+    image_signature_and_admission_policy_checks_current:
+      - name: Admission policy engine present
+        status: >-
+          {{
+            'OK'
+            if (admission_policy_engine_present_current | bool)
+            else ('WARN' if (image_signature_and_admission_policy_partial_signal_current | bool) else 'INFO')
+          }}
+        detail: >-
+          {{
+            'an admission policy engine footprint was detected'
+            if (admission_policy_engine_present_current | bool)
+            else 'no admission policy engine footprint was detected'
+          }}
+      - name: Image registry restriction policy present
+        status: >-
+          {{
+            'OK'
+            if (image_registry_filter_policy_present_current | bool)
+            else ('WARN' if (image_signature_and_admission_policy_partial_signal_current | bool) else 'INFO')
+          }}
+        detail: >-
+          {{
+            'an image registry restriction policy footprint was detected'
+            if (image_registry_filter_policy_present_current | bool)
+            else 'no image registry restriction policy footprint was detected'
+          }}
+      - name: Insecure registries absent from the effective path
+        status: "{{ 'OK' if (insecure_registry_count_current | int) == 0 else 'WARN' }}"
+        detail: "insecureRegistries={{ insecure_registry_count_current | int }}"
     image_signature_and_admission_policy_findings_current: >-
       {{
-        []
-        if image_signature_and_admission_policy_healthy_current
-        else [
-          {
-            'capability': 'image_signature_and_admission_policy',
-            'issue': (
-              'prod-day2-image-signature-and-admission-policy-insecure-registries'
-              if image_signature_and_admission_policy_present_current
-              else 'prod-day2-image-signature-and-admission-policy-missing'
-            ),
-            'severity': ('warning' if image_signature_and_admission_policy_present_current else 'info'),
-            'source': 'trusted image policy and admission guardrail inventory',
-            'detail': (
-              image_signature_and_admission_policy_reason_summary_current
-              if image_signature_and_admission_policy_present_current
-              else 'no admission policy engine or image registry restriction policy signal was detected for trusted-image enforcement'
-            ),
-            'recommended_action': image_signature_and_admission_policy_recommended_action_current,
-            'docs': ((day2_image_signature_and_admission_policy_section_current.docs | default([])) | string)
-          }
-        ]
+        ([] +
+        ([{
+          'capability': 'image_signature_and_admission_policy',
+          'issue': 'prod-day2-image-signature-and-admission-policy-admission-engine-missing',
+          'severity': ('warning' if (image_signature_and_admission_policy_partial_signal_current | bool) else 'info'),
+          'source': 'trusted image policy and admission guardrail inventory',
+          'detail': 'No admission policy engine footprint was detected for trusted-image enforcement.',
+          'recommended_action': image_signature_and_admission_policy_recommended_action_current,
+          'docs': ((day2_image_signature_and_admission_policy_section_current.docs | default([])) | string)
+        }] if not (admission_policy_engine_present_current | bool) else []) +
+        ([{
+          'capability': 'image_signature_and_admission_policy',
+          'issue': 'prod-day2-image-signature-and-admission-policy-registry-policy-missing',
+          'severity': ('warning' if (image_signature_and_admission_policy_partial_signal_current | bool) else 'info'),
+          'source': 'trusted image policy and admission guardrail inventory',
+          'detail': 'No image registry restriction policy footprint was detected for trusted-image enforcement.',
+          'recommended_action': image_signature_and_admission_policy_recommended_action_current,
+          'docs': ((day2_image_signature_and_admission_policy_section_current.docs | default([])) | string)
+        }] if not (image_registry_filter_policy_present_current | bool) else []) +
+        ([{
+          'capability': 'image_signature_and_admission_policy',
+          'issue': 'prod-day2-image-signature-and-admission-policy-insecure-registries',
+          'severity': 'warning',
+          'source': 'trusted image policy and admission guardrail inventory',
+          'detail': 'One or more insecure registries remain in the effective image path.',
+          'recommended_action': image_signature_and_admission_policy_recommended_action_current,
+          'docs': ((day2_image_signature_and_admission_policy_section_current.docs | default([])) | string)
+        }] if (insecure_registry_count_current | int) > 0 else []))
       }}
     image_signature_and_admission_policy_section_override_current: >-
       {{
@@ -57,8 +100,9 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
-              'finding_count': (0 if image_signature_and_admission_policy_healthy_current else 1),
+              'check_count': (image_signature_and_admission_policy_checks_current | length),
+              'finding_count': (image_signature_and_admission_policy_findings_current | length),
+              'checks': image_signature_and_admission_policy_checks_current,
               'findings': image_signature_and_admission_policy_findings_current,
               'status': (
                 'OK'
@@ -81,6 +125,8 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
+      check_count: "{{ (image_signature_and_admission_policy_checks_current | length) | int }}"
+      finding_count: "{{ (image_signature_and_admission_policy_findings_current | length) | int }}"
       image_signature_and_admission_policy_present: "{{ image_signature_and_admission_policy_present_current | bool }}"
       image_signature_and_admission_policy_healthy: "{{ image_signature_and_admission_policy_healthy_current | bool }}"
       admission_policy_engine_present: "{{ admission_policy_engine_present_current | bool }}"

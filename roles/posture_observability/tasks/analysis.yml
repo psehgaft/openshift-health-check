@@ -6,6 +6,7 @@
         (clusteroperator_status_map.monitoring.available | default('Unknown')) == 'True'
         and (clusteroperator_status_map.monitoring.degraded | default('False')) != 'True'
       }}
+    vendor_managed_observability_vendors: "{{ ((observability_forwarding_summary.metrics_forwarding_vendor_names | default([])) + (observability_forwarding_summary.log_forwarding_vendor_names | default([]))) | unique }}"
     vendor_managed_observability_present: >-
       {{
         (observability_forwarding_summary.vendor_managed_log_forwarding_present | default(false))
@@ -32,6 +33,215 @@
           )
         )
       }}
+    dynatrace_vendor_context_present: >-
+      {{
+        (
+          ('dynatrace' in (vendor_managed_observability_vendors | default([])))
+          or ('dynatrace-operator' in (subscription_packages | default([])))
+          or ('dynatrace' in (namespace_names | default([])))
+          or (
+            (
+              ((analysis_graph.crds | default({})).get('items', []) | default([]))
+              | selectattr('metadata', 'defined')
+              | selectattr('metadata.name', 'defined')
+              | map(attribute='metadata.name')
+              | map('string')
+              | map('lower')
+              | select('in', ['dynakube.dynatrace.com', 'edgeconnects.dynatrace.com'])
+              | list
+              | length
+            ) > 0
+          )
+        ) | bool
+      }}
+    dynatrace_vendor_healthy: >-
+      {{
+        (
+          not (dynatrace_vendor_context_present | bool)
+        ) or (
+          (((analysis_graph.dynakubes | default({})).get('items', []) | length) > 0)
+          or (((analysis_graph.edgeconnects | default({})).get('items', []) | length) > 0)
+          or (
+            (all_workload_blobs | default([]))
+            | map('string')
+            | map('lower')
+            | select('search', 'dynatrace-operator|dynakube|oneagent|activegate|dynatrace-webhook')
+            | list
+            | length
+          ) > 0
+        )
+      }}
+    datadog_vendor_context_present: >-
+      {{
+        (
+          ('datadog' in (vendor_managed_observability_vendors | default([])))
+          or ('datadog-operator' in (subscription_packages | default([])))
+          or ('datadog' in (namespace_names | default([])))
+          or (
+            (
+              ((analysis_graph.crds | default({})).get('items', []) | default([]))
+              | selectattr('metadata', 'defined')
+              | selectattr('metadata.name', 'defined')
+              | map(attribute='metadata.name')
+              | map('string')
+              | map('lower')
+              | select('in', ['datadogagents.datadoghq.com', 'datadogmetrics.datadoghq.com'])
+              | list
+              | length
+            ) > 0
+          )
+        ) | bool
+      }}
+    datadog_vendor_healthy: >-
+      {{
+        (
+          not (datadog_vendor_context_present | bool)
+        ) or (
+          (((analysis_graph.datadogagents | default({})).get('items', []) | length) > 0)
+          or (
+            (all_workload_blobs | default([]))
+            | map('string')
+            | map('lower')
+            | select('search', 'datadog-agent|cluster-agent|datadog-cluster-agent|datadog-operator')
+            | list
+            | length
+          ) > 0
+        )
+      }}
+    appdynamics_vendor_context_present: >-
+      {{
+        (
+          ('appdynamics' in (vendor_managed_observability_vendors | default([])))
+          or ('appdynamics-operator' in (subscription_packages | default([])))
+          or ('appdynamics' in (namespace_names | default([])))
+          or (
+            (
+              ((analysis_graph.crds | default({})).get('items', []) | default([]))
+              | selectattr('metadata', 'defined')
+              | selectattr('metadata.name', 'defined')
+              | map(attribute='metadata.name')
+              | map('string')
+              | map('lower')
+              | select('in', ['clusteragents.appdynamics.com', 'infravizs.appdynamics.com', 'appdynamics.com'])
+              | list
+              | length
+            ) > 0
+          )
+        ) | bool
+      }}
+    appdynamics_vendor_healthy: >-
+      {{
+        (
+          not (appdynamics_vendor_context_present | bool)
+        ) or (
+          (((analysis_graph.clusteragents | default({})).get('items', []) | length) > 0)
+          or (((analysis_graph.infravizs | default({})).get('items', []) | length) > 0)
+          or (
+            (all_workload_blobs | default([]))
+            | map('string')
+            | map('lower')
+            | select('search', 'appdynamics|cluster-agent|infraviz')
+            | list
+            | length
+          ) > 0
+        )
+      }}
+    splunk_vendor_context_present: >-
+      {{
+        (
+          ('splunk' in (vendor_managed_observability_vendors | default([])))
+          or ('splunk' in (namespace_names | default([])))
+          or (
+            (
+              ((analysis_graph.crds | default({})).get('items', []) | default([]))
+              | selectattr('metadata', 'defined')
+              | selectattr('metadata.name', 'defined')
+              | map(attribute='metadata.name')
+              | map('string')
+              | map('lower')
+              | select('in', ['splunk.com', 'otelcollectors.opentelemetry.io', 'opentelemetrycollectors.opentelemetry.io'])
+              | list
+              | length
+            ) > 0
+          )
+        ) | bool
+      }}
+    splunk_vendor_healthy: >-
+      {{
+        (
+          not (splunk_vendor_context_present | bool)
+        ) or (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'splunk|otel-collector|opentelemetry-collector')
+          | list
+          | length
+        ) > 0
+      }}
+    loki_vendor_context_present: >-
+      {{
+        (
+          ('loki' in (vendor_managed_observability_vendors | default([])))
+          or ('openshift-logging' in (namespace_names | default([])))
+          or ('loki' in (namespace_names | default([])))
+          or (
+            (
+              ((analysis_graph.crds | default({})).get('items', []) | default([]))
+              | selectattr('metadata', 'defined')
+              | selectattr('metadata.name', 'defined')
+              | map(attribute='metadata.name')
+              | map('string')
+              | map('lower')
+              | select('in', ['lokistacks.loki.grafana.com', 'lokis.loki.grafana.com'])
+              | list
+              | length
+            ) > 0
+          )
+        ) | bool
+      }}
+    loki_vendor_healthy: >-
+      {{
+        (
+          not (loki_vendor_context_present | bool)
+        ) or (
+          (((analysis_graph.lokistacks | default({})).get('items', []) | length) > 0)
+          or (
+            (all_workload_blobs | default([]))
+            | map('string')
+            | map('lower')
+            | select('search', 'loki|promtail|log-collector|vector')
+            | list
+            | length
+          ) > 0
+        )
+      }}
+    vendor_managed_observability_health_entries:
+      - name: dynatrace
+        present: "{{ dynatrace_vendor_context_present | bool }}"
+        healthy: "{{ dynatrace_vendor_healthy | bool }}"
+      - name: datadog
+        present: "{{ datadog_vendor_context_present | bool }}"
+        healthy: "{{ datadog_vendor_healthy | bool }}"
+      - name: appdynamics
+        present: "{{ appdynamics_vendor_context_present | bool }}"
+        healthy: "{{ appdynamics_vendor_healthy | bool }}"
+      - name: splunk
+        present: "{{ splunk_vendor_context_present | bool }}"
+        healthy: "{{ splunk_vendor_healthy | bool }}"
+      - name: loki
+        present: "{{ loki_vendor_context_present | bool }}"
+        healthy: "{{ loki_vendor_healthy | bool }}"
+    vendor_managed_observability_unhealthy_vendors: >-
+      {{
+        []
+        + (['dynatrace'] if ((dynatrace_vendor_context_present | bool) and not (dynatrace_vendor_healthy | bool)) else [])
+        + (['datadog'] if ((datadog_vendor_context_present | bool) and not (datadog_vendor_healthy | bool)) else [])
+        + (['appdynamics'] if ((appdynamics_vendor_context_present | bool) and not (appdynamics_vendor_healthy | bool)) else [])
+        + (['splunk'] if ((splunk_vendor_context_present | bool) and not (splunk_vendor_healthy | bool)) else [])
+        + (['loki'] if ((loki_vendor_context_present | bool) and not (loki_vendor_healthy | bool)) else [])
+      }}
+    vendor_managed_observability_all_healthy: "{{ (vendor_managed_observability_unhealthy_vendors | default([]) | length) == 0 }}"
     firing_critical_alert_count: "{{ (firing_alerts_by_severity | default({})).critical | default(0) }}"
     firing_warning_alert_count: >-
       {{
@@ -77,7 +287,13 @@
       {{
         'CRITICAL'
         if (
-          (not monitoring_operator_healthy and not vendor_managed_observability_configured)
+          (
+            not monitoring_operator_healthy
+            and (
+              not vendor_managed_observability_configured
+              or not (vendor_managed_observability_all_healthy | bool)
+            )
+          )
           or (firing_critical_alert_count | int) > 0
         )
         else (
@@ -101,8 +317,10 @@
         (
           []
           + (['monitoring operator not healthy and no configured vendor-managed observability telemetry path was identified'] if (not monitoring_operator_healthy and not vendor_managed_observability_configured) else [])
-          + (['monitoring operator not healthy but a vendor-managed observability telemetry path is configured'] if (not monitoring_operator_healthy and vendor_managed_observability_configured) else [])
-          + (['vendor-managed observability=' ~ ((((observability_forwarding_summary.metrics_forwarding_vendor_names | default([])) + (observability_forwarding_summary.log_forwarding_vendor_names | default([]))) | unique) | join(','))] if vendor_managed_observability_present else [])
+          + (['monitoring operator not healthy and the configured vendor-managed observability path is not healthy'] if (not monitoring_operator_healthy and vendor_managed_observability_configured and not (vendor_managed_observability_all_healthy | bool)) else [])
+          + (['monitoring operator not healthy but a vendor-managed observability telemetry path is configured'] if (not monitoring_operator_healthy and vendor_managed_observability_configured and (vendor_managed_observability_all_healthy | bool)) else [])
+          + (['vendor-managed observability=' ~ ((vendor_managed_observability_vendors | default([])) | join(','))] if vendor_managed_observability_present else [])
+          + (['vendor-managed observability unhealthy=' ~ ((vendor_managed_observability_unhealthy_vendors | default([])) | join(','))] if ((vendor_managed_observability_unhealthy_vendors | default([]) | length) > 0) else [])
           + (['critical firing alerts=' ~ ((firing_critical_alert_count | int) | string)] if (firing_critical_alert_count | int) > 0 else [])
           + (['non-critical firing alerts=' ~ ((firing_warning_alert_count | int) | string)] if (firing_warning_alert_count | int) > 0 else [])
           + (['warning events over threshold=' ~ ((recent_warning_events | default([]) | length) | string)] if (warning_event_count | int) >= (warning_event_posture_threshold | int) else [])
@@ -133,7 +351,10 @@
       monitoring_operator_healthy: "{{ monitoring_operator_healthy }}"
       vendor_managed_observability_present: "{{ vendor_managed_observability_present }}"
       vendor_managed_observability_configured: "{{ vendor_managed_observability_configured }}"
-      vendor_managed_observability_vendors: "{{ ((observability_forwarding_summary.metrics_forwarding_vendor_names | default([])) + (observability_forwarding_summary.log_forwarding_vendor_names | default([]))) | unique }}"
+      vendor_managed_observability_vendors: "{{ vendor_managed_observability_vendors }}"
+      vendor_managed_observability_all_healthy: "{{ vendor_managed_observability_all_healthy }}"
+      vendor_managed_observability_unhealthy_vendors: "{{ vendor_managed_observability_unhealthy_vendors }}"
+      vendor_managed_observability_health_entries: "{{ vendor_managed_observability_health_entries }}"
       vendor_managed_log_forwarding_present: "{{ observability_forwarding_summary.vendor_managed_log_forwarding_present | default(false) }}"
       vendor_managed_metrics_forwarding_present: "{{ observability_forwarding_summary.vendor_managed_metrics_forwarding_present | default(false) }}"
       log_forwarding_vendor_names: "{{ observability_forwarding_summary.log_forwarding_vendor_names | default([]) }}"

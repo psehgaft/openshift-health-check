@@ -152,6 +152,12 @@ def main() -> int:
         namespace_cost_value = first_present_value(
             COST_LABEL_KEYS, namespace_labels, namespace_annotations, related_objects
         )
+        namespace_business_unit_value = first_present_value(
+            ["business-unit", "business_unit", "department"],
+            namespace_labels,
+            namespace_annotations,
+            related_objects,
+        )
 
         findings.append(
             {
@@ -161,10 +167,16 @@ def main() -> int:
                 "recommended_label_values": [
                     f"team={namespace_owner_value}",
                     f"app.kubernetes.io/owner={namespace_owner_value}",
+                    f"app.kubernetes.io/team={namespace_owner_value}",
                     (
                         f"cost-center={namespace_cost_value}"
                         if namespace_cost_value
                         else f"cost-center=<set-cost-center-for-{ns_name}>"
+                    ),
+                    (
+                        f"business-unit={namespace_business_unit_value}"
+                        if namespace_business_unit_value
+                        else "business-unit=<set-business-unit>"
                     ),
                 ],
                 "recommended_annotation_values": [
@@ -178,6 +190,7 @@ def main() -> int:
                         if namespace_owner_contact
                         else f"owner.contact=<set-contact-for-{workload_name_hint}>"
                     ),
+                    f"description=<describe-{workload_name_hint}-purpose>",
                 ],
                 "present_label_keys": present_keys,
             }

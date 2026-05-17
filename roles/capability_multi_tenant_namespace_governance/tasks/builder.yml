@@ -47,6 +47,127 @@
         ~ ' missingResourceQuota=' ~ (multi_tenant_missing_resourcequota_count | string)
         ~ ' missingLimitRange=' ~ (multi_tenant_missing_limitrange_count | string)
       }}
+    multi_tenant_checks_current:
+      - name: Self-provisioner public access restricted
+        status: "{{ 'OK' if (self_provisioning_restricted | default(false)) else 'WARN' }}"
+        detail: >-
+          {{
+            'self-provisioners binding is not granted to broad authenticated groups'
+            if (self_provisioning_restricted | default(false))
+            else 'self-provisioners binding still allows broad authenticated self-provisioning'
+          }}
+      - name: Self-provisioner autoupdate disabled
+        status: "{{ 'OK' if (self_provisioner_autoupdate_false | default(false)) else 'WARN' }}"
+        detail: >-
+          {{
+            'self-provisioners binding autoupdate is disabled'
+            if (self_provisioner_autoupdate_false | default(false))
+            else 'self-provisioners binding autoupdate is not disabled'
+          }}
+      - name: Project request flow defined
+        status: "{{ 'OK' if ((project_request_template_present | default(false)) or (project_request_message_configured | default(false))) else 'INFO' }}"
+        detail: >-
+          {{
+            'project request template or request guidance is configured'
+            if ((project_request_template_present | default(false)) or (project_request_message_configured | default(false)))
+            else 'no project request template or request guidance was detected'
+          }}
+      - name: Namespace onboarding controls present
+        status: "{{ 'OK' if (namespace_onboarding_controls_present | default(false)) else ('INFO' if (multi_tenant_user_namespace_count | int) == 0 else 'WARN') }}"
+        detail: >-
+          {{
+            'GitOps, project-template, or team-RBAC onboarding controls were detected'
+            if (namespace_onboarding_controls_present | default(false))
+            else (
+              'no user namespaces were in scope for onboarding control review'
+              if (multi_tenant_user_namespace_count | int) == 0
+              else 'no namespace onboarding controls were detected for shared user namespaces'
+            )
+          }}
+      - name: Team RBAC mapped to user namespaces
+        status: "{{ 'OK' if (team_rbac_namespace_count | default(0) | int) > 0 else ('INFO' if (multi_tenant_user_namespace_count | int) == 0 else 'WARN') }}"
+        detail: >-
+          {{
+            'team-rbac namespaces=' ~ ((team_rbac_namespace_count | default(0) | int) | string)
+            ~ ' groups=' ~ ((team_rbac_group_count | default(0) | int) | string)
+            ~ ' knownGroups=' ~ ((known_team_group_count | default(0) | int) | string)
+          }}
+      - name: Namespace guardrail baseline
+        status: >-
+          {{
+            'OK'
+            if (
+              (multi_tenant_user_namespace_count | int) == 0
+              or (
+                (multi_tenant_missing_networkpolicy_count | int) == 0
+                and (multi_tenant_missing_egress_controls_count | int) == 0
+                and (multi_tenant_missing_resourcequota_count | int) == 0
+                and (multi_tenant_missing_limitrange_count | int) == 0
+              )
+            )
+            else 'WARN'
+          }}
+        detail: >-
+          {{
+            'networkPolicyMissing=' ~ (multi_tenant_missing_networkpolicy_count | string)
+            ~ ' egressControlMissing=' ~ (multi_tenant_missing_egress_controls_count | string)
+            ~ ' resourceQuotaMissing=' ~ (multi_tenant_missing_resourcequota_count | string)
+            ~ ' limitRangeMissing=' ~ (multi_tenant_missing_limitrange_count | string)
+          }}
+    multi_tenant_findings_current: >-
+      {{
+        ([] +
+        ([{
+          'severity': 'warning',
+          'issue': 'Self-provisioner public access still enabled',
+          'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+          'detail': 'The self-provisioners binding still grants broad authenticated self-provisioning.',
+          'recommended_action': 'Restrict the self-provisioners binding so non-admin authenticated users cannot create projects by default.'
+        }] if not (self_provisioning_restricted | default(false)) else []) +
+        ([{
+          'severity': 'warning',
+          'issue': 'Self-provisioner autoupdate still enabled',
+          'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+          'detail': 'The self-provisioners binding autoupdate flag is not disabled.',
+          'recommended_action': 'Set self-provisioners autoupdate to false so the restriction is not reverted automatically.'
+        }] if not (self_provisioner_autoupdate_false | default(false)) else []) +
+        ([{
+          'severity': ('info' if (multi_tenant_user_namespace_count | int) == 0 else 'warning'),
+          'issue': 'Project request flow not defined',
+          'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+          'detail': 'No project request template or project request guidance was detected.',
+          'recommended_action': 'Define an approved project request flow with either a project request template or explicit request guidance.'
+        }] if not ((project_request_template_present | default(false)) or (project_request_message_configured | default(false))) else []) +
+        ([{
+          'severity': ('info' if (multi_tenant_user_namespace_count | int) == 0 else 'warning'),
+          'issue': 'Namespace onboarding controls missing',
+          'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+          'detail': 'No onboarding GitOps, project-template, or team-RBAC controls were detected for shared user namespaces.',
+          'recommended_action': 'Add namespace onboarding controls so tenant namespaces receive a defined bootstrap and ownership path.'
+        }] if not (namespace_onboarding_controls_present | default(false)) else []) +
+        ([{
+          'severity': ('info' if (multi_tenant_user_namespace_count | int) == 0 else 'warning'),
+          'issue': 'Team RBAC mapping missing',
+          'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+          'detail': 'No team-group RoleBindings were detected in user namespaces.',
+          'recommended_action': 'Map team groups into user namespaces with the expected admin, edit, or view role bindings.'
+        }] if ((team_rbac_namespace_count | default(0) | int) == 0) else []) +
+        ([{
+          'severity': 'warning',
+          'issue': 'Namespace guardrail baseline incomplete',
+          'source': 'project configuration, GitOps, RBAC, and namespace guardrail inventory',
+          'detail': 'One or more user namespaces are missing baseline NetworkPolicy, egress controls, ResourceQuota, or LimitRange coverage.',
+          'recommended_action': 'Close the remaining namespace guardrail gaps before treating multi-tenant governance as complete.'
+        }] if (
+          (multi_tenant_user_namespace_count | int) > 0
+          and (
+            (multi_tenant_missing_networkpolicy_count | int) > 0
+            or (multi_tenant_missing_egress_controls_count | int) > 0
+            or (multi_tenant_missing_resourcequota_count | int) > 0
+            or (multi_tenant_missing_limitrange_count | int) > 0
+          )
+        ) else []))
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: multi_tenant_namespace_governance
     capability_artifact_analysis_summary:
@@ -83,3 +204,22 @@
       namespaces_missing_egress_controls_count: "{{ multi_tenant_missing_egress_controls_count | int }}"
       namespaces_missing_resourcequota_count: "{{ multi_tenant_missing_resourcequota_count | int }}"
       missing_limitrange_count: "{{ multi_tenant_missing_limitrange_count | int }}"
+    capability_artifact_section_override:
+      key: multi_tenant_namespace_governance
+      status: "{{ multi_tenant_status_current }}"
+      accounting_state: assessed
+      check_count: "{{ multi_tenant_checks_current | length }}"
+      finding_count: "{{ multi_tenant_findings_current | length }}"
+      checks: "{{ multi_tenant_checks_current }}"
+      findings: "{{ multi_tenant_findings_current }}"
+      top_detail: "{{ multi_tenant_reason_current }}"
+      recommended_action: >-
+        {{
+          'No multi-tenant namespace-governance remediation is required for this capability.'
+          if multi_tenant_status_current == 'OK'
+          else (
+            'No user namespaces were in scope for the shared-namespace governance check. If this capability is expected, confirm the tenant model and collect the corresponding onboarding, RBAC, and namespace-guardrail evidence.'
+            if (multi_tenant_user_namespace_count | int) == 0
+            else 'Tighten self-provisioning controls, define the project request flow, confirm onboarding and team RBAC, and close the remaining namespace guardrail gaps for tenant namespaces.'
+          )
+        }}

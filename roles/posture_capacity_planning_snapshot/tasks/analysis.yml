@@ -274,10 +274,25 @@
     effective_ingress_items: "{{ graph_ingress_items if (graph_ingress_items | length) > 0 else collected_ingress_items }}"
     effective_namespace_items: "{{ graph_namespace_items if (graph_namespace_items | length) > 0 else collected_namespace_items }}"
     effective_storageclass_items: "{{ graph_storageclass_items if (graph_storageclass_items | length) > 0 else collected_storageclass_items }}"
+    healthy_pod_count: >-
+      {% set ns = namespace(count=0) %}
+      {% for pod in effective_pod_items %}
+      {% set status = pod.status | default({}) %}
+      {% set phase = status.phase | default('Unknown') %}
+      {% set total_container_count = status.containerStatuses | default([]) | length | int %}
+      {% set ready_container_count = status.containerStatuses | default([]) | selectattr('ready', 'equalto', true) | list | length | int %}
+      {% if phase == 'Succeeded' or (phase == 'Running' and total_container_count > 0 and ready_container_count == total_container_count) %}
+      {% set ns.count = ns.count + 1 %}
+      {% endif %}
+      {% endfor %}
+      {{ ns.count }}
+    unhealthy_pod_count: "{{ [0, ((effective_pod_items | length | int) - (healthy_pod_count | int))] | max }}"
     graph_object_counts:
       namespaces: "{{ effective_namespace_items | length }}"
       pods: "{{ effective_pod_items | length }}"
       running_pods: "{{ effective_pod_items | selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+      healthy_pods: "{{ healthy_pod_count | int }}"
+      unhealthy_pods: "{{ unhealthy_pod_count | int }}"
       deployments: "{{ effective_deployment_items | length }}"
       statefulsets: "{{ effective_statefulset_items | length }}"
       daemonsets: "{{ effective_daemonset_items | length }}"
@@ -293,6 +308,14 @@
         or (
           (cluster_current_state.object_counts | default({})).running_pods | default(0) | int == 0
           and (graph_object_counts.running_pods | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).healthy_pods | default(0) | int == 0
+          and (graph_object_counts.healthy_pods | int) > 0
+        )
+        or (
+          (cluster_current_state.object_counts | default({})).unhealthy_pods | default(0) | int == 0
+          and (graph_object_counts.unhealthy_pods | int) > 0
         )
         or (
           (cluster_current_state.object_counts | default({})).deployments | default(0) | int == 0
@@ -339,6 +362,16 @@
                     (((graph_object_counts.pods | int) / ([1, (cluster_current_state.node_counts.total | default(0) | int)] | max)) | round(1))
                     if (graph_object_counts.pods | int) > 0
                     else ((cluster_current_state.resources | default({})).average_pods_per_node | default('unknown'))
+                  ),
+                  'healthy_pod_ratio_pct': (
+                    ((((graph_object_counts.healthy_pods | int) * 100.0) / (graph_object_counts.pods | int)) | round(1))
+                    if (graph_object_counts.pods | int) > 0
+                    else ((cluster_current_state.resources | default({})).healthy_pod_ratio_pct | default(none))
+                  ),
+                  'unhealthy_pod_ratio_pct': (
+                    ((((graph_object_counts.unhealthy_pods | int) * 100.0) / (graph_object_counts.pods | int)) | round(1))
+                    if (graph_object_counts.pods | int) > 0
+                    else ((cluster_current_state.resources | default({})).unhealthy_pod_ratio_pct | default(none))
                   )
                 }, recursive=True)
             )

@@ -117,6 +117,19 @@ def normalize_items(value):
     return []
 
 
+def is_pod_healthy(pod):
+    status = (pod.get("status", {}) or {}) if isinstance(pod, dict) else {}
+    phase = str(status.get("phase") or "Unknown")
+    if phase == "Succeeded":
+        return True
+    if phase != "Running":
+        return False
+    statuses = status.get("containerStatuses") or []
+    if not isinstance(statuses, list) or not statuses:
+        return False
+    return all(bool((item or {}).get("ready")) for item in statuses)
+
+
 def signal_kind(entry, observed_label="utilization", derived_label="requested-pressure"):
     if (entry or {}).get("status") == "observed":
         return observed_label
@@ -420,6 +433,10 @@ def main():
     running_pod_count = sum(
         1 for pod in pod_items if (((pod.get("status", {}) or {}).get("phase")) == "Running")
     )
+    healthy_pod_count = sum(1 for pod in pod_items if is_pod_healthy(pod))
+    unhealthy_pod_count = max(0, pod_total_count - healthy_pod_count)
+    healthy_pod_ratio_pct = round((healthy_pod_count / pod_total_count) * 100.0, 1) if pod_total_count > 0 else None
+    unhealthy_pod_ratio_pct = round((unhealthy_pod_count / pod_total_count) * 100.0, 1) if pod_total_count > 0 else None
 
     node_cpu_signal = runtime_signal_entry(data, "node_cpu_utilization")
     node_memory_signal = runtime_signal_entry(data, "node_memory_utilization")
@@ -804,6 +821,8 @@ def main():
             "namespaces": int(data.get("namespace_count", 0) or 0),
             "pods": max(int((data.get("pod_object_counts") or {}).get("total", 0) or 0), pod_total_count),
             "running_pods": max(int((data.get("pod_object_counts") or {}).get("running", 0) or 0), running_pod_count),
+            "healthy_pods": healthy_pod_count,
+            "unhealthy_pods": unhealthy_pod_count,
             "deployments": int(data.get("deployment_count", 0) or 0),
             "statefulsets": int(data.get("statefulset_count", 0) or 0),
             "daemonsets": int(data.get("daemonset_count", 0) or 0),
@@ -847,6 +866,8 @@ def main():
             "average_disk_signal_method": node_disk_signal.get("method", "not-collected"),
             "average_disk_signal_kind": signal_kind(node_disk_signal),
             "average_disk_is_approximation": bool(node_disk_signal.get("is_approximation", False)),
+            "healthy_pod_ratio_pct": healthy_pod_ratio_pct,
+            "unhealthy_pod_ratio_pct": unhealthy_pod_ratio_pct,
         },
         "ip_capacity": {
             "services": data.get("service_ip_capacity_summary", {}) or {},

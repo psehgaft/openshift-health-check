@@ -98,3 +98,56 @@
       }}
   changed_when: false
   when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Create node metadata governance input file
+  ansible.builtin.tempfile:
+    state: file
+    suffix: node-metadata-governance.json
+  register: node_metadata_governance_input_file
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Write node metadata governance input
+  ansible.builtin.copy:
+    dest: "{{ node_metadata_governance_input_file.path }}"
+    mode: "0600"
+    content: "{{ {
+      'nodes': ((analysis_graph.nodes | default({})).get('items', []))
+    } | to_json }}"
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Build node ownership and chargeback metadata findings
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/build_node_metadata_governance_findings.py"
+      - "{{ node_metadata_governance_input_file.path }}"
+  register: node_metadata_governance_cmd
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
+
+- name: Remove node metadata governance input file
+  ansible.builtin.file:
+    path: "{{ node_metadata_governance_input_file.path }}"
+    state: absent
+  when: node_metadata_governance_input_file is defined and (node_metadata_governance_input_file.path | default('') | length > 0)
+  changed_when: false
+
+- name: Normalize node ownership and chargeback metadata findings
+  ansible.builtin.set_fact:
+    node_metadata_governance_findings: >-
+      {{
+        (
+          (
+            node_metadata_governance_cmd.stdout
+            | default('{}', true)
+            | trim
+            | default('{}', true)
+            | from_json
+          ).node_metadata_governance_findings
+          | default([])
+        )
+      }}
+  changed_when: false
+  when: report_scope_requires_core_namespace_governance_analysis | default(true) | bool
