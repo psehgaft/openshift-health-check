@@ -1,0 +1,154 @@
+---
+- name: Build OpenShift Developer Hub capability artifact facts
+  vars:
+    day2_openshift_developer_hub_section_current: "{{ (((day2_capability_sections | default([])) | selectattr('key', 'equalto', 'openshift_developer_hub') | list | first) | default({})) }}"
+    openshift_developer_hub_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_present', false)) | bool }}"
+    openshift_developer_hub_healthy_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_healthy', false)) | bool }}"
+    openshift_developer_hub_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_subscription_present', false)) | bool }}"
+    openshift_developer_hub_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_namespace_present', false)) | bool }}"
+    openshift_developer_hub_crd_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_crd_present', false)) | bool }}"
+    openshift_developer_hub_workload_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_workload_present', false)) | bool }}"
+    openshift_developer_hub_reason_summary_current: >-
+      {{
+        (
+          day2_openshift_developer_hub_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'subscriptionPresent=' ~ (openshift_developer_hub_subscription_present_current | string)
+          ~ ' namespacePresent=' ~ (openshift_developer_hub_namespace_present_current | string)
+          ~ ' crdPresent=' ~ (openshift_developer_hub_crd_present_current | string)
+          ~ ' workloadPresent=' ~ (openshift_developer_hub_workload_present_current | string)
+        )
+      }}
+    openshift_developer_hub_recommended_action_current: >-
+      {{
+        'Confirm the intended Red Hat Developer Hub operator, Backstage resources, and portal workload remain healthy for the teams that depend on them.'
+        if openshift_developer_hub_present_current
+        else 'If Red Hat Developer Hub is intended, deploy or confirm the RHDH operator, Backstage CRD, namespace, and portal workload footprint.'
+      }}
+    openshift_developer_hub_checks_current:
+      - name: Subscription footprint present
+        status: >-
+          {{
+            'OK'
+            if (openshift_developer_hub_subscription_present_current | bool)
+            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+          }}
+        detail: "subscriptionPresent={{ (openshift_developer_hub_subscription_present_current | bool) | string }}"
+      - name: Operator namespace footprint present
+        status: >-
+          {{
+            'OK'
+            if (openshift_developer_hub_namespace_present_current | bool)
+            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+          }}
+        detail: "namespacePresent={{ (openshift_developer_hub_namespace_present_current | bool) | string }}"
+      - name: Backstage CRD footprint present
+        status: >-
+          {{
+            'OK'
+            if (openshift_developer_hub_crd_present_current | bool)
+            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+          }}
+        detail: "crdPresent={{ (openshift_developer_hub_crd_present_current | bool) | string }}"
+      - name: Developer portal workload footprint present
+        status: >-
+          {{
+            'OK'
+            if (openshift_developer_hub_workload_present_current | bool)
+            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+          }}
+        detail: "workloadPresent={{ (openshift_developer_hub_workload_present_current | bool) | string }}"
+    openshift_developer_hub_findings_current: >-
+      {{
+        ([] +
+        ([{
+          'capability': 'openshift_developer_hub',
+          'issue': 'prod-day2-openshift-developer-hub-subscription-missing',
+          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'source': 'Red Hat Developer Hub operator and workload inventory',
+          'detail': 'No Red Hat Developer Hub operator subscription footprint was detected.',
+          'recommended_action': openshift_developer_hub_recommended_action_current,
+          'docs': ((day2_openshift_developer_hub_section_current.docs | default([])) | string)
+        }] if not (openshift_developer_hub_subscription_present_current | bool) else []) +
+        ([{
+          'capability': 'openshift_developer_hub',
+          'issue': 'prod-day2-openshift-developer-hub-namespace-missing',
+          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'source': 'Red Hat Developer Hub operator and workload inventory',
+          'detail': 'No Red Hat Developer Hub operator namespace footprint was detected.',
+          'recommended_action': openshift_developer_hub_recommended_action_current,
+          'docs': ((day2_openshift_developer_hub_section_current.docs | default([])) | string)
+        }] if not (openshift_developer_hub_namespace_present_current | bool) else []) +
+        ([{
+          'capability': 'openshift_developer_hub',
+          'issue': 'prod-day2-openshift-developer-hub-crd-missing',
+          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'source': 'Red Hat Developer Hub operator and workload inventory',
+          'detail': 'No Backstage custom resource definition footprint was detected.',
+          'recommended_action': openshift_developer_hub_recommended_action_current,
+          'docs': ((day2_openshift_developer_hub_section_current.docs | default([])) | string)
+        }] if not (openshift_developer_hub_crd_present_current | bool) else []) +
+        ([{
+          'capability': 'openshift_developer_hub',
+          'issue': 'prod-day2-openshift-developer-hub-workload-missing',
+          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'source': 'Red Hat Developer Hub operator and workload inventory',
+          'detail': 'No Red Hat Developer Hub or Backstage workload footprint was detected.',
+          'recommended_action': openshift_developer_hub_recommended_action_current,
+          'docs': ((day2_openshift_developer_hub_section_current.docs | default([])) | string)
+        }] if not (openshift_developer_hub_workload_present_current | bool) else []))
+      }}
+    openshift_developer_hub_section_override_current: >-
+      {{
+        (day2_openshift_developer_hub_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': (openshift_developer_hub_checks_current | length),
+              'finding_count': (openshift_developer_hub_findings_current | length),
+              'checks': openshift_developer_hub_checks_current,
+              'findings': openshift_developer_hub_findings_current,
+              'status': (
+                'OK'
+                if openshift_developer_hub_healthy_current
+                else ('WARNING' if openshift_developer_hub_present_current else 'INFO')
+              ),
+              'top_detail': (
+                openshift_developer_hub_reason_summary_current
+                if openshift_developer_hub_present_current
+                else 'no Red Hat Developer Hub operator, Backstage CRD, namespace, or workload footprint was detected'
+              ),
+              'recommended_action': openshift_developer_hub_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
+  ansible.builtin.set_fact:
+    capability_artifact_key: openshift_developer_hub
+    capability_artifact_section_override: "{{ openshift_developer_hub_section_override_current }}"
+    capability_artifact_analysis_summary:
+      assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: "{{ (openshift_developer_hub_checks_current | length) | int }}"
+      finding_count: "{{ (openshift_developer_hub_findings_current | length) | int }}"
+      openshift_developer_hub_present: "{{ openshift_developer_hub_present_current | bool }}"
+      openshift_developer_hub_healthy: "{{ openshift_developer_hub_healthy_current | bool }}"
+      openshift_developer_hub_subscription_present: "{{ openshift_developer_hub_subscription_present_current | bool }}"
+      openshift_developer_hub_namespace_present: "{{ openshift_developer_hub_namespace_present_current | bool }}"
+      openshift_developer_hub_crd_present: "{{ openshift_developer_hub_crd_present_current | bool }}"
+      openshift_developer_hub_workload_present: "{{ openshift_developer_hub_workload_present_current | bool }}"
+      status_summary: "{{ openshift_developer_hub_section_override_current.status }}"
+      reason_summary: "{{ openshift_developer_hub_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_openshift_developer_hub_section: "{{ openshift_developer_hub_section_override_current }}"
+    capability_artifact_collection_inputs:
+      openshift_developer_hub_present: "{{ openshift_developer_hub_present_current | bool }}"
+      openshift_developer_hub_healthy: "{{ openshift_developer_hub_healthy_current | bool }}"
+      openshift_developer_hub_subscription_present: "{{ openshift_developer_hub_subscription_present_current | bool }}"
+      openshift_developer_hub_namespace_present: "{{ openshift_developer_hub_namespace_present_current | bool }}"
+      openshift_developer_hub_crd_present: "{{ openshift_developer_hub_crd_present_current | bool }}"
+      openshift_developer_hub_workload_present: "{{ openshift_developer_hub_workload_present_current | bool }}"

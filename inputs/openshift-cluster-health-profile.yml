@@ -61,6 +61,7 @@ cluster_health_profile:
         expected.
       includes:
       - machine_health_check_remediation
+      - kubelet_configuration_governance
       satisfied_by_all:
       - node_tuning_operator
     backup_and_disaster_recovery:
@@ -241,7 +242,9 @@ cluster_health_profile:
       - The next report run shows no unresolved failed pipeline or trigger-ownership
         findings.
       - Delivery tooling failures are no longer blocking normal release flow.
-      includes: []
+      includes:
+      - openshift_developer_hub
+      - openshift_dev_spaces
       satisfied_by_all: []
     day2_production_readiness:
       enabled: true
@@ -583,6 +586,26 @@ cluster_health_profile:
       - Cluster autoscaler resources are present when this capability is enabled.
       - The intended autoscaling path is healthy for the worker pools that depend
         on it.
+    kubelet_configuration_governance:
+      enabled: false
+      required: false
+      criticality: medium
+      expected_state: configured
+      owner: node
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this capability when the cluster is expected to manage kubelet pod-density,
+        reservation, eviction, or runtime-policy settings intentionally through KubeletConfig
+        resources instead of relying only on inherited defaults.
+      docs:
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/nodes/working-with-nodes
+      - https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/machine_configuration/machine-configs-configure
+      verification:
+      - KubeletConfig resources are present when this capability is enabled.
+      - The intended MachineConfigPool targets are selected for each KubeletConfig.
+      - Expected pod-density, reservation, eviction, or runtime-policy settings are
+        explicitly configured for the node pools that depend on them.
     etcd_encryption:
       enabled: true
       required: true
@@ -1057,6 +1080,46 @@ cluster_health_profile:
         are present when this capability is enabled.
       - Expected cluster-hosted pipeline workflows complete successfully for the teams
         or applications that use them.
+    openshift_developer_hub:
+      enabled: false
+      required: false
+      criticality: info
+      expected_state: present
+      owner: release
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this optional capability when Red Hat Developer Hub is the expected
+        developer portal or software catalog path for the cluster. Missing or unhealthy
+        operator, CRD, or workload footprint can leave developer self-service and
+        catalog workflows unavailable or only partially deployed.
+      docs:
+      - https://docs.redhat.com/en/documentation/red_hat_developer_hub/latest
+      verification:
+      - Red Hat Developer Hub operator, Backstage custom resources, or workload footprint
+        is present when this capability is enabled.
+      - The intended developer portal path is deployed and healthy enough for teams
+        that depend on it.
+    openshift_dev_spaces:
+      enabled: false
+      required: false
+      criticality: info
+      expected_state: present
+      owner: release
+      evidence_required:
+      - must-gather
+      - oc-get
+      notes: Use this optional capability when Red Hat OpenShift Dev Spaces is the
+        expected browser-based workspace path for the cluster. Missing or unhealthy
+        operator, control-plane, routing, or Dev Workspace footprint can leave developer
+        workspace provisioning unavailable or only partially deployed.
+      docs:
+      - https://docs.redhat.com/en/documentation/red_hat_openshift_dev_spaces/latest
+      verification:
+      - OpenShift Dev Spaces operator, CheCluster, DevWorkspace, or supporting routing
+        footprint is present when this capability is enabled.
+      - The intended developer workspace path is deployed and healthy enough for
+        teams that depend on it.
     cluster_hosted_cicd_runners:
       enabled: false
       required: false

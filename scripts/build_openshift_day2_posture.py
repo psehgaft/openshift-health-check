@@ -232,8 +232,13 @@ secretstores = data.get("secretstores") or []
 externalsecrets = data.get("externalsecrets") or []
 secretproviderclasses = data.get("secretproviderclasses") or []
 clusterautoscalers = data.get("clusterautoscalers") or []
+kubeletconfigs = data.get("kubeletconfigs") or []
 hostedclusters = data.get("hostedclusters") or []
 nodepools = data.get("nodepools") or []
+checlusters = data.get("checlusters") or []
+devworkspaces = data.get("devworkspaces") or []
+devworkspaceoperatorconfigs = data.get("devworkspaceoperatorconfigs") or []
+devworkspaceroutings = data.get("devworkspaceroutings") or []
 dynakubes = data.get("dynakubes") or []
 edgeconnects = data.get("edgeconnects") or []
 datadogagents = data.get("datadogagents") or []
@@ -806,6 +811,75 @@ cluster_network_observability_healthy = bool(
     and (
         cluster_network_observability_crd_present
         or cluster_network_observability_workload_present
+    )
+)
+openshift_developer_hub_subscription_present = "rhdh" in subscription_packages
+openshift_developer_hub_namespace_present = "rhdh-operator" in namespace_names
+openshift_developer_hub_crd_present = crd_has(
+    "backstages.rhdh.redhat.com",
+    "rhdh.redhat.com",
+)
+openshift_developer_hub_workload_present = any_keyword(
+    [
+        "developer-hub",
+        "red-hat-developer-hub",
+        "backstage",
+        "rhdh",
+    ],
+    all_workload_blobs,
+)
+openshift_developer_hub_present = bool(
+    openshift_developer_hub_subscription_present
+    or openshift_developer_hub_namespace_present
+    or openshift_developer_hub_crd_present
+    or openshift_developer_hub_workload_present
+)
+openshift_developer_hub_healthy = bool(
+    openshift_developer_hub_present
+    and (
+        openshift_developer_hub_crd_present
+        or openshift_developer_hub_workload_present
+    )
+)
+openshift_dev_spaces_subscription_present = any(
+    package in subscription_packages
+    for package in {
+        "devspaces",
+        "devspacesoperator",
+        "devworkspace-operator",
+    }
+)
+openshift_dev_spaces_namespace_present = "openshift-devspaces" in namespace_names
+openshift_dev_spaces_checluster_present = bool(len(checlusters) > 0)
+openshift_dev_spaces_devworkspace_present = bool(len(devworkspaces) > 0)
+openshift_dev_spaces_workspace_operator_config_present = bool(len(devworkspaceoperatorconfigs) > 0)
+openshift_dev_spaces_routing_present = bool(len(devworkspaceroutings) > 0) or any_keyword(
+    [
+        "devworkspace-routing",
+        "devworkspace-webhook-server",
+        "che-gateway",
+        "devspaces-dashboard",
+        "openvsx",
+    ],
+    all_workload_blobs,
+)
+openshift_dev_spaces_present = bool(
+    openshift_dev_spaces_subscription_present
+    or openshift_dev_spaces_namespace_present
+    or openshift_dev_spaces_checluster_present
+    or openshift_dev_spaces_devworkspace_present
+    or openshift_dev_spaces_workspace_operator_config_present
+    or openshift_dev_spaces_routing_present
+)
+openshift_dev_spaces_healthy = bool(
+    openshift_dev_spaces_present
+    and (
+        openshift_dev_spaces_checluster_present
+        or openshift_dev_spaces_devworkspace_present
+        or (
+            openshift_dev_spaces_workspace_operator_config_present
+            and openshift_dev_spaces_routing_present
+        )
     )
 )
 appdynamics_subscription_present = "appdynamics-operator" in subscription_packages
@@ -1566,6 +1640,8 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "OADP operator app footprint": "application_backup_and_restore_readiness",
         "Compliance validation footprint": "compliance_requirements_validation",
         "OpenShift pipeline workflow footprint": "openshift_pipeline_workflows",
+        "OpenShift Developer Hub footprint": "openshift_developer_hub",
+        "OpenShift Dev Spaces footprint": "openshift_dev_spaces",
         "cert-manager operator footprint": "cert_manager_operator",
         "Advanced Cluster Security operator footprint": "advanced_cluster_security",
         "Dynatrace observability footprint": "dynatrace_observability",
@@ -1611,6 +1687,7 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "Central identity provider integration": "oauth_external_identity_provider",
         "Worker machine remediation": "machine_health_check_remediation",
         "Cluster autoscaler": "cluster_autoscaler_configuration",
+        "Kubelet configuration governance": "kubelet_configuration_governance",
         "Registry governance baseline": "image_registry_policy_governance",
         "Trusted image admission policy": "image_signature_and_admission_policy",
         "Cluster image mirror configuration": "cluster_image_mirror_configuration",
@@ -1668,6 +1745,7 @@ def finding_capability_key(issue, source):
         "prod-day2-machinehealthcheck-missing": "machine_health_check_remediation",
         "prod-day2-machinehealthcheck-coverage-incomplete": "machine_health_check_remediation",
         "prod-day2-cluster-autoscaler-missing": "cluster_autoscaler_configuration",
+        "prod-day2-kubelet-configuration-governance-missing": "kubelet_configuration_governance",
         "prod-day2-cluster-image-mirror-configuration-missing": "cluster_image_mirror_configuration",
         "prod-day2-cluster-image-mirror-configuration-legacy-icsp-only": "cluster_image_mirror_configuration",
         "prod-day2-cluster-image-mirror-configuration-targets-missing": "cluster_image_mirror_configuration",
@@ -1700,6 +1778,8 @@ def finding_capability_key(issue, source):
         "prod-day2-platform-oadp-operator-missing": "application_backup_and_restore_readiness",
         "prod-day2-platform-compliance-validation-missing": "compliance_requirements_validation",
         "prod-day2-platform-pipelines-operator-missing": "openshift_pipeline_workflows",
+        "prod-day2-openshift-developer-hub-missing": "openshift_developer_hub",
+        "prod-day2-openshift-dev-spaces-missing": "openshift_dev_spaces",
         "prod-day2-platform-cert-manager-missing": "cert_manager_operator",
         "prod-day2-platform-acs-missing": "advanced_cluster_security",
         "prod-day2-platform-namespace-governance-weak": "multi_tenant_namespace_governance",
@@ -2235,6 +2315,58 @@ if cap_required("cluster_network_observability") and not cluster_network_observa
         "no network observability operator, CRD, namespace, or workload footprint was detected",
         severity=cap_failure_severity("cluster_network_observability"),
         source="OpenShift network observability operator and workload inventory",
+    )
+
+add_check(
+    "OpenShift Developer Hub footprint",
+    cap_status_for_presence(
+        "openshift_developer_hub",
+        openshift_developer_hub_present,
+        openshift_developer_hub_healthy,
+    ),
+    (
+        f"subscriptionPresent={openshift_developer_hub_subscription_present} "
+        f"namespacePresent={openshift_developer_hub_namespace_present} "
+        f"crdPresent={openshift_developer_hub_crd_present} "
+        f"workloadPresent={openshift_developer_hub_workload_present}"
+    ),
+    "Red Hat Developer Hub operator and workload inventory",
+    level=cap_level("openshift_developer_hub", "informational"),
+    scored=False,
+)
+if cap_required("openshift_developer_hub") and not openshift_developer_hub_present:
+    add_finding(
+        "prod-day2-openshift-developer-hub-missing",
+        "no Red Hat Developer Hub operator, Backstage CRD, namespace, or workload footprint was detected",
+        severity=cap_failure_severity("openshift_developer_hub"),
+        source="Red Hat Developer Hub operator and workload inventory",
+    )
+
+add_check(
+    "OpenShift Dev Spaces footprint",
+    cap_status_for_presence(
+        "openshift_dev_spaces",
+        openshift_dev_spaces_present,
+        openshift_dev_spaces_healthy,
+    ),
+    (
+        f"subscriptionPresent={openshift_dev_spaces_subscription_present} "
+        f"namespacePresent={openshift_dev_spaces_namespace_present} "
+        f"cheClusterPresent={openshift_dev_spaces_checluster_present} "
+        f"devWorkspacePresent={openshift_dev_spaces_devworkspace_present} "
+        f"workspaceOperatorConfigPresent={openshift_dev_spaces_workspace_operator_config_present} "
+        f"routingPresent={openshift_dev_spaces_routing_present}"
+    ),
+    "OpenShift Dev Spaces operator and workspace inventory",
+    level=cap_level("openshift_dev_spaces", "informational"),
+    scored=False,
+)
+if cap_required("openshift_dev_spaces") and not openshift_dev_spaces_present:
+    add_finding(
+        "prod-day2-openshift-dev-spaces-missing",
+        "no OpenShift Dev Spaces operator, CheCluster, DevWorkspace, namespace, or routing footprint was detected",
+        severity=cap_failure_severity("openshift_dev_spaces"),
+        source="OpenShift Dev Spaces operator and workspace inventory",
     )
 
 apiserver_audit_profile = str((((apiserver_config.get("spec") or {}).get("audit") or {}).get("profile") or "")).strip().lower()
@@ -2895,6 +3027,49 @@ autoscaler_healthy = bool(
         )
     )
 )
+kubeletconfig_targeted = [
+    item for item in kubeletconfigs
+    if len((((item.get("spec") or {}).get("machineConfigPoolSelector")) or {})) > 0
+]
+kubeletconfig_density_tuned = [
+    item for item in kubeletconfigs
+    if any(
+        key in (((item.get("spec") or {}).get("kubeletConfig")) or {})
+        for key in ("maxPods", "podsPerCore")
+    )
+]
+kubeletconfig_reservation_tuned = [
+    item for item in kubeletconfigs
+    if any(
+        key in (((item.get("spec") or {}).get("kubeletConfig")) or {})
+        for key in ("systemReserved", "kubeReserved", "reservedSystemCPUs")
+    )
+]
+kubeletconfig_eviction_tuned = [
+    item for item in kubeletconfigs
+    if any(
+        key in (((item.get("spec") or {}).get("kubeletConfig")) or {})
+        for key in ("evictionHard", "evictionSoft", "evictionSoftGracePeriod", "evictionPressureTransitionPeriod")
+    )
+]
+kubeletconfig_runtime_policy_tuned = [
+    item for item in kubeletconfigs
+    if any(
+        key in (((item.get("spec") or {}).get("kubeletConfig")) or {})
+        for key in ("cpuManagerPolicy", "topologyManagerPolicy", "memoryManagerPolicy")
+    )
+]
+kubelet_configuration_governance_present = len(kubeletconfigs) > 0
+kubelet_configuration_governance_healthy = bool(
+    kubelet_configuration_governance_present
+    and len(kubeletconfig_targeted) > 0
+    and (
+        len(kubeletconfig_density_tuned) > 0
+        or len(kubeletconfig_reservation_tuned) > 0
+        or len(kubeletconfig_eviction_tuned) > 0
+        or len(kubeletconfig_runtime_policy_tuned) > 0
+    )
+)
 add_check(
     "Cluster autoscaler",
     cap_status_for_presence(
@@ -2914,6 +3089,24 @@ add_check(
     ),
     "cluster autoscaler guidance for Machine API worker pools",
     level=autoscaler_level,
+)
+add_check(
+    "Kubelet configuration governance",
+    cap_status_for_presence(
+        "kubelet_configuration_governance",
+        kubelet_configuration_governance_present,
+        kubelet_configuration_governance_healthy,
+    ),
+    (
+        f"kubeletConfigs={len(kubeletconfigs)} "
+        f"targetedConfigs={len(kubeletconfig_targeted)} "
+        f"densityTuned={len(kubeletconfig_density_tuned)} "
+        f"reservationTuned={len(kubeletconfig_reservation_tuned)} "
+        f"evictionTuned={len(kubeletconfig_eviction_tuned)} "
+        f"runtimePolicyTuned={len(kubeletconfig_runtime_policy_tuned)}"
+    ),
+    "KubeletConfig resource inventory",
+    level=cap_level("kubelet_configuration_governance", "informational"),
 )
 if (autoscaler_expected or cap_required("cluster_autoscaler_configuration")) and not autoscaler_present:
     add_finding(
@@ -2939,6 +3132,13 @@ elif (autoscaler_expected or cap_required("cluster_autoscaler_configuration")) a
         ),
         severity=cap_failure_severity("cluster_autoscaler_configuration"),
         source="cluster autoscaler guidance for Machine API worker pools",
+    )
+if cap_required("kubelet_configuration_governance") and kubelet_configuration_governance_present and not kubelet_configuration_governance_healthy:
+    add_finding(
+        "prod-day2-kubelet-configuration-governance-missing",
+        "KubeletConfig resources were detected, but no targeted pod-density, reservation, eviction, or runtime-policy tuning signal was found",
+        severity=cap_failure_severity("kubelet_configuration_governance"),
+        source="KubeletConfig resource inventory",
     )
 
 image_policy_clean = len(data.get("image_registry_findings") or []) == 0
@@ -3470,6 +3670,23 @@ platform_app_catalog = [
         "finding": "no OpenShift Pipelines operator footprint was detected",
     },
     {
+        "key": "openshift_dev_spaces",
+        "capability": "OpenShift Dev Spaces footprint",
+        "level": cap_level("openshift_dev_spaces", "informational"),
+        "source": "OpenShift Dev Spaces operator and workspace inventory",
+        "present": openshift_dev_spaces_present,
+        "detail": (
+            f"subscriptionPresent={openshift_dev_spaces_subscription_present} "
+            f"namespacePresent={openshift_dev_spaces_namespace_present} "
+            f"cheClusterPresent={openshift_dev_spaces_checluster_present} "
+            f"devWorkspacePresent={openshift_dev_spaces_devworkspace_present} "
+            f"workspaceOperatorConfigPresent={openshift_dev_spaces_workspace_operator_config_present} "
+            f"routingPresent={openshift_dev_spaces_routing_present}"
+        ),
+        "issue": "prod-day2-openshift-dev-spaces-missing",
+        "finding": "no OpenShift Dev Spaces operator, CheCluster, DevWorkspace, namespace, or routing footprint was detected",
+    },
+    {
         "key": "cert_manager_operator",
         "capability": "cert-manager operator footprint",
         "level": cert_manager_level,
@@ -3860,6 +4077,58 @@ platform_app_catalog = [
         "finding": "no KataConfig, kata runtime workload, or sandboxed containers operator footprint was detected",
     },
     {
+        "key": "kubelet_configuration_governance",
+        "capability": "Kubelet configuration governance",
+        "level": cap_level("kubelet_configuration_governance", "informational"),
+        "source": "KubeletConfig resource inventory",
+        "present": kubelet_configuration_governance_present,
+        "healthy": kubelet_configuration_governance_healthy,
+        "detail": (
+            f"kubeletConfigs={len(kubeletconfigs)} "
+            f"targetedConfigs={len(kubeletconfig_targeted)} "
+            f"densityTuned={len(kubeletconfig_density_tuned)} "
+            f"reservationTuned={len(kubeletconfig_reservation_tuned)} "
+            f"evictionTuned={len(kubeletconfig_eviction_tuned)} "
+            f"runtimePolicyTuned={len(kubeletconfig_runtime_policy_tuned)}"
+        ),
+        "issue": "prod-day2-kubelet-configuration-governance-missing",
+        "finding": "no KubeletConfig resource footprint was detected for explicit kubelet tuning governance",
+    },
+    {
+        "key": "openshift_developer_hub",
+        "capability": "OpenShift Developer Hub footprint",
+        "level": cap_level("openshift_developer_hub", "informational"),
+        "source": "Red Hat Developer Hub operator and workload inventory",
+        "present": openshift_developer_hub_present,
+        "healthy": openshift_developer_hub_healthy,
+        "detail": (
+            f"subscriptionPresent={openshift_developer_hub_subscription_present} "
+            f"namespacePresent={openshift_developer_hub_namespace_present} "
+            f"crdPresent={openshift_developer_hub_crd_present} "
+            f"workloadPresent={openshift_developer_hub_workload_present}"
+        ),
+        "issue": "prod-day2-openshift-developer-hub-missing",
+        "finding": "no Red Hat Developer Hub operator, Backstage CRD, namespace, or workload footprint was detected",
+    },
+    {
+        "key": "openshift_dev_spaces",
+        "capability": "OpenShift Dev Spaces footprint",
+        "level": cap_level("openshift_dev_spaces", "informational"),
+        "source": "OpenShift Dev Spaces operator and workspace inventory",
+        "present": openshift_dev_spaces_present,
+        "healthy": openshift_dev_spaces_healthy,
+        "detail": (
+            f"subscriptionPresent={openshift_dev_spaces_subscription_present} "
+            f"namespacePresent={openshift_dev_spaces_namespace_present} "
+            f"cheClusterPresent={openshift_dev_spaces_checluster_present} "
+            f"devWorkspacePresent={openshift_dev_spaces_devworkspace_present} "
+            f"workspaceOperatorConfigPresent={openshift_dev_spaces_workspace_operator_config_present} "
+            f"routingPresent={openshift_dev_spaces_routing_present}"
+        ),
+        "issue": "prod-day2-openshift-dev-spaces-missing",
+        "finding": "no OpenShift Dev Spaces operator, CheCluster, DevWorkspace, namespace, or routing footprint was detected",
+    },
+    {
         "key": "node_tuning_operator",
         "capability": "Node tuning operator configuration",
         "level": cap_level("node_tuning_operator", "informational"),
@@ -4129,6 +4398,28 @@ if cap_required("node_tuning_operator") and node_tuning_present and not node_tun
         severity=cap_failure_severity("node_tuning_operator"),
         source="Node Tuning Operator inventory",
     )
+if cap_required("openshift_developer_hub") and openshift_developer_hub_present and not openshift_developer_hub_healthy:
+    add_finding(
+        "prod-day2-openshift-developer-hub-missing",
+        "Red Hat Developer Hub footprint was detected, but no Backstage CRD or portal workload was found",
+        severity=cap_failure_severity("openshift_developer_hub"),
+        source="Red Hat Developer Hub operator and workload inventory",
+    )
+if cap_required("openshift_dev_spaces") and openshift_dev_spaces_present and not openshift_dev_spaces_healthy:
+    add_finding(
+        "prod-day2-openshift-dev-spaces-missing",
+        (
+            "OpenShift Dev Spaces footprint was detected, but no healthy CheCluster, DevWorkspace, or supporting routing/configuration path was found "
+            f"(subscriptionPresent={openshift_dev_spaces_subscription_present}, "
+            f"namespacePresent={openshift_dev_spaces_namespace_present}, "
+            f"cheClusterPresent={openshift_dev_spaces_checluster_present}, "
+            f"devWorkspacePresent={openshift_dev_spaces_devworkspace_present}, "
+            f"workspaceOperatorConfigPresent={openshift_dev_spaces_workspace_operator_config_present}, "
+            f"routingPresent={openshift_dev_spaces_routing_present})"
+        ),
+        severity=cap_failure_severity("openshift_dev_spaces"),
+        source="OpenShift Dev Spaces operator and workspace inventory",
+    )
 if cap_required("kubernetes_nmstate_networking") and nmstate_present and not nmstate_healthy:
     add_finding(
         "prod-day2-kubernetes-nmstate-networking-missing",
@@ -4397,6 +4688,20 @@ print(json.dumps({
         "openshift_pipeline_subscription_present": "openshift-pipelines-operator-rh" in subscription_packages,
         "openshift_pipeline_namespace_present": "openshift-pipelines" in namespace_names,
         "openshift_pipeline_gitops_app_present": "openshift-pipelines-operator-bootstrap" in gitops_application_names,
+        "openshift_developer_hub_present": openshift_developer_hub_present,
+        "openshift_developer_hub_healthy": openshift_developer_hub_healthy,
+        "openshift_developer_hub_subscription_present": openshift_developer_hub_subscription_present,
+        "openshift_developer_hub_namespace_present": openshift_developer_hub_namespace_present,
+        "openshift_developer_hub_crd_present": openshift_developer_hub_crd_present,
+        "openshift_developer_hub_workload_present": openshift_developer_hub_workload_present,
+        "openshift_dev_spaces_present": openshift_dev_spaces_present,
+        "openshift_dev_spaces_healthy": openshift_dev_spaces_healthy,
+        "openshift_dev_spaces_subscription_present": openshift_dev_spaces_subscription_present,
+        "openshift_dev_spaces_namespace_present": openshift_dev_spaces_namespace_present,
+        "openshift_dev_spaces_checluster_present": openshift_dev_spaces_checluster_present,
+        "openshift_dev_spaces_devworkspace_present": openshift_dev_spaces_devworkspace_present,
+        "openshift_dev_spaces_workspace_operator_config_present": openshift_dev_spaces_workspace_operator_config_present,
+        "openshift_dev_spaces_routing_present": openshift_dev_spaces_routing_present,
         "cert_manager_operator_present": bool("openshift-cert-manager-operator" in subscription_packages or "cert-manager-operator" in namespace_names or "cert-manager" in namespace_names),
         "cert_manager_subscription_present": "openshift-cert-manager-operator" in subscription_packages,
         "cert_manager_operator_namespace_present": "cert-manager-operator" in namespace_names,
@@ -4435,6 +4740,14 @@ print(json.dumps({
         "gpu_accelerated_workloads_healthy": gpu_workloads_healthy,
         "sandboxed_container_workloads_present": sandboxed_containers_present,
         "sandboxed_container_workloads_healthy": sandboxed_containers_healthy,
+        "kubelet_configuration_governance_present": kubelet_configuration_governance_present,
+        "kubelet_configuration_governance_healthy": kubelet_configuration_governance_healthy,
+        "kubeletconfig_count": len(kubeletconfigs),
+        "kubeletconfig_targeted_count": len(kubeletconfig_targeted),
+        "kubeletconfig_density_tuned_count": len(kubeletconfig_density_tuned),
+        "kubeletconfig_reservation_tuned_count": len(kubeletconfig_reservation_tuned),
+        "kubeletconfig_eviction_tuned_count": len(kubeletconfig_eviction_tuned),
+        "kubeletconfig_runtime_policy_tuned_count": len(kubeletconfig_runtime_policy_tuned),
         "node_tuning_operator_present": node_tuning_present,
         "node_tuning_operator_healthy": node_tuning_healthy,
         "kubernetes_nmstate_networking_present": nmstate_present,
