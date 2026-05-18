@@ -502,66 +502,10 @@ Platform engineering and SRE
 {% set report_assessment_mode = report_mode_resolved | default('live') %}
 {% set report_execution_mode = report_run_mode | default('fresh') %}
 {% set report_metadata_present = (report_generated_at | default('') | trim | length) > 0 and (report_cluster_type | default('') | trim | length) > 0 and (report_context_value | default('unknown') | trim) not in ['', 'unknown', 'not-collected'] and (report_api_server_value | default('unknown') | trim) not in ['', 'unknown', 'not-collected'] and (report_user_value | default('unknown') | trim) not in ['', 'unknown', 'not-collected'] %}
+{% set node_density_table_limit = top_node_density_table_limit | default(8) | int %}
+{% set pod_usage_table_limit = top_pod_usage_table_limit | default(40) | int %}
 
 # OpenShift Cluster Health Report
-
-## Report Context
-
-### Health Score
-
-| Signal | Value | Status |
-| --- | --- | --- |
-| Section score | `not-scored` | {{ status_badge('INFO') }} |
-| Report metadata present | `{{ report_metadata_present }}` | {{ status_badge('OK' if report_metadata_present else 'WARN') }} |
-| Cluster context known | `{{ (report_context_value | default('unknown') | trim) not in ['unknown', 'not-collected', ''] }}` | {{ status_badge('OK' if (report_context_value | default('unknown') | trim) not in ['unknown', 'not-collected', ''] else 'WARN') }} |
-| API server known | `{{ (report_api_server_value | default('unknown') | trim) not in ['unknown', 'not-collected', ''] }}` | {{ status_badge('OK' if (report_api_server_value | default('unknown') | trim) not in ['unknown', 'not-collected', ''] else 'WARN') }} |
-
-### Recommendations
-
-**Findings Summary**
-- This report is scoped to context `{{ report_context_value }}`, API server `{{ report_api_server_value }}`, and user `{{ report_user_value }}`.
-
-### Findings
-
-| Property | Value |
-| --- | --- |
-| Generated at | `{{ report_generated_at }}` |
-| Cluster type | `{{ report_cluster_type | default('openshift') }}` |
-| Context | `{{ report_context_value }}` |
-| API server | `{{ report_api_server_value }}` |
-| User | `{{ report_user_value }}` |
-| Assessment mode | `{{ report_assessment_mode }}` |
-| Execution mode | `{{ report_execution_mode }}` |
-| Checkpoint stage | `{{ report_context_checkpoint_stage }}` |
-| Resume next stage | `{{ report_context_resume_next_stage }}` |
-| Checkpoint manifest | `{{ report_resume_manifest_path | default('not-configured') }}` |
-
-### Profile Accounting
-
-| Scope | Enabled | Required | Accounting Rule |
-| --- | --- | --- | --- |
-| Postures | `{{ enabled_posture_items | length }}` | `{{ enabled_posture_items | selectattr('value.required', 'equalto', true) | list | length }}` | `Only enabled postures render as top-level report sections.` |
-| Capabilities | `{{ enabled_capability_items | length }}` | `{{ enabled_capability_items | selectattr('value.required', 'equalto', true) | list | length }}` | `Every enabled capability is accounted for in Day 2 capability sections.` |
-
-| Enabled posture | Required | Owner |
-| --- | --- | --- |
-{% for item in enabled_posture_items %}
-| `{{ item.key }}` | `{{ item.value.required | default(false) }}` | `{{ item.value.owner | default('platform') }}` |
-{% endfor %}
-
-| Enabled capability | Required | Owner |
-| --- | --- | --- |
-{% for item in enabled_capability_items %}
-| `{{ item.key }}` | `{{ item.value.required | default(false) }}` | `{{ item.value.owner | default('platform') }}` |
-{% endfor %}
-
-#### Scoring Legend
-
-| Score Range | Rating | Meaning |
-| --- | --- | --- |
-{% for item in cluster_health_score_legend %}
-| `{{ item.min }}-{{ item.max }}` | `{{ item.label }}` | {{ item.meaning }} |
-{% endfor %}
 
 ## Cluster Health Overview
 
@@ -630,43 +574,6 @@ Platform engineering and SRE
 | Primary risk themes | `{{ top_risk_areas | length }}` |
 | Priority actions | `{{ derived_priority_count }}` |
 | First recommended action | {{ first_recommended_action }} |
-
-{% if top_risk_areas | length == 0 %}
-| Primary Concern | Detail |
-| --- | --- |
-| `none` | No major risk themes were detected in this run. |
-{% else %}
-| Primary Concern | Detail |
-| --- | --- |
-{% for item in top_risk_areas[:5] %}
-| `{{ loop.index }}` | {{ item }} |
-{% endfor %}
-{% endif %}
-
-#### Leadership Readout
-
-- Executive summary: {{ executive_status_phrase(health_summary.status | default('unknown')) }}. Overall health is `{{ health_summary.status | default('unknown') }}` with score `{{ cluster_health_score }}/100`, `{{ derived_priority_count }}` priority actions, and main risks `{{ top_risk_areas[:3] | join('; ') or 'none identified' }}`.
-- Next step: {{ first_recommended_action }}.
-
-#### Top Priorities
-
-{% if top_priority_items | length == 0 and (top_risk_areas | length) == 0 %}
-| Priority | Recommended Action |
-| --- | --- |
-| `none` | No immediate or next-step remediation items were generated for this run. |
-{% elif top_priority_items | length == 0 %}
-| Priority | Recommended Action |
-| --- | --- |
-{% for item in top_risk_areas[:3] %}
-| `derived-{{ loop.index }}` | Review the owning posture section for `{{ item }}` and assign a remediation owner. |
-{% endfor %}
-{% else %}
-| Priority | Recommended Action |
-| --- | --- |
-{% for item in top_priority_items[:5] %}
-| `{{ item.priority }}` | {{ item.summary }} |
-{% endfor %}
-{% endif %}
 
 #### Action Plan
 
@@ -873,23 +780,71 @@ Platform engineering and SRE
 {% set platform_omc_summary = platform_health_domain.get('omc_summary', {}) %}
 {% set platform_etcd_diag_findings = platform_health_domain.get('etcd_ocp_diag_findings', []) %}
 {% set platform_omc_findings = platform_health_domain.get('omc_findings', []) %}
+{% set platform_control_plane_query_statuses = platform_health_domain.get('control_plane_query_status_map', control_plane_query_status_map | default({})) %}
+{% set platform_apiserver_readyz_status = platform_health_domain.get('apiserver_readyz_status', apiserver_readyz_status | default('not-collected')) %}
+{% set platform_apiserver_readyz_failed_checks = platform_health_domain.get('apiserver_readyz_failed_checks', apiserver_readyz_failed_checks | default(0)) %}
 {% set platform_etcd_diag_verdict = platform_etcd_diag_summary.verdict | default('not-collected') %}
 {% set platform_omc_diag_verdict = platform_omc_summary.verdict | default('not-collected') %}
 {% set platform_control_plane_diagnostics_missing = platform_etcd_diag_verdict in ['not-collected', 'not-derived', 'unknown'] and platform_omc_diag_verdict in ['not-collected', 'not-derived', 'unknown'] %}
 {% set platform_control_plane_diagnostics_blockers = 1 if platform_etcd_diag_verdict in ['unsupported-risk', 'review-required'] or platform_omc_diag_verdict in ['unsupported-risk', 'review-required'] else 0 %}
 {% set platform_runtime_has_findings = platform_operator_blockers > 0 or platform_node_blockers > 0 or platform_access_blockers > 0 or platform_control_plane_blockers > 0 or platform_control_plane_diagnostics_blockers > 0 or (platform_health_summary.platform_pod_issues | default(0) | int) > 0 or (platform_health_summary.image_registry_findings | default(0) | int) > 0 %}
+{% set platform_evidence_state_values = ['not-collected', 'no-data', 'query-failed', 'not-configured', 'unknown', 'unavailable'] %}
+{% set platform_operator_inventory_present = (platform_health_summary.operators_total | default(0) | int) > 0 or (platform_health_summary.operators_degraded | default(0) | int) > 0 or (platform_health_summary.operators_unavailable | default(0) | int) > 0 or (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 %}
+{% set platform_node_runtime_inventory_present = (platform_health_summary.nodes_total | default(0) | int) > 0 or (platform_health_summary.nodes_not_ready | default(0) | int) > 0 or (platform_health_summary.node_pressure_count | default(0) | int) > 0 or (platform_health_summary.mcps_degraded | default(0) | int) > 0 %}
+{% set platform_operator_availability_value = ('degraded=' ~ (platform_health_summary.operators_degraded | default(0)) ~ ', unavailable=' ~ (platform_health_summary.operators_unavailable | default(0)) ~ ', high-impact-progressing=' ~ (platform_health_summary.operators_progressing_high_impact | default(0))) if platform_operator_inventory_present else 'not-collected' %}
+{% set platform_node_runtime_value = ('notReady=' ~ (platform_health_summary.nodes_not_ready | default(0)) ~ ', pressure=' ~ (platform_health_summary.node_pressure_count | default(0)) ~ ', degradedMCPs=' ~ (platform_health_summary.mcps_degraded | default(0))) if platform_node_runtime_inventory_present else 'not-collected' %}
+{% set platform_api_runtime_signal_states = [platform_control_plane_query_statuses.get('apiserver_5xx_rate', 'not-collected'), platform_control_plane_query_statuses.get('apiserver_latency', 'not-collected')] %}
+{% set platform_etcd_leader_signal_states = [platform_control_plane_query_statuses.get('etcd_leader_count', 'not-collected'), platform_control_plane_query_statuses.get('etcd_members_reporting_leader', 'not-collected')] %}
+{% set platform_etcd_runtime_signal_states = [platform_control_plane_query_statuses.get('etcd_wal_fsync', 'not-collected'), platform_control_plane_query_statuses.get('etcd_peer_rtt', 'not-collected'), platform_control_plane_query_statuses.get('etcd_leader_changes', 'not-collected')] %}
+{% set platform_api_runtime_state = namespace(value='not-collected') %}
+{% if 'query-failed' in platform_api_runtime_signal_states %}
+{% set platform_api_runtime_state.value = 'query-failed' %}
+{% elif 'no-data' in platform_api_runtime_signal_states %}
+{% set platform_api_runtime_state.value = 'no-data' %}
+{% elif 'collected' in platform_api_runtime_signal_states %}
+{% set platform_api_runtime_state.value = 'collected' %}
+{% elif 'not-configured' in platform_api_runtime_signal_states %}
+{% set platform_api_runtime_state.value = 'not-configured' %}
+{% endif %}
+{% set platform_etcd_leader_state = namespace(value='not-collected') %}
+{% if 'query-failed' in platform_etcd_leader_signal_states %}
+{% set platform_etcd_leader_state.value = 'query-failed' %}
+{% elif 'no-data' in platform_etcd_leader_signal_states %}
+{% set platform_etcd_leader_state.value = 'no-data' %}
+{% elif 'collected' in platform_etcd_leader_signal_states %}
+{% set platform_etcd_leader_state.value = 'collected' %}
+{% elif 'not-configured' in platform_etcd_leader_signal_states %}
+{% set platform_etcd_leader_state.value = 'not-configured' %}
+{% endif %}
+{% set platform_etcd_runtime_state = namespace(value='not-collected') %}
+{% if 'query-failed' in platform_etcd_runtime_signal_states %}
+{% set platform_etcd_runtime_state.value = 'query-failed' %}
+{% elif 'no-data' in platform_etcd_runtime_signal_states %}
+{% set platform_etcd_runtime_state.value = 'no-data' %}
+{% elif 'collected' in platform_etcd_runtime_signal_states %}
+{% set platform_etcd_runtime_state.value = 'collected' %}
+{% elif 'not-configured' in platform_etcd_runtime_signal_states %}
+{% set platform_etcd_runtime_state.value = 'not-configured' %}
+{% endif %}
+{% set platform_readyz_failed_display = ((1 if (platform_apiserver_readyz_status == 'failed' or (platform_apiserver_readyz_failed_checks | default(0) | int) > 0) else 0) | string) if platform_apiserver_readyz_status in ['ok', 'failed'] else platform_apiserver_readyz_status %}
+{% set platform_api_runtime_display = ((platform_health_summary.apiserver_runtime_degraded | default(0)) | string) if platform_api_runtime_state.value == 'collected' else platform_api_runtime_state.value %}
+{% set platform_etcd_leader_display = ((platform_health_summary.etcd_leader_unhealthy | default(0)) | string) if platform_etcd_leader_state.value == 'collected' else platform_etcd_leader_state.value %}
+{% set platform_etcd_runtime_display = ((platform_health_summary.etcd_runtime_degraded | default(0)) | string) if platform_etcd_runtime_state.value == 'collected' else platform_etcd_runtime_state.value %}
+{% set platform_api_etcd_runtime_value = 'readyzFailed=' ~ platform_readyz_failed_display ~ ', apiRuntime=' ~ platform_api_runtime_display ~ ', etcdLeader=' ~ platform_etcd_leader_display ~ ', etcdRuntime=' ~ platform_etcd_runtime_display %}
+{% set platform_api_etcd_runtime_has_evidence_gaps = platform_readyz_failed_display in platform_evidence_state_values or platform_api_runtime_display in platform_evidence_state_values or platform_etcd_leader_display in platform_evidence_state_values or platform_etcd_runtime_display in platform_evidence_state_values %}
+{% set platform_access_value = 'routeIssues=' ~ (platform_health_summary.route_issues | default(0)) ~ ', ingressIssues=' ~ (platform_health_summary.ingress_issues | default(0)) ~ ', ingressControllerIssues=' ~ (platform_health_summary.ingresscontroller_issues | default(0)) ~ ', apiServiceIssues=' ~ (platform_health_summary.apiservice_issues | default(0)) %}
 
 ### Health Score
 
 | Signal | Value | Status |
 | --- | --- | --- |
 | Core platform health status | `{{ platform_status }}` | {{ status_badge('CRITICAL' if platform_status == 'CRITICAL' else ('WARN' if platform_status == 'WARNING' else ('OK' if platform_status == 'HEALTHY' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(platform_status) }}` | {{ status_badge('INFO') }} |
-| Runtime reason summary | `{{ platform_reason or 'none' }}` | {{ status_badge('WARN' if platform_runtime_has_findings else 'OK') }} |
-| Operator availability | `degraded={{ platform_health_summary.operators_degraded | default(0) }}, unavailable={{ platform_health_summary.operators_unavailable | default(0) }}, high-impact-progressing={{ platform_health_summary.operators_progressing_high_impact | default(0) }}` | {{ status_badge('CRITICAL' if platform_operator_blockers > 0 else ('WARN' if (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 else 'OK')) }} |
-| Node and MCP runtime | `notReady={{ platform_health_summary.nodes_not_ready | default(0) }}, pressure={{ platform_health_summary.node_pressure_count | default(0) }}, degradedMCPs={{ platform_health_summary.mcps_degraded | default(0) }}` | {{ status_badge('CRITICAL' if (platform_health_summary.nodes_not_ready | default(0) | int) > 0 or (platform_health_summary.mcps_degraded | default(0) | int) > 0 else ('WARN' if (platform_health_summary.node_pressure_count | default(0) | int) > 0 else 'OK')) }} |
-| API and etcd runtime | `readyzFailed={{ platform_health_summary.apiserver_readyz_failed | default(0) }}, apiRuntime={{ platform_health_summary.apiserver_runtime_degraded | default(0) }}, etcdLeader={{ platform_health_summary.etcd_leader_unhealthy | default(0) }}, etcdRuntime={{ platform_health_summary.etcd_runtime_degraded | default(0) }}` | {{ status_badge('CRITICAL' if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 else ('WARN' if (platform_health_summary.apiserver_runtime_degraded | default(0) | int) > 0 or (platform_health_summary.etcd_runtime_degraded | default(0) | int) > 0 else 'OK')) }} |
-| Ingress and APIService access | `routes={{ platform_health_summary.route_issues | default(0) }}, ingress={{ platform_health_summary.ingress_issues | default(0) }}, ingressControllers={{ platform_health_summary.ingresscontroller_issues | default(0) }}, apiServices={{ platform_health_summary.apiservice_issues | default(0) }}` | {{ status_badge('CRITICAL' if platform_access_blockers > 0 else 'OK') }} |
+| Health score | `{{ posture_score(platform_status) }}` | {{ status_badge('CRITICAL' if platform_status == 'CRITICAL' else ('WARN' if platform_status == 'WARNING' else ('OK' if platform_status == 'HEALTHY' else 'UNKNOWN'))) }} |
+| Runtime reason summary | `{{ platform_reason or 'none' }}` | {{ status_badge('CRITICAL' if (platform_status == 'CRITICAL' and platform_runtime_has_findings) else ('WARN' if platform_runtime_has_findings else 'OK')) }} |
+| Operator availability | `{{ platform_operator_availability_value }}` | {{ status_badge('CRITICAL' if platform_operator_blockers > 0 else ('WARN' if (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 else ('INFO' if not platform_operator_inventory_present else 'OK'))) }} |
+| Node and MCP runtime | `{{ platform_node_runtime_value }}` | {{ status_badge('CRITICAL' if (platform_health_summary.nodes_not_ready | default(0) | int) > 0 or (platform_health_summary.mcps_degraded | default(0) | int) > 0 else ('WARN' if (platform_health_summary.node_pressure_count | default(0) | int) > 0 else ('INFO' if not platform_node_runtime_inventory_present else 'OK'))) }} |
+| API and etcd runtime | `{{ platform_api_etcd_runtime_value }}` | {{ status_badge('CRITICAL' if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 else ('WARN' if (platform_health_summary.apiserver_runtime_degraded | default(0) | int) > 0 or (platform_health_summary.etcd_runtime_degraded | default(0) | int) > 0 else ('INFO' if platform_api_etcd_runtime_has_evidence_gaps else 'OK'))) }} |
+| Ingress and APIService access | `{{ platform_access_value }}` | {{ status_badge('CRITICAL' if platform_access_blockers > 0 else 'OK') }} |
 
 ### Recommendations
 
@@ -977,23 +932,28 @@ Platform engineering and SRE
 {% set node_has_diagnostics_gap = (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] %}
 {% set node_metric_evidence_missing = node_metric_source_status != 'collected' %}
 {% set node_reason_summary = node_health_capacity_summary.reason_summary | default('', true) %}
+{% set node_hotspot_count = (node_health_capacity_summary.high_cpu_node_count | default(0) | int) + (node_health_capacity_summary.high_memory_node_count | default(0) | int) + (node_health_capacity_summary.high_disk_node_count | default(0) | int) %}
+{% set node_high_cpu_display = (node_health_capacity_summary.high_cpu_node_count | default(0) | string) if ((node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 or not node_metric_evidence_missing) else 'not-collected' %}
+{% set node_high_memory_display = (node_health_capacity_summary.high_memory_node_count | default(0) | string) if ((node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 or not node_metric_evidence_missing) else 'not-collected' %}
+{% set node_high_disk_display = (node_health_capacity_summary.high_disk_node_count | default(0) | string) if ((node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 or not node_metric_evidence_missing) else 'not-collected' %}
+{% set node_utilization_hotspot_display = (node_hotspot_count | string) if (node_hotspot_count > 0 or not node_metric_evidence_missing) else 'not-collected' %}
 
 ### Health Score
 
 | Signal | Value | Status |
 | --- | --- | --- |
 | Node health and capacity status | `{{ ('partially-assessed (summary=' ~ (node_health_capacity_summary.status | default('unknown')) ~ ')') if node_inventory_missing else (node_health_capacity_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (node_health_capacity_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (node_health_capacity_summary.status | default('unknown')) == 'WARNING' else ('INFO' if node_inventory_missing else ('OK' if (node_health_capacity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')))) }} |
-| Health score | `{{ posture_score(node_health_capacity_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(node_health_capacity_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (node_health_capacity_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (node_health_capacity_summary.status | default('unknown')) == 'WARNING' else ('INFO' if node_inventory_missing else ('OK' if (node_health_capacity_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')))) }} |
 | Capacity reason summary | `{{ node_reason_summary or ('node inventory was not available to this report, so per-node readiness and density evidence was not fully assessed' if node_inventory_missing else 'no actionable node readiness, pressure, capacity, or diagnostics gaps were detected') }}` | {{ status_badge('WARN' if (node_has_actionable_capacity_findings or node_has_diagnostics_gap) else ('INFO' if node_inventory_missing else 'OK')) }} |
 | NotReady nodes | `{{ node_health_capacity_summary.not_ready_node_count | default(0) }}` | {{ status_badge('CRITICAL' if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 else 'OK') }} |
 | Nodes under pressure | `{{ node_health_capacity_summary.node_pressure_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 else 'OK') }} |
 | Critical pod density nodes | `{{ node_health_capacity_summary.critical_pod_density_node_count | default(0) }}` | {{ status_badge('CRITICAL' if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 else 'OK') }} |
 | High pod density nodes | `{{ node_health_capacity_summary.high_pod_density_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 else 'OK') }} |
 | Quota pressure findings | `{{ node_health_capacity_summary.quota_pressure_finding_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 else 'OK') }} |
-| High CPU nodes | `{{ node_health_capacity_summary.high_cpu_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 else 'OK') }} |
-| High memory nodes | `{{ node_health_capacity_summary.high_memory_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 else 'OK') }} |
-| High disk nodes | `{{ node_health_capacity_summary.high_disk_node_count | default(0) }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 else 'OK') }} |
-| Utilization hotspot count | `{{ (node_health_capacity_summary.high_cpu_node_count | default(0) | int) + (node_health_capacity_summary.high_memory_node_count | default(0) | int) + (node_health_capacity_summary.high_disk_node_count | default(0) | int) }}` | {{ status_badge('WARN' if ((node_health_capacity_summary.high_cpu_node_count | default(0) | int) + (node_health_capacity_summary.high_memory_node_count | default(0) | int) + (node_health_capacity_summary.high_disk_node_count | default(0) | int)) > 0 else 'OK') }} |
+| High CPU nodes | `{{ node_high_cpu_display }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 else ('INFO' if node_metric_evidence_missing else 'OK')) }} |
+| High memory nodes | `{{ node_high_memory_display }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 else ('INFO' if node_metric_evidence_missing else 'OK')) }} |
+| High disk nodes | `{{ node_high_disk_display }}` | {{ status_badge('WARN' if (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 else ('INFO' if node_metric_evidence_missing else 'OK')) }} |
+| Utilization hotspot count | `{{ node_utilization_hotspot_display }}` | {{ status_badge('WARN' if node_hotspot_count > 0 else ('INFO' if node_metric_evidence_missing else 'OK')) }} |
 | Node diagnostics verdict | `{{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}` | {{ status_badge('OK' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['supported', 'basic-supported'] else ('WARN' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] else ('INFO' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['node-level-not-requested', 'node-level-no-targets'] else 'UNKNOWN'))) }} |
 
 ### Recommendations
@@ -1150,7 +1110,7 @@ Platform engineering and SRE
 | Signal | Value | Status |
 | --- | --- | --- |
 | Workload backup and DR posture status | `{{ backup_recovery_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (backup_recovery_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (backup_recovery_summary.status | default('unknown')) == 'WARNING' else ('OK' if (backup_recovery_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(backup_recovery_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(backup_recovery_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (backup_recovery_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (backup_recovery_summary.status | default('unknown')) == 'WARNING' else ('OK' if (backup_recovery_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
 | Recovery reason summary | `{{ backup_recovery_summary.reason_summary | default('none') }}` | {{ status_badge('CRITICAL' if (backup_recovery_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (backup_recovery_has_findings or backup_control_plane_gap) else 'OK')) }} |
 | Backup tooling detected | `{{ backup_recovery_summary.backup_tooling_detected | default(false) }}` | {{ status_badge('OK' if (backup_recovery_summary.backup_tooling_detected | default(false)) else 'CRITICAL') }} |
 | DataProtectionApplications | `{{ backup_recovery_summary.dataprotectionapplication_count | default(0) }}` | {{ status_badge('INFO' if (backup_recovery_summary.dataprotectionapplication_count | default(0) | int) == 0 else 'OK') }} |
@@ -1371,7 +1331,7 @@ Platform engineering and SRE
 | Signal | Value | Status |
 | --- | --- | --- |
 | Network architecture status | `{{ ('partially-assessed (summary=' ~ (network_architecture_summary.status | default('unknown')) ~ ')') if network_route_ingress_not_assessed else (network_architecture_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (network_architecture_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (network_architecture_summary.status | default('unknown')) == 'WARNING' else ('INFO' if network_route_ingress_not_assessed else ('OK' if (network_architecture_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')))) }} |
-| Health score | `{{ posture_score(network_architecture_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(network_architecture_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (network_architecture_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (network_architecture_summary.status | default('unknown')) == 'WARNING' else ('INFO' if network_route_ingress_not_assessed else ('OK' if (network_architecture_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')))) }} |
 | Reason summary | `{{ network_reason_summary or ('traffic-entry object health was not assessed because no Route or Ingress objects were present' if network_route_ingress_not_assessed else ('namespace isolation context needs policy review for exposed workloads' if network_has_policy_context else 'no material route, ingress, endpoint, host-conflict, or proxy gaps were detected')) }}` | {{ status_badge('WARN' if network_has_actionable_findings else ('INFO' if (network_has_policy_context or network_route_ingress_not_assessed) else 'OK')) }} |
 | Route issues | `{{ network_architecture_summary.route_issue_count | default(0) }}` | {{ status_badge('WARN' if (network_architecture_summary.route_issue_count | default(0) | int) > 0 else 'OK') }} |
 | Ingress issues | `{{ network_architecture_summary.ingress_issue_count | default(0) }}` | {{ status_badge('WARN' if (network_architecture_summary.ingress_issue_count | default(0) | int) > 0 else 'OK') }} |
@@ -1540,7 +1500,7 @@ Platform engineering and SRE
 | Signal | Value | Status |
 | --- | --- | --- |
 | Observability posture status | `{{ observability_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (observability_summary.status | default('unknown')) == 'WARNING' else ('OK' if (observability_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(observability_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(observability_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (observability_summary.status | default('unknown')) == 'WARNING' else ('OK' if (observability_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
 | Observability reason summary | `{{ observability_summary.reason_summary | default('none') }}` | {{ status_badge('CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if ((observability_summary.status | default('unknown')) == 'WARNING' or observability_has_findings) else 'OK')) }} |
 | Monitoring operator healthy | `{{ observability_summary.monitoring_operator_healthy | default(false) }}` | {{ status_badge('OK' if (observability_summary.monitoring_operator_healthy | default(false)) else ('WARN' if (observability_summary.vendor_managed_observability_configured | default(false)) else 'CRITICAL')) }} |
 | Vendor-managed observability present | `{{ observability_summary.vendor_managed_observability_present | default(false) }}` | {{ status_badge('OK' if (observability_summary.vendor_managed_observability_present | default(false)) else 'INFO') }} |
@@ -1777,7 +1737,7 @@ Platform engineering and SRE
 | Signal | Value | Status |
 | --- | --- | --- |
 | Security posture status | `{{ security_governance_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (security_governance_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (security_governance_summary.status | default('unknown')) == 'WARNING' else ('OK' if (security_governance_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(security_governance_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(security_governance_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (security_governance_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (security_governance_summary.status | default('unknown')) == 'WARNING' else ('OK' if (security_governance_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
 | Security reason summary | `{{ security_governance_summary.reason_summary | default('none') }}` | {{ status_badge('CRITICAL' if (security_governance_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if security_actionable else 'OK')) }} |
 | Identity provider posture | `{{ auth_posture_reason }}` | {{ status_badge('WARN' if auth_identity_gap else ('OK' if auth_posture_status == 'healthy' and auth_external_identity_provider_count > 0 else 'UNKNOWN')) }} |
 | Privileged access grants | `{{ security_governance_summary.privileged_access_count | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.privileged_access_count | default(0) | int) > 0 else 'OK') }} |
@@ -2044,13 +2004,14 @@ Platform engineering and SRE
 
 {% if expiring_certificates_critical_section | default([]) | length > 0 or expiring_certificates_warning_section | default([]) | length > 0 %}
 #### Certificate Expiry Samples
+{% set certificate_issue_table_limit = top_metadata_table_limit | default(10) | int %}
 
 | Secret | Severity | Expires At | Days Remaining |
 | --- | --- | --- | --- |
-{% for cert in (expiring_certificates_critical_section | default([]))[:top_certificate_issue_limit] %}
+{% for cert in (expiring_certificates_critical_section | default([]))[:certificate_issue_table_limit] %}
 | `{{ cert.namespace }}/{{ cert.name }}` | `critical` | `{{ cert.not_after }}` | `{{ cert.days_remaining }}` |
 {% endfor %}
-{% for cert in (expiring_certificates_warning_section | default([]))[:top_certificate_issue_limit] %}
+{% for cert in (expiring_certificates_warning_section | default([]))[:certificate_issue_table_limit] %}
 {% if (cert.days_remaining | float) > (certificate_expiry_critical_days | float) %}
 | `{{ cert.namespace }}/{{ cert.name }}` | `warning` | `{{ cert.not_after }}` | `{{ cert.days_remaining }}` |
 {% endif %}
@@ -2143,8 +2104,6 @@ Platform engineering and SRE
 {% set top_overprovisioned_pods_section = workload_domain.overprovisioned_pods | default(top_overprovisioned_pods | default(overprovisioned_pods | default([]))) %}
 {% set top_pod_cpu_usage_summary_section = workload_domain.top_pod_cpu_usage_summary | default(top_pod_cpu_usage_summary | default([])) %}
 {% set top_pod_memory_usage_summary_section = workload_domain.top_pod_memory_usage_summary | default(top_pod_memory_usage_summary | default([])) %}
-{% set node_density_table_limit = top_node_density_table_limit | default(8) | int %}
-{% set pod_usage_table_limit = top_pod_usage_table_limit | default(40) | int %}
 {% set workload_soft_hygiene_count = (workload_summary.high_replica_workload_count | default(0) | int) + (workload_summary.orphan_pod_count | default(0) | int) + (workload_summary.workload_label_governance_count | default(0) | int) + (workload_summary.workload_resource_finding_count | default(0) | int) %}
 {% set workload_runtime_issue_count = (workload_summary.unhealthy_user_pod_count | default(0) | int) + (workload_summary.workload_health_issue_count | default(0) | int) %}
 {% set workload_has_remediation = (workload_runtime_issue_count | int) > 0 or (workload_summary.high_restart_pod_count | default(0) | int) > 0 or (workload_summary.workload_probe_finding_count | default(0) | int) > 0 or (workload_soft_hygiene_count | int) > 0 %}
@@ -2196,7 +2155,7 @@ Platform engineering and SRE
 | Signal | Value | Status |
 | --- | --- | --- |
 | Workload posture status | `{{ workload_summary.status | default('unknown') }}` | {{ status_badge('CRITICAL' if (workload_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (workload_summary.status | default('unknown')) == 'WARNING' else ('OK' if (workload_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(workload_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(workload_summary.status | default('unknown')) }}` | {{ status_badge('CRITICAL' if (workload_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if (workload_summary.status | default('unknown')) == 'WARNING' else ('OK' if (workload_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))) }} |
 | Reason summary | `{{ workload_reason_summary_display }}` | {{ status_badge('CRITICAL' if (workload_summary.status | default('unknown')) == 'CRITICAL' else ('WARN' if workload_has_remediation else ('INFO' if (workload_rightsizing_has_action or workload_rightsizing_confidence_limited) else 'OK'))) }} |
 | Unhealthy user pods | `{{ workload_summary.unhealthy_user_pod_count | default(0) }}` | {{ status_badge('CRITICAL' if (workload_summary.unhealthy_user_pod_count | default(0) | int) > 0 else 'OK') }} |
 | Workload rollout issues | `{{ workload_summary.workload_health_issue_count | default(0) }}` | {{ status_badge('CRITICAL' if (workload_summary.workload_health_issue_count | default(0) | int) > 0 else 'OK') }} |
@@ -2414,7 +2373,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | Signal | Value | Status |
 | --- | --- | --- |
 | Lifecycle posture status | `{{ architecture_status }}` | {{ status_badge('CRITICAL' if architecture_status == 'CRITICAL' else ('WARN' if architecture_status == 'WARNING' else ('OK' if architecture_status == 'HEALTHY' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(architecture_status) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(architecture_status) }}` | {{ status_badge('CRITICAL' if architecture_status == 'CRITICAL' else ('WARN' if architecture_status == 'WARNING' else ('OK' if architecture_status == 'HEALTHY' else 'UNKNOWN'))) }} |
 | Lifecycle support status | `{{ architecture_lifecycle_summary.support_status | default('unknown') }}` | {{ status_badge('WARN' if (architecture_lifecycle_summary.support_status | default('unknown')) not in ['supported', 'unknown'] else ('OK' if (architecture_lifecycle_summary.support_status | default('unknown')) == 'supported' else 'UNKNOWN')) }} |
 | Lifecycle support phase | `{{ architecture_lifecycle_summary.support_phase | default('unknown') }}` | {{ status_badge('UNKNOWN' if (architecture_lifecycle_summary.support_phase | default('unknown')) == 'unknown' else ('WARN' if (architecture_lifecycle_summary.support_status | default('unknown')) != 'supported' else 'OK')) }} |
 | Base maintenance support ends | `{{ architecture_lifecycle_summary.maintenance_end | default('unknown') }}` | {{ status_badge('INFO') }} |
@@ -2709,7 +2668,7 @@ Cluster update history was not returned.
 | Signal | Value | Status |
 | --- | --- | --- |
 | Capacity snapshot status | `{% if capacity_node_inventory_missing %}not-assessed{% elif capacity_snapshot_partial %}partial{% else %}available{% endif %}` | {{ status_badge('UNKNOWN' if capacity_node_inventory_missing else ('INFO' if capacity_snapshot_partial else 'OK')) }} |
-| Health score | `{% if capacity_node_inventory_missing %}not-scored{% elif capacity_snapshot_partial %}80/100{% else %}100/100{% endif %}` | {{ status_badge('INFO') }} |
+| Health score | `{% if capacity_node_inventory_missing %}not-scored{% elif capacity_snapshot_partial %}80/100{% else %}100/100{% endif %}` | {{ status_badge('UNKNOWN' if capacity_node_inventory_missing else ('INFO' if capacity_snapshot_partial else 'OK')) }} |
 | Nodes | `{{ capacity_nodes_display }}` | {{ status_badge('OK' if not capacity_node_inventory_missing else 'UNKNOWN') }} |
 | Worker nodes | `{{ capacity_workers_display }}` | {{ status_badge('INFO' if not capacity_node_inventory_missing else 'UNKNOWN') }} |
 | Pods | `{{ capacity_pods_display }}` | {{ status_badge('INFO' if (not capacity_node_inventory_missing and (capacity_object_counts.pods | default(0) | int) > 0) else ('WARN' if not capacity_node_inventory_missing else 'UNKNOWN')) }} |
@@ -2980,8 +2939,8 @@ Cluster update history was not returned.
 | Signal | Value | Status |
 | --- | --- | --- |
 | Declarative operations status | `{{ declarative_operations_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN')) }} |
-| Health score | `{{ posture_score(declarative_operations_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
-| Reason summary | `{{ declarative_operations_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(declarative_operations_summary.status | default('unknown')) }}` | {{ status_badge('WARN' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else ('INFO' if (declarative_operations_summary.status | default('unknown')) == 'INFO' else 'UNKNOWN'))) }} |
+| Reason summary | `{{ declarative_operations_summary.reason_summary | default('none') }}` | {{ status_badge('WARN' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'INFO')) }} |
 | Declarative operations evidence | `{{ declarative_operations_summary.gitops_present | default(false) }}` | {{ status_badge('OK' if (declarative_operations_summary.gitops_present | default(false)) else 'WARN') }} |
 | Argo CD controllers | `{{ declarative_operations_summary.argocd_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.argocd_count | default(0) | int) == 0 else 'OK') }} |
 | GitOps applications | `{{ declarative_operations_summary.gitops_application_count | default(0) }}` | {{ status_badge('OK' if (declarative_operations_summary.gitops_application_count | default(0) | int) > 0 else 'WARN') }} |
@@ -3045,7 +3004,7 @@ Cluster update history was not returned.
 | Signal | Value | Status |
 | --- | --- | --- |
 | Release engineering posture status | `{{ release_engineering_summary.status | default('unknown') }}` | {{ status_badge('WARN' if (release_engineering_summary.status | default('unknown')) == 'WARNING' else ('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else ('INFO' if (release_engineering_summary.status | default('unknown')) == 'INFO' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(release_engineering_summary.status | default('unknown')) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(release_engineering_summary.status | default('unknown')) }}` | {{ status_badge('WARN' if (release_engineering_summary.status | default('unknown')) == 'WARNING' else ('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else ('INFO' if (release_engineering_summary.status | default('unknown')) == 'INFO' else 'UNKNOWN'))) }} |
 | Reason summary | `{{ release_engineering_summary.reason_summary | default('none') }}` | {{ status_badge('INFO') }} |
 | External delivery automation signal | `{{ release_engineering_summary.external_delivery_evidence_present | default(false) }}` | {{ status_badge('OK' if (release_engineering_summary.external_delivery_evidence_present | default(false)) else 'INFO') }} |
 | Failed PipelineRuns | `{{ release_engineering_summary.failed_pipelinerun_count | default(0) }}` | {{ status_badge('WARN' if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 else 'OK') }} |
@@ -3217,7 +3176,7 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 | Signal | Value | Status |
 | --- | --- | --- |
 | Production readiness decision | `{{ day2_status }}` | {{ status_badge('CRITICAL' if day2_status == 'CRITICAL' else ('WARN' if day2_status == 'WARNING' else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN'))) }} |
-| Health score | `{{ posture_score(day2_status) }}` | {{ status_badge('INFO') }} |
+| Health score | `{{ posture_score(day2_status) }}` | {{ status_badge('CRITICAL' if day2_status == 'CRITICAL' else ('WARN' if day2_status == 'WARNING' else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN'))) }} |
 | Evidence confidence | `{{ day2_evidence_confidence }}` | {{ status_badge('WARN' if day2_evidence_confidence in ['low', 'unknown'] else ('OK' if day2_evidence_confidence in ['high', 'medium'] else 'UNKNOWN')) }} |
 | Capability assessment state | `{{ day2_capability_assessment_state }}` | {{ status_badge('OK' if day2_capability_assessment_state == 'completed' else ('WARN' if day2_capability_assessment_state == 'failed' else 'UNKNOWN')) }} |
 | Top blockers | `{{ day2_top_blockers | join('; ') or 'none' }}` | {{ status_badge('CRITICAL' if day2_critical_blocker_present else ('WARN' if day2_top_blockers | length > 0 else 'OK')) }} |
@@ -3240,11 +3199,6 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
   posture_reference_urls(['day2'], 'day2_production_readiness'),
   posture_notes('day2_production_readiness')
 ) }}
-
-#### Leadership Readout
-
-- Executive summary: {{ executive_status_phrase(day2_status) }}. Production readiness is `{{ day2_status }}` with evidence confidence `{{ day2_evidence_confidence }}` and `{{ ns_day2.required_gaps }}` required capabilities at risk.
-- Next step: {% if day2_capability_assessment_state == 'completed' %}use the capability sections below as the owner work queue for evidence, remediation, and sign-off.{% else %}fix the capability assessment failure first, then rerun so the capability sections become collected assessment output instead of placeholders.{% endif %}
 
 #### Capability Summary
 
@@ -3355,79 +3309,19 @@ Findings
 | `Readiness blocker count` | `{% if day2_critical_blocker_present %}CRITICAL{% elif day2_top_blockers | length > 0 %}WARNING{% elif day2_status == 'HEALTHY' %}OK{% else %}UNKNOWN{% endif %}` | `{{ day2_top_blockers | length }} blockers` | `Production sign-off should be based on unresolved lifecycle, recovery, security, observability, and operations blockers.` | `blockers={{ day2_top_blockers | join('; ') or 'none' }}` | `{% if day2_top_blockers | length > 0 %}Resolve the named readiness blockers in the owning posture sections before production sign-off.{% elif day2_status == 'HEALTHY' %}No readiness-blocker remediation is required for this posture.{% else %}Verify incomplete readiness inputs before using this roll-up as a final decision.{% endif %}` | `{{ gap_owner('operations') }}` | `{{ gap_done_when('CRITICAL' if day2_critical_blocker_present else ('WARNING' if day2_top_blockers | length > 0 else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN'))) }}` |
 
 {% endif %}
-{% set has_supporting_evidence =
-  (top_namespace_issue_summary | default([]) | length > 0)
-  or (report_collection_failures_list | length > 0)
-  or (pv_issues | default([]) | length > 0)
-  or (pvc_issues | default([]) | length > 0)
-%}
-{% set has_appendix = (supportability_appendix_content | trim | length > 0) or has_supporting_evidence %}
+{% set has_appendix = (supportability_appendix_content | trim | length > 0) or (cluster_health_score_legend | default([]) | length > 0) %}
 {% if has_appendix %}
 ## Appendix
 
 {{ supportability_appendix_content | trim }}
 
-{% if has_supporting_evidence %}
-### Supporting Evidence Samples
+{% if cluster_health_score_legend | default([]) | length > 0 %}
+### Scoring Legend
 
-This appendix contains lower-level evidence samples that support the main domain conclusions when namespace state, storage issues, or collection failures need extra detail.
-
-{% if top_namespace_issue_summary | default([]) | length > 0 %}
-#### Namespace State Samples
-
-Showing up to the top {{ top_namespace_issue_summary | length }} namespaces that were flagged for follow-up or incomplete state classification.
-
-| Namespace | Phase |
-| --- | --- |
-{% for item in top_namespace_issue_summary %}
-| `{{ item.name }}` | `{{ item.phase }}` |
-{% endfor %}
-{% if (namespace_issue_summary | default([]) | length) > (top_namespace_issue_summary | length) %}
-| `additional entries omitted` | `{{ (namespace_issue_summary | length) - (top_namespace_issue_summary | length) }}` |
-{% endif %}
-{% endif %}
-
-{% if report_collection_failures_list | length > 0 %}
-#### Collection Failures
-
-Showing up to the top {{ top_collection_failure_limit | default(10) | int }} collection failures that can affect confidence in the report.
-
-| Command | Status | Detail |
+| Score Range | Rating | Meaning |
 | --- | --- | --- |
-{% for item in (report_collection_failures_list | default([]))[:(top_collection_failure_limit | default(10) | int)] %}
-| `{{ item.name | default('unknown') }}` | `{{ 'timed-out' if (item.timed_out | default(false)) else 'failed' }}` | `{{ item.stderr | default(item.detail | default('No error detail captured.')) | replace('|', '\\|') }}` |
+{% for item in cluster_health_score_legend %}
+| `{{ item.min }}-{{ item.max }}` | `{{ item.label }}` | {{ item.meaning }} |
 {% endfor %}
-{% if (report_collection_failures_list | length) > (top_collection_failure_limit | default(10) | int) %}
-| `additional failures omitted` | `{{ (report_collection_failures_list | length) - (top_collection_failure_limit | default(10) | int) }}` | `See collection summary for full failure accounting.` |
-{% endif %}
-{% endif %}
-
-{% if pvc_issues | default([]) | length > 0 %}
-#### Top PVC Samples With Issues
-
-Showing up to the top 25 PVCs with detected issues.
-
-| PVC | Phase | StorageClass |
-| --- | --- | --- |
-{% for pvc in top_pvc_issues %}
-| `{{ pvc.namespace }}/{{ pvc.name }}` | `{{ pvc.phase }}` | `{{ pvc.storageClassName or 'none' }}` |
-{% endfor %}
-{% if (pvc_issues | length) > (top_pvc_issues | length) %}
-| `additional PVC issues omitted` | `{{ (pvc_issues | length) - (top_pvc_issues | length) }}` | `n/a` |
-{% endif %}
-{% endif %}
-
-{% if pv_issues | default([]) | length > 0 %}
-#### Top PV Samples With Issues
-
-| PV | Phase | StorageClass | Claim |
-| --- | --- | --- | --- |
-{% for pv in top_pv_issues %}
-| `{{ pv.name }}` | `{{ pv.phase }}` | `{{ pv.storageClassName or 'none' }}` | `{{ pv.claimRef or 'unbound' }}` |
-{% endfor %}
-{% if (pv_issues | length) > (top_pv_issues | length) %}
-| `additional PV issues omitted` | `{{ (pv_issues | length) - (top_pv_issues | length) }}` | `n/a` | `n/a` |
-{% endif %}
-{% endif %}
 {% endif %}
 {% endif %}

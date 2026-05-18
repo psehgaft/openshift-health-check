@@ -81,7 +81,7 @@ def expected_cluster_sections() -> list:
     profile_path = Path(__file__).resolve().parent.parent / "inputs" / "openshift-cluster-health-profile.yml"
     profile_payload = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
     posture_profile = ((profile_payload.get("cluster_health_profile") or {}).get("postures") or {})
-    titles = ["Report Context", "Cluster Health Overview"]
+    titles = ["Cluster Health Overview"]
     for key, title in POSTURE_SECTION_TITLES:
         value = posture_profile.get(key, {})
         if not isinstance(value, dict) or bool(value.get("enabled", True)):
@@ -177,9 +177,8 @@ def validate_markdown(path: Path) -> None:
 
     validate_markdown_tables(markdown)
 
-    if "## Report Context" in markdown:
-        validate_cluster_posture_sections(markdown)
-        validate_day2_capability_markdown_sections(markdown)
+    validate_cluster_posture_sections(markdown)
+    validate_day2_capability_markdown_sections(markdown)
 
     for marker in REQUIRED_DAY2_MARKERS:
         if marker not in markdown:

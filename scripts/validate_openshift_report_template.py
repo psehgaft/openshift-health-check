@@ -7,7 +7,6 @@ from pathlib import Path
 
 
 EXPECTED_SECTIONS = [
-    "Report Context",
     "Cluster Health Overview",
     "Platform Health",
     "Node Health And Capacity",
