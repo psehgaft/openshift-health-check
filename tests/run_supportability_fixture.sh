@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/repo-runtime-env.sh"
 FIXTURE_PATH="${ROOT_DIR}/tests/fixtures/must-gather.local.mock"
 CLUSTER_COMPARE_PATH="${ROOT_DIR}/tests/fixtures/cluster-compare/mock-cluster-compare.json"
 INSPECT_PATH="${ROOT_DIR}/tests/fixtures/inspect.mock"
@@ -10,14 +11,16 @@ SOSREPORT_PATH="${ROOT_DIR}/tests/fixtures/sosreport-worker-0"
 ADVISOR_PATH="${ROOT_DIR}/tests/fixtures/advisor/mock-advisor.json"
 MANAGED_GATES_PATH="${ROOT_DIR}/tests/fixtures/managed-gates/mock-rosa-gates.json"
 OMC_PATH="${ROOT_DIR}/tests/fixtures/bin/omc"
-REPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/supportability-fixture-reports.XXXXXX")"
-LOG_PATH="${TMPDIR:-/tmp}/supportability-fixture.log"
+REPORT_DIR="$(mktemp -d "${REPO_TMP_ROOT}/supportability-fixture-reports.XXXXXX")"
+LOG_PATH="${REPO_TMP_ROOT}/supportability-fixture.log"
 ANSIBLE_PLAYBOOK_BIN="${ROOT_DIR}/.venv/bin/ansible-playbook"
 VENV_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 trap 'rm -rf "${REPORT_DIR}"' EXIT
 
-ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
-ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
+cleanup_repo_ansible_temp_dirs
+
+ANSIBLE_LOCAL_TEMP="${REPO_ANSIBLE_LOCAL_TEMP}" \
+ANSIBLE_REMOTE_TEMP="${REPO_ANSIBLE_REMOTE_TEMP}" \
 ANSIBLE_STDOUT_CALLBACK=minimal \
 "${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_output_dir="${REPORT_DIR}" \

@@ -29,84 +29,42 @@
     feature_findings: "{{ feature_findings | default([]) + feature_finding_entries }}"
 
 - name: Build internal image registry workload usage findings
-  block:
-    - name: Create internal registry workload input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-internal-registry-
-        suffix: .json
-      register: internal_registry_workloads_input_file
-      changed_when: false
-
-    - name: Write internal registry workload input data
-      ansible.builtin.copy:
-        dest: "{{ internal_registry_workloads_input_file.path }}"
-        mode: "0600"
-        content: "{{ {
-          'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
-          'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
-          'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
-          'exclude_regex': (user_namespaces_exclude_regex | default('^$'))
-        } | to_json }}"
-      changed_when: false
-
-    - name: Run internal registry workload analysis
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_internal_registry_workload_findings.py"
-          - "{{ internal_registry_workloads_input_file.path }}"
-      register: internal_registry_workloads_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove internal registry workload input file
-      ansible.builtin.file:
-        path: "{{ internal_registry_workloads_input_file.path }}"
-        state: absent
-      when: internal_registry_workloads_input_file is defined and (internal_registry_workloads_input_file.path | default('') | length > 0)
-      changed_when: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_internal_registry_workload_findings.py"
+    stdin: "{{ {
+      'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+      'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
+      'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+      'exclude_regex': (user_namespaces_exclude_regex | default('^$'))
+    } | to_json }}"
+  register: internal_registry_workloads_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Normalize internal image registry workload usage findings
   ansible.builtin.set_fact:
     internal_registry_workloads: "{{ (internal_registry_workloads_cmd.stdout | from_json).internal_registry_workloads if (internal_registry_workloads_cmd.rc == 0 and (internal_registry_workloads_cmd.stdout | default('') | length > 0)) else [] }}"
     image_registry_findings: "{{ (image_registry_findings | default([])) + (((internal_registry_workloads_cmd.stdout | from_json).image_registry_findings) if (internal_registry_workloads_cmd.rc == 0 and (internal_registry_workloads_cmd.stdout | default('') | length > 0)) else []) }}"
 
-- name: Create stale access review input file
-  ansible.builtin.tempfile:
-    state: file
-    suffix: stale-access-review.json
-  register: stale_access_review_input_file
-  changed_when: false
-
-- name: Write stale access review input
-  ansible.builtin.copy:
-    dest: "{{ stale_access_review_input_file.path }}"
-    mode: "0600"
-    content: "{{ {
+- name: Build stale access review candidates
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_stale_access_review_candidates.py"
+    stdin: "{{ {
       'rolebindings': ((analysis_graph.rolebindings | default({})).get('items', [])),
       'clusterrolebindings': ((analysis_graph.clusterrolebindings | default({})).get('items', [])),
       'users': ((analysis_graph.users | default({})).get('items', [])),
       'groups': ((analysis_graph.groups | default({})).get('items', [])),
       'likely_unused_serviceaccounts': (likely_unused_serviceaccounts | default([]))
     } | to_json }}"
-  changed_when: false
-
-- name: Build stale access review candidates
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/build_stale_access_review_candidates.py"
-      - "{{ stale_access_review_input_file.path }}"
   register: stale_access_review_cmd
   changed_when: false
-
-- name: Remove stale access review input file
-  ansible.builtin.file:
-    path: "{{ stale_access_review_input_file.path }}"
-    state: absent
-  when: stale_access_review_input_file is defined and (stale_access_review_input_file.path | default('') | length > 0)
-  changed_when: false
+  failed_when: false
 
 - name: Normalize stale access review candidates
   ansible.builtin.set_fact:

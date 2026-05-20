@@ -29,10 +29,14 @@
       insights_archive_path: "{{ insights_archive_path | default('') }}"
       sosreport_paths: "{{ sosreport_paths | default([]) }}"
     shared_collection_artifact_hash: "{{ (shared_collection_hash_basis | to_json) | hash('sha256') }}"
-  ansible.builtin.copy:
-    dest: "{{ report_run_workspace_shared_dir }}/collection.json"
-    mode: "0644"
-    content: >-
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ report_run_workspace_shared_dir }}/collection.json"
+      - --mode
+      - "0644"
+    stdin: >-
       {{
         {
           'schema_version': (report_artifact_schema_version | default('1')),
@@ -62,6 +66,7 @@
         }
         | to_nice_json
       }}
+  changed_when: false
   when: ((report_resume_artifact_plan | default({})).get('shared', {}).get('collection', {}).get('should_build', true) | bool)
 
 - name: Write shared analysis graph artifact
@@ -74,10 +79,14 @@
       analysis_graph_summary: "{{ openshift_analysis_graph_summary | default({}) }}"
       cluster_profile: "{{ cluster_profile | default({}) }}"
     shared_analysis_graph_artifact_hash: "{{ (shared_analysis_graph_hash_basis | to_json) | hash('sha256') }}"
-  ansible.builtin.copy:
-    dest: "{{ report_run_workspace_shared_dir }}/analysis-graph.json"
-    mode: "0644"
-    content: >-
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ report_run_workspace_shared_dir }}/analysis-graph.json"
+      - --mode
+      - "0644"
+    stdin: >-
       {{
         {
           'schema_version': (report_artifact_schema_version | default('1')),
@@ -96,6 +105,7 @@
         }
         | to_nice_json
       }}
+  changed_when: false
   when: ((report_resume_artifact_plan | default({})).get('shared', {}).get('analysis_graph', {}).get('should_build', true) | bool)
 
 - name: Record current shared artifact hashes after writes

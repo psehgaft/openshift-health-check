@@ -16,8 +16,10 @@ DOCUMENTATION = r"""
     type: stdout
     short_description: Show task-count progress while preserving default stdout output
     description:
-      - Extends Ansible's default stdout callback with a single-line progress bar.
-      - The total starts from the statically compiled play task list and grows when include_tasks discovers more tasks.
+      - Extends Ansible's default stdout callback with a single-line live progress summary.
+      - The callback reports exact counts for completed tasks and currently known tasks.
+      - It does not claim a fixed final total during execution because include_tasks, rescue blocks,
+        handlers, and conditional execution can change the runnable task set at runtime.
     extends_documentation_fragment:
       - default_callback
       - result_format_callback
@@ -40,8 +42,14 @@ class CallbackModule(DefaultCallbackModule):
         self._discovered_include_keys: set[str] = set()
         self._current_task_name = ""
         self._current_play_name = ""
+        self._current_task_key = ""
         self._progress_drawn = False
         self._progress_started_at = time.monotonic()
+        self._run_finished = False
+        self._play_started_at = self._progress_started_at
+        self._play_start_completed = 0
+        self._play_start_known = 0
+        self._play_summary_emitted = False
 
     def _task_key(self, task) -> str:
         return str(getattr(task, "_uuid", "") or "")
@@ -132,18 +140,69 @@ class CallbackModule(DefaultCallbackModule):
         return f"{minutes:02d}:{seconds:02d}"
 
     def _progress_line(self) -> str:
-        total = max(self._progress_total, 0)
-        completed = min(self._progress_completed, total) if total > 0 else 0
-        percent = int((completed / total) * 100) if total > 0 else 0
-        width = 24
-        filled = min(width, int((completed / total) * width)) if total > 0 else 0
-        bar = "#" * filled + "-" * (width - filled)
-        segments = [f"[{bar}] {percent:3d}% ({completed}/{total})", f"elapsed={self._format_elapsed()}"]
+        known = max(self._progress_total, 0)
+        completed = min(self._progress_completed, known) if known > 0 else self._progress_completed
+        running = 1 if (self._current_task_key and self._current_task_key not in self._completed_task_keys) else 0
+        pending_known = max(known - completed - running, 0)
+        known_pct = int((completed / known) * 100) if known > 0 else 0
+        state = "complete" if self._run_finished else "running"
+        segments = [
+            f"state={state}",
+            f"done={completed}",
+            f"running={running}",
+            f"known={known}",
+            f"known_pct={known_pct}%",
+            f"pending_known={pending_known}",
+            f"elapsed={self._format_elapsed()}",
+        ]
         if self._current_play_name:
             segments.append(f"play={self._truncate(self._current_play_name, 28)}")
         if self._current_task_name:
             segments.append(f"task={self._truncate(self._current_task_name, 56)}")
         return " ".join(segments)
+
+    def _format_duration(self, start_time: float) -> str:
+        elapsed_seconds = max(0, int(time.monotonic() - start_time))
+        hours, remainder = divmod(elapsed_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _emit_play_summary(self) -> None:
+        if not self._current_play_name or self._play_summary_emitted:
+            return
+        play_done = max(self._progress_completed - self._play_start_completed, 0)
+        play_known = max(self._progress_total - self._play_start_known, 0)
+        play_pending_known = max(play_known - play_done, 0)
+        summary = (
+            f"PLAY SUMMARY "
+            f"play={self._truncate(self._current_play_name, 40)} "
+            f"done={play_done} "
+            f"known={play_known} "
+            f"pending_known={play_pending_known} "
+            f"elapsed={self._format_duration(self._play_started_at)}"
+        )
+        self._clear_progress()
+        sys.stdout.write(summary + "\n")
+        sys.stdout.flush()
+        self._play_summary_emitted = True
+
+    def _emit_run_summary(self) -> None:
+        known = max(self._progress_total, 0)
+        completed = max(self._progress_completed, 0)
+        pending_known = max(known - completed, 0)
+        summary = (
+            f"RUN SUMMARY "
+            f"done={completed} "
+            f"known={known} "
+            f"pending_known={pending_known} "
+            f"elapsed={self._format_duration(self._progress_started_at)}"
+        )
+        self._clear_progress()
+        sys.stdout.write(summary + "\n")
+        sys.stdout.flush()
+        self._progress_drawn = False
 
     def _clear_progress(self) -> None:
         if not self._progress_enabled or not self._progress_drawn:
@@ -176,7 +235,14 @@ class CallbackModule(DefaultCallbackModule):
         self._render_progress()
 
     def v2_playbook_on_play_start(self, play):
+        self._emit_play_summary()
         self._current_play_name = play.get_name().strip() or "unnamed-play"
+        self._current_task_name = ""
+        self._current_task_key = ""
+        self._play_started_at = time.monotonic()
+        self._play_start_completed = self._progress_completed
+        self._play_start_known = self._progress_total
+        self._play_summary_emitted = False
         self._register_play_tasks(play)
         self._clear_progress()
         super().v2_playbook_on_play_start(play)
@@ -184,6 +250,7 @@ class CallbackModule(DefaultCallbackModule):
 
     def v2_playbook_on_task_start(self, task, is_conditional):
         self._current_task_name = task.get_name().strip() or task.action or "unnamed-task"
+        self._current_task_key = self._task_key(task)
         self._register_task(task)
         self._clear_progress()
         super().v2_playbook_on_task_start(task, is_conditional)
@@ -191,6 +258,7 @@ class CallbackModule(DefaultCallbackModule):
 
     def v2_playbook_on_handler_task_start(self, task):
         self._current_task_name = task.get_name().strip() or task.action or "unnamed-handler"
+        self._current_task_key = self._task_key(task)
         self._register_task(task)
         self._clear_progress()
         super().v2_playbook_on_handler_task_start(task)
@@ -227,10 +295,13 @@ class CallbackModule(DefaultCallbackModule):
         self._render_progress()
 
     def v2_playbook_on_stats(self, stats):
+        self._run_finished = True
         self._progress_completed = max(self._progress_completed, self._progress_total)
+        self._emit_play_summary()
         self._render_progress()
         if self._progress_enabled:
             sys.stdout.write("\n")
             sys.stdout.flush()
             self._progress_drawn = False
+            self._emit_run_summary()
         super().v2_playbook_on_stats(stats)

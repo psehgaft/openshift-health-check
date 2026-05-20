@@ -203,17 +203,27 @@
       stdout: "{{ collected_metadata.user | default('not-collected') }}"
 
 - name: Write collected-state JSON report
-  ansible.builtin.copy:
-    dest: "{{ supportability_report_json_path }}"
-    content: "{{ supportability_report_payload | to_nice_json }}"
-    mode: "0644"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ supportability_report_json_path }}"
+      - --mode
+      - "0644"
+    stdin: "{{ supportability_report_payload | to_nice_json }}"
+  changed_when: false
   when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Persist assembled collected-state payload into run workspace
-  ansible.builtin.copy:
-    dest: "{{ report_run_workspace_report_dir }}/payload.json"
-    content: "{{ supportability_report_payload | to_nice_json }}"
-    mode: "0644"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ report_run_workspace_report_dir }}/payload.json"
+      - --mode
+      - "0644"
+    stdin: "{{ supportability_report_payload | to_nice_json }}"
+  changed_when: false
   when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Render collected-state Markdown report

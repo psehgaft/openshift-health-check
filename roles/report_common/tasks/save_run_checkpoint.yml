@@ -23,10 +23,14 @@
   when: run_checkpoint_write_snapshot | default(true) | bool
 
 - name: Write run checkpoint snapshot
-  ansible.builtin.copy:
-    dest: "{{ run_checkpoint_snapshot_path }}"
-    mode: "0644"
-    content: >-
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ run_checkpoint_snapshot_path }}"
+      - --mode
+      - "0644"
+    stdin: >-
       {{
         (
           run_checkpoint_snapshot_payload
@@ -54,6 +58,7 @@
           | to_nice_json
         )
       }}
+  changed_when: false
   when: run_checkpoint_write_snapshot | default(true) | bool
 
 - name: Update in-memory checkpoint pointers
@@ -63,10 +68,14 @@
     report_resume_last_resume_next_stage: "{{ run_checkpoint_resume_next_stage if (run_checkpoint_status | default('completed')) == 'completed' else (report_resume_last_resume_next_stage | default('')) }}"
 
 - name: Write run checkpoint manifest
-  ansible.builtin.copy:
-    dest: "{{ report_resume_manifest_path }}"
-    mode: "0644"
-    content: >-
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ report_resume_manifest_path }}"
+      - --mode
+      - "0644"
+    stdin: >-
       {{
         {
           'schema_version': (report_artifact_schema_version | default('1')),
@@ -105,12 +114,17 @@
         }
         | to_nice_json
       }}
+  changed_when: false
 
 - name: Write workspace run manifest
-  ansible.builtin.copy:
-    dest: "{{ report_run_workspace_manifest_path }}"
-    mode: "0644"
-    content: >-
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ report_run_workspace_manifest_path }}"
+      - --mode
+      - "0644"
+    stdin: >-
       {{
         {
           'schema_version': (report_artifact_schema_version | default('1')),
@@ -149,6 +163,7 @@
         }
         | to_nice_json
       }}
+  changed_when: false
 
 - name: Show checkpoint status
   vars:

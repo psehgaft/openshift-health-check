@@ -47,10 +47,14 @@
       {%- endfor -%}
       {{ capability_artifact_shared_inputs_used if (capability_artifact_shared_inputs_used is defined) else ns.inputs }}
     capability_artifact_section_current: "{{ capability_artifact_section_resolved | default({}) }}"
-  ansible.builtin.copy:
-    dest: "{{ report_run_workspace_capabilities_dir }}/{{ capability_artifact_key }}.json"
-    mode: "0644"
-    content: >-
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ report_run_workspace_capabilities_dir }}/{{ capability_artifact_key }}.json"
+      - --mode
+      - "0644"
+    stdin: >-
       {{
         {
           'schema_version': (report_artifact_schema_version | default('1')),
@@ -94,6 +98,7 @@
         }
         | to_nice_json
       }}
+  changed_when: false
 
 - name: Record completed OpenShift capability artifact
   ansible.builtin.set_fact:

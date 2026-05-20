@@ -9,18 +9,13 @@
     warning_event_items: "{{ (warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list }}"
     recent_warning_events: "{{ ((warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list)[:warning_event_limit] }}"
 
-- name: Create Prometheus query input file
-  ansible.builtin.tempfile:
-    state: file
-    prefix: openshift-prom-query-
-    suffix: .json
-  register: prom_query_input_file
-
-- name: Write Prometheus query input
-  ansible.builtin.copy:
-    dest: "{{ prom_query_input_file.path }}"
-    mode: "0600"
-    content: >-
+- name: Run Prometheus signal helper
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/query_prometheus_signals.py"
+    stdin: >-
       {{
         {
           "route_host": (thanos_route_cmd.stdout | default('') | trim),
@@ -54,23 +49,9 @@
           ]
         } | to_json
       }}
-
-- name: Run Prometheus signal helper
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/query_prometheus_signals.py"
-      - "{{ prom_query_input_file.path }}"
   register: prom_query_helper_cmd
   changed_when: false
   failed_when: false
-
-- name: Remove Prometheus query input file
-  ansible.builtin.file:
-    path: "{{ prom_query_input_file.path }}"
-    state: absent
-  when: prom_query_input_file is defined and (prom_query_input_file.path | default('') | length > 0)
-  changed_when: false
 
 - name: Normalize Prometheus helper output
   ansible.builtin.set_fact:
@@ -107,4 +88,3 @@
       proxy_error: "{{ prom_query_helper_data.proxy_error | default('') }}"
       query_errors: "{{ prom_query_error_map | default({}) }}"
       query_statuses: "{{ prom_query_status_map | default({}) }}"
-

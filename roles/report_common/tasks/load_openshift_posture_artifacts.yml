@@ -10,35 +10,20 @@
   ansible.builtin.set_fact:
     openshift_posture_artifacts: "{{ openshift_posture_artifacts | default({}) }}"
 
-- name: Read OpenShift posture artifact files
-  ansible.builtin.slurp:
-    path: "{{ item.path }}"
-  loop: "{{ openshift_posture_artifact_files.files | default([]) }}"
-  register: openshift_posture_artifact_raw_results
+- name: Load OpenShift posture artifacts in bulk
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/load_json_artifact_dir.py"
+      - "{{ report_run_workspace_postures_dir }}"
+  register: openshift_posture_artifacts_cmd
+  changed_when: false
   when: (openshift_posture_artifact_files.matched | default(0) | int) > 0
 
 - name: Merge OpenShift posture artifacts
   ansible.builtin.set_fact:
-    openshift_posture_artifacts: >-
-      {{
-        (openshift_posture_artifacts | default({}))
-        | combine(
-            {
-              (posture_artifact.key | default((item.item.path | basename | regex_replace('\.json$', '')))): posture_artifact
-            },
-            recursive=True
-          )
-      }}
-  vars:
-    posture_artifact: >-
-      {{
-        (
-          item.content | b64decode | from_json
-        )
-        if (item.content | default('') | length > 0)
-        else {}
-      }}
-  loop: "{{ openshift_posture_artifact_raw_results.results | default([]) }}"
+    openshift_posture_artifacts: "{{ (openshift_posture_artifacts | default({})) | combine((openshift_posture_artifacts_cmd.stdout | from_json), recursive=True) }}"
   when:
-    - not (item.skipped | default(false))
-    - (item.content | default('') | length) > 0
+    - openshift_posture_artifacts_cmd is defined
+    - (openshift_posture_artifacts_cmd.rc | default(1)) == 0
+    - (openshift_posture_artifacts_cmd.stdout | default('') | length) > 0

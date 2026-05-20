@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import re
 import sys
 
@@ -45,15 +46,107 @@ def selector_matches(selector, labels):
     return all(match_expression(labels, expr) for expr in expressions)
 
 
-def has_spread_policy(pod_spec):
+NODE_OR_ZONE_TOPOLOGY_KEYS = {
+    "topology.kubernetes.io/zone",
+    "failure-domain.beta.kubernetes.io/zone",
+    "kubernetes.io/hostname",
+}
+
+
+def classify_spread_policy(pod_spec):
     pod_spec = pod_spec or {}
     spread_constraints = pod_spec.get("topologySpreadConstraints") or []
-    if spread_constraints:
-        return True
+    spread_topology_keys = [
+        str(item.get("topologyKey") or "").strip()
+        for item in spread_constraints
+        if str(item.get("topologyKey") or "").strip()
+    ]
+    if any(key in NODE_OR_ZONE_TOPOLOGY_KEYS for key in spread_topology_keys):
+        return {
+            "present": True,
+            "node_or_zone_aware": True,
+            "basis": "topologySpreadConstraints",
+            "topology_keys": spread_topology_keys,
+        }
+    if spread_topology_keys:
+        return {
+            "present": True,
+            "node_or_zone_aware": False,
+            "basis": "topologySpreadConstraints",
+            "topology_keys": spread_topology_keys,
+        }
     affinity = (pod_spec.get("affinity") or {}).get("podAntiAffinity") or {}
-    return bool(
-        (affinity.get("requiredDuringSchedulingIgnoredDuringExecution") or [])
-        or (affinity.get("preferredDuringSchedulingIgnoredDuringExecution") or [])
+    anti_affinity_terms = (affinity.get("requiredDuringSchedulingIgnoredDuringExecution") or []) + (
+        affinity.get("preferredDuringSchedulingIgnoredDuringExecution") or []
+    )
+    anti_affinity_topology_keys = [
+        str(((item or {}).get("topologyKey") or "")).strip()
+        for item in anti_affinity_terms
+        if str(((item or {}).get("topologyKey") or "")).strip()
+    ]
+    if any(key in NODE_OR_ZONE_TOPOLOGY_KEYS for key in anti_affinity_topology_keys):
+        return {
+            "present": True,
+            "node_or_zone_aware": True,
+            "basis": "podAntiAffinity",
+            "topology_keys": anti_affinity_topology_keys,
+        }
+    if anti_affinity_terms:
+        return {
+            "present": True,
+            "node_or_zone_aware": False,
+            "basis": "podAntiAffinity",
+            "topology_keys": anti_affinity_topology_keys,
+        }
+    return {
+        "present": False,
+        "node_or_zone_aware": False,
+        "basis": "none",
+        "topology_keys": [],
+    }
+
+
+def parse_int_or_percent(value, replicas):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("%"):
+        try:
+            return int(math.ceil((replicas * float(text[:-1])) / 100.0))
+        except ValueError:
+            return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def evaluate_pdb_usable(pdb_spec, replicas):
+    spec = pdb_spec or {}
+    max_unavailable = parse_int_or_percent(spec.get("maxUnavailable"), replicas)
+    min_available = parse_int_or_percent(spec.get("minAvailable"), replicas)
+    if max_unavailable is not None:
+        return (
+            max_unavailable >= 1,
+            f"maxUnavailable={spec.get('maxUnavailable')}",
+        )
+    if min_available is not None:
+        return (
+            min_available <= max(replicas - 1, 0),
+            f"minAvailable={spec.get('minAvailable')}",
+        )
+    return (False, "no minAvailable or maxUnavailable was set")
+
+
+def pdb_review_detail(workload, matching_pdbs):
+    pdb_descriptions = ", ".join(
+        f"{item['name']}({item['usability_reason']})"
+        for item in matching_pdbs
+    )
+    return (
+        f"replicas={workload['replicas']}; matching PDBs require review: {pdb_descriptions}"
     )
 
 
@@ -69,7 +162,11 @@ def main() -> int:
     operator_managed_namespace_names = data.get("operator_managed_namespace_names") or []
 
     workloads = []
-    for collection_name, kind in (("deployments", "Deployment"), ("statefulsets", "StatefulSet")):
+    for collection_name, kind in (
+        ("deployments", "Deployment"),
+        ("statefulsets", "StatefulSet"),
+        ("deploymentconfigs", "DeploymentConfig"),
+    ):
         for item in data.get(collection_name, []):
             metadata = item.get("metadata", {}) or {}
             namespace = str(metadata.get("namespace") or "")
@@ -90,7 +187,7 @@ def main() -> int:
                     "name": str(metadata.get("name") or "unknown"),
                     "replicas": desired_replicas,
                     "labels": normalize_labels(template_metadata.get("labels")),
-                    "has_spread_policy": has_spread_policy(template_spec),
+                    "spread_policy": classify_spread_policy(template_spec),
                 }
             )
 
@@ -102,13 +199,18 @@ def main() -> int:
             {
                 "name": str(metadata.get("name") or "unknown"),
                 "selector": ((item.get("spec", {}) or {}).get("selector") or {}),
+                "spec": (item.get("spec", {}) or {}),
             }
         )
 
     findings = []
+    pdb_review_findings = []
     for workload in workloads:
         matching_pdbs = [
-            pdb["name"]
+            {
+                "name": pdb["name"],
+                "spec": pdb.get("spec") or {},
+            }
             for pdb in pdbs_by_namespace.get(workload["namespace"], [])
             if selector_matches(pdb.get("selector"), workload["labels"])
         ]
@@ -122,7 +224,35 @@ def main() -> int:
                     "detail": f"replicas={workload['replicas']}; no matching PodDisruptionBudget",
                 }
             )
-        if not workload["has_spread_policy"]:
+        else:
+            evaluated_pdbs = []
+            has_usable_pdb = False
+            for pdb in matching_pdbs:
+                usable, usability_reason = evaluate_pdb_usable(
+                    pdb.get("spec") or {},
+                    workload["replicas"],
+                )
+                evaluated_pdbs.append(
+                    {
+                        "name": pdb["name"],
+                        "usable": usable,
+                        "usability_reason": usability_reason,
+                    }
+                )
+                if usable:
+                    has_usable_pdb = True
+            if not has_usable_pdb:
+                pdb_review_findings.append(
+                    {
+                        "kind": workload["kind"],
+                        "namespace": workload["namespace"],
+                        "name": workload["name"],
+                        "issue": "pod-disruption-budget-requires-review",
+                        "detail": pdb_review_detail(workload, evaluated_pdbs),
+                        "matching_pdb_names": [item["name"] for item in evaluated_pdbs],
+                    }
+                )
+        if not workload["spread_policy"]["present"]:
             findings.append(
                 {
                     "kind": workload["kind"],
@@ -137,12 +267,26 @@ def main() -> int:
         json.dumps(
             {
                 "findings": findings,
+                "pdb_review_findings": pdb_review_findings,
                 "multi_replica_workload_count": len(workloads),
                 "multi_replica_workloads_without_pdb": sum(
                     1 for item in findings if item["issue"] == "missing-pod-disruption-budget"
                 ),
+                "multi_replica_workloads_without_usable_pdb": len(pdb_review_findings),
                 "multi_replica_workloads_without_spread_policy": sum(
                     1 for item in findings if item["issue"] == "missing-workload-spread-policy"
+                ),
+                "multi_replica_workloads_with_node_or_zone_spread_policy": sum(
+                    1
+                    for workload in workloads
+                    if workload["spread_policy"]["present"]
+                    and workload["spread_policy"]["node_or_zone_aware"]
+                ),
+                "multi_replica_workloads_with_other_spread_policy": sum(
+                    1
+                    for workload in workloads
+                    if workload["spread_policy"]["present"]
+                    and not workload["spread_policy"]["node_or_zone_aware"]
                 ),
             }
         )

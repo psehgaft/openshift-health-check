@@ -1,40 +1,17 @@
 ---
 - name: Build authentication findings
-  block:
-    - name: Create authentication findings input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-auth-findings-
-        suffix: .json
-      register: auth_posture_input_file
-      changed_when: false
-
-    - name: Write authentication findings input data
-      ansible.builtin.copy:
-        dest: "{{ auth_posture_input_file.path }}"
-        mode: "0600"
-        content: "{{ {
-          'oauth_config': (analysis_graph.oauth_config | default({})),
-          'secrets': ((analysis_graph.secrets | default({})).get('items', []))
-        } | to_json }}"
-      changed_when: false
-
-    - name: Run authentication findings analysis
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_authentication_findings.py"
-          - "{{ auth_posture_input_file.path }}"
-      register: auth_posture_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove authentication findings input file
-      ansible.builtin.file:
-        path: "{{ auth_posture_input_file.path }}"
-        state: absent
-      when: auth_posture_input_file is defined and (auth_posture_input_file.path | default('') | length > 0)
-      changed_when: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_authentication_findings.py"
+    stdin: "{{ {
+      'oauth_config': (analysis_graph.oauth_config | default({})),
+      'secrets': ((analysis_graph.secrets | default({})).get('items', []))
+    } | to_json }}"
+  register: auth_posture_cmd
+  changed_when: false
+  failed_when: false
   when: report_scope_requires_core_auth_analysis | default(true) | bool
 
 - name: Normalize authentication findings

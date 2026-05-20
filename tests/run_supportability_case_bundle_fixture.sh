@@ -3,15 +3,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/repo-runtime-env.sh"
 BUNDLE_PATH="${ROOT_DIR}/tests/fixtures"
-REPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/supportability-case-bundle-reports.XXXXXX")"
-LOG_PATH="${TMPDIR:-/tmp}/supportability-case-bundle.log"
+REPORT_DIR="$(mktemp -d "${REPO_TMP_ROOT}/supportability-case-bundle-reports.XXXXXX")"
+LOG_PATH="${REPO_TMP_ROOT}/supportability-case-bundle.log"
 ANSIBLE_PLAYBOOK_BIN="${ROOT_DIR}/.venv/bin/ansible-playbook"
 VENV_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 trap 'rm -rf "${REPORT_DIR}"' EXIT
 
-ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
-ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
+cleanup_repo_ansible_temp_dirs
+
+ANSIBLE_LOCAL_TEMP="${REPO_ANSIBLE_LOCAL_TEMP}" \
+ANSIBLE_REMOTE_TEMP="${REPO_ANSIBLE_REMOTE_TEMP}" \
 ANSIBLE_STDOUT_CALLBACK=minimal \
 "${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_output_dir="${REPORT_DIR}" \

@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/repo-runtime-env.sh"
 CI_MD="${ROOT_DIR}/reports/.run-state/openshift/collected-artifacts/report/ci-cluster-report.md"
 CI_JSON="${ROOT_DIR}/reports/.run-state/openshift/collected-artifacts/report/ci-cluster-report.json"
 CI_WORKSPACE_ROOT="${ROOT_DIR}/reports/.run-state/openshift/collected-artifacts"

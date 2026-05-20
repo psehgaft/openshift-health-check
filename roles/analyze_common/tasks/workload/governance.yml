@@ -293,35 +293,16 @@
       }}
   changed_when: false
 
-- name: Create node label governance input file
-  ansible.builtin.tempfile:
-    state: file
-    suffix: node-label-governance.json
-  register: node_label_governance_input_file
-  changed_when: false
-
-- name: Write node label governance input
-  ansible.builtin.copy:
-    dest: "{{ node_label_governance_input_file.path }}"
-    mode: "0600"
-    content: "{{ {'nodes': (node_label_governance_source_nodes | default([]))} | to_json }}"
-  changed_when: false
-
 - name: Build node label governance findings
   ansible.builtin.command:
     argv:
       - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
       - "{{ playbook_dir }}/../scripts/build_node_label_governance_findings.py"
-      - "{{ node_label_governance_input_file.path }}"
+    stdin: "{{ {'nodes': (node_label_governance_source_nodes | default([]))} | to_json }}"
   register: node_label_governance_cmd
   changed_when: false
-
-- name: Remove node label governance input file
-  ansible.builtin.file:
-    path: "{{ node_label_governance_input_file.path }}"
-    state: absent
-  when: node_label_governance_input_file is defined and (node_label_governance_input_file.path | default('') | length > 0)
-  changed_when: false
+  failed_when: false
 
 - name: Normalize node label governance findings
   ansible.builtin.set_fact:

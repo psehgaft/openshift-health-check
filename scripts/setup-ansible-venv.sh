@@ -21,7 +21,7 @@ fi
 "${venv_dir}/bin/python" -m pip install --upgrade pip
 "${venv_dir}/bin/pip" install -r "${repo_root}/requirements.txt"
 
-mkdir -p "${repo_root}/.ansible/tmp"
+mkdir -p "${repo_root}/.runtime/ansible/tmp" "${repo_root}/.runtime/ansible/remote_tmp"
 
 cat <<EOF
 Virtual environment ready.

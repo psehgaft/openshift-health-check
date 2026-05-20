@@ -9,6 +9,8 @@
     workload_warning_issue_count: >-
       {{
         (high_restart_pods | default([]) | length)
+        + ((workload_resilience_data.findings | default([])) | length)
+        + ((workload_resilience_data.pdb_review_findings | default([])) | length)
         + (high_replica_workloads | default([]) | length)
         + (orphan_pods | default([]) | length)
         + (workload_label_governance_findings | default([]) | length)
@@ -18,7 +20,9 @@
       }}
     workload_hygiene_debt_count: >-
       {{
-        (high_replica_workloads | default([]) | length)
+        ((workload_resilience_data.findings | default([])) | length)
+        + ((workload_resilience_data.pdb_review_findings | default([])) | length)
+        + (high_replica_workloads | default([]) | length)
         + (orphan_pods | default([]) | length)
         + (workload_label_governance_findings | default([]) | length)
         + (node_label_governance_findings | default([]) | length)
@@ -52,6 +56,8 @@
           + (['unhealthy user pods=' ~ ((unhealthy_user_pods | default([]) | length) | string)] if ((unhealthy_user_pods | default([]) | length) > 0) else [])
           + (['workload rollout issues=' ~ ((workload_health_issues | default([]) | length) | string)] if ((workload_health_issues | default([]) | length) > 0) else [])
           + (['restart hotspots=' ~ ((high_restart_pods | default([]) | length) | string)] if ((high_restart_pods | default([]) | length) > 0) else [])
+          + (['workload resilience findings=' ~ (((workload_resilience_data.findings | default([])) | length) | string)] if (((workload_resilience_data.findings | default([])) | length) > 0) else [])
+          + (['PDB review findings=' ~ (((workload_resilience_data.pdb_review_findings | default([])) | length) | string)] if (((workload_resilience_data.pdb_review_findings | default([])) | length) > 0) else [])
           + (['probe coverage findings=' ~ ((workload_probe_findings | default([]) | length) | string)] if ((workload_probe_findings | default([]) | length) > 0) else [])
           + (['resource request/limit findings=' ~ ((workload_resource_findings | default([]) | length) | string)] if ((workload_resource_findings | default([]) | length) > 0) else [])
           + (['label governance findings=' ~ ((workload_label_governance_findings | default([]) | length) | string)] if ((workload_label_governance_findings | default([]) | length) > 0) else [])
@@ -67,7 +73,7 @@
           'Stabilize workload runtime health first: fix unhealthy user pods and incomplete workload rollouts before treating application posture as acceptable.'
           if workload_status == 'CRITICAL'
           else (
-            'Reduce workload deployment risk next: review restart hotspots and workload hygiene debt such as missing probes, resource settings, labels, or owner references. Treat overprovisioning signals as softer follow-up context.'
+            'Reduce workload deployment risk next: review restart hotspots, multi-replica resilience controls, and workload hygiene debt such as missing probes, resource settings, labels, or owner references. Treat overprovisioning signals as softer follow-up context.'
             if workload_status == 'WARNING'
             else 'Workload health and deployment hygiene look acceptable for this run. Keep rollout status, restart hotspots, probes, and resource hygiene under normal review.'
           )
@@ -84,6 +90,13 @@
       service_endpoint_gap_count: "{{ services_without_endpoints | default([]) | length }}"
       workload_hygiene_debt_count: "{{ workload_hygiene_debt_count }}"
       workload_efficiency_context_count: "{{ workload_efficiency_context_count }}"
+      workload_resilience_finding_count: "{{ (workload_resilience_data.findings | default([])) | length }}"
+      multi_replica_workloads_checked: "{{ workload_resilience_data.multi_replica_workload_count | default(0) }}"
+      multi_replica_workloads_without_pdb: "{{ workload_resilience_data.multi_replica_workloads_without_pdb | default(0) }}"
+      multi_replica_workloads_without_usable_pdb: "{{ workload_resilience_data.multi_replica_workloads_without_usable_pdb | default(0) }}"
+      multi_replica_workloads_without_spread_policy: "{{ workload_resilience_data.multi_replica_workloads_without_spread_policy | default(0) }}"
+      multi_replica_workloads_with_node_or_zone_spread_policy: "{{ workload_resilience_data.multi_replica_workloads_with_node_or_zone_spread_policy | default(0) }}"
+      multi_replica_workloads_with_other_spread_policy: "{{ workload_resilience_data.multi_replica_workloads_with_other_spread_policy | default(0) }}"
       high_replica_workload_count: "{{ high_replica_workloads | default([]) | length }}"
       orphan_pod_count: "{{ orphan_pods | default([]) | length }}"
       workload_label_governance_count: "{{ workload_label_governance_findings | default([]) | length }}"

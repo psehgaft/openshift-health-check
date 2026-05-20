@@ -21,47 +21,25 @@
           | first
         ) | default({})
       }}
-  block:
-    - name: Create temporary OpenShift cluster classification input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: openshift-cluster-classification-
-        suffix: .json
-      register: openshift_cluster_classification_input_file
-
-    - name: Write OpenShift cluster classification input data
-      ansible.builtin.copy:
-        dest: "{{ openshift_cluster_classification_input_file.path }}"
-        mode: "0600"
-        content: "{{ {
-          'cluster_profile': (cluster_profile | default({})),
-          'cluster_config_v1_data': (cluster_config_v1_map.data | default({})),
-          'openshift_install_manifests_data': (openshift_install_manifests_map.data | default({})),
-          'namespace_names': ((analysis_graph.namespaces | default({})).get('items', []) | map(attribute='metadata.name') | list),
-          'machineset_count': ((analysis_graph.machinesets | default({})).get('items', []) | length),
-          'node_count': (openshift_node_items | default([]) | length),
-          'control_plane_node_count': (openshift_control_plane_node_count | default(0) | int),
-          'worker_node_count': (openshift_worker_node_count | default(0) | int),
-          'infra_node_count': (openshift_infra_node_count | default(0) | int)
-        } | to_json }}"
-      changed_when: false
-
-    - name: Run OpenShift cluster classification helper
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_openshift_cluster_classification.py"
-          - "{{ openshift_cluster_classification_input_file.path }}"
-      register: openshift_cluster_classification_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove OpenShift cluster classification input file
-      ansible.builtin.file:
-        path: "{{ openshift_cluster_classification_input_file.path }}"
-        state: absent
-      when: openshift_cluster_classification_input_file is defined and (openshift_cluster_classification_input_file.path | default('') | length > 0)
-      changed_when: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_openshift_cluster_classification.py"
+    stdin: "{{ {
+      'cluster_profile': (cluster_profile | default({})),
+      'cluster_config_v1_data': (cluster_config_v1_map.data | default({})),
+      'openshift_install_manifests_data': (openshift_install_manifests_map.data | default({})),
+      'namespace_names': ((analysis_graph.namespaces | default({})).get('items', []) | map(attribute='metadata.name') | list),
+      'machineset_count': ((analysis_graph.machinesets | default({})).get('items', []) | length),
+      'node_count': (openshift_node_items | default([]) | length),
+      'control_plane_node_count': (openshift_control_plane_node_count | default(0) | int),
+      'worker_node_count': (openshift_worker_node_count | default(0) | int),
+      'infra_node_count': (openshift_infra_node_count | default(0) | int)
+    } | to_json }}"
+  register: openshift_cluster_classification_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Normalize OpenShift cluster classification
   ansible.builtin.set_fact:

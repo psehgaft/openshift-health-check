@@ -12,43 +12,23 @@
   changed_when: false
 
 - name: Build storage posture summary
-  block:
-    - name: Create temporary storage posture summary input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-storage-posture-
-        suffix: .json
-      register: storage_posture_summary_input_file
-
-    - name: Write storage posture summary input data
-      ansible.builtin.copy:
-        dest: "{{ storage_posture_summary_input_file.path }}"
-        content: >-
-          {{
-            {
-              "storageclasses": storageclass_summary | default([]),
-              "persistentvolumes": (analysis_graph.persistentvolumes | default({})).get('items', []),
-              "security_findings": security_findings | default([]),
-              "workload_practice_findings": workload_practice_findings | default([])
-            } | to_json
-          }}
-        mode: "0600"
-
-    - name: Run storage posture summary helper
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_storage_posture_summary.py"
-          - "{{ storage_posture_summary_input_file.path }}"
-      register: storage_posture_summary_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove temporary storage posture summary input file
-      ansible.builtin.file:
-        path: "{{ storage_posture_summary_input_file.path }}"
-        state: absent
-      when: storage_posture_summary_input_file is defined and (storage_posture_summary_input_file.path | default('') | length > 0)
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_storage_posture_summary.py"
+    stdin: >-
+      {{
+        {
+          "storageclasses": storageclass_summary | default([]),
+          "persistentvolumes": (analysis_graph.persistentvolumes | default({})).get('items', []),
+          "security_findings": security_findings | default([]),
+          "workload_practice_findings": workload_practice_findings | default([])
+        } | to_json
+      }}
+  register: storage_posture_summary_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Normalize storage posture summary
   ansible.builtin.set_fact:
@@ -89,42 +69,22 @@
   changed_when: false
 
 - name: Collect TLS secret certificate expiry with openssl
-  block:
-    - name: Create temporary TLS secret expiry input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-tls-expiry-
-        suffix: .json
-      register: tls_secret_cert_expiry_input_file
-
-    - name: Write TLS secret expiry input data
-      ansible.builtin.copy:
-        dest: "{{ tls_secret_cert_expiry_input_file.path }}"
-        content: >-
-          {{
-            {
-              "timeout_seconds": 20,
-              "parallelism": effective_analysis_parallelism | default(analysis_parallelism | default(collection_parallelism | default(4))),
-              "secrets": tls_secret_expiry_targets | default([])
-            } | to_json
-          }}
-        mode: "0600"
-
-    - name: Run batched TLS secret expiry helper
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/batch_tls_secret_expiry.py"
-          - "{{ tls_secret_cert_expiry_input_file.path }}"
-      register: tls_secret_cert_expiry_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove temporary TLS secret expiry input file
-      ansible.builtin.file:
-        path: "{{ tls_secret_cert_expiry_input_file.path }}"
-        state: absent
-      when: tls_secret_cert_expiry_input_file is defined and (tls_secret_cert_expiry_input_file.path | default('') | length > 0)
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/batch_tls_secret_expiry.py"
+    stdin: >-
+      {{
+        {
+          "timeout_seconds": 20,
+          "parallelism": effective_analysis_parallelism | default(analysis_parallelism | default(collection_parallelism | default(4))),
+          "secrets": tls_secret_expiry_targets | default([])
+        } | to_json
+      }}
+  register: tls_secret_cert_expiry_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Build certificate expiry findings
   ansible.builtin.set_fact:

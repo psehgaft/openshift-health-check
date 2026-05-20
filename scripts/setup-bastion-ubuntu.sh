@@ -73,7 +73,7 @@ bootstrap_repo_runtime() {
   fi
 
   log "Preparing repo-local runtime ownership for ${bootstrap_user}"
-  mkdir -p "${REPO_ROOT}/.ansible/tmp"
+  mkdir -p "${REPO_ROOT}/.runtime/ansible/tmp" "${REPO_ROOT}/.runtime/ansible/remote_tmp"
   chown -R "${bootstrap_user}:${bootstrap_user}" "${REPO_ROOT}/.ansible"
   if [[ -e "${REPO_ROOT}/.venv" ]]; then
     chown -R "${bootstrap_user}:${bootstrap_user}" "${REPO_ROOT}/.venv"

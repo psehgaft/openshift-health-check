@@ -80,52 +80,31 @@
       }}
 
 - name: Build service and pod IP capacity summaries
-  block:
-    - name: Create temporary IP capacity summary input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-ip-capacity-
-        suffix: .json
-      register: ip_capacity_summary_input_file
-
-    - name: Write IP capacity summary input data
-      ansible.builtin.copy:
-        dest: "{{ ip_capacity_summary_input_file.path }}"
-        content: >-
-          {{
-            {
-              "cluster_profile": ip_capacity_cluster_profile | default(cluster_profile | default({})),
-              "infrastructure": analysis_graph.infrastructure | default({}),
-              "network_config": analysis_graph.network_config | default({}),
-              "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
-              "configmaps": (analysis_graph.configmaps | default({})).get('items', []),
-              "secrets": (analysis_graph.secrets | default({})).get('items', []),
-              "services": (analysis_graph.services | default({})).get('items', []),
-              "pods": (analysis_graph.pods | default({})).get('items', []),
-              "nodes": (analysis_graph.nodes | default({})).get('items', [])
-            } | to_json
-          }}
-        mode: "0600"
-
-    - name: Run IP capacity summary helper
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_ip_capacity_summary.py"
-          - "{{ ip_capacity_summary_input_file.path }}"
-      register: ip_capacity_summary_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove temporary IP capacity summary input file
-      ansible.builtin.file:
-        path: "{{ ip_capacity_summary_input_file.path }}"
-        state: absent
-      when: ip_capacity_summary_input_file is defined and (ip_capacity_summary_input_file.path | default('') | length > 0)
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_ip_capacity_summary.py"
+    stdin: >-
+      {{
+        {
+          "cluster_profile": ip_capacity_cluster_profile | default(cluster_profile | default({})),
+          "infrastructure": analysis_graph.infrastructure | default({}),
+          "network_config": analysis_graph.network_config | default({}),
+          "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
+          "configmaps": (analysis_graph.configmaps | default({})).get('items', []),
+          "secrets": (analysis_graph.secrets | default({})).get('items', []),
+          "services": (analysis_graph.services | default({})).get('items', []),
+          "pods": (analysis_graph.pods | default({})).get('items', []),
+          "nodes": (analysis_graph.nodes | default({})).get('items', [])
+        } | to_json
+      }}
+  register: ip_capacity_summary_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Normalize service and pod IP capacity summaries
   ansible.builtin.set_fact:
     service_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).service_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
     pod_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).pod_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
     node_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).node_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
-

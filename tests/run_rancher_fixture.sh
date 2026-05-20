@@ -3,16 +3,19 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/repo-runtime-env.sh"
 FIXTURE_DIR="${ROOT_DIR}/tests/fixtures/k8s-smoke"
 FAKE_KUBECTL="${FIXTURE_DIR}/mock-kubectl"
-REPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rancher-fixture-reports.XXXXXX")"
-LOG_PATH="${TMPDIR:-/tmp}/rancher-fixture.log"
+REPORT_DIR="$(mktemp -d "${REPO_TMP_ROOT}/rancher-fixture-reports.XXXXXX")"
+LOG_PATH="${REPO_TMP_ROOT}/rancher-fixture.log"
 ANSIBLE_PLAYBOOK_BIN="${ROOT_DIR}/.venv/bin/ansible-playbook"
 VENV_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 trap 'rm -rf "${REPORT_DIR}"' EXIT
 
-ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
-ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
+cleanup_repo_ansible_temp_dirs
+
+ANSIBLE_LOCAL_TEMP="${REPO_ANSIBLE_LOCAL_TEMP}" \
+ANSIBLE_REMOTE_TEMP="${REPO_ANSIBLE_REMOTE_TEMP}" \
 ANSIBLE_STDOUT_CALLBACK=minimal \
 "${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/rancher_cluster_health_report.yml" \
   -e kube_cli="${FAKE_KUBECTL}" \

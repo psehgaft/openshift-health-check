@@ -155,25 +155,13 @@
         } | to_json
       }}
 
-- name: Create production Day 2 posture input file
-  ansible.builtin.tempfile:
-    state: file
-    prefix: openshift-day2-posture-
-    suffix: .json
-  register: day2_posture_input_file
-
-- name: Write production Day 2 posture input file
-  ansible.builtin.copy:
-    dest: "{{ day2_posture_input_file.path }}"
-    mode: "0600"
-    content: "{{ day2_posture_input_json }}"
-
 - name: Build production Day 2 posture summary
   ansible.builtin.command:
     argv:
       - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
       - "{{ playbook_dir }}/../scripts/build_openshift_day2_posture.py"
-      - "{{ day2_posture_input_file.path }}"
+    stdin: "{{ day2_posture_input_json }}"
   register: day2_posture_cmd
   changed_when: false
   failed_when: false

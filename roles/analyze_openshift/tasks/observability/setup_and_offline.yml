@@ -188,43 +188,20 @@
   changed_when: false
 
 - name: Build offline workload metric fallbacks
-  block:
-    - name: Create offline workload fallback input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-offline-workload-
-        suffix: .json
-      register: offline_workload_fallback_input_file
-      changed_when: false
-
-    - name: Write offline workload fallback input data
-      ansible.builtin.copy:
-        dest: "{{ offline_workload_fallback_input_file.path }}"
-        mode: "0600"
-        content: "{{ {
-          'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
-          'pods': ((analysis_graph.pods | default({})).get('items', [])),
-          'exclude_regex': user_namespaces_exclude_regex,
-          'omc_summary': (omc_summary | default({}))
-        } | to_json }}"
-      changed_when: false
-
-    - name: Run offline workload fallback analysis
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_offline_workload_fallback.py"
-          - "{{ offline_workload_fallback_input_file.path }}"
-      register: offline_workload_fallback_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove offline workload fallback input file
-      ansible.builtin.file:
-        path: "{{ offline_workload_fallback_input_file.path }}"
-        state: absent
-      when: offline_workload_fallback_input_file is defined and (offline_workload_fallback_input_file.path | default('') | length > 0)
-      changed_when: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_offline_workload_fallback.py"
+    stdin: "{{ {
+      'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
+      'pods': ((analysis_graph.pods | default({})).get('items', [])),
+      'exclude_regex': user_namespaces_exclude_regex,
+      'omc_summary': (omc_summary | default({}))
+    } | to_json }}"
+  register: offline_workload_fallback_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Normalize offline workload metric fallbacks
   ansible.builtin.set_fact:
@@ -249,4 +226,3 @@
         }
       }}
   changed_when: false
-

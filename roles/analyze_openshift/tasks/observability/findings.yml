@@ -55,89 +55,39 @@
   changed_when: false
 
 - name: Build overprovisioned pod findings from Prometheus usage
-  block:
-    - name: Create overprovisioned pod input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-overprovisioned-pods-
-        suffix: .json
-      register: overprovisioned_pods_input_file
-      changed_when: false
-
-    - name: Write overprovisioned pod input data
-      ansible.builtin.copy:
-        dest: "{{ overprovisioned_pods_input_file.path }}"
-        mode: "0600"
-        content: "{{ {
-          'pods': ((analysis_graph.pods | default({})).get('items', [])),
-          'cpu_usage': (pod_cpu_usage_all_results | default([])),
-          'memory_usage': (pod_memory_usage_all_results | default([])),
-          'exclude_regex': user_namespaces_exclude_regex,
-          'operator_managed_namespace_names': (operator_managed_namespace_names | default([])),
-          'cpu_usage_status': (((runtime_signal_resolution_map.pod_cpu_usage_all | default({})).get('status', 'not-collected'))),
-          'memory_usage_status': (((runtime_signal_resolution_map.pod_memory_usage_all | default({})).get('status', 'not-collected')))
-        } | to_json }}"
-      changed_when: false
-      when: prom_available | bool
-
-    - name: Run overprovisioned pod analysis
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_overprovisioned_pods.py"
-          - "{{ overprovisioned_pods_input_file.path }}"
-      register: overprovisioned_pods_cmd
-      changed_when: false
-      failed_when: false
-      when: prom_available | bool
-  always:
-    - name: Remove overprovisioned pod input file
-      ansible.builtin.file:
-        path: "{{ overprovisioned_pods_input_file.path }}"
-        state: absent
-      when:
-        - prom_available | bool
-        - overprovisioned_pods_input_file is defined
-        - (overprovisioned_pods_input_file.path | default('') | length > 0)
-      changed_when: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_overprovisioned_pods.py"
+    stdin: "{{ {
+      'pods': ((analysis_graph.pods | default({})).get('items', [])),
+      'cpu_usage': (pod_cpu_usage_all_results | default([])),
+      'memory_usage': (pod_memory_usage_all_results | default([])),
+      'exclude_regex': user_namespaces_exclude_regex,
+      'operator_managed_namespace_names': (operator_managed_namespace_names | default([])),
+      'cpu_usage_status': (((runtime_signal_resolution_map.pod_cpu_usage_all | default({})).get('status', 'not-collected'))),
+      'memory_usage_status': (((runtime_signal_resolution_map.pod_memory_usage_all | default({})).get('status', 'not-collected')))
+    } | to_json }}"
+  register: overprovisioned_pods_cmd
+  changed_when: false
+  failed_when: false
+  when: prom_available | bool
 
 - name: Normalize overprovisioned pod findings
   ansible.builtin.set_fact:
     overprovisioned_pods: "{{ overprovisioned_pods_cmd.stdout | from_json if (overprovisioned_pods_cmd is defined and overprovisioned_pods_cmd.rc is defined and overprovisioned_pods_cmd.rc == 0 and (overprovisioned_pods_cmd.stdout | default('') | length > 0)) else [] }}"
 
 - name: Build quota pressure findings
-  block:
-    - name: Create quota pressure input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-quota-pressure-
-        suffix: .json
-      register: quota_pressure_input_file
-      changed_when: false
-
-    - name: Write quota pressure input data
-      ansible.builtin.copy:
-        dest: "{{ quota_pressure_input_file.path }}"
-        mode: "0600"
-        content: "{{ ((analysis_graph.resourcequotas | default({})).get('items', [])) | to_json }}"
-      changed_when: false
-
-    - name: Run quota pressure analysis
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_quota_pressure_findings.py"
-          - "{{ quota_pressure_input_file.path }}"
-      register: quota_pressure_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove quota pressure input file
-      ansible.builtin.file:
-        path: "{{ quota_pressure_input_file.path }}"
-        state: absent
-      when: quota_pressure_input_file is defined and (quota_pressure_input_file.path | default('') | length > 0)
-      changed_when: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_quota_pressure_findings.py"
+    stdin: "{{ ((analysis_graph.resourcequotas | default({})).get('items', [])) | to_json }}"
+  register: quota_pressure_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Normalize quota pressure findings
   ansible.builtin.set_fact:

@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/repo-runtime-env.sh"
 if [[ $# -lt 1 || "${1}" == -* ]]; then
   PLAYBOOK="${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml"
 else
@@ -34,13 +35,15 @@ if [[ "${OHC_CI_TEE_ACTIVE:-0}" != "1" ]]; then
   exit "${PIPESTATUS[0]}"
 fi
 
+cleanup_repo_ansible_temp_dirs
+
 printf '[%s] Writing CI run output to %s\n' "$(date '+%H:%M:%S')" "${LOG_FILE}"
 
 FINAL_MD="${ROOT_DIR}/reports/ci-cluster-report.md"
 FINAL_JSON="${ROOT_DIR}/reports/ci-cluster-report.json"
 FINAL_WORKSPACE_MD="${ROOT_DIR}/reports/.run-state/openshift/collected-artifacts/report/ci-cluster-report.md"
 FINAL_WORKSPACE_JSON="${ROOT_DIR}/reports/.run-state/openshift/collected-artifacts/report/ci-cluster-report.json"
-TEMP_REPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ci-cluster-report.XXXXXX")"
+TEMP_REPORT_DIR="$(mktemp -d "${REPO_TMP_ROOT}/ci-cluster-report.XXXXXX")"
 EFFECTIVE_REPORT_DIR="${TEMP_REPORT_DIR}"
 trap 'rm -rf "${TEMP_REPORT_DIR}"' EXIT
 
@@ -53,8 +56,8 @@ for ((i=0; i<${#args[@]}; i++)); do
   fi
 done
 
-ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/ansible-local" \
-ANSIBLE_REMOTE_TEMP="${TMPDIR:-/tmp}/ansible-remote" \
+ANSIBLE_LOCAL_TEMP="${REPO_ANSIBLE_LOCAL_TEMP}" \
+ANSIBLE_REMOTE_TEMP="${REPO_ANSIBLE_REMOTE_TEMP}" \
 OHC_FORCE_TASK_PROGRESS=1 \
 "${ANSIBLE_PLAYBOOK_BIN}" "${PLAYBOOK}" \
   -e report_output_dir="${TEMP_REPORT_DIR}" \

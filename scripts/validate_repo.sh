@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/repo-runtime-env.sh"
 LOG_DIR="${ROOT_DIR}/.logs"
 TIMESTAMP="$(date '+%Y%m%dT%H%M%S')"
 CLUSTER_TYPE_LABEL="${1:-repo}"
@@ -35,6 +36,7 @@ log() {
 
 log "Writing validation output to ${LOG_FILE}"
 export OHC_FORCE_TASK_PROGRESS=1
+cleanup_repo_ansible_temp_dirs
 
 log "Validating YAML syntax across repository"
 "${VENV_PYTHON_BIN}" - "${ROOT_DIR}" <<'PY'
