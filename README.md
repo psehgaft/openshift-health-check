@@ -907,7 +907,7 @@ Important runtime settings:
 
 - `collection_parallelism`
   Requested number of cluster read commands to run at the same time. Default: `4`
-  The runtime now auto-caps this for smaller machines based on local CPU and memory. The default budget targets are `50%` of local CPU and `50%` of local memory. On a 4 vCPU / 8 GiB VM, the effective cap is `2`.
+  The runtime now auto-caps this for smaller machines based on local CPU and memory. The default budget targets are `80%` of local CPU and `80%` of local memory. On a 4 vCPU / 16 GiB VM, the effective cap is `3`.
 - `rbac_check_service_account_namespace`
   Service account namespace used by the OpenShift preflight `oc auth can-i` matrix. Default: `openshift-health-check`
 - `rbac_check_service_account_name`
@@ -1241,7 +1241,7 @@ Runs usually take longer when:
 
 Runs can also take longer if you lower `collection_parallelism`, if the runtime auto-caps parallelism on a smaller machine, or if you raise `collection_command_timeout_seconds`.
 
-For example, with the default `50%` CPU and memory budget, a 4 vCPU / 8 GiB machine will usually run the main collection and analysis stages with an effective worker cap of `2`, even if you request a higher `collection_parallelism`.
+For example, with the default `80%` CPU and memory budget, a 4 vCPU / 16 GiB machine will usually run the main collection and analysis stages with an effective worker cap of `3`, even if you request a higher `collection_parallelism`.
 
 ## Output
 
