@@ -73,25 +73,34 @@
         )
       }}
 
-- name: Read existing posture artifact files for resume planning
-  ansible.builtin.slurp:
-    src: "{{ item.path }}"
-  loop: "{{ report_resume_posture_artifact_files.files | default([]) }}"
-  register: report_resume_posture_artifact_slurps
+- name: Load existing posture artifacts for resume planning
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/load_json_artifact_dir.py"
+      - "{{ report_run_workspace_postures_dir }}"
+  register: report_resume_posture_artifacts_cmd
+  changed_when: false
   when: report_run_mode | default('fresh') == 'resume_last_failure'
 
-- name: Read existing shared artifact files for resume planning
-  ansible.builtin.slurp:
-    src: "{{ item.path }}"
-  loop: "{{ report_resume_shared_artifact_files.files | default([]) }}"
-  register: report_resume_shared_artifact_slurps
+- name: Load existing shared artifact hashes for resume planning
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/load_json_artifact_hash_dir.py"
+      - "{{ report_run_workspace_shared_dir }}"
+  register: report_resume_shared_artifact_hashes_cmd
+  changed_when: false
   when: report_run_mode | default('fresh') == 'resume_last_failure'
 
-- name: Read existing capability artifact files for resume planning
-  ansible.builtin.slurp:
-    src: "{{ item.path }}"
-  loop: "{{ report_resume_capability_artifact_files.files | default([]) }}"
-  register: report_resume_capability_artifact_slurps
+- name: Load existing capability artifacts for resume planning
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/load_json_artifact_dir.py"
+      - "{{ report_run_workspace_capabilities_dir }}"
+  register: report_resume_capability_artifacts_cmd
+  changed_when: false
   when: report_run_mode | default('fresh') == 'resume_last_failure'
 
 - name: Initialize resume artifact metadata maps
@@ -103,57 +112,30 @@
 
 - name: Merge shared artifact hashes for resume planning
   ansible.builtin.set_fact:
-    report_resume_shared_artifact_hash_map: >-
-      {{
-        (report_resume_shared_artifact_hash_map | default({}))
-        | combine(
-            {
-              (((item.item.path | basename) | replace('.json', '') | replace('-', '_'))): ((((item.content | b64decode) | from_json).get('artifact_hash', '')) if (item.content is defined) else '')
-            },
-            recursive=True
-          )
-      }}
-  loop: "{{ report_resume_shared_artifact_slurps.results | default([]) }}"
+    report_resume_shared_artifact_hash_map: "{{ (report_resume_shared_artifact_hash_map | default({})) | combine((report_resume_shared_artifact_hashes_cmd.stdout | default('{}') | from_json), recursive=True) }}"
   when:
     - report_run_mode | default('fresh') == 'resume_last_failure'
-    - not (item.failed | default(false))
-    - item.content is defined
+    - report_resume_shared_artifact_hashes_cmd is defined
+    - (report_resume_shared_artifact_hashes_cmd.rc | default(1)) == 0
+    - (report_resume_shared_artifact_hashes_cmd.stdout | default('') | length) > 0
 
 - name: Merge posture artifact metadata for resume planning
   ansible.builtin.set_fact:
-    report_resume_posture_artifact_metadata_map: >-
-      {{
-        (report_resume_posture_artifact_metadata_map | default({}))
-        | combine(
-            {
-              (((item.item.path | basename) | replace('.json', ''))): (((item.content | b64decode) | from_json) if (item.content is defined) else {})
-            },
-            recursive=True
-          )
-      }}
-  loop: "{{ report_resume_posture_artifact_slurps.results | default([]) }}"
+    report_resume_posture_artifact_metadata_map: "{{ (report_resume_posture_artifact_metadata_map | default({})) | combine((report_resume_posture_artifacts_cmd.stdout | default('{}') | from_json), recursive=True) }}"
   when:
     - report_run_mode | default('fresh') == 'resume_last_failure'
-    - not (item.failed | default(false))
-    - item.content is defined
+    - report_resume_posture_artifacts_cmd is defined
+    - (report_resume_posture_artifacts_cmd.rc | default(1)) == 0
+    - (report_resume_posture_artifacts_cmd.stdout | default('') | length) > 0
 
 - name: Merge capability artifact metadata for resume planning
   ansible.builtin.set_fact:
-    report_resume_capability_artifact_metadata_map: >-
-      {{
-        (report_resume_capability_artifact_metadata_map | default({}))
-        | combine(
-            {
-              (((item.item.path | basename) | replace('.json', ''))): (((item.content | b64decode) | from_json) if (item.content is defined) else {})
-            },
-            recursive=True
-          )
-      }}
-  loop: "{{ report_resume_capability_artifact_slurps.results | default([]) }}"
+    report_resume_capability_artifact_metadata_map: "{{ (report_resume_capability_artifact_metadata_map | default({})) | combine((report_resume_capability_artifacts_cmd.stdout | default('{}') | from_json), recursive=True) }}"
   when:
     - report_run_mode | default('fresh') == 'resume_last_failure'
-    - not (item.failed | default(false))
-    - item.content is defined
+    - report_resume_capability_artifacts_cmd is defined
+    - (report_resume_capability_artifacts_cmd.rc | default(1)) == 0
+    - (report_resume_capability_artifacts_cmd.stdout | default('') | length) > 0
 
 - name: Resolve current shared artifact hashes for resume planning
   ansible.builtin.set_fact:

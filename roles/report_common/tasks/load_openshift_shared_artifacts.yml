@@ -10,11 +10,14 @@
     file_type: file
   register: openshift_shared_artifact_files
 
-- name: Read OpenShift shared artifact files
-  ansible.builtin.slurp:
-    path: "{{ item.path }}"
-  loop: "{{ openshift_shared_artifact_files.files | default([]) }}"
-  register: openshift_shared_artifact_raw_results
+- name: Load OpenShift shared artifacts in bulk
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/load_json_artifact_dir.py"
+      - "{{ report_run_workspace_shared_dir }}"
+  register: openshift_shared_artifacts_cmd
+  changed_when: false
   when: (openshift_shared_artifact_files.matched | default(0) | int) > 0
 
 - name: Merge OpenShift shared artifacts
@@ -30,12 +33,7 @@
           )
       }}
   vars:
-    shared_artifact: >-
-      {{
-        (item.content | b64decode | from_json)
-        if (item.content | default('') | length > 0)
-        else {}
-      }}
+    shared_artifact: "{{ item.value | default({}) }}"
     shared_artifact_key: >-
       {{
         (
@@ -44,14 +42,13 @@
           else (
             'analysis_graph'
             if ((shared_artifact.kind | default('')) == 'shared-analysis-graph')
-            else (item.item.path | basename | regex_replace('\.json$', ''))
+            else item.key
           )
         )
       }}
-  loop: "{{ openshift_shared_artifact_raw_results.results | default([]) }}"
+  loop: "{{ ((openshift_shared_artifacts_cmd.stdout | default('{}')) | from_json | dict2items) if (openshift_shared_artifacts_cmd is defined and (openshift_shared_artifacts_cmd.rc | default(1)) == 0 and (openshift_shared_artifacts_cmd.stdout | default('') | length) > 0) else [] }}"
   when:
-    - not (item.skipped | default(false))
-    - (item.content | default('') | length) > 0
+    - shared_artifact | length > 0
 
 - name: Restore canonical facts from OpenShift shared artifacts
   vars:

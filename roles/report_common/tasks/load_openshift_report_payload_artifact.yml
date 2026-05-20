@@ -1,12 +1,16 @@
 ---
 - name: Read persisted OpenShift report payload artifact
-  ansible.builtin.slurp:
-    src: "{{ report_run_workspace_report_dir }}/payload.json"
-  register: openshift_report_payload_artifact_slurp
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/load_json_file.py"
+      - "{{ report_run_workspace_report_dir }}/payload.json"
+  register: openshift_report_payload_artifact_cmd
+  changed_when: false
 
 - name: Restore persisted OpenShift report payload artifact facts
   vars:
-    restored_payload: "{{ (openshift_report_payload_artifact_slurp.content | b64decode | from_json) if (openshift_report_payload_artifact_slurp.content is defined) else {} }}"
+    restored_payload: "{{ (openshift_report_payload_artifact_cmd.stdout | from_json) if (openshift_report_payload_artifact_cmd is defined and (openshift_report_payload_artifact_cmd.rc | default(1)) == 0 and (openshift_report_payload_artifact_cmd.stdout | default('') | length) > 0) else {} }}"
     restored_domains: "{{ restored_payload.domains | default({}) }}"
     restored_supportability: "{{ restored_payload.supportability | default({}) }}"
     restored_audit: "{{ restored_payload.audit | default({}) }}"
