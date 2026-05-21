@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Validate OpenShift capability role coverage against the profile and playbook."""
 
-from __future__ import annotations
-
 import argparse
 import re
 import sys

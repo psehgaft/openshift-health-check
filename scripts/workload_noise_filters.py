@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 
 def _normalize_str_map(raw):
     return {

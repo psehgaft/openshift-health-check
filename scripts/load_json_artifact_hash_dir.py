@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Load artifact hashes from a directory of JSON artifacts."""
 
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path

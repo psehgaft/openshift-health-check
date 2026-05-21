@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Run an existing JSON-file helper by feeding it stdin through one temp file."""
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys

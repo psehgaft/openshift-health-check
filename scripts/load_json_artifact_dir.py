@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Load a directory of JSON artifacts into a single JSON object."""
 
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Write stdin to a target file path with a fixed mode."""
 
-from __future__ import annotations
-
 import argparse
 import os
 import sys
