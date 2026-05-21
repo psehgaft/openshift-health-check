@@ -8,6 +8,16 @@ import tempfile
 from pathlib import Path
 
 
+def resolve_repo_tmp_root() -> str:
+    explicit = os.environ.get("OHC_REPO_TMPDIR") or os.environ.get("TMPDIR")
+    if explicit:
+        Path(explicit).mkdir(parents=True, exist_ok=True)
+        return explicit
+    fallback = str((Path(__file__).resolve().parent.parent / ".runtime" / "tmp"))
+    Path(fallback).mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("usage: run_json_helper_from_stdin.py <helper.py> [helper-args...]", file=sys.stderr)
@@ -17,7 +27,13 @@ def main() -> int:
     helper_args = sys.argv[2:]
     payload = sys.stdin.read()
 
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".json",
+        delete=False,
+        encoding="utf-8",
+        dir=resolve_repo_tmp_root(),
+    ) as handle:
         handle.write(payload)
         temp_path = handle.name
 

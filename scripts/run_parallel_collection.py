@@ -7,6 +7,16 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+def resolve_repo_tmp_root():
+    explicit = os.environ.get("OHC_REPO_TMPDIR") or os.environ.get("TMPDIR")
+    if explicit:
+        os.makedirs(explicit, exist_ok=True)
+        return explicit
+    fallback = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".runtime", "tmp")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
+
+
 def run_command(spec, timeout_seconds):
     try:
         proc = subprocess.run(
@@ -64,7 +74,7 @@ def main() -> int:
             result = future.result()
             results[result["name"]] = result
 
-    output_dir = tempfile.mkdtemp(prefix="cluster-health-parallel-collect-")
+    output_dir = tempfile.mkdtemp(prefix="cluster-health-parallel-collect-", dir=resolve_repo_tmp_root())
     results_path = os.path.join(output_dir, "collected-commands.json")
     status_path = os.path.join(output_dir, "collected-command-status.json")
     with open(results_path, "w", encoding="utf-8") as handle:

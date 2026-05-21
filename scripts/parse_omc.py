@@ -13,6 +13,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+def resolve_repo_tmp_root() -> str:
+    explicit = os.environ.get("OHC_REPO_TMPDIR") or os.environ.get("TMPDIR")
+    if explicit:
+        Path(explicit).mkdir(parents=True, exist_ok=True)
+        return explicit
+    fallback = str((Path(__file__).resolve().parent.parent / ".runtime" / "tmp"))
+    Path(fallback).mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 def resolve_omc_binary(explicit_path: Optional[str]) -> Optional[str]:
     if explicit_path:
         candidate = Path(explicit_path)
@@ -28,7 +38,7 @@ def resolve_omc_binary(explicit_path: Optional[str]) -> Optional[str]:
 
 
 def run_omc_command(omc_bin: str, must_gather_path: Path, args: List[str]) -> Dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="omc-context.") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="omc-context.", dir=resolve_repo_tmp_root()) as tmpdir:
         env = os.environ.copy()
         env["HOME"] = tmpdir
         env["XDG_CONFIG_HOME"] = tmpdir

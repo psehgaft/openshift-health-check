@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -125,7 +126,14 @@ def main():
         help="Skip cleanly instead of discovering all nodes when no --node or --node-selector is provided.",
     )
     parser.add_argument("--timeout-seconds", type=int, default=1800)
-    parser.add_argument("--remote-dir", default="/var/tmp/openshift-health-check-sos")
+    parser.add_argument(
+        "--remote-dir",
+        default=(
+            os.environ.get("OHC_NODE_DEBUG_REMOTE_TMPDIR")
+            or os.environ.get("OHC_REMOTE_TMPDIR")
+            or "/var/lib/openshift-health-check/sos"
+        ),
+    )
     parser.add_argument(
         "--sos-arg",
         action="append",

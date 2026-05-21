@@ -89,7 +89,8 @@ apt-get update
 log "Installing bastion host packages"
 DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_PACKAGES[@]}"
 
-TMP_DIR="$(mktemp -d)"
+mkdir -p "${REPO_ROOT}/.runtime/tmp"
+TMP_DIR="$(mktemp -d "${REPO_ROOT}/.runtime/tmp/bootstrap.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 OCP_CLIENT_URL="https://mirror.openshift.com/pub/openshift-v4/${OCP_ARCH}/clients/ocp/stable/openshift-client-linux.tar.gz"
