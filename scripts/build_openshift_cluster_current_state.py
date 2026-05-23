@@ -94,6 +94,18 @@ def metric_value_float(item, multiplier=1.0):
         return None
 
 
+def sum_runtime_metric(data, result_key, signal_name, multiplier=1.0):
+    total = 0.0
+    seen = False
+    for item in runtime_signal_rows(data, result_key, signal_name):
+        value = metric_value_float(item, multiplier=multiplier)
+        if value is None:
+            continue
+        total += value
+        seen = True
+    return total if seen else None
+
+
 def runtime_signal_entry(data, name):
     return ((data.get("runtime_signal_resolution_map") or {}).get(name)) or {}
 
@@ -858,6 +870,38 @@ def main():
     average_disk_utilization_pct = avg(
         [item.get("disk_utilization_pct") for item in node_resource_rows if item.get("disk_utilization_pct") not in (None, "")]
     )
+    average_cpu_signal_kind = signal_kind(node_cpu_signal)
+    average_cpu_signal_status = node_cpu_signal.get("status", "not-collected")
+    average_cpu_signal_source = node_cpu_signal.get("source", "unavailable")
+    average_cpu_signal_method = node_cpu_signal.get("method", "not-collected")
+    average_cpu_is_approximation = bool(node_cpu_signal.get("is_approximation", False))
+    average_memory_signal_kind = signal_kind(node_memory_signal)
+    average_memory_signal_status = node_memory_signal.get("status", "not-collected")
+    average_memory_signal_source = node_memory_signal.get("source", "unavailable")
+    average_memory_signal_method = node_memory_signal.get("method", "not-collected")
+    average_memory_is_approximation = bool(node_memory_signal.get("is_approximation", False))
+    if average_cpu_utilization_pct is None and total_cpu_cores > 0:
+        pod_cpu_signal = runtime_signal_entry(data, "pod_cpu_usage_all")
+        pod_cpu_usage_cores = sum_runtime_metric(data, "pod_cpu_usage_all_results", "pod_cpu_usage_all")
+        if pod_cpu_usage_cores is not None:
+            average_cpu_utilization_pct = round((pod_cpu_usage_cores / total_cpu_cores) * 100.0, 1)
+            pod_cpu_status = pod_cpu_signal.get("status", "observed")
+            average_cpu_signal_status = pod_cpu_status
+            average_cpu_signal_source = pod_cpu_signal.get("source", "pod_cpu_usage_all")
+            average_cpu_signal_method = pod_cpu_signal.get("method", "pod-usage-sum")
+            average_cpu_signal_kind = "workload-usage" if pod_cpu_status == "observed" else "requested-pressure"
+            average_cpu_is_approximation = True
+    if average_memory_utilization_pct is None and total_memory_bytes > 0:
+        pod_memory_signal = runtime_signal_entry(data, "pod_memory_usage_all")
+        pod_memory_usage_bytes = sum_runtime_metric(data, "pod_memory_usage_all_results", "pod_memory_usage_all")
+        if pod_memory_usage_bytes is not None:
+            average_memory_utilization_pct = round((pod_memory_usage_bytes / total_memory_bytes) * 100.0, 1)
+            pod_memory_status = pod_memory_signal.get("status", "observed")
+            average_memory_signal_status = pod_memory_status
+            average_memory_signal_source = pod_memory_signal.get("source", "pod_memory_usage_all")
+            average_memory_signal_method = pod_memory_signal.get("method", "pod-usage-sum")
+            average_memory_signal_kind = "workload-usage" if pod_memory_status == "observed" else "requested-pressure"
+            average_memory_is_approximation = True
     namespace_data = dict(data)
     namespace_data["pods"] = pod_items
     namespace_data["resourcequotas"] = resourcequota_items
@@ -933,17 +977,17 @@ def main():
             "average_pod_density_signal_kind": signal_kind(pod_density_signal, observed_label="density", derived_label="density"),
             "average_pod_density_is_approximation": bool(pod_density_signal.get("is_approximation", False)),
             "average_cpu_utilization_pct": average_cpu_utilization_pct,
-            "average_cpu_signal_status": node_cpu_signal.get("status", "not-collected"),
-            "average_cpu_signal_source": node_cpu_signal.get("source", "unavailable"),
-            "average_cpu_signal_method": node_cpu_signal.get("method", "not-collected"),
-            "average_cpu_signal_kind": signal_kind(node_cpu_signal),
-            "average_cpu_is_approximation": bool(node_cpu_signal.get("is_approximation", False)),
+            "average_cpu_signal_status": average_cpu_signal_status,
+            "average_cpu_signal_source": average_cpu_signal_source,
+            "average_cpu_signal_method": average_cpu_signal_method,
+            "average_cpu_signal_kind": average_cpu_signal_kind,
+            "average_cpu_is_approximation": average_cpu_is_approximation,
             "average_memory_utilization_pct": average_memory_utilization_pct,
-            "average_memory_signal_status": node_memory_signal.get("status", "not-collected"),
-            "average_memory_signal_source": node_memory_signal.get("source", "unavailable"),
-            "average_memory_signal_method": node_memory_signal.get("method", "not-collected"),
-            "average_memory_signal_kind": signal_kind(node_memory_signal),
-            "average_memory_is_approximation": bool(node_memory_signal.get("is_approximation", False)),
+            "average_memory_signal_status": average_memory_signal_status,
+            "average_memory_signal_source": average_memory_signal_source,
+            "average_memory_signal_method": average_memory_signal_method,
+            "average_memory_signal_kind": average_memory_signal_kind,
+            "average_memory_is_approximation": average_memory_is_approximation,
             "average_disk_utilization_pct": average_disk_utilization_pct,
             "average_disk_signal_status": node_disk_signal.get("status", "not-collected"),
             "average_disk_signal_source": node_disk_signal.get("source", "unavailable"),

@@ -122,31 +122,25 @@ def main() -> int:
         if not missing_metadata:
             continue
 
-        owner_team_hint = f"platform-{role_slug}"
-        owner_email_hint = f"platform-{role_slug}@example.com"
-        owner_contact_hint = f"#platform-{role_slug}"
-        description_hint = f"{primary_role} node in {zone} for {provider}"
-        cost_center_hint = f"cc-{normalize_slug(provider).upper() or 'PLATFORM'}"
-        business_unit_hint = "PLATFORM"
-
         findings.append(
             {
                 "node": name,
                 "roles": roles,
+                "role": ", ".join(roles),
+                "zone": zone,
+                "instance_type": provider,
                 "missing_metadata": missing_metadata,
                 "present_owner_labels": present_owner_labels,
                 "present_owner_annotations": present_owner_annotations,
                 "present_cost_labels": present_cost_labels,
                 "recommended_owner_values": [
-                    f"team={owner_team_hint}",
-                    f"owner={owner_team_hint}",
-                    f"owner.email={owner_email_hint}",
-                    f"owner.contact={owner_contact_hint}",
-                    f"description={description_hint}",
+                    "set one of: team, owner, owner.team, app.kubernetes.io/owner",
+                    "set contact annotation: owner.email or owner.contact",
+                    "optionally describe node pool ownership in description",
                 ],
                 "recommended_cost_values": [
-                    f"cost-center={cost_center_hint}",
-                    f"business-unit={business_unit_hint}",
+                    "set one of: cost-center, billing-code, chargeback-code",
+                    "optionally set business-unit or department",
                 ],
                 "detail": "; ".join(missing_metadata),
                 "expected_owner_label_keys": OWNER_LABEL_KEYS,

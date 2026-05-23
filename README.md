@@ -47,13 +47,43 @@ Use the design notes when you want to understand why the checks exist and how th
 
 ## Quick Start
 
-Launch the tool from the repo root:
+Use these steps from the repo root.
+
+1. Prepare the Python environment:
 
 ```bash
 ./scripts/setup-ansible-venv.sh
 source .venv/bin/activate
-ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
 ```
+
+2. Log in to the cluster before running the report:
+
+```bash
+oc login https://api.<cluster-name>.<domain>:6443
+oc whoami
+```
+
+3. Pick the run mode that matches the engagement:
+
+```bash
+# Most complete first run. Includes node diagnostics when prerequisites exist.
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=live
+
+# Production-friendly full run. Enables full support collection but skips
+# node-level diagnostics through oc debug node/<node> and sosreport.
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=live \
+  -e report_performance_profile=full \
+  -e collect_live_sosreport=false
+
+# Faster routine run. Keeps lower-cost API, metrics, inspect, and Insights evidence.
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=live \
+  -e report_performance_profile=standard
+```
+
+The default OpenShift run uses `report_performance_profile=full` so new users get the most complete report without needing to discover optional flags. For customer environments where node-level inspection is not approved, use the production-friendly full command above.
 
 If you are preparing a fresh bastion host first, use the OS bootstrap that matches the host:
 
@@ -69,21 +99,28 @@ Those bastion scripts are safe to run with `sudo`. They install system packages 
 
 If you are trying the repo for the first time, start with OpenShift. OpenShift is the original cluster type this solution was designed around, and `playbooks/openshift_cluster_health_report.yml` remains the primary entrypoint and deepest report path in the repo.
 
-For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and defaults to the `standard` performance profile. That includes API and metric evidence plus lower-cost support evidence such as live `inspect` and Insights archive copy. Expensive support collectors such as `must-gather`, `cluster-compare`, PDF generation, and node diagnostics are available through `report_performance_profile=full` or explicit collector variables.
-
-Example live OpenShift run:
-
-```bash
-ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
-```
+For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and defaults to the `full` performance profile so first-time users get the most complete evidence set without needing to discover optional flags. That includes API and metric evidence, `must-gather`, live `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available. Use `report_performance_profile=standard` or `report_performance_profile=fast` when you intentionally want a shorter live run.
 
 For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
 
 Common OpenShift command variants:
 
-- Default live scan
+- Default full live scan
 ```bash
 ansible-playbook playbooks/openshift_cluster_health_report.yml -e report_mode=live
+```
+- Full live scan without node diagnostics
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=live \
+  -e report_performance_profile=full \
+  -e collect_live_sosreport=false
+```
+- Faster live scan with lower-cost support collection
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=live \
+  -e report_performance_profile=standard
 ```
 - Live scan with a custom profile override file
 ```bash
@@ -148,6 +185,8 @@ Most-used OpenShift options:
   Enable or disable HTML output
 - `report_generate_pdf`
   Enable or disable PDF output
+- `report_performance_profile`
+  Choose live OpenShift collection depth. Default: `full`
 
 `must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates and Advisor export can run in the same scan when their command prerequisites are available. Node-level `oc debug node/<node>` plus `sosreport` collection is optional and runs only when `collect_live_sosreport=true`; when enabled, it targets derived symptom nodes by default and is capped by `live_support_sosreport_node_limit`. If no symptom-based targets are found, the collector skips cleanly instead of collecting arbitrary nodes. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
 
@@ -906,7 +945,7 @@ Supported PDF engines are checked automatically:
 Important runtime settings:
 
 - `collection_parallelism`
-  Requested number of cluster read commands to run at the same time. Default: `4`
+  Requested number of cluster read commands to run at the same time. Default: `8`
   The runtime now auto-caps this for smaller machines based on local CPU and memory. The default budget targets are `80%` of local CPU and `80%` of local memory. On a 4 vCPU / 16 GiB VM, the effective cap is `3`.
 - `rbac_check_service_account_namespace`
   Service account namespace used by the OpenShift preflight `oc auth can-i` matrix. Default: `openshift-health-check`
@@ -917,9 +956,9 @@ Important runtime settings:
 - `collect_live_support_artifacts`
   Enable live support collectors such as `must-gather`, `inspect`, Insights archive copy, `cluster-compare`, and node diagnostics. Default: `true`
 - `report_performance_profile`
-  Live OpenShift collection profile. `fast` keeps the run to required API evidence and skips optional support collectors and PDF generation. `standard` is the default and collects API evidence plus lower-cost support evidence while avoiding `must-gather`, `cluster-compare`, node diagnostics, and PDF generation unless explicitly requested. `full` preserves the deepest support collection path, including `must-gather`, `inspect`, Insights archive copy, optional `cluster-compare`, node diagnostics, and PDF generation when prerequisites are available. Default: `standard`
+  Live OpenShift collection profile. `full` is the default and uses the deepest support collection path, including `must-gather`, `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available. `standard` collects API evidence plus lower-cost support evidence while avoiding `must-gather`, `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation unless explicitly requested. `fast` keeps the run to required API evidence and skips optional support collectors and PDF generation. Default: `full`
 - `live_support_collection_profile`
-  Low-level support collector profile after performance-profile resolution. Use `report_performance_profile` for normal runs. Default for `standard`: `read_only`; default for `full`: `all`
+  Low-level support collector profile after performance-profile resolution. Use `report_performance_profile` for normal runs. Default for `full`: `all`; default for `standard`: `read_only`
 - `allow_mutating_live_collectors`
   Allow live collectors that create and later clean up temporary cluster resources, such as `oc adm must-gather` and `oc debug node`. Default: `true`
 - `collection_command_timeout_seconds`
@@ -1088,7 +1127,7 @@ These parameters work across the playbooks:
 - `sosreport_paths`
   One or more extracted `sosreport` directories or archives, typically collected through `oc debug node/<node>` when host-level node diagnostics are required
 - `collect_live_sosreport`
-  Enable or disable live `oc debug node/<node>` sosreport collection. The default `standard` profile keeps it disabled; `report_performance_profile=full` enables it when applicable. Setting it to `false` disables node debug even when `live_support_collection_profile=all`
+  Enable or disable live `oc debug node/<node>` sosreport collection. The default `full` profile enables it when applicable. `report_performance_profile=standard` and `report_performance_profile=fast` keep it disabled unless explicitly enabled. Setting it to `false` disables node debug even when `live_support_collection_profile=all`
 - `live_support_sosreport_nodes`
   Optional explicit node list for live sosreport collection; when empty, the scan uses derived symptom nodes
 - `live_support_sosreport_node_limit`

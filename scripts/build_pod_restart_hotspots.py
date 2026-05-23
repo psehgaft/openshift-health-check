@@ -96,6 +96,7 @@ def main() -> int:
                     "phase": phase,
                     "restarts": restart_count,
                     "node": node_name,
+                    "created_at": str(metadata.get("creationTimestamp") or "unknown"),
                 }
             )
 

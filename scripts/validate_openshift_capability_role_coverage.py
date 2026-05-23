@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 
-EXPECTED_PLAYBOOK_WIRING_COUNT = 4
+EXPECTED_PLAYBOOK_WIRING_COUNT = 1
 ROLE_PREFIX = "capability_"
 IGNORED_ROLE_DIRS = {
     "capability_artifact_from_builder",
@@ -38,7 +38,7 @@ def load_role_backed_capabilities(roles_dir: Path) -> list[str]:
 def load_playbook_wiring_counts(playbook_path: Path) -> dict[str, int]:
     text = playbook_path.read_text(encoding="utf-8")
     counts: dict[str, int] = {}
-    for match in re.finditer(r"name:\s+capability_([a-z0-9_]+)", text):
+    for match in re.finditer(r"(?:name|role):\s+capability_([a-z0-9_]+)", text):
         key = match.group(1)
         counts[key] = counts.get(key, 0) + 1
     return counts

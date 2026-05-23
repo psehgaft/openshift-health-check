@@ -37,6 +37,13 @@ ALLOWED_SECTION_LABELS = [
     "Findings",
 ]
 
+ALLOWED_DAY2_SECTION_LABELS = [
+    "Health Score",
+    "Findings Summary",
+    "Capability Assessment",
+    "Findings",
+]
+
 REQUIRED_CAPABILITY_SUBSECTIONS = [
     "##### Health Score",
     "##### Findings Summary",
@@ -200,10 +207,11 @@ def validate_cluster_posture_sections(markdown: str) -> None:
             for line in lines[start : end - 1]
             if line.startswith("### ") and not line.startswith("#### ")
         ]
-        if direct_subsections != ALLOWED_SECTION_LABELS:
+        allowed_labels = ALLOWED_DAY2_SECTION_LABELS if title == "Day 2 Production Readiness" else ALLOWED_SECTION_LABELS
+        if direct_subsections != allowed_labels:
             fail(
                 f"{title!r} at line {start} must contain only "
-                + ", ".join(ALLOWED_SECTION_LABELS)
+                + ", ".join(allowed_labels)
                 + "; found "
                 + ", ".join(direct_subsections)
             )
@@ -223,6 +231,8 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
     if start_idx is None:
         fail("missing Day 2 Production Readiness section")
     block = lines[start_idx:end_idx]
+    if "### Capability Assessment" not in block:
+        fail("missing Day 2 Capability Assessment subsection")
     rendered_titles = [line[5:].strip() for line in block if line.startswith("#### ") and not line.startswith("##### ")]
     expected_titles = expected_enabled_capability_titles()
     missing = sorted(set(expected_titles) - set(rendered_titles))

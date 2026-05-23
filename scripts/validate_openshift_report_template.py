@@ -34,6 +34,13 @@ ALLOWED_POSTURE_SUBSECTIONS = [
     "Findings",
 ]
 
+ALLOWED_DAY2_SUBSECTIONS = [
+    "Health Score",
+    "Findings Summary",
+    "Capability Assessment",
+    "Findings",
+]
+
 POSTURE_SECTIONS = {
     "Platform Health",
     "Node Health And Capacity",
@@ -123,10 +130,11 @@ def main() -> int:
             for line in lines[start : end - 1]
             if line.startswith("### ") and not line.startswith("#### ")
         ]
-        if direct_subsections != ALLOWED_POSTURE_SUBSECTIONS:
+        allowed_subsections = ALLOWED_DAY2_SUBSECTIONS if title == "Day 2 Production Readiness" else ALLOWED_POSTURE_SUBSECTIONS
+        if direct_subsections != allowed_subsections:
             fail(
                 f"{title!r} at line {start} must contain only "
-                + ", ".join(ALLOWED_POSTURE_SUBSECTIONS)
+                + ", ".join(allowed_subsections)
                 + "; found "
                 + ", ".join(direct_subsections)
             )

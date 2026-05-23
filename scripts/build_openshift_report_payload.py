@@ -426,6 +426,10 @@ def build_live_findings(data, include_aged_pods):
     }
     if include_aged_pods:
         findings["aged_user_pods"] = data.get("top_aged_user_pods") or []
+        findings["stale_user_pods"] = data.get("top_stale_user_pods") or []
+        findings["stale_configmaps"] = data.get("top_stale_configmaps") or []
+        findings["stale_generic_secrets"] = data.get("top_stale_generic_secrets") or []
+        findings["stale_dockerconfigjson_secrets"] = data.get("top_stale_dockerconfigjson_secrets") or []
     return findings
 
 

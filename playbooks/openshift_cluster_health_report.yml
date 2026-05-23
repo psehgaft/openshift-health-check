@@ -236,7 +236,7 @@
     apiserver_latency_p99_warn_seconds: 1
     pod_density_warn_pct: 80
     pod_density_critical_pct: 90
-    certificate_expiry_warn_days: 30
+    certificate_expiry_warn_days: 60
     certificate_expiry_critical_days: 7
     prom_queries:
       firing_alerts: 'ALERTS{alertstate="firing"}'
@@ -276,6 +276,21 @@
         - "{{ repo_ansible_local_tmp_dir }}"
         - "{{ repo_ansible_remote_tmp_dir }}"
         - "{{ report_output_dir }}"
+
+    - name: Apply global namespace scan exclusions
+      ansible.builtin.set_fact:
+        user_namespaces_exclude_regex: >-
+          {%- set base_regex = user_namespaces_exclude_regex | default('^$') -%}
+          {%- set excluded_patterns = global_scan_excluded_namespace_patterns | default([]) | map('trim') | reject('equalto', '') | list -%}
+          {%- set ns = namespace(regexes=[]) -%}
+          {%- for pattern in excluded_patterns -%}
+          {%- set _ = ns.regexes.append(pattern | regex_escape | replace('\\*', '.*') | replace('\\?', '.')) -%}
+          {%- endfor -%}
+          {%- if ns.regexes | length > 0 -%}
+          (?:{{ base_regex }})|^(?:{{ ns.regexes | join('|') }})$
+          {%- else -%}
+          {{ base_regex }}
+          {%- endif -%}
 
     - name: Load OpenShift cluster health profile
       ansible.builtin.include_vars:
@@ -342,13 +357,13 @@
     - name: Validate OpenShift report performance profile
       ansible.builtin.assert:
         that:
-          - (report_performance_profile | default('standard')) in (report_performance_profile_settings | default({})).keys()
+          - (report_performance_profile | default('full')) in (report_performance_profile_settings | default({})).keys()
         fail_msg: "Set report_performance_profile to one of: {{ (report_performance_profile_settings | default({})).keys() | list | join(', ') }}."
       when: report_mode_resolved == 'live'
 
     - name: Apply OpenShift report performance profile defaults
       vars:
-        report_performance_profile_resolved: "{{ report_performance_profile | default('standard') }}"
+        report_performance_profile_resolved: "{{ report_performance_profile | default('full') }}"
         report_performance_profile_defaults: "{{ (report_performance_profile_settings | default({})).get(report_performance_profile_resolved, {}) }}"
       ansible.builtin.set_fact:
         report_performance_profile_effective: "{{ report_performance_profile_resolved }}"

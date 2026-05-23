@@ -35,12 +35,21 @@ def collect_route_receivers(route_obj, result):
         collect_route_receivers(child, result)
 
 
+def bool_value(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build(data):
     findings = []
     receivers = []
     config_sources = []
     configs_with_external_routes = 0
     configs_without_route_receivers = 0
+    require_external_alert_delivery = bool_value(data.get("require_external_alert_delivery"))
 
     for item in data.get("items", []):
         meta = item.get("metadata", {}) or {}
@@ -98,7 +107,7 @@ def build(data):
             "name": "alertmanager.additionalAlertmanagerConfigs",
         })
 
-    if not receivers and not config_sources:
+    if require_external_alert_delivery and not receivers and not config_sources:
         findings.append({
             "issue": "external-alert-delivery-not-configured",
             "detail": "no AlertmanagerConfig receiver was found for supported external channels such as email, Slack, PagerDuty, Opsgenie, VictorOps, webhook, or WeChat"

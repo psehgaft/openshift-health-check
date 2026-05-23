@@ -97,6 +97,7 @@ def main():
                 "memory_request_mib": round(mem_req / 1048576, 1),
                 "memory_usage_mib": round(mem_use / 1048576, 1),
                 "reasons": reasons,
+                "reason_names": [reason[0] for reason in reasons],
             })
 
     findings.sort(key=lambda x: (

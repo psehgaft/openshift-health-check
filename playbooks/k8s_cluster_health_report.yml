@@ -315,6 +315,21 @@
         - "{{ repo_ansible_remote_tmp_dir }}"
         - "{{ report_output_dir }}"
 
+    - name: Apply global namespace scan exclusions
+      ansible.builtin.set_fact:
+        user_namespaces_exclude_regex: >-
+          {%- set base_regex = user_namespaces_exclude_regex | default('^$') -%}
+          {%- set excluded_patterns = global_scan_excluded_namespace_patterns | default([]) | map('trim') | reject('equalto', '') | list -%}
+          {%- set ns = namespace(regexes=[]) -%}
+          {%- for pattern in excluded_patterns -%}
+          {%- set _ = ns.regexes.append(pattern | regex_escape | replace('\\*', '.*') | replace('\\?', '.')) -%}
+          {%- endfor -%}
+          {%- if ns.regexes | length > 0 -%}
+          (?:{{ base_regex }})|^(?:{{ ns.regexes | join('|') }})$
+          {%- else -%}
+          {{ base_regex }}
+          {%- endif -%}
+
     - name: Detect whether the current cluster exposes OpenShift APIs
       ansible.builtin.command:
         argv:

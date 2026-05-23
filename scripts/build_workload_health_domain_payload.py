@@ -130,6 +130,12 @@ def build_payload(data):
         "workload_probe_findings": "top_workload_probe_findings" if mode == "live" else "workload_probe_findings",
         "overprovisioned_pods": "top_overprovisioned_pods" if mode == "live" else "overprovisioned_pods",
         "services_without_endpoints": "top_services_without_endpoints" if mode == "live" else "services_without_endpoints",
+        "stale_user_pods": "top_stale_user_pods" if mode == "live" else "top_stale_user_pods",
+        "stale_configmaps": "top_stale_configmaps" if mode == "live" else "top_stale_configmaps",
+        "stale_generic_secrets": "top_stale_generic_secrets" if mode == "live" else "top_stale_generic_secrets",
+        "stale_dockerconfigjson_secrets": (
+            "top_stale_dockerconfigjson_secrets" if mode == "live" else "top_stale_dockerconfigjson_secrets"
+        ),
     }
     for payload_key, fallback_key in fallback_names.items():
         payload[payload_key] = first_defined(

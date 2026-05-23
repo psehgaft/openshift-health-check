@@ -275,7 +275,11 @@
         + (1 if ((observability_forwarding_summary.external_alert_receiver_count | default(0) | int) > 0 and not (observability_forwarding_summary.alert_routing_to_external_receiver_configured | default(false))) else 0)
         + (1 if ((observability_forwarding_summary.alert_delivery_source_count | default(0) | int) > 0 and (observability_forwarding_summary.external_alert_receiver_count | default(0) | int) == 0) else 0)
         + (1 if (
-            (require_external_alert_delivery | default(false) | bool)
+            ((
+              require_external_alert_delivery
+              if require_external_alert_delivery is defined
+              else ((cluster_health_profile | default({})).get('capabilities', {}).get('external_alert_delivery', {}).get('required', false))
+            ) | bool)
             and ((observability_forwarding_summary.alert_delivery_verification_status | default('not-configured')) in ['not-configured', 'missing', 'failed'])
             and not (observability_forwarding_summary.vendor_managed_alerting_present | default(false))
           ) else 0)

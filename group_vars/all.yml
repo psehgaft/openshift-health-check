@@ -9,6 +9,16 @@ repo_ansible_local_tmp_dir: "{{ repo_ansible_root_dir }}/tmp"
 repo_ansible_remote_tmp_dir: "{{ repo_ansible_root_dir }}/remote_tmp"
 node_debug_remote_tmp_dir: "/var/lib/openshift-health-check/sos"
 
+# Namespace/project patterns to exclude from user workload, hygiene, and
+# security scans in addition to the platform namespace regex. Values support
+# simple shell-style wildcards, for example: openshift-*, kube*, test-*
+global_scan_excluded_namespace_patterns:
+  - default
+  - openshift
+  - openshift-*
+  - kube*
+  - kubernetes-*
+
 # Shared process environment for helper scripts launched through Ansible.
 repo_script_environment:
   TMPDIR: "{{ repo_tmp_root_dir }}"
@@ -28,17 +38,17 @@ cluster_max_pods_per_node_default: 250
 # Default controller-side local resource budget. These values bound the
 # effective collection and analysis worker counts based on detected CPU and
 # memory on the VM running the report.
-local_resource_budget_cpu_pct: 75
-local_resource_budget_mem_pct: 75
+local_resource_budget_cpu_pct: 80
+local_resource_budget_mem_pct: 80
 
 # Buffer posture and capability artifact writes and flush each artifact group in
 # bulk. This reduces controller-side process and filesystem overhead while
 # preserving the individual JSON artifact contract under .run-state.
 report_artifact_persistence_mode: buffered
 
-# Live OpenShift run profile. The playbook applies these defaults before
-# preflight so expensive optional support collectors are explicit.
-report_performance_profile: standard
+# Live OpenShift run profile. Default to the most complete evidence path
+# because many users run the playbook without reading the profile docs first.
+report_performance_profile: full
 report_performance_profile_settings:
   fast:
     report_generate_pdf: false
@@ -68,8 +78,8 @@ report_performance_profile_settings:
     collect_live_cluster_compare: true
     collect_live_insights_archive: true
     collect_live_sosreport: true
-    collect_live_managed_gates: false
-    collect_live_advisor_export: false
+    collect_live_managed_gates: true
+    collect_live_advisor_export: true
 
 # Report-facing list and table limits. Keep these high enough to show the
 # dominant patterns for larger production clusters, but low enough to avoid
@@ -89,6 +99,14 @@ top_metadata_table_limit: 30
 top_external_delivery_table_limit: 15
 top_pod_usage_table_limit: 50
 top_old_pod_table_limit: 50
+top_stale_pod_table_limit: 50
+stale_pod_age_threshold_days: 100
+top_stale_configmap_table_limit: 50
+stale_configmap_age_threshold_days: 100
+top_stale_generic_secret_table_limit: 50
+stale_generic_secret_age_threshold_days: 100
+top_stale_dockerconfigjson_secret_table_limit: 50
+stale_dockerconfigjson_secret_age_threshold_days: 200
 top_release_table_limit: 15
 top_capacity_summary_limit: 30
 top_capacity_shape_summary_limit: 30

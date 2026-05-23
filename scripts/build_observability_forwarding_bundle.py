@@ -55,6 +55,14 @@ def nested_get(data, path, default=None):
     return value if value is not None else default
 
 
+def bool_value(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build(data):
     graph = as_dict(data.get("analysis_graph"))
     vendor = build_vendor_managed_telemetry.build({
@@ -77,19 +85,20 @@ def build(data):
         "items": nested_get(graph, ["clusterlogforwarders", "items"], []),
         "vendor_managed_present": vendor.get("vendor_managed_log_forwarding_present", False),
         "vendor_names": vendor.get("log_vendor_names", []),
-        "require_cluster_log_forwarder": bool(data.get("require_cluster_log_forwarder")),
+        "require_cluster_log_forwarder": bool_value(data.get("require_cluster_log_forwarder")),
     })
     metrics_data = build_metrics_forwarding_findings.build({
         "cluster_remote_write": nested_get(data, ["cluster_monitoring_config_parsed", "prometheusK8s", "remoteWrite"], []),
         "user_remote_write": nested_get(data, ["user_workload_monitoring_config_parsed", "prometheus", "remoteWrite"], []),
         "vendor_managed_present": vendor.get("vendor_managed_metrics_forwarding_present", False),
         "vendor_names": vendor.get("metrics_vendor_names", []),
-        "require_external_metrics_remote_write": bool(data.get("require_external_metrics_remote_write")),
+        "require_external_metrics_remote_write": bool_value(data.get("require_external_metrics_remote_write")),
     })
     alert_data = build_external_alert_delivery_findings.build({
         "items": nested_get(graph, ["alertmanagerconfigs", "items"], []),
         "cluster_alertmanager_additional_configs": nested_get(data, ["cluster_monitoring_config_parsed", "alertmanagerMain", "additionalAlertmanagerConfigs"], []),
         "user_workload_alertmanager_additional_configs": nested_get(data, ["user_workload_monitoring_config_parsed", "alertmanager", "additionalAlertmanagerConfigs"], []),
+        "require_external_alert_delivery": bool_value(data.get("require_external_alert_delivery")),
     })
 
     return {

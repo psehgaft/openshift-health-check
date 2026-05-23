@@ -53,6 +53,16 @@ Current mode rules:
 - live OpenShift API validation runs only for `live`
 - collected-state is a supported path and must not require a live API probe
 
+### Live Performance Profiles
+
+OpenShift live runs use `report_performance_profile` to choose the default evidence depth before preflight.
+
+- `full` is the default and should remain the safest first-run behavior. It enables the broadest support collection path, including `must-gather`, `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available.
+- `standard` is the lower-cost live path for routine runs. It keeps API and metric evidence plus lower-cost support evidence while avoiding `must-gather`, `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation unless explicitly requested.
+- `fast` is the narrowest live path. It keeps required API evidence and skips optional support collectors and PDF generation.
+
+The profile settings live in [group_vars/all.yml](/Users/luqman/workspace/guides/openshift-health-check/group_vars/all.yml:1). Keep this file, README usage text, and the OpenShift playbook fallback default aligned whenever changing profile names or defaults.
+
 ### Profile Contract
 
 Canonical OpenShift catalog:

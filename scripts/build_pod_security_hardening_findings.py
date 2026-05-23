@@ -32,6 +32,8 @@ def main() -> int:
             continue
 
         pod = str(metadata.get("name") or "unknown")
+        annotations = metadata.get("annotations", {}) or {}
+        scc = str(annotations.get("openshift.io/scc") or "not-collected")
         spec = item.get("spec", {}) or {}
         pod_sc = spec.get("securityContext", {}) or {}
         containers = (spec.get("containers") or []) + (spec.get("initContainers") or [])
@@ -84,6 +86,7 @@ def main() -> int:
                     {
                         "namespace": namespace,
                         "pod": pod,
+                        "scc": scc,
                         "issue": issue,
                         "detail": ", ".join(names),
                     }
