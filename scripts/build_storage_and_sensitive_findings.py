@@ -4,6 +4,27 @@ import re
 import sys
 
 
+SCC_PRIVILEGE_RANKS = {
+    "privileged": 100,
+    "hostmount-anyuid": 90,
+    "hostnetwork": 80,
+    "hostaccess": 70,
+    "anyuid": 60,
+    "nonroot-v2": 30,
+    "nonroot": 30,
+    "restricted-v2": 10,
+    "restricted": 10,
+    "not-collected": 0,
+}
+
+
+def scc_privilege_rank(scc):
+    name = str(scc or "not-collected").strip()
+    if not name:
+        return 0
+    return SCC_PRIVILEGE_RANKS.get(name, 40)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(json.dumps({
@@ -33,6 +54,13 @@ def main() -> int:
         spec = pod.get("spec", {}) or {}
         namespace = meta.get("namespace", "")
         name = meta.get("name", "")
+        annotations = meta.get("annotations", {}) or {}
+        scc = str(
+            annotations.get("openshift.io/scc")
+            or annotations.get("security.openshift.io/scc.podSecurityLabelSync")
+            or "not-collected"
+        )
+        scc_rank = scc_privilege_rank(scc)
         if exclude_re.search(namespace or ""):
             continue
 
@@ -82,6 +110,8 @@ def main() -> int:
             extra_security.append({
                 "namespace": namespace,
                 "pod": name,
+                "scc": scc,
+                "scc_privilege_rank": scc_rank,
                 "issue": "literal-sensitive-env",
                 "detail": ", ".join(sorted(set(literal_env_hits))),
             })
@@ -89,6 +119,8 @@ def main() -> int:
             extra_security.append({
                 "namespace": namespace,
                 "pod": name,
+                "scc": scc,
+                "scc_privilege_rank": scc_rank,
                 "issue": "literal-sensitive-arg",
                 "detail": ", ".join(sorted(set(literal_arg_hits))),
             })

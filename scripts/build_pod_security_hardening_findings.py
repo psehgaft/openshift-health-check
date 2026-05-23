@@ -4,6 +4,27 @@ import re
 import sys
 
 
+SCC_PRIVILEGE_RANKS = {
+    "privileged": 100,
+    "hostmount-anyuid": 90,
+    "hostnetwork": 80,
+    "hostaccess": 70,
+    "anyuid": 60,
+    "nonroot-v2": 30,
+    "nonroot": 30,
+    "restricted-v2": 10,
+    "restricted": 10,
+    "not-collected": 0,
+}
+
+
+def scc_privilege_rank(scc):
+    name = str(scc or "not-collected").strip()
+    if not name:
+        return 0
+    return SCC_PRIVILEGE_RANKS.get(name, 40)
+
+
 def merged_security_context(pod_sc, container_sc):
     pod_sc = pod_sc or {}
     container_sc = container_sc or {}
@@ -33,7 +54,11 @@ def main() -> int:
 
         pod = str(metadata.get("name") or "unknown")
         annotations = metadata.get("annotations", {}) or {}
-        scc = str(annotations.get("openshift.io/scc") or "not-collected")
+        scc = str(
+            annotations.get("openshift.io/scc")
+            or annotations.get("security.openshift.io/scc.podSecurityLabelSync")
+            or "not-collected"
+        )
         spec = item.get("spec", {}) or {}
         pod_sc = spec.get("securityContext", {}) or {}
         containers = (spec.get("containers") or []) + (spec.get("initContainers") or [])
@@ -87,6 +112,7 @@ def main() -> int:
                         "namespace": namespace,
                         "pod": pod,
                         "scc": scc,
+                        "scc_privilege_rank": scc_privilege_rank(scc),
                         "issue": issue,
                         "detail": ", ".join(names),
                     }

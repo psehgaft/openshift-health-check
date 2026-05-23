@@ -34,6 +34,47 @@ def increment(counter, key, amount=1):
     counter[key] = int(counter.get(key, 0)) + int(amount)
 
 
+SCC_PRIVILEGE_RANKS = {
+    "privileged": 100,
+    "hostmount-anyuid": 90,
+    "hostnetwork": 80,
+    "hostaccess": 70,
+    "anyuid": 60,
+    "nonroot-v2": 30,
+    "nonroot": 30,
+    "restricted-v2": 10,
+    "restricted": 10,
+    "not-collected": 0,
+}
+
+
+def pod_scc(metadata):
+    annotations = as_dict(as_dict(metadata).get("annotations"))
+    return str(
+        annotations.get("openshift.io/scc")
+        or annotations.get("security.openshift.io/scc.podSecurityLabelSync")
+        or "not-collected"
+    )
+
+
+def scc_privilege_rank(scc):
+    name = str(scc or "not-collected").strip()
+    if not name:
+        return 0
+    return SCC_PRIVILEGE_RANKS.get(name, 40)
+
+
+def pod_security_finding(namespace, pod_name, scc, issue, detail):
+    return {
+        "namespace": namespace,
+        "pod": pod_name,
+        "scc": scc,
+        "scc_privilege_rank": scc_privilege_rank(scc),
+        "issue": issue,
+        "detail": detail,
+    }
+
+
 def namespace_counts(items):
     counts = {}
     for item in as_list(items):
@@ -105,8 +146,10 @@ def basic_pod_findings(data):
     workload_practice_findings = []
 
     for item in pods:
-        namespace = str(nested_get(item, ["metadata", "namespace"], "") or "")
-        pod_name = nested_get(item, ["metadata", "name"], None)
+        metadata = as_dict(item.get("metadata"))
+        namespace = str(metadata.get("namespace") or "")
+        pod_name = metadata.get("name")
+        scc = pod_scc(metadata)
         if exclude_re.match(namespace):
             continue
 
@@ -135,47 +178,35 @@ def basic_pod_findings(data):
                 hostpath_volume_names.append(volume.get("name"))
 
         if privileged_names:
-            security_findings.append({
-                "namespace": namespace,
-                "pod": pod_name,
-                "issue": "privileged-containers",
-                "detail": ", ".join(str(value) for value in privileged_names),
-            })
+            security_findings.append(pod_security_finding(
+                namespace,
+                pod_name,
+                scc,
+                "privileged-containers",
+                ", ".join(str(value) for value in privileged_names),
+            ))
         if spec.get("hostNetwork", False):
-            security_findings.append({
-                "namespace": namespace,
-                "pod": pod_name,
-                "issue": "host-network",
-                "detail": "hostNetwork=true",
-            })
+            security_findings.append(pod_security_finding(namespace, pod_name, scc, "host-network", "hostNetwork=true"))
         if spec.get("hostPID", False):
-            security_findings.append({
-                "namespace": namespace,
-                "pod": pod_name,
-                "issue": "host-pid",
-                "detail": "hostPID=true",
-            })
+            security_findings.append(pod_security_finding(namespace, pod_name, scc, "host-pid", "hostPID=true"))
         if spec.get("hostIPC", False):
-            security_findings.append({
-                "namespace": namespace,
-                "pod": pod_name,
-                "issue": "host-ipc",
-                "detail": "hostIPC=true",
-            })
+            security_findings.append(pod_security_finding(namespace, pod_name, scc, "host-ipc", "hostIPC=true"))
         if hostpath_volume_names:
-            security_findings.append({
-                "namespace": namespace,
-                "pod": pod_name,
-                "issue": "hostpath-volume",
-                "detail": ", ".join(str(value) for value in hostpath_volume_names),
-            })
+            security_findings.append(pod_security_finding(
+                namespace,
+                pod_name,
+                scc,
+                "hostpath-volume",
+                ", ".join(str(value) for value in hostpath_volume_names),
+            ))
         if run_as_root_names:
-            security_findings.append({
-                "namespace": namespace,
-                "pod": pod_name,
-                "issue": "run-as-root",
-                "detail": ", ".join(str(value) for value in run_as_root_names),
-            })
+            security_findings.append(pod_security_finding(
+                namespace,
+                pod_name,
+                scc,
+                "run-as-root",
+                ", ".join(str(value) for value in run_as_root_names),
+            ))
 
         if containers_without_requests:
             workload_practice_findings.append({

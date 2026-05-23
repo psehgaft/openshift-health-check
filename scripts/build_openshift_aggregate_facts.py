@@ -127,6 +127,47 @@ def sort_by_attr(items, attr: str, reverse: bool = False) -> list:
     return sorted(as_list(items), key=key, reverse=reverse)
 
 
+SCC_PRIVILEGE_RANKS = {
+    "privileged": 100,
+    "hostmount-anyuid": 90,
+    "hostnetwork": 80,
+    "hostaccess": 70,
+    "anyuid": 60,
+    "nonroot-v2": 30,
+    "nonroot": 30,
+    "restricted-v2": 10,
+    "restricted": 10,
+    "not-collected": 0,
+}
+
+
+def scc_privilege_rank(item: dict) -> int:
+    try:
+        rank = int(as_dict(item).get("scc_privilege_rank"))
+    except (TypeError, ValueError):
+        rank = -1
+    if rank >= 0:
+        return rank
+
+    name = str(as_dict(item).get("scc") or "not-collected").strip()
+    if not name:
+        return 0
+    return SCC_PRIVILEGE_RANKS.get(name, 40)
+
+
+def sort_security_findings(items: list) -> list:
+    return sorted(
+        as_list(items),
+        key=lambda item: (
+            -scc_privilege_rank(item),
+            str(as_dict(item).get("scc") or "not-collected"),
+            str(as_dict(item).get("namespace") or ""),
+            str(as_dict(item).get("pod") or ""),
+            str(as_dict(item).get("issue") or ""),
+        ),
+    )
+
+
 def select_attr_equal(items, attr: str, expected) -> list:
     return [item for item in as_list(items) if attr_value(item, attr) == expected]
 
@@ -352,7 +393,7 @@ def build(data: dict) -> dict:
         "top_workload_probe_findings": top(normalize_probe_findings(data.get("workload_probe_findings")), workload_issue_limit),
         "top_overprovisioned_pods": top(normalize_overprovisioned_pods(data.get("overprovisioned_pods")), workload_issue_limit),
         "top_quota_pressure_findings": top(data.get("quota_pressure_findings"), workload_issue_limit),
-        "top_security_findings": top(data.get("security_findings"), security_issue_limit),
+        "top_security_findings": top(sort_security_findings(data.get("security_findings")), security_issue_limit),
         "top_workload_practice_findings": top(data.get("workload_practice_findings"), security_issue_limit),
         "top_route_issues": top(data.get("route_issues"), workload_issue_limit),
         "top_ingress_issues": top(data.get("ingress_issues"), workload_issue_limit),

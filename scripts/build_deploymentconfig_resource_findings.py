@@ -42,6 +42,29 @@ def container_names_without(containers, path):
     return names
 
 
+def resource_finding(common, containers_without_requests, containers_without_limits):
+    issues = []
+    detail_parts = []
+    if containers_without_requests:
+        issues.append("workload-missing-resource-requests")
+        detail_parts.append("requests: " + ", ".join(text(value) for value in containers_without_requests))
+    if containers_without_limits:
+        issues.append("workload-missing-resource-limits")
+        detail_parts.append("limits: " + ", ".join(text(value) for value in containers_without_limits))
+    if not issues:
+        return None
+
+    entry = dict(common)
+    entry.update({
+        "issue": ", ".join(issues),
+        "issues": issues,
+        "missing_requests_containers": [text(value) for value in containers_without_requests],
+        "missing_limits_containers": [text(value) for value in containers_without_limits],
+        "detail": "; ".join(detail_parts),
+    })
+    return entry
+
+
 def build(data):
     exclude_re = re.compile(data.get("exclude_regex") or r"^$")
     findings = []
@@ -64,20 +87,8 @@ def build(data):
             "name": text(nested_get(item, ["metadata", "name"], "unknown") or "unknown"),
         }
 
-        if containers_without_requests:
-            entry = dict(common)
-            entry.update({
-                "issue": "workload-missing-resource-requests",
-                "detail": ", ".join(text(value) for value in containers_without_requests),
-            })
-            findings.append(entry)
-
-        if containers_without_limits:
-            entry = dict(common)
-            entry.update({
-                "issue": "workload-missing-resource-limits",
-                "detail": ", ".join(text(value) for value in containers_without_limits),
-            })
+        entry = resource_finding(common, containers_without_requests, containers_without_limits)
+        if entry:
             findings.append(entry)
 
     return {"deploymentconfig_resource_findings": findings}

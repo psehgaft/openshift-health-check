@@ -925,7 +925,11 @@ def build_payload(data):
     collected_resource_graph = collection_artifact.get(
         "collected_resource_graph", data.get("collected_resource_graph") or {}
     )
-    analysis_graph = analysis_graph_artifact or data.get("analysis_graph") or {}
+    analysis_graph = (
+        analysis_graph_artifact.get("analysis_graph")
+        or data.get("analysis_graph")
+        or {}
+    )
     cluster_profile = (
         analysis_graph_artifact.get("cluster_profile")
         or collection_artifact.get("cluster_profile")

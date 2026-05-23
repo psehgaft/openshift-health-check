@@ -823,8 +823,11 @@ Platform engineering and SRE
 {% if posture_profile.get('platform_health', {}).get('enabled', true) %}
 ## Platform Health
 
-{% set platform_health_summary = audit_report.domains.platform_health.summary | default((collected_report_payload.domains | default({})).platform_health.summary | default(health_summary)) %}
-{% set platform_health_domain = audit_report.domains.platform_health | default((collected_report_payload.domains | default({})).platform_health | default({})) %}
+{% set platform_health_slice = (openshift_posture_render_slices | default({})).get('platform_health', {}) %}
+{% set platform_health_slice_artifact = platform_health_slice.get('artifact', {}) %}
+{% set platform_health_slice_render_inputs = platform_health_slice.get('render_inputs', {}) %}
+{% set platform_health_domain = audit_domains.get('platform_health', (collected_report_payload.domains | default({})).get('platform_health', platform_health_slice_artifact | default({}))) %}
+{% set platform_health_summary = platform_health_domain.summary | default(platform_health_slice_artifact.summary | default((collected_report_payload.domains | default({})).platform_health.summary | default(health_summary))) %}
 {% set platform_status = platform_health_summary.status | default('not-derived') %}
 {% set platform_reason = platform_health_summary.core_platform_runtime_reason_summary | default('') %}
 {% set platform_operator_blockers = (platform_health_summary.operators_degraded | default(0) | int) + (platform_health_summary.operators_unavailable | default(0) | int) %}
@@ -915,15 +918,24 @@ Platform engineering and SRE
 | `Ingress and APIService access` | `{% if platform_access_blockers > 0 %}CRITICAL{% else %}OK{% endif %}` | `routes={{ platform_health_summary.route_issues | default(0) }}, ingress={{ platform_health_summary.ingress_issues | default(0) }}, ingressControllers={{ platform_health_summary.ingresscontroller_issues | default(0) }}, apiServices={{ platform_health_summary.apiservice_issues | default(0) }}` | `Broken ingress, route, or aggregated API paths can cause broad application or platform-service outages.` | `routeHostConflicts={{ platform_health_summary.route_host_conflicts | default(0) }}, ingressHostConflicts={{ platform_health_summary.ingress_host_conflicts | default(0) }}` | `{% if platform_access_blockers > 0 %}{{ recommended_action_with_docs('Repair ingress-controller conditions, route or ingress admission issues, host conflicts, and unavailable APIService backing services or CA bundles.', 'CRITICAL', ['network', 'core']) }}{% else %}{{ recommended_action_with_docs('No ingress or APIService runtime remediation is required for this posture.', 'OK', ['network', 'core']) }}{% endif %}` | `{{ gap_owner('network') }}` | `{{ gap_done_when('CRITICAL' if platform_access_blockers > 0 else 'OK') }}` |
 
 **APIService Availability**
-{% if top_apiservice_issues | default([]) | length > 0 %}
-{% set apiservice_items = top_apiservice_issues %}
-{% set apiservice_use_status_badge = true %}
-{% include 'partials/openshift_apiservice_findings.md.j2' %}
-{% elif apiservices_count > 0 %}
-| Check | Result | Detail |
-| --- | --- | --- |
-| `APIService availability` | `no issues detected` | `No APIService availability issues were detected in the available APIService registrations.` |
+{% set platform_apiservice_issue_items = platform_health_domain.get('apiservice_issues', platform_health_slice_render_inputs.get('apiservice_issues', top_apiservice_issues | default([]))) %}
+{% if platform_apiservice_issue_items is string %}
+{% set platform_apiservice_issue_items = [] %}
 {% endif %}
+{% set apiservice_items = platform_apiservice_issue_items %}
+{% set apiservice_use_status_badge = true %}
+{% set apiservice_issue_count = platform_health_summary.apiservice_issues | default(apiservice_items | length) | int %}
+{% if apiservice_items | default([]) | length == 0 and apiservice_issue_count > 0 %}
+{% set apiservice_empty_result = 'details unavailable' %}
+{% set apiservice_empty_message = 'APIService availability issues were summarized for this posture, but row-level APIService details were not available in the render payload.' %}
+{% elif apiservice_items | default([]) | length == 0 and apiservices_count > 0 %}
+{% set apiservice_empty_result = 'no issues detected' %}
+{% set apiservice_empty_message = 'No APIService availability issues were detected in the available APIService registrations.' %}
+{% elif apiservice_items | default([]) | length == 0 %}
+{% set apiservice_empty_result = 'not collected' %}
+{% set apiservice_empty_message = 'No APIService inventory was available in this run, so aggregated APIService availability could not be assessed from collected APIService registrations.' %}
+{% endif %}
+{% include 'partials/openshift_apiservice_findings.md.j2' %}
 
 {% if (audit_report.domains.platform_health.etcd_ocp_diag_summary.present | default(false)) or (audit_report.domains.platform_health.etcd_ocp_diag_findings | default([]) | length > 0) %}
 **etcd Must-Gather Diagnostics**
@@ -1696,21 +1708,24 @@ Platform engineering and SRE
 {% if posture_profile.get('security_and_governance', {}).get('enabled', true) %}
 ## Security And Governance
 
+{% set security_governance_slice = (openshift_posture_render_slices | default({})).get('security_and_governance', {}) %}
+{% set security_governance_slice_artifact = security_governance_slice.get('artifact', {}) %}
+{% set security_governance_slice_render_inputs = security_governance_slice.get('render_inputs', {}) %}
 {% set security_governance_summary_fact = security_governance_summary | default({}) %}
-{% set security_domain = audit_report.domains.security_and_governance | default((collected_report_payload.domains | default({})).security_and_governance | default({})) %}
-{% set security_governance_summary = security_domain.summary | default(security_governance_summary_fact) %}
+{% set security_domain = audit_domains.get('security_and_governance', (collected_report_payload.domains | default({})).get('security_and_governance', security_governance_slice_artifact | default({}))) %}
+{% set security_governance_summary = security_domain.summary | default(security_governance_slice_artifact.summary | default(security_governance_summary_fact)) %}
 {% set auth_posture_summary_fact = auth_posture_summary | default({}) %}
 {% set auth_posture_summary = security_domain.auth_posture_summary | default(auth_posture_summary_fact) %}
 {% set auth_findings_section = security_domain.auth_findings | default(auth_findings | default([])) %}
-{% set namespace_hygiene_domain = security_domain.namespace_hygiene | default({}) %}
+{% set namespace_hygiene_domain = security_domain.namespace_hygiene | default(security_governance_slice_artifact.namespace_hygiene | default({})) %}
 {% set namespaces_without_networkpolicy_section = namespace_hygiene_domain.namespaces_without_networkpolicy | default(namespaces_without_networkpolicy | default([])) %}
 {% set namespaces_missing_ingress_policies_section = namespace_hygiene_domain.namespaces_missing_ingress_policies | default(namespaces_missing_ingress_policies | default([])) %}
 {% set namespaces_missing_egress_policies_section = namespace_hygiene_domain.namespaces_missing_egress_policies | default(namespaces_missing_egress_policies | default([])) %}
 {% set namespaces_without_resourcequota_section = namespace_hygiene_domain.namespaces_without_resourcequota | default(namespaces_without_resourcequota | default([])) %}
 {% set namespaces_without_limitrange_section = namespace_hygiene_domain.namespaces_without_limitrange | default(namespaces_without_limitrange | default([])) %}
 {% set user_namespace_names_section = namespace_hygiene_domain.user_namespaces | default(user_namespace_names | default([])) %}
-{% set namespace_metadata_governance_findings_section = namespace_hygiene_domain.metadata_governance_findings | default(top_namespace_metadata_governance_findings | default([])) %}
-{% set node_metadata_governance_findings_section = namespace_hygiene_domain.node_metadata_governance_findings | default(top_node_metadata_governance_findings | default([])) %}
+{% set namespace_metadata_governance_findings_section = namespace_hygiene_domain.metadata_governance_findings | default(security_governance_slice_render_inputs.get('namespace_metadata_governance_findings', top_namespace_metadata_governance_findings | default([]))) %}
+{% set node_metadata_governance_findings_section = namespace_hygiene_domain.node_metadata_governance_findings | default(security_governance_slice_render_inputs.get('node_metadata_governance_findings', top_node_metadata_governance_findings | default([]))) %}
 {% set pod_security_domain = security_domain.pod_security | default({}) %}
 {% set security_issue_type_counts_section = pod_security_domain.issue_type_counts | default(security_issue_type_counts | default({})) %}
 {% set top_security_findings_section = pod_security_domain.findings | default(top_security_findings | default([])) %}
@@ -1904,7 +1919,7 @@ Platform engineering and SRE
 | Namespace | Pod | SCC | Check | Detail |
 | --- | --- | --- | --- | --- |
 {% for item in top_security_findings_section %}
-| `{{ item.namespace }}` | `{{ item.pod }}` | `{{ item.scc | default('not-collected') }}` | `{% if item.issue == 'privileged-containers' %}Privileged containers{% elif item.issue == 'host-network' %}Host network{% elif item.issue == 'host-pid' %}Host PID{% elif item.issue == 'host-ipc' %}Host IPC{% elif item.issue == 'hostpath-volume' %}Local hostPath storage{% elif item.issue == 'run-as-root' %}Run as root{% elif item.issue == 'missing-seccomp-profile' %}Missing seccomp profile{% elif item.issue == 'unconfined-seccomp-profile' %}Unconfined seccomp profile{% elif item.issue == 'allow-privilege-escalation-not-disabled' %}Privilege escalation not disabled{% elif item.issue == 'run-as-non-root-not-enforced' %}Run as non-root not enforced{% elif item.issue == 'read-only-root-filesystem-not-enabled' %}Read-only root filesystem not enabled{% elif item.issue == 'capabilities-not-fully-dropped' %}Capabilities not fully dropped{% elif item.issue == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.issue == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
+| `{{ item.namespace }}` | `{{ item.pod }}` | `{{ item.scc | default('not-collected', true) }}` | `{% if item.issue == 'privileged-containers' %}Privileged containers{% elif item.issue == 'host-network' %}Host network{% elif item.issue == 'host-pid' %}Host PID{% elif item.issue == 'host-ipc' %}Host IPC{% elif item.issue == 'hostpath-volume' %}Local hostPath storage{% elif item.issue == 'run-as-root' %}Run as root{% elif item.issue == 'missing-seccomp-profile' %}Missing seccomp profile{% elif item.issue == 'unconfined-seccomp-profile' %}Unconfined seccomp profile{% elif item.issue == 'allow-privilege-escalation-not-disabled' %}Privilege escalation not disabled{% elif item.issue == 'run-as-non-root-not-enforced' %}Run as non-root not enforced{% elif item.issue == 'read-only-root-filesystem-not-enabled' %}Read-only root filesystem not enabled{% elif item.issue == 'capabilities-not-fully-dropped' %}Capabilities not fully dropped{% elif item.issue == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.issue == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.issue }}{% endif %}` | `{{ item.detail }}` |
 {% endfor %}
 {% if (security_findings_total | int) > (top_security_findings_section | length) %}
 | `summary-limit` | `additional-findings` | `n/a` | `Pod security findings omitted from this sample` | `{{ (security_findings_total | int) - (top_security_findings_section | length) }}` |
@@ -2824,13 +2839,19 @@ Cluster update history was not returned.
 {% if posture_profile.get('capacity_planning_snapshot', {}).get('enabled', true) %}
 ## Capacity Planning Snapshot
 
-{% set capacity_domain = (audit_report.domains.capacity_planning_snapshot | default(collected_report_payload.domains.capacity_planning_snapshot | default({}))) %}
-{% set capacity_cluster_current_state = capacity_domain.cluster_current_state | default(cluster_current_state | default({})) %}
-{% set capacity_cluster_profile = capacity_domain.cluster_profile | default(cluster_profile | default({})) %}
-{% set capacity_architecture_lifecycle_summary = capacity_domain.architecture_lifecycle_summary | default(architecture_lifecycle_summary | default({})) %}
-{% set capacity_cluster_current_state_sanity_findings = capacity_domain.cluster_current_state_sanity_findings | default(cluster_current_state_sanity_findings | default([])) %}
-{% set capacity_cluster_current_state_build_error = capacity_domain.cluster_current_state_build_error | default(cluster_current_state_build_error | default('')) %}
-{% set capacity_runtime_signal_resolution_map = capacity_domain.runtime_signal_resolution_map | default(runtime_signal_resolution_map | default({})) %}
+{% set capacity_slice = (openshift_posture_render_slices | default({})).get('capacity_planning_snapshot', {}) %}
+{% set capacity_slice_artifact = capacity_slice.get('artifact', {}) %}
+{% set capacity_slice_render_inputs = capacity_slice.get('render_inputs', {}) %}
+{% set capacity_domain_candidate = audit_domains.get('capacity_planning_snapshot', {}) %}
+{% set capacity_collected_domain = (collected_report_payload.domains | default({})).get('capacity_planning_snapshot', {}) %}
+{% set capacity_domain = capacity_domain_candidate if (capacity_domain_candidate | length) > 0 else (capacity_collected_domain if (capacity_collected_domain | length) > 0 else (capacity_slice_artifact | default({}))) %}
+{% set capacity_summary = capacity_domain.summary | default(capacity_slice_artifact.summary | default({}), true) %}
+{% set capacity_cluster_current_state = capacity_domain.cluster_current_state | default(capacity_slice_artifact.cluster_current_state | default(capacity_slice_render_inputs.cluster_current_state | default(cluster_current_state | default({}))), true) %}
+{% set capacity_cluster_profile = capacity_domain.cluster_profile | default(capacity_slice_artifact.cluster_profile | default(capacity_slice_render_inputs.cluster_profile | default(cluster_profile | default({}))), true) %}
+{% set capacity_architecture_lifecycle_summary = capacity_domain.architecture_lifecycle_summary | default(capacity_slice_artifact.architecture_lifecycle_summary | default(capacity_slice_render_inputs.architecture_lifecycle_summary | default(architecture_lifecycle_summary | default({}))), true) %}
+{% set capacity_cluster_current_state_sanity_findings = capacity_domain.cluster_current_state_sanity_findings | default(capacity_slice_artifact.cluster_current_state_sanity_findings | default(capacity_slice_render_inputs.cluster_current_state_sanity_findings | default(cluster_current_state_sanity_findings | default([]))), true) %}
+{% set capacity_cluster_current_state_build_error = capacity_domain.cluster_current_state_build_error | default(capacity_slice_artifact.cluster_current_state_build_error | default(capacity_slice_render_inputs.cluster_current_state_build_error | default(cluster_current_state_build_error | default(''))), true) %}
+{% set capacity_runtime_signal_resolution_map = capacity_domain.runtime_signal_resolution_map | default(capacity_slice_artifact.runtime_signal_resolution_map | default(capacity_slice_render_inputs.runtime_signal_resolution_map | default(runtime_signal_resolution_map | default({}))), true) %}
 {% set capacity_node_counts = capacity_cluster_current_state.get('node_counts', {}) %}
 {% set capacity_object_counts = capacity_cluster_current_state.get('object_counts', {}) %}
 {% set capacity_resources = capacity_cluster_current_state.get('resources', {}) %}
@@ -2841,25 +2862,27 @@ Cluster update history was not returned.
 {% set capacity_node_growth = capacity_cluster_current_state.get('node_growth_capacity', {}) %}
 {% set capacity_worker_pools = capacity_cluster_current_state.get('worker_pools', []) %}
 {% set capacity_node_shapes = capacity_cluster_current_state.get('node_shapes', []) %}
-{% set capacity_node_inventory_missing = (capacity_node_counts.total | default(0) | int) == 0 %}
+{% set capacity_node_inventory_missing = capacity_summary.node_inventory_missing | default((capacity_node_counts.total | default(0) | int) == 0) %}
 {% set capacity_resource_partial = (capacity_resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or (capacity_resources.total_memory_mib | default('not-derived')) == 'not-derived' %}
 {% set capacity_zero_allocatable_suspect = (capacity_node_counts.total | default(0) | int) > 0 and (capacity_resources.total_cpu_millicores | default('not-derived') | string) == '0' and (capacity_resources.total_memory_mib | default('not-derived') | string) == '0' %}
 {% set capacity_current_state_render = template_table_render.capacity_current_state_summary | default({}) %}
 {% set capacity_shape_placeholder_present = capacity_current_state_render.shape_placeholder_present | default(((capacity_worker_pools | selectattr('type', 'defined') | map(attribute='type') | select('search', '-unknown$|not-assessed$') | list | length) > 0) or ((capacity_node_shapes | selectattr('shape', 'defined') | map(attribute='shape') | select('search', '-unknown$|not-assessed$') | list | length) > 0)) %}
 {% set capacity_object_count_partial = ((capacity_object_counts.pods | default(0) | int) == 0 and (capacity_object_counts.namespaces | default(0) | int) > 0) or ((capacity_object_counts.deployments | default(0) | int) == 0 and (capacity_object_counts.namespaces | default(0) | int) > 0) %}
-{% set capacity_nodes_display = 'not-derived' if capacity_node_inventory_missing else (capacity_node_counts.total | default(0) | string) %}
-{% set capacity_workers_display = 'not-derived' if capacity_node_inventory_missing else (capacity_node_counts.worker | default(0) | string) %}
-{% set capacity_pods_display = 'not-derived' if capacity_node_inventory_missing else (capacity_object_counts.pods | default(0) | string) %}
-{% set capacity_cpu_display = 'not-derived' if capacity_node_inventory_missing or (capacity_resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or capacity_zero_allocatable_suspect else (capacity_resources.total_cpu_millicores | string ~ 'm') %}
-{% set capacity_memory_display = 'not-derived' if capacity_node_inventory_missing or (capacity_resources.total_memory_mib | default('not-derived')) == 'not-derived' or capacity_zero_allocatable_suspect else (capacity_resources.total_memory_mib | string ~ 'MiB') %}
+{% set capacity_nodes_display = capacity_summary.nodes | default('not-derived' if capacity_node_inventory_missing else (capacity_node_counts.total | default(0) | string), true) %}
+{% set capacity_workers_display = capacity_summary.workers | default('not-derived' if capacity_node_inventory_missing else (capacity_node_counts.worker | default(0) | string), true) %}
+{% set capacity_pods_display = capacity_summary.pods | default('not-derived' if capacity_node_inventory_missing else (capacity_object_counts.pods | default(0) | string), true) %}
+{% set capacity_cpu_display = capacity_summary.total_cpu | default('not-derived' if capacity_node_inventory_missing or (capacity_resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or capacity_zero_allocatable_suspect else (capacity_resources.total_cpu_millicores | string ~ 'm'), true) %}
+{% set capacity_memory_display = capacity_summary.total_memory | default('not-derived' if capacity_node_inventory_missing or (capacity_resources.total_memory_mib | default('not-derived')) == 'not-derived' or capacity_zero_allocatable_suspect else (capacity_resources.total_memory_mib | string ~ 'MiB'), true) %}
 {% set capacity_snapshot_partial = capacity_resource_partial or capacity_object_count_partial or capacity_zero_allocatable_suspect or capacity_shape_placeholder_present %}
+{% set capacity_summary_status = capacity_summary.status | default('not-assessed' if capacity_node_inventory_missing else ('partial' if capacity_snapshot_partial else 'available'), true) %}
+{% set capacity_summary_health_score = capacity_summary.health_score | default('not-scored' if capacity_node_inventory_missing else ('80/100' if capacity_snapshot_partial else '100/100'), true) %}
 
 ### Health Score
 
 | Signal | Value | Status |
 | --- | --- | --- |
-| Capacity snapshot status | `{% if capacity_node_inventory_missing %}not-assessed{% elif capacity_snapshot_partial %}partial{% else %}available{% endif %}` | {{ status_badge('UNKNOWN' if capacity_node_inventory_missing else ('INFO' if capacity_snapshot_partial else 'OK')) }} |
-| Health score | `{% if capacity_node_inventory_missing %}not-scored{% elif capacity_snapshot_partial %}80/100{% else %}100/100{% endif %}` | {{ status_badge('UNKNOWN' if capacity_node_inventory_missing else ('INFO' if capacity_snapshot_partial else 'OK')) }} |
+| Capacity snapshot status | `{{ capacity_summary_status }}` | {{ status_badge('UNKNOWN' if capacity_summary_status in ['not-assessed', 'unknown'] else ('INFO' if capacity_summary_status in ['partial', 'not-scored'] else 'OK')) }} |
+| Health score | `{{ capacity_summary_health_score }}` | {{ status_badge('UNKNOWN' if capacity_summary_health_score in ['not-scored', 'not-assessed', 'unknown'] else ('INFO' if capacity_snapshot_partial or capacity_summary_status == 'partial' else 'OK')) }} |
 | Nodes | `{{ capacity_nodes_display }}` | {{ status_badge('OK' if not capacity_node_inventory_missing else 'UNKNOWN') }} |
 | Worker nodes | `{{ capacity_workers_display }}` | {{ status_badge('INFO' if not capacity_node_inventory_missing else 'UNKNOWN') }} |
 | Pods | `{{ capacity_pods_display }}` | {{ status_badge('INFO' if (not capacity_node_inventory_missing and (capacity_object_counts.pods | default(0) | int) > 0) else ('WARN' if not capacity_node_inventory_missing else 'UNKNOWN')) }} |
