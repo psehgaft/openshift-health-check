@@ -1,32 +1,52 @@
-- name: Build reference usage and privileged RBAC findings
+- name: Build reference, RBAC, and CRD target analysis bundle
   ansible.builtin.command:
     argv:
       - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_reference_usage_findings.py"
+      - "{{ playbook_dir }}/../scripts/run_json_helpers_from_stdin.py"
     stdin: "{{ {
-      'user_namespaces_exclude_regex': (user_namespaces_exclude_regex | default('^$')),
-      'pods': ((analysis_graph.pods | default({})).get('items', [])),
-      'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
-      'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
-      'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
-      'configmaps': ((analysis_graph.configmaps | default({})).get('items', [])),
-      'serviceaccounts': ((analysis_graph.serviceaccounts | default({})).get('items', [])),
-      'secrets': ((analysis_graph.secrets | default({})).get('items', [])),
-      'clusterrolebindings': ((analysis_graph.clusterrolebindings | default({})).get('items', [])),
-      'rolebindings': ((analysis_graph.rolebindings | default({})).get('items', []))
+      'fail_on_error': false,
+      'helpers': [
+        {
+          'name': 'reference_usage_findings',
+          'script': 'scripts/build_reference_usage_findings.py',
+          'input': {
+            'user_namespaces_exclude_regex': (user_namespaces_exclude_regex | default('^$')),
+            'pods': ((analysis_graph.pods | default({})).get('items', [])),
+            'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+            'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
+            'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+            'configmaps': ((analysis_graph.configmaps | default({})).get('items', [])),
+            'serviceaccounts': ((analysis_graph.serviceaccounts | default({})).get('items', [])),
+            'secrets': ((analysis_graph.secrets | default({})).get('items', [])),
+            'clusterrolebindings': ((analysis_graph.clusterrolebindings | default({})).get('items', [])),
+            'rolebindings': ((analysis_graph.rolebindings | default({})).get('items', []))
+          }
+        },
+        {
+          'name': 'crd_usage_targets',
+          'script': 'scripts/build_crd_usage_facts.py',
+          'input': {
+            'crds': ((analysis_graph.crds | default({})).get('items', []))
+          }
+        }
+      ]
     } | to_json }}"
-  register: reference_usage_findings_cmd
+  register: reference_rbac_crd_targets_bundle_cmd
   changed_when: false
   failed_when: false
 
 - name: Normalize reference usage and privileged RBAC findings
+  vars:
+    reference_rbac_crd_targets_bundle_results: >-
+      {{
+        (reference_rbac_crd_targets_bundle_cmd.stdout | from_json).results
+        if (reference_rbac_crd_targets_bundle_cmd.rc == 0 and (reference_rbac_crd_targets_bundle_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
   ansible.builtin.set_fact:
     reference_usage_findings_data: >-
       {{
-        reference_usage_findings_cmd.stdout | from_json
-        if (reference_usage_findings_cmd.rc == 0 and (reference_usage_findings_cmd.stdout | default('') | length > 0))
-        else {
+        reference_rbac_crd_targets_bundle_results.reference_usage_findings.output | default({
           'referenced_configmaps': {},
           'referenced_secrets': {},
           'referenced_serviceaccounts': {},
@@ -36,8 +56,9 @@
           'privileged_serviceaccount_access': [],
           'privileged_user_access': [],
           'privileged_group_access': []
-        }
+        })
       }}
+    crd_usage_targets_data: "{{ reference_rbac_crd_targets_bundle_results.crd_usage_targets.output | default({}) }}"
 
 - name: Expand reference usage and privileged RBAC findings
   ansible.builtin.set_fact:
@@ -51,20 +72,9 @@
     privileged_user_access: "{{ reference_usage_findings_data.privileged_user_access | default([]) }}"
     privileged_group_access: "{{ reference_usage_findings_data.privileged_group_access | default([]) }}"
 
-- name: Build namespaced CRD count targets
+- name: Normalize namespaced CRD count targets
   ansible.builtin.set_fact:
-    namespaced_crd_count_targets: "{{ (namespaced_crd_count_targets | default([])) + [crd_count_target] }}"
-  loop: "{{ (analysis_graph.crds | default({})).get('items', []) }}"
-  vars:
-    crd_count_target:
-      name: "{{ item.metadata.name | default('') }}"
-      group: "{{ item.spec.group | default('') }}"
-      plural: "{{ item.spec.names.plural | default('') }}"
-  when:
-    - item.spec is defined
-    - item.spec.names is defined
-    - item.spec.group is defined
-    - item.spec.scope | default('Namespaced') == 'Namespaced'
+    namespaced_crd_count_targets: "{{ crd_usage_targets_data.namespaced_crd_count_targets | default([]) }}"
   changed_when: false
 
 - name: Check CRD instance counts
@@ -87,22 +97,19 @@
   failed_when: false
 
 - name: Build likely unused custom resource definitions
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_crd_usage_facts.py"
+    stdin: "{{ {
+      'results': ((crd_instance_count_cmd.stdout | from_json).results if (crd_instance_count_cmd.rc == 0 and (crd_instance_count_cmd.stdout | default('') | length > 0)) else [])
+    } | to_json }}"
+  register: crd_usage_findings_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize likely unused custom resource definitions
   ansible.builtin.set_fact:
-    likely_unused_crds: "{{ likely_unused_crds | default([]) + crd_issue_entry }}"
-  loop: "{{ (crd_instance_count_cmd.stdout | from_json).results if (crd_instance_count_cmd.rc == 0 and (crd_instance_count_cmd.stdout | default('') | length > 0)) else [] }}"
-  vars:
-    crd_issue_entry: >-
-      {{
-        [{
-          'name': item.name | default(''),
-          'group': item.group | default(''),
-          'plural': item.plural | default(''),
-          'count': (item.count | default(0) | int)
-        }]
-        if (
-          (item.rc | default(1) | int) == 0
-          and (item.count | default(0) | int) == 0
-          and not ((item.group | default('')) is match('^(openshift.io|operator.openshift.io|config.openshift.io|machine.openshift.io|monitoring.coreos.com|apiextensions.k8s.io|rbac.authorization.k8s.io|authorization.openshift.io|route.openshift.io|image.openshift.io|build.openshift.io|apps.openshift.io|project.openshift.io|template.openshift.io|k8s.io)$'))
-        ) else []
-      }}
+    likely_unused_crds: "{{ (crd_usage_findings_cmd.stdout | from_json).likely_unused_crds if (crd_usage_findings_cmd.rc == 0 and (crd_usage_findings_cmd.stdout | default('') | length > 0)) else [] }}"
   changed_when: false

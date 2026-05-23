@@ -67,7 +67,7 @@ This keeps the report readable:
 - middle sections explain resilience, security, and workload quality
 - later sections cover operating model, delivery practice, and production-readiness roll-up
 
-Each posture section should start with a short recommendation and summary before the detailed tables.
+Each posture section should start with a short findings summary before the detailed tables.
 
 More importantly, every major posture section should answer the same five questions:
 
@@ -79,7 +79,7 @@ More importantly, every major posture section should answer the same five questi
 
 That is the section contract for this repo. The report should behave like a practical remediation guide, not just a status dump.
 
-In the current template, that contract shows up as a recurring section structure:
+In the current template, that contract shows up as a recurring findings-first section structure:
 
 - a short leadership-oriented summary
 - evidence-backed findings
@@ -88,6 +88,30 @@ In the current template, that contract shows up as a recurring section structure
 - a clear completion signal such as `Done When`
 
 If a section does not help the reader answer those five questions, it is incomplete even if the evidence is technically correct.
+
+The required customer-facing posture and capability structure uses only three subsections. For top-level posture sections the labels render as:
+
+1. `### Health Score`
+2. `### Findings Summary`
+3. `### Findings`
+
+For nested capability sections, the heading depth may follow the nesting level, but the labels must still be exactly:
+
+1. `Health Score`
+2. `Findings Summary`
+3. `Findings`
+
+Postures and capabilities must not add separate customer-facing subsections such as `Recommendations`, `Operating Questions`, `Leadership view`, `Technical focus`, `Assessment Summary`, `Checks`, or `Capability Assessments`. Useful content from those older blocks belongs in `Findings Summary` or in the standard `Findings` table.
+
+The report should not need separate `Recommendations` or `Operating Questions` subsections for customer-facing posture and capability content. The recommendations and operating questions belong in the findings model itself:
+
+- the gap belongs in `Finding` and `Current State`
+- the reason it matters belongs in `Business Impact`
+- the action belongs in `Action Plan`
+- the accountable team belongs in `Suggested Owner`
+- the completion signal belongs in `Done When`
+
+`Findings Summary` must be derived from the same evidence and severity represented in the findings table. It must not describe a section as healthy when the table contains warning, critical, missing-evidence, or not-collected states. It also must not introduce risks or recommendations that are absent from the table.
 
 If you want the short version of that review flow, start with the first three report sections and move down only after supportability and platform health look trustworthy.
 
@@ -655,6 +679,8 @@ That is why the report favors:
 The same thinking applies to wording. If a field is inferred from operator state, topology, labels, or observed configuration, the report should say that plainly instead of presenting it as a stronger fact than the data supports.
 
 The report should also avoid debug-log presentation. Findings are more useful when they are rendered as tables or short structured summaries with plain-language labels instead of internal issue codes.
+
+For posture and capability sections, `Findings Summary` should replace a standalone recommendation block. It should explain the most important table-backed findings in plain language and let the `Findings` table carry the detailed gap, impact, action, owner, and done-when fields.
 
 That is why newer report sections now prefer:
 

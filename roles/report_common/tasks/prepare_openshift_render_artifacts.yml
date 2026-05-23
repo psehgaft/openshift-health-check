@@ -1,0 +1,62 @@
+---
+- name: Prepare OpenShift render artifacts and support tables
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/prepare_openshift_render_artifacts.py"
+    stdin: >-
+      {{
+        {
+          'shared_dir': report_run_workspace_shared_dir,
+          'postures_dir': report_run_workspace_postures_dir,
+          'capabilities_dir': report_run_workspace_capabilities_dir,
+          'output_path': report_run_workspace_report_dir ~ '/render-artifacts.json',
+          'cluster_profile': (cluster_profile | default({})),
+          'evidence_summary': (evidence_summary | default({})),
+          'assessment_collection_summary': (assessment_collection_summary | default({})),
+          'assessment_collection_failures': (assessment_collection_failures | default([])),
+          'assessment_collection_skipped_optional_commands': (assessment_collection_skipped_optional_commands | default([])),
+          'live_support_data': (live_support_data | default({})),
+          'render_count_maps': {
+            'buildconfig_strategy_counts': (buildconfig_strategy_counts | default({})),
+            'compliance_result_counts': (compliance_result_counts | default({})),
+            'control_plane_query_errors': (prom_query_error_map | default({})),
+            'firing_alerts_by_severity': (firing_alerts_by_severity | default({})),
+            'pipelinerun_status_counts': (pipelinerun_status_counts | default({})),
+            'pod_security_issue_type_counts': (security_issue_type_counts | default({})),
+            'pv_phase_counts': (pv_phase_counts | default({})),
+            'pvc_phase_counts': (pvc_phase_counts | default({})),
+            'workload_probe_issue_type_counts': (workload_probe_issue_type_counts | default({}))
+          },
+          'render_table_inputs': {
+            'aged_user_pods': (top_aged_user_pods | default(aged_user_pods | default([]))),
+            'available_updates': (available_updates | default([])),
+            'capacity_cluster_current_state': (capacity_cluster_current_state | default(cluster_current_state | default({}))),
+            'capacity_cluster_current_state_sanity_findings': (capacity_cluster_current_state_sanity_findings | default([])),
+            'cluster_update_history': (cluster_update_history | default([])),
+            'conditional_updates': (conditional_updates | default([])),
+            'default_storageclasses': (default_storageclasses | default([])),
+            'node_capacity_summary_by_density_asc': (node_capacity_summary_by_density_asc | default([])),
+            'node_capacity_summary_by_density_desc': (node_capacity_summary_by_density_desc | default([])),
+            'storageclass_summary': (storageclass_summary | default([])),
+            'top_pod_cpu_usage_summary': (top_pod_cpu_usage_summary | default([])),
+            'top_pod_memory_usage_summary': (top_pod_memory_usage_summary | default([]))
+          },
+          'render_limits': {
+            'node_density_table_limit': (node_density_table_limit | default(10)),
+            'old_pod_table_limit': (old_pod_table_limit | default(25)),
+            'pod_usage_table_limit': (pod_usage_table_limit | default(25)),
+            'top_capacity_shape_summary_limit': (top_capacity_shape_summary_limit | default(12)),
+            'top_capacity_summary_limit': (top_capacity_summary_limit | default(10)),
+            'top_release_table_limit': (top_release_table_limit | default(10))
+          }
+        } | to_json
+      }}
+  register: openshift_render_artifacts_cmd
+  changed_when: false
+
+- name: Load OpenShift render artifacts and support tables as facts
+  ansible.builtin.include_vars:
+    file: "{{ report_run_workspace_report_dir }}/render-artifacts.json"
+  when:
+    - (openshift_render_artifacts_cmd.rc | default(1)) == 0

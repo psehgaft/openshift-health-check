@@ -222,6 +222,24 @@
       }}
   ansible.builtin.set_fact:
     day2_posture_data: "{{ day2_posture_payload }}"
+
+- name: Resolve production Day 2 capability assessment completion state
+  vars:
+    day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+  ansible.builtin.set_fact:
+    day2_capability_assessment_completed: >-
+      {{
+        (day2_posture_payload.assessment_state | default('completed')) == 'completed'
+        and ((day2_posture_payload.capability_sections | default([])) | length > 0)
+      }}
+
+- name: Initialize production Day 2 fallback sections for completed assessment
+  ansible.builtin.set_fact:
+    day2_capability_sections_fallback: []
+  when: day2_capability_assessment_completed | default(false) | bool
+
+- name: Build production Day 2 fallback sections for incomplete assessment
+  ansible.builtin.set_fact:
     day2_capability_sections_fallback: >-
       {%- set sections = [] -%}
       {%- set resolved_capability_profile = ((cluster_health_profile | default({})).get('capabilities', {})) -%}
@@ -259,3 +277,4 @@
         {%- endif -%}
       {%- endfor -%}
       {{ sections }}
+  when: not (day2_capability_assessment_completed | default(false) | bool)

@@ -1,18 +1,98 @@
 ---
-- name: Create cluster current state temp input
-  ansible.builtin.tempfile:
-    state: file
-    prefix: openshift-cluster-current-state-
-    suffix: .json
-  register: cluster_current_state_input
+- name: Rebuild IP capacity summaries for capacity snapshot when upstream facts are incomplete
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_ip_capacity_summary.py"
+    stdin: >-
+      {{
+        {
+          "cluster_profile": (cluster_profile | default({})) | combine(
+            {
+              'service_networks': (
+                ((cluster_profile | default({})).get('service_networks', []))
+                if (((cluster_profile | default({})).get('service_networks', []) | length) > 0)
+                else ((analysis_graph.network_config | default({})).get('spec', {}).get('serviceNetwork', []))
+              ),
+              'cluster_networks': (
+                ((cluster_profile | default({})).get('cluster_networks', []))
+                if (((cluster_profile | default({})).get('cluster_networks', []) | length) > 0)
+                else ((analysis_graph.network_config | default({})).get('spec', {}).get('clusterNetwork', []))
+              ),
+              'machine_networks': ((cluster_profile | default({})).get('machine_networks', []))
+            },
+            recursive=True
+          ),
+          "infrastructure": analysis_graph.infrastructure | default({}),
+          "network_config": analysis_graph.network_config | default({}),
+          "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
+          "configmaps": (analysis_graph.configmaps | default({})).get('items', []),
+          "secrets": (analysis_graph.secrets | default({})).get('items', []),
+          "services": (analysis_graph.services | default({})).get('items', []),
+          "pods": (analysis_graph.pods | default({})).get('items', []),
+          "nodes": (analysis_graph.nodes | default({})).get('items', [])
+        } | to_json
+      }}
+  register: capacity_ip_summary_rebuild_cmd
+  changed_when: false
+  failed_when: false
+  when:
+    - ((service_ip_capacity_summary.range_list | default([])) | length) == 0
+      or ((pod_ip_capacity_summary.range_list | default([])) | length) == 0
 
-- name: Write cluster current state input
+- name: Normalize rebuilt IP capacity summaries for capacity snapshot
+  vars:
+    capacity_ip_summary_rebuild_data: >-
+      {{
+        (capacity_ip_summary_rebuild_cmd.stdout | from_json)
+        if (
+          capacity_ip_summary_rebuild_cmd is defined
+          and capacity_ip_summary_rebuild_cmd.rc == 0
+          and (capacity_ip_summary_rebuild_cmd.stdout | default('') | length > 0)
+        )
+        else {}
+      }}
+  ansible.builtin.set_fact:
+    service_ip_capacity_summary: >-
+      {{
+        capacity_ip_summary_rebuild_data.service_ip_capacity_summary
+        if (
+          (capacity_ip_summary_rebuild_data | length) > 0
+          and (((service_ip_capacity_summary.range_list | default([])) | length) == 0)
+        )
+        else (service_ip_capacity_summary | default({}))
+      }}
+    pod_ip_capacity_summary: >-
+      {{
+        capacity_ip_summary_rebuild_data.pod_ip_capacity_summary
+        if (
+          (capacity_ip_summary_rebuild_data | length) > 0
+          and (((pod_ip_capacity_summary.range_list | default([])) | length) == 0)
+        )
+        else (pod_ip_capacity_summary | default({}))
+      }}
+    node_ip_capacity_summary: >-
+      {{
+        capacity_ip_summary_rebuild_data.node_ip_capacity_summary
+        if (
+          (capacity_ip_summary_rebuild_data | length) > 0
+          and (((node_ip_capacity_summary.range_list | default([])) | length) == 0)
+        )
+        else (node_ip_capacity_summary | default({}))
+      }}
+  changed_when: false
+  when: capacity_ip_summary_rebuild_cmd is defined and not capacity_ip_summary_rebuild_cmd.skipped | default(false)
+
+- name: Build cluster current state
   vars:
     graph: "{{ analysis_graph | default({}) }}"
-  ansible.builtin.copy:
-    dest: "{{ cluster_current_state_input.path }}"
-    mode: "0600"
-    content: "{{ {
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_openshift_cluster_current_state.py"
+    stdin: "{{ {
       'cluster_profile': cluster_profile | default({}),
       'clusterversion': graph.clusterversion | default({}),
       'nodes': (graph.nodes | default({})).get('items', []),
@@ -63,14 +143,7 @@
       'openshift_public_cloud': cluster_profile.public_cloud | default(false),
       'openshift_is_sno': cluster_profile.is_sno | default(false),
       'openshift_is_hosted_control_plane': cluster_profile.is_hosted_control_plane | default(false)
-    } | to_nice_json }}"
-
-- name: Build cluster current state
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/build_openshift_cluster_current_state.py"
-      - "{{ cluster_current_state_input.path }}"
+    } | to_json }}"
   register: cluster_current_state_cmd
   changed_when: false
   failed_when: false
@@ -428,9 +501,3 @@
           and ((cluster_current_state.worker_pools | default([]) | length) == 0)
         ) else []))
       }}
-
-- name: Remove cluster current state temp input
-  ansible.builtin.file:
-    path: "{{ cluster_current_state_input.path }}"
-    state: absent
-  changed_when: false

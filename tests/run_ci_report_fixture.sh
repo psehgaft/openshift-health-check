@@ -122,6 +122,13 @@ rg -q '^## Platform Architecture And Lifecycle' "${CI_MD}"
 rg -q '^## Appendix' "${CI_MD}"
 rg -q '^### Evidence And Supportability' "${CI_MD}"
 rg -q '^## Day 2 Production Readiness' "${CI_MD}"
-rg -q '^### Capability Assessments' "${CI_MD}"
+if rg -q '^### Capability Assessments' "${CI_MD}"; then
+  echo "legacy Capability Assessments heading must not render" >&2
+  exit 1
+fi
+rg -q '^#### .*' "${CI_MD}"
+rg -q '^##### Health Score' "${CI_MD}"
+rg -q '^##### Findings Summary' "${CI_MD}"
+rg -q '^##### Findings' "${CI_MD}"
 
 printf 'ci fixture report ok\nmd=%s\njson=%s\n' "${CI_MD}" "${CI_JSON}"

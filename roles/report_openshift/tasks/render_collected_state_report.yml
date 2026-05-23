@@ -1,35 +1,27 @@
 ---
-- name: Define collected-state report paths
-  ansible.builtin.set_fact:
-    supportability_report_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
-
-- name: Resolve reusable collected-state report artifact basenames for resume
-  ansible.builtin.set_fact:
-    report_resume_reusable_markdown_name: "{{ (report_resume_artifact_plan.report.markdown.path | default('') | basename) }}"
-    report_resume_reusable_json_name: "{{ (report_resume_artifact_plan.report.json.path | default('') | basename) }}"
-  when:
-    - report_run_mode | default('fresh') == 'resume_last_failure'
-    - ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
-
-- name: Build collected-state report file paths
-  ansible.builtin.set_fact:
-    supportability_report_name: >-
+- name: Define collected-state report naming and timestamps
+  vars:
+    supportability_report_timestamp_resolved: "{{ ansible_date_time.iso8601_basic_short }}"
+    report_resume_reusable_markdown_name_resolved: "{{ (report_resume_artifact_plan.report.markdown.path | default('') | basename) }}"
+    report_resume_reusable_json_name_resolved: "{{ (report_resume_artifact_plan.report.json.path | default('') | basename) }}"
+    report_resume_bundle_reusable: >-
       {{
-        (report_resume_reusable_markdown_name | regex_replace('\\.md$', ''))
-        if (
-          (report_run_mode | default('fresh')) == 'resume_last_failure'
-          and (((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false)) | bool)
-        )
-        else (report_basename ~ '-' ~ platform_family ~ '-' ~ supportability_report_timestamp)
+        (report_run_mode | default('fresh')) == 'resume_last_failure'
+        and (((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false)) | bool)
       }}
-
-- name: Finalize collected-state report output paths
+    supportability_report_name_resolved: >-
+      {{
+        (report_resume_reusable_markdown_name_resolved | regex_replace('\\.md$', ''))
+        if report_resume_bundle_reusable
+        else (report_basename ~ '-' ~ platform_family ~ '-' ~ supportability_report_timestamp_resolved)
+      }}
   ansible.builtin.set_fact:
-    supportability_report_md_path: "{{ report_output_dir }}/{{ supportability_report_name }}.md"
-    supportability_report_json_path: "{{ report_output_dir }}/{{ supportability_report_name }}.json"
-
-- name: Define collected-state report timestamps
-  ansible.builtin.set_fact:
+    supportability_report_timestamp: "{{ supportability_report_timestamp_resolved }}"
+    report_resume_reusable_markdown_name: "{{ report_resume_reusable_markdown_name_resolved }}"
+    report_resume_reusable_json_name: "{{ report_resume_reusable_json_name_resolved }}"
+    supportability_report_name: "{{ supportability_report_name_resolved }}"
+    supportability_report_md_path: "{{ report_output_dir }}/{{ supportability_report_name_resolved }}.md"
+    supportability_report_json_path: "{{ report_output_dir }}/{{ supportability_report_name_resolved }}.json"
     report_generated_at: "{{ report_generated_at | default(ansible_date_time.iso8601) }}"
     report_completed_at: "{{ report_completed_at | default(ansible_date_time.iso8601) }}"
 
@@ -138,28 +130,10 @@
     tasks_from: load_openshift_report_payload_artifact.yml
   when: report_resume_payload_reuse_active | default(false) | bool
 
-- name: Build collected-state support table summaries
+- name: Prepare collected-state OpenShift render artifacts
   ansible.builtin.include_role:
     name: report_common
-    tasks_from: build_offline_openshift_support_tables.yml
-  when: not (report_resume_payload_reuse_active | default(false) | bool)
-
-- name: Load OpenShift shared artifacts
-  ansible.builtin.include_role:
-    name: report_common
-    tasks_from: load_openshift_shared_artifacts.yml
-  when: not (report_resume_payload_reuse_active | default(false) | bool)
-
-- name: Load OpenShift posture artifacts
-  ansible.builtin.include_role:
-    name: report_common
-    tasks_from: load_openshift_posture_artifacts.yml
-  when: not (report_resume_payload_reuse_active | default(false) | bool)
-
-- name: Load OpenShift capability artifacts
-  ansible.builtin.include_role:
-    name: report_common
-    tasks_from: load_openshift_capability_artifacts.yml
+    tasks_from: prepare_openshift_render_artifacts.yml
   when: not (report_resume_payload_reuse_active | default(false) | bool)
 
 - name: Build shared OpenShift domain payload
@@ -180,21 +154,17 @@
     tasks_from: build_openshift_report_payload.yml
   when: not (report_resume_payload_reuse_active | default(false) | bool)
 
-- name: Build collected-state OpenShift report extras
-  ansible.builtin.include_role:
-    name: report_common
-    tasks_from: build_offline_openshift_report_extras.yml
-  when: not (report_resume_payload_reuse_active | default(false) | bool)
-
-- name: Build collected-state JSON payload
-  ansible.builtin.set_fact:
-    supportability_report_payload: "{{ openshift_report_payload_common | combine(openshift_report_payload_mode_extras | default({}), recursive=True) }}"
-  when: not (report_resume_payload_reuse_active | default(false) | bool)
-
-- name: Define collected-state report metadata compatibility facts
+- name: Build collected-state JSON payload and metadata compatibility facts
   vars:
-    collected_metadata: "{{ supportability_report_payload.metadata | default({}) }}"
+    supportability_report_payload_resolved: >-
+      {{
+        supportability_report_payload | default({})
+        if (report_resume_payload_reuse_active | default(false) | bool)
+        else (openshift_report_payload_common | default({}))
+      }}
+    collected_metadata: "{{ supportability_report_payload_resolved.metadata | default({}) }}"
   ansible.builtin.set_fact:
+    supportability_report_payload: "{{ supportability_report_payload_resolved }}"
     oc_context_cmd:
       stdout: "{{ collected_metadata.context | default('not-collected') }}"
     oc_server_cmd:
@@ -202,42 +172,35 @@
     oc_user_cmd:
       stdout: "{{ collected_metadata.user | default('not-collected') }}"
 
-- name: Write collected-state JSON report
+- name: Write collected-state JSON report artifacts
   ansible.builtin.command:
     argv:
       - python3
-      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
-      - "{{ supportability_report_json_path }}"
-      - --mode
-      - "0644"
-    stdin: "{{ supportability_report_payload | to_nice_json }}"
-  changed_when: false
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
-
-- name: Persist assembled collected-state payload into run workspace
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_files.py"
       - "{{ report_run_workspace_report_dir }}/payload.json"
+      - "{{ supportability_report_json_path }}"
+      - "{{ report_run_workspace_report_dir }}/{{ supportability_report_json_path | basename }}"
       - --mode
       - "0644"
-    stdin: "{{ supportability_report_payload | to_nice_json }}"
+      - --json-pretty
+    stdin: "{{ supportability_report_payload | to_json }}"
   changed_when: false
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+  when:
+    - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
+    - not (openshift_collected_report_payload_pre_written | default(false) | bool)
 
-- name: Render collected-state Markdown report
-  ansible.builtin.template:
-    src: "{{ playbook_dir }}/../templates/openshift_cluster_health_report.md.j2"
-    dest: "{{ supportability_report_md_path }}"
-    mode: "0644"
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
-
-- name: Normalize unknown-state labels in collected-state Markdown report
-  ansible.builtin.replace:
-    path: "{{ supportability_report_md_path }}"
-    regexp: "\\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN|Unknown|unknown)\\b"
-    replace: "not-assessed"
+- name: Write collected-state Markdown report artifacts
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_files.py"
+      - "{{ supportability_report_md_path }}"
+      - "{{ report_run_workspace_report_dir }}/{{ supportability_report_md_path | basename }}"
+      - --mode
+      - "0644"
+      - --normalize-unknown-labels
+    stdin: "{{ lookup('template', playbook_dir ~ '/../templates/openshift_cluster_health_report.md.j2') }}"
+  changed_when: true
   when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Restore reusable collected-state Markdown report into output directory
@@ -259,22 +222,6 @@
   when:
     - report_run_mode | default('fresh') == 'resume_last_failure'
     - ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
-
-- name: Persist collected-state Markdown report into run workspace
-  ansible.builtin.copy:
-    src: "{{ supportability_report_md_path }}"
-    dest: "{{ report_run_workspace_report_dir }}/{{ supportability_report_md_path | basename }}"
-    mode: "0644"
-    remote_src: true
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
-
-- name: Persist collected-state JSON report into run workspace
-  ansible.builtin.copy:
-    src: "{{ supportability_report_json_path }}"
-    dest: "{{ report_run_workspace_report_dir }}/{{ supportability_report_json_path | basename }}"
-    mode: "0644"
-    remote_src: true
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Record collected-state report artifacts in workspace manifest tracking
   ansible.builtin.set_fact:

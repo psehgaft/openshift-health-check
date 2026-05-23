@@ -1,90 +1,30 @@
-- name: Detect vendor-managed telemetry evidence
+- name: Build observability forwarding evidence bundle
   ansible.builtin.command:
     argv:
       - python3
       - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_vendor_managed_telemetry.py"
+      - "{{ playbook_dir }}/../scripts/build_observability_forwarding_bundle.py"
     stdin: "{{ {
-      'dynakubes': ((analysis_graph.dynakubes | default({})).get('items', [])),
-      'edgeconnects': ((analysis_graph.edgeconnects | default({})).get('items', [])),
-      'datadogagents': ((analysis_graph.datadogagents | default({})).get('items', [])),
-      'clusteragents': ((analysis_graph.clusteragents | default({})).get('items', [])),
-      'infravizs': ((analysis_graph.infravizs | default({})).get('items', [])),
-      'lokistacks': ((analysis_graph.lokistacks | default({})).get('items', [])),
-      'crds': ((analysis_graph.crds | default({})).get('items', [])),
-      'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
-      'pods': ((analysis_graph.pods | default({})).get('items', [])),
-      'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
-      'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
-      'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', []))
-    } | to_json }}"
-  register: observability_vendor_telemetry_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Normalize vendor-managed telemetry evidence
-  ansible.builtin.set_fact:
-    observability_vendor_telemetry_data: "{{ observability_vendor_telemetry_cmd.stdout | from_json if (observability_vendor_telemetry_cmd.rc == 0 and (observability_vendor_telemetry_cmd.stdout | default('') | length > 0)) else {'vendor_managed_metrics_forwarding_present': false, 'vendor_managed_log_forwarding_present': false, 'metrics_vendor_names': [], 'log_vendor_names': []} }}"
-
-- name: Build log forwarding findings
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_log_forwarding_findings.py"
-    stdin: "{{ {
-      'items': ((analysis_graph.clusterlogforwarders | default({})).get('items', [])),
-      'vendor_managed_present': (observability_vendor_telemetry_data.vendor_managed_log_forwarding_present | default(false)),
-      'vendor_names': (observability_vendor_telemetry_data.log_vendor_names | default([])),
-      'require_cluster_log_forwarder': (require_cluster_log_forwarder | bool)
-    } | to_json }}"
-  register: observability_log_forwarding_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Normalize log forwarding findings
-  ansible.builtin.set_fact:
-    observability_log_forwarding_data: "{{ observability_log_forwarding_cmd.stdout | from_json if (observability_log_forwarding_cmd.rc == 0 and (observability_log_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'outputs': [], 'external_outputs': [], 'pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}, 'external_pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}} }}"
-
-- name: Build metrics forwarding findings
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_metrics_forwarding_findings.py"
-    stdin: "{{ {
-      'cluster_remote_write': (((cluster_monitoring_config_parsed.prometheusK8s | default({})).remoteWrite | default([]))),
-      'user_remote_write': (((user_workload_monitoring_config_parsed.prometheus | default({})).remoteWrite | default([]))),
-      'vendor_managed_present': (observability_vendor_telemetry_data.vendor_managed_metrics_forwarding_present | default(false)),
-      'vendor_names': (observability_vendor_telemetry_data.metrics_vendor_names | default([])),
+      'analysis_graph': (analysis_graph | default({})),
+      'cluster_monitoring_config_parsed': (cluster_monitoring_config_parsed | default({})),
+      'user_workload_monitoring_config_parsed': (user_workload_monitoring_config_parsed | default({})),
+      'require_cluster_log_forwarder': (require_cluster_log_forwarder | bool),
       'require_external_metrics_remote_write': (require_external_metrics_remote_write | bool)
     } | to_json }}"
-  register: observability_metrics_forwarding_cmd
+  register: observability_forwarding_bundle_cmd
   changed_when: false
   failed_when: false
 
-- name: Normalize metrics forwarding findings
+- name: Normalize observability forwarding evidence bundle
   ansible.builtin.set_fact:
-    observability_metrics_forwarding_data: "{{ observability_metrics_forwarding_cmd.stdout | from_json if (observability_metrics_forwarding_cmd.rc == 0 and (observability_metrics_forwarding_cmd.stdout | default('') | length > 0)) else {'findings': [], 'cluster_external_count': 0, 'user_external_count': 0} }}"
+    observability_forwarding_bundle_data: "{{ observability_forwarding_bundle_cmd.stdout | from_json if (observability_forwarding_bundle_cmd.rc == 0 and (observability_forwarding_bundle_cmd.stdout | default('') | length > 0)) else {} }}"
 
-- name: Build external alert delivery findings
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_external_alert_delivery_findings.py"
-    stdin: "{{ {
-      'items': ((analysis_graph.alertmanagerconfigs | default({})).get('items', [])),
-      'cluster_alertmanager_additional_configs': ((((cluster_monitoring_config_parsed.alertmanagerMain | default({})).additionalAlertmanagerConfigs | default([])))),
-      'user_workload_alertmanager_additional_configs': ((((user_workload_monitoring_config_parsed.alertmanager | default({})).additionalAlertmanagerConfigs | default([]))))
-    } | to_json }}"
-  register: observability_alert_delivery_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Normalize external alert delivery findings
+- name: Apply observability forwarding evidence bundle
   ansible.builtin.set_fact:
-    observability_alert_delivery_data: "{{ observability_alert_delivery_cmd.stdout | from_json if (observability_alert_delivery_cmd.rc == 0 and (observability_alert_delivery_cmd.stdout | default('') | length > 0)) else {'findings': [], 'receivers': [], 'config_sources': [], 'alert_delivery_source_count': 0, 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false, 'alert_routing_to_external_receiver_configured': false, 'alertmanagerconfigs_with_external_routes': 0, 'alertmanagerconfigs_without_route_receivers': 0} }}"
+    observability_vendor_telemetry_data: "{{ observability_forwarding_bundle_data.vendor | default({'vendor_managed_metrics_forwarding_present': false, 'vendor_managed_log_forwarding_present': false, 'metrics_vendor_names': [], 'log_vendor_names': []}) }}"
+    observability_log_forwarding_data: "{{ observability_forwarding_bundle_data.log_forwarding | default({'findings': [], 'outputs': [], 'external_outputs': [], 'pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}, 'external_pipeline_counts': {'application': 0, 'infrastructure': 0, 'audit': 0}}) }}"
+    observability_metrics_forwarding_data: "{{ observability_forwarding_bundle_data.metrics_forwarding | default({'findings': [], 'cluster_external_count': 0, 'user_external_count': 0}) }}"
+    observability_alert_delivery_data: "{{ observability_forwarding_bundle_data.alert_delivery | default({'findings': [], 'receivers': [], 'config_sources': [], 'alert_delivery_source_count': 0, 'external_alert_receiver_count': 0, 'external_alert_delivery_configured': false, 'alert_routing_to_external_receiver_configured': false, 'alertmanagerconfigs_with_external_routes': 0, 'alertmanagerconfigs_without_route_receivers': 0}) }}"
 
 - name: Build observability findings and summary
   ansible.builtin.set_fact:

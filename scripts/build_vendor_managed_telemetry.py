@@ -3,10 +3,7 @@ import json
 import sys
 
 
-def main():
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
+def build(data):
     def crd_has(group_fragment):
         target = str(group_fragment).lower()
         for item in data.get("crds", []) or []:
@@ -69,7 +66,19 @@ def main():
         log_vendors.append("splunk")
     if loki_present:
         log_vendors.append("loki")
-    print(json.dumps({"vendor_managed_metrics_forwarding_present": len(metrics_vendors) > 0, "vendor_managed_log_forwarding_present": len(log_vendors) > 0, "metrics_vendor_names": metrics_vendors, "log_vendor_names": log_vendors}))
+    return {
+        "vendor_managed_metrics_forwarding_present": len(metrics_vendors) > 0,
+        "vendor_managed_log_forwarding_present": len(log_vendors) > 0,
+        "metrics_vendor_names": metrics_vendors,
+        "log_vendor_names": log_vendors,
+    }
+
+
+def main():
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    print(json.dumps(build(data)))
 
 
 if __name__ == "__main__":

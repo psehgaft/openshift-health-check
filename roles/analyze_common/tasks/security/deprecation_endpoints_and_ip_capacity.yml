@@ -1,58 +1,3 @@
-- name: Build CRD deprecation findings
-  ansible.builtin.set_fact:
-    deprecated_crd_findings: "{{ deprecated_crd_findings | default([]) + deprecated_entry }}"
-  loop: "{{ (analysis_graph.crds | default({})).get('items', []) }}"
-  vars:
-    deprecated_versions: "{{ item.spec.versions | default([]) | selectattr('deprecated', 'defined') | selectattr('deprecated', 'equalto', true) | map(attribute='name') | list }}"
-    deprecated_entry: "{{ [{'name': item.metadata.name, 'group': item.spec.group | default(''), 'versions': deprecated_versions | join(', ')}] if deprecated_versions | length > 0 else [] }}"
-  changed_when: false
-
-- name: Build deprecated API resource findings
-  ansible.builtin.set_fact:
-    deprecated_api_lines: "{{ (api_resources_cmd.stdout_lines | default([])) | select('search', 'DEPRECATED') | list }}"
-
-- name: Build endpoint map
-  ansible.builtin.set_fact:
-    service_endpoint_address_counts: "{{ service_endpoint_address_counts | default({}) | combine({endpoint_key: endpoint_count}, recursive=True) }}"
-  loop: "{{ (analysis_graph.endpoints | default({})).get('items', []) }}"
-  vars:
-    endpoint_key: "{{ (item.metadata.namespace | default('')) ~ '/' ~ (item.metadata.name | default('')) }}"
-    endpoint_count: >-
-      {%- set total = 0 -%}
-      {%- for subset in (item.subsets | default([])) -%}
-      {%- set total = total + ((subset.addresses | default([])) | length) -%}
-      {%- endfor -%}
-      {{ total }}
-  changed_when: false
-
-- name: Build service without endpoint findings
-  ansible.builtin.set_fact:
-    services_without_endpoints: "{{ services_without_endpoints | default([]) + service_issue_entry }}"
-  loop: "{{ (analysis_graph.services | default({})).get('items', []) }}"
-  vars:
-    service_ns: "{{ item.metadata.namespace | default('') }}"
-    service_name: "{{ item.metadata.name | default('') }}"
-    service_type: "{{ item.spec.type | default('ClusterIP') }}"
-    endpoint_key: "{{ service_ns ~ '/' ~ service_name }}"
-    endpoint_count: "{{ (service_endpoint_address_counts | default({}))[endpoint_key] | default(0) | int }}"
-    service_issue_entry: >-
-      {{
-        [{
-          'namespace': service_ns,
-          'name': service_name,
-          'type': service_type,
-          'endpoint_count': endpoint_count
-        }]
-        if (
-          not (service_ns is match(user_namespaces_exclude_regex))
-          and service_name != 'kubernetes'
-          and service_type != 'ExternalName'
-          and (item.spec.selector | default({}) | length > 0)
-          and endpoint_count == 0
-        ) else []
-      }}
-  changed_when: false
-
 - name: Build effective cluster profile for IP capacity analysis
   ansible.builtin.set_fact:
     ip_capacity_cluster_profile: >-
@@ -78,33 +23,80 @@
           recursive=True
         )
       }}
+  changed_when: false
 
-- name: Build service and pod IP capacity summaries
+- name: Build deprecation, endpoint, and IP capacity analysis bundle
   ansible.builtin.command:
     argv:
       - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_ip_capacity_summary.py"
-    stdin: >-
-      {{
+      - "{{ playbook_dir }}/../scripts/run_json_helpers_from_stdin.py"
+    stdin: "{{ {
+      'fail_on_error': false,
+      'helpers': [
         {
-          "cluster_profile": ip_capacity_cluster_profile | default(cluster_profile | default({})),
-          "infrastructure": analysis_graph.infrastructure | default({}),
-          "network_config": analysis_graph.network_config | default({}),
-          "machinesets": (analysis_graph.machinesets | default({})).get('items', []),
-          "configmaps": (analysis_graph.configmaps | default({})).get('items', []),
-          "secrets": (analysis_graph.secrets | default({})).get('items', []),
-          "services": (analysis_graph.services | default({})).get('items', []),
-          "pods": (analysis_graph.pods | default({})).get('items', []),
-          "nodes": (analysis_graph.nodes | default({})).get('items', [])
-        } | to_json
-      }}
-  register: ip_capacity_summary_cmd
+          'name': 'deprecation_endpoint_findings',
+          'script': 'scripts/build_deprecation_endpoint_findings.py',
+          'input': {
+            'crds': ((analysis_graph.crds | default({})).get('items', [])),
+            'endpoints': ((analysis_graph.endpoints | default({})).get('items', [])),
+            'services': ((analysis_graph.services | default({})).get('items', [])),
+            'user_namespaces_exclude_regex': (user_namespaces_exclude_regex | default('^$'))
+          }
+        },
+        {
+          'name': 'ip_capacity_summary',
+          'script': 'scripts/build_ip_capacity_summary.py',
+          'input': {
+            'cluster_profile': ip_capacity_cluster_profile | default(cluster_profile | default({})),
+            'infrastructure': analysis_graph.infrastructure | default({}),
+            'network_config': analysis_graph.network_config | default({}),
+            'machinesets': (analysis_graph.machinesets | default({})).get('items', []),
+            'configmaps': (analysis_graph.configmaps | default({})).get('items', []),
+            'secrets': (analysis_graph.secrets | default({})).get('items', []),
+            'services': (analysis_graph.services | default({})).get('items', []),
+            'pods': (analysis_graph.pods | default({})).get('items', []),
+            'nodes': (analysis_graph.nodes | default({})).get('items', [])
+          }
+        }
+      ]
+    } | to_json }}"
+  register: deprecation_endpoint_ip_capacity_bundle_cmd
   changed_when: false
   failed_when: false
 
+- name: Normalize deprecation, endpoint, and IP capacity analysis bundle
+  vars:
+    deprecation_endpoint_ip_capacity_bundle_results: >-
+      {{
+        (deprecation_endpoint_ip_capacity_bundle_cmd.stdout | from_json).results
+        if (deprecation_endpoint_ip_capacity_bundle_cmd.rc == 0 and (deprecation_endpoint_ip_capacity_bundle_cmd.stdout | default('') | length > 0))
+        else {}
+      }}
+  ansible.builtin.set_fact:
+    deprecation_endpoint_findings_data: >-
+      {{
+        deprecation_endpoint_ip_capacity_bundle_results.deprecation_endpoint_findings.output | default({
+          'deprecated_crd_findings': [],
+          'service_endpoint_address_counts': {},
+          'services_without_endpoints': []
+        })
+      }}
+    ip_capacity_summary_data: "{{ deprecation_endpoint_ip_capacity_bundle_results.ip_capacity_summary.output | default({}) }}"
+  changed_when: false
+
+- name: Expand deprecation and service endpoint findings
+  ansible.builtin.set_fact:
+    deprecated_crd_findings: "{{ deprecation_endpoint_findings_data.deprecated_crd_findings | default([]) }}"
+    service_endpoint_address_counts: "{{ deprecation_endpoint_findings_data.service_endpoint_address_counts | default({}) }}"
+    services_without_endpoints: "{{ deprecation_endpoint_findings_data.services_without_endpoints | default([]) }}"
+  changed_when: false
+
+- name: Build deprecated API resource findings
+  ansible.builtin.set_fact:
+    deprecated_api_lines: "{{ (api_resources_cmd.stdout_lines | default([])) | select('search', 'DEPRECATED') | list }}"
+
 - name: Normalize service and pod IP capacity summaries
   ansible.builtin.set_fact:
-    service_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).service_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
-    pod_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).pod_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
-    node_ip_capacity_summary: "{{ (ip_capacity_summary_cmd.stdout | from_json).node_ip_capacity_summary if (ip_capacity_summary_cmd.rc == 0 and (ip_capacity_summary_cmd.stdout | default('') | length > 0)) else {'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []} }}"
+    service_ip_capacity_summary: "{{ ip_capacity_summary_data.service_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"
+    pod_ip_capacity_summary: "{{ ip_capacity_summary_data.pod_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"
+    node_ip_capacity_summary: "{{ ip_capacity_summary_data.node_ip_capacity_summary | default({'ranges': [], 'range_count': 0, 'range_list': [], 'total_ips': 'unknown', 'taken_ips': 0, 'available_ips': 'unknown', 'observed_ips': 0, 'observed_out_of_range_count': 0, 'observed_out_of_range_sample': []}) }}"

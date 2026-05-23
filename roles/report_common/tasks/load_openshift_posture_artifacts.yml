@@ -1,15 +1,4 @@
 ---
-- name: Find OpenShift posture artifacts
-  ansible.builtin.find:
-    paths: "{{ report_run_workspace_postures_dir }}"
-    patterns: "*.json"
-    file_type: file
-  register: openshift_posture_artifact_files
-
-- name: Initialize loaded OpenShift posture artifacts
-  ansible.builtin.set_fact:
-    openshift_posture_artifacts: "{{ openshift_posture_artifacts | default({}) }}"
-
 - name: Load OpenShift posture artifacts in bulk
   ansible.builtin.command:
     argv:
@@ -18,12 +7,10 @@
       - "{{ report_run_workspace_postures_dir }}"
   register: openshift_posture_artifacts_cmd
   changed_when: false
-  when: (openshift_posture_artifact_files.matched | default(0) | int) > 0
 
 - name: Merge OpenShift posture artifacts
   ansible.builtin.set_fact:
     openshift_posture_artifacts: "{{ (openshift_posture_artifacts | default({})) | combine((openshift_posture_artifacts_cmd.stdout | from_json), recursive=True) }}"
   when:
-    - openshift_posture_artifacts_cmd is defined
     - (openshift_posture_artifacts_cmd.rc | default(1)) == 0
     - (openshift_posture_artifacts_cmd.stdout | default('') | length) > 0

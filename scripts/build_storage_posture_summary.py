@@ -68,14 +68,7 @@ def classify_pv_source(spec):
     return "unknown"
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print(json.dumps({"error": "usage: build_storage_posture_summary.py <input-json-path>"}))
-        return 2
-
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
+def build(data):
     external_storageclasses = []
     local_storageclasses = []
     default_external_storageclasses = []
@@ -123,7 +116,7 @@ def main() -> int:
             "detail": "local storage or ephemeral volume usage was detected without any external persistent storage provider",
         })
 
-    print(json.dumps({
+    return {
         "external_storageclass_count": len(external_storageclasses),
         "local_storageclass_count": len(local_storageclasses),
         "default_external_storageclass_count": len(default_external_storageclasses),
@@ -136,7 +129,18 @@ def main() -> int:
         "has_external_storage_provider": has_external_storage,
         "local_or_ephemeral_only_risk": local_or_ephemeral_only_risk,
         "findings": findings,
-    }))
+    }
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "usage: build_storage_posture_summary.py <input-json-path>"}))
+        return 2
+
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    print(json.dumps(build(data)))
     return 0
 
 

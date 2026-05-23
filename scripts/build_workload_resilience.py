@@ -150,14 +150,7 @@ def pdb_review_detail(workload, matching_pdbs):
     )
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print(json.dumps({"error": "usage: build_workload_resilience.py <input-json-path>"}))
-        return 2
-
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
+def build(data):
     exclude_re = re.compile(data.get("exclude_regex") or r"^$")
     operator_managed_namespace_names = data.get("operator_managed_namespace_names") or []
 
@@ -263,34 +256,41 @@ def main() -> int:
                 }
             )
 
-    print(
-        json.dumps(
-            {
-                "findings": findings,
-                "pdb_review_findings": pdb_review_findings,
-                "multi_replica_workload_count": len(workloads),
-                "multi_replica_workloads_without_pdb": sum(
-                    1 for item in findings if item["issue"] == "missing-pod-disruption-budget"
-                ),
-                "multi_replica_workloads_without_usable_pdb": len(pdb_review_findings),
-                "multi_replica_workloads_without_spread_policy": sum(
-                    1 for item in findings if item["issue"] == "missing-workload-spread-policy"
-                ),
-                "multi_replica_workloads_with_node_or_zone_spread_policy": sum(
-                    1
-                    for workload in workloads
-                    if workload["spread_policy"]["present"]
-                    and workload["spread_policy"]["node_or_zone_aware"]
-                ),
-                "multi_replica_workloads_with_other_spread_policy": sum(
-                    1
-                    for workload in workloads
-                    if workload["spread_policy"]["present"]
-                    and not workload["spread_policy"]["node_or_zone_aware"]
-                ),
-            }
-        )
-    )
+    return {
+        "findings": findings,
+        "pdb_review_findings": pdb_review_findings,
+        "multi_replica_workload_count": len(workloads),
+        "multi_replica_workloads_without_pdb": sum(
+            1 for item in findings if item["issue"] == "missing-pod-disruption-budget"
+        ),
+        "multi_replica_workloads_without_usable_pdb": len(pdb_review_findings),
+        "multi_replica_workloads_without_spread_policy": sum(
+            1 for item in findings if item["issue"] == "missing-workload-spread-policy"
+        ),
+        "multi_replica_workloads_with_node_or_zone_spread_policy": sum(
+            1
+            for workload in workloads
+            if workload["spread_policy"]["present"]
+            and workload["spread_policy"]["node_or_zone_aware"]
+        ),
+        "multi_replica_workloads_with_other_spread_policy": sum(
+            1
+            for workload in workloads
+            if workload["spread_policy"]["present"]
+            and not workload["spread_policy"]["node_or_zone_aware"]
+        ),
+    }
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "usage: build_workload_resilience.py <input-json-path>"}))
+        return 2
+
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    print(json.dumps(build(data)))
     return 0
 
 

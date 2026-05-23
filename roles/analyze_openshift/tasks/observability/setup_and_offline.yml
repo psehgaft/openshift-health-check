@@ -1,10 +1,28 @@
 ---
 - name: Build warning event summaries
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_warning_event_summaries.py"
+    stdin: "{{ {
+      'events': ((analysis_graph.events | default({})).get('items', [])),
+      'warning_event_limit': (warning_event_limit | default(20))
+    } | to_json }}"
+  register: warning_event_summaries_cmd
+  changed_when: false
+  failed_when: warning_event_summaries_cmd.rc != 0 or (warning_event_summaries_cmd.stdout | default('') | length == 0)
+
+- name: Normalize warning event summaries
   ansible.builtin.set_fact:
-    warning_event_reason_counts: "{{ warning_event_reason_counts | default({}) | combine({event_reason: ((warning_event_reason_counts[event_reason] | default(0)) + 1)}, recursive=True) }}"
-  loop: "{{ (analysis_graph.events | default({})).get('items', []) }}"
-  vars:
-    event_reason: "{{ item.reason | default('Unknown') }}"
+    warning_event_summary_data: "{{ warning_event_summaries_cmd.stdout | from_json }}"
+  changed_when: false
+
+- name: Apply warning event summaries
+  ansible.builtin.set_fact:
+    warning_event_reason_counts: "{{ warning_event_summary_data.warning_event_reason_counts | default({}) }}"
+    warning_event_items: "{{ warning_event_summary_data.warning_event_items | default([]) }}"
+    recent_warning_events: "{{ warning_event_summary_data.recent_warning_events | default([]) }}"
   changed_when: false
 
 - name: Parse monitoring config YAML

@@ -1,0 +1,72 @@
+---
+- name: Prepare OpenShift artifact persistence lookup context
+  vars:
+    report_posture_artifact_dependency_keys_by_key_resolved: >-
+      {%- set ns = namespace(items={}) -%}
+      {%- for item in (openshift_enabled_posture_artifact_roles | default([])) -%}
+        {%- set key = item.key | default('') -%}
+        {%- if key | length > 0 -%}
+          {%- set _ = ns.items.update({key: (report_scope_posture_dependency_map | default({})).get(key, [])}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.items | to_json }}
+    report_capability_artifact_dependency_keys_by_key_resolved: >-
+      {%- set ns = namespace(items={}) -%}
+      {%- for item in (openshift_enabled_capability_artifact_roles | default([])) -%}
+        {%- set key = item.key | default('') -%}
+        {%- if key | length > 0 -%}
+          {%- set _ = ns.items.update({key: (report_scope_capability_dependency_map | default({})).get(key, [])}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.items | to_json }}
+    report_posture_artifact_shared_inputs_by_key_resolved: >-
+      {%- set result = namespace(items={}) -%}
+      {%- for item in (openshift_enabled_posture_artifact_roles | default([])) -%}
+        {%- set key = item.key | default('') -%}
+        {%- set deps = (report_scope_posture_dependency_map | default({})).get(key, []) -%}
+        {%- set inputs = namespace(items=[]) -%}
+        {%- for tag in deps -%}
+          {%- for input_name in ((report_scope_tag_shared_inputs_map | default({})).get(tag, [])) -%}
+            {%- if input_name not in inputs.items -%}
+              {%- set _ = inputs.items.append(input_name) -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {%- if key | length > 0 -%}
+          {%- set _ = result.items.update({key: inputs.items}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ result.items | to_json }}
+    report_capability_artifact_shared_inputs_by_key_resolved: >-
+      {%- set result = namespace(items={}) -%}
+      {%- for item in (openshift_enabled_capability_artifact_roles | default([])) -%}
+        {%- set key = item.key | default('') -%}
+        {%- set deps = (report_scope_capability_dependency_map | default({})).get(key, []) -%}
+        {%- set inputs = namespace(items=[]) -%}
+        {%- for tag in deps -%}
+          {%- for input_name in ((report_scope_tag_shared_inputs_map | default({})).get(tag, [])) -%}
+            {%- if input_name not in inputs.items -%}
+              {%- set _ = inputs.items.append(input_name) -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {%- if key | length > 0 -%}
+          {%- set _ = result.items.update({key: inputs.items}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ result.items | to_json }}
+    day2_capability_sections_by_key_resolved: >-
+      {%- set ns = namespace(sections={}) -%}
+      {%- for section in (day2_capability_sections | default([])) -%}
+        {%- set key = section.key | default('') -%}
+        {%- if key | length > 0 -%}
+          {%- set _ = ns.sections.update({key: section}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.sections | to_json }}
+  ansible.builtin.set_fact:
+    report_posture_artifact_dependency_keys_by_key: "{{ report_posture_artifact_dependency_keys_by_key_resolved | from_json }}"
+    report_posture_artifact_shared_inputs_by_key: "{{ report_posture_artifact_shared_inputs_by_key_resolved | from_json }}"
+    report_capability_artifact_dependency_keys_by_key: "{{ report_capability_artifact_dependency_keys_by_key_resolved | from_json }}"
+    report_capability_artifact_shared_inputs_by_key: "{{ report_capability_artifact_shared_inputs_by_key_resolved | from_json }}"
+    day2_capability_sections_by_key: "{{ day2_capability_sections_by_key_resolved | from_json }}"

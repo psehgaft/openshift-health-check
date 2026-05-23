@@ -27,13 +27,31 @@ POSTURE_SECTION_TITLES = [
 
 REQUIRED_CLUSTER_SUBSECTIONS = [
     "### Health Score",
-    "### Recommendations",
+    "### Findings Summary",
     "### Findings",
+]
+
+ALLOWED_SECTION_LABELS = [
+    "Health Score",
+    "Findings Summary",
+    "Findings",
+]
+
+REQUIRED_CAPABILITY_SUBSECTIONS = [
+    "##### Health Score",
+    "##### Findings Summary",
+    "##### Findings",
 ]
 
 FORBIDDEN_MARKDOWN_PATTERNS = [
     (r"\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN|Unknown|unknown)\b", "unknown-state labels must be normalized"),
     (r"^#### Execution Context$", "execution context must not render in the report"),
+    (r"^### Recommendations$", "legacy Recommendations subsections must not render"),
+    (r"^### Operating Questions$", "legacy Operating Questions subsections must not render"),
+    (r"^### Capability Assessments$", "legacy Capability Assessments heading must not render"),
+    (r"^##### Assessment Summary$", "capability sections must use Findings Summary instead of Assessment Summary"),
+    (r"^\*\*Leadership view\*\*", "capability sections must not render separate Leadership view labels"),
+    (r"^\*\*Technical focus\*\*", "capability sections must not render separate Technical focus labels"),
     (r"Run time (seconds|minutes)", "execution runtime stats must not render in the report"),
     (r"\baro-gitops\b", "customer report must not mention aro-gitops"),
     (r"\baro-classic-terraform/", "customer report must not mention aro-classic-terraform"),
@@ -41,9 +59,7 @@ FORBIDDEN_MARKDOWN_PATTERNS = [
     (r"\| Signal \| Value \| \s*\| --- \| --- \|", "finding tables must not collapse onto one line"),
 ]
 
-REQUIRED_DAY2_MARKERS = [
-    "### Capability Assessments",
-]
+REQUIRED_DAY2_MARKERS = []
 
 FORBIDDEN_CAPABILITY_ACTION_PATTERNS = (
     "Collect or review the expected evidence for this capability and remediate any gaps.",
@@ -59,6 +75,58 @@ FORBIDDEN_JSON_PATTERNS = [
     (r"\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN)\b", "JSON payload must not contain misspelled or uppercase unknown labels"),
     (r"\baro-gitops\b", "JSON payload must not mention aro-gitops"),
     (r"\baro-classic-terraform/", "JSON payload must not mention aro-classic-terraform"),
+]
+
+BAD_SUMMARY_CLEAN_PHRASES = [
+    "no remediation is currently required",
+    "no remediation was identified",
+    "no material gap",
+    "no material gaps",
+    "no gaps detected",
+    "no gap detected",
+    "fully healthy",
+    "posture is healthy",
+    "capability is healthy",
+    "area is healthy",
+]
+
+CRITICAL_SUMMARY_TERMS = [
+    "critical",
+    "blocking",
+    "blocker",
+    "failure",
+    "failed",
+    "outage",
+    "degraded",
+    "unavailable",
+    "unhealthy",
+    "already be degraded",
+]
+
+WARNING_SUMMARY_TERMS = [
+    "warning",
+    "gap",
+    "risk",
+    "review",
+    "remediat",
+    "not fully evidenced",
+    "not in the expected healthy state",
+    "not collected",
+    "missing",
+    "incomplete",
+    "needs",
+    "should",
+]
+
+FINDING_TABLE_HEADER = [
+    "finding",
+    "severity",
+    "current state",
+    "business impact",
+    "technical evidence",
+    "action plan",
+    "suggested owner",
+    "done when",
 ]
 
 
@@ -125,6 +193,20 @@ def validate_cluster_posture_sections(markdown: str) -> None:
         missing = [heading for heading in REQUIRED_CLUSTER_SUBSECTIONS if heading not in block]
         if missing:
             fail(f"{title!r} at line {start} missing {', '.join(missing)}")
+        if title not in {section_title for _, section_title in POSTURE_SECTION_TITLES}:
+            continue
+        direct_subsections = [
+            line[4:].strip()
+            for line in lines[start : end - 1]
+            if line.startswith("### ") and not line.startswith("#### ")
+        ]
+        if direct_subsections != ALLOWED_SECTION_LABELS:
+            fail(
+                f"{title!r} at line {start} must contain only "
+                + ", ".join(ALLOWED_SECTION_LABELS)
+                + "; found "
+                + ", ".join(direct_subsections)
+            )
 
 
 def validate_day2_capability_markdown_sections(markdown: str) -> None:
@@ -132,16 +214,16 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
     start_idx = None
     end_idx = None
     for idx, line in enumerate(lines):
-        if line.strip() == "### Capability Assessments":
+        if line.strip() == "## Day 2 Production Readiness":
             start_idx = idx + 1
             continue
-        if start_idx is not None and line.startswith("### Findings"):
+        if start_idx is not None and line.startswith("## "):
             end_idx = idx
             break
     if start_idx is None:
-        fail("missing Day 2 capability section marker")
+        fail("missing Day 2 Production Readiness section")
     block = lines[start_idx:end_idx]
-    rendered_titles = [line[5:].strip() for line in block if line.startswith("#### ")]
+    rendered_titles = [line[5:].strip() for line in block if line.startswith("#### ") and not line.startswith("##### ")]
     expected_titles = expected_enabled_capability_titles()
     missing = sorted(set(expected_titles) - set(rendered_titles))
     extra = sorted(set(rendered_titles) - set(expected_titles))
@@ -156,6 +238,179 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
                 + ("extra=" + ", ".join(extra) if extra else "")
             )
         )
+    for idx, line in enumerate(block):
+        if not line.startswith("#### ") or line.startswith("##### "):
+            continue
+        title = line[5:].strip()
+        next_idx = len(block)
+        for probe_idx in range(idx + 1, len(block)):
+            if block[probe_idx].startswith("#### ") and not block[probe_idx].startswith("##### "):
+                next_idx = probe_idx
+                break
+        capability_block = block[idx:next_idx]
+        missing_subsections = [
+            heading for heading in REQUIRED_CAPABILITY_SUBSECTIONS if heading not in capability_block
+        ]
+        if missing_subsections:
+            fail(f"capability {title!r} missing {', '.join(missing_subsections)}")
+        direct_subsections = [
+            item[6:].strip()
+            for item in capability_block
+            if item.startswith("##### ") and not item.startswith("###### ")
+        ]
+        if direct_subsections != ALLOWED_SECTION_LABELS:
+            fail(
+                f"capability {title!r} must contain only "
+                + ", ".join(ALLOWED_SECTION_LABELS)
+                + "; found "
+                + ", ".join(direct_subsections)
+            )
+
+
+def split_markdown_table_row(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def is_markdown_separator_row(cells: list[str]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
+
+
+def extract_finding_rows(block: list[str], findings_heading: str) -> list[dict[str, str]]:
+    try:
+        start_idx = next(idx for idx, line in enumerate(block) if line.strip() == findings_heading)
+    except StopIteration:
+        return []
+
+    table_start = None
+    for idx in range(start_idx + 1, len(block)):
+        if block[idx].startswith("#"):
+            return []
+        if block[idx].startswith("|"):
+            table_start = idx
+            break
+    if table_start is None or table_start + 1 >= len(block):
+        return []
+
+    headers = [cell.lower() for cell in split_markdown_table_row(block[table_start])]
+    separator = split_markdown_table_row(block[table_start + 1])
+    if headers != FINDING_TABLE_HEADER or not is_markdown_separator_row(separator):
+        return []
+
+    rows = []
+    for line in block[table_start + 2 :]:
+        if not line.startswith("|"):
+            break
+        cells = split_markdown_table_row(line)
+        if len(cells) != len(headers):
+            continue
+        rows.append(dict(zip(headers, cells)))
+    return rows
+
+
+def extract_summary_text(
+    block: list[str],
+    summary_heading: str,
+    findings_heading: str,
+    stop_before_headings: tuple[str, ...] = (),
+) -> str:
+    try:
+        start_idx = next(idx for idx, line in enumerate(block) if line.strip() == summary_heading)
+    except StopIteration:
+        return ""
+    end_idx = len(block)
+    for idx in range(start_idx + 1, len(block)):
+        if block[idx].strip() == findings_heading:
+            end_idx = idx
+            break
+        if stop_before_headings and block[idx].startswith(stop_before_headings):
+            end_idx = idx
+            break
+    return "\n".join(line.strip() for line in block[start_idx + 1 : end_idx]).strip()
+
+
+def severity_rank(value: str) -> str:
+    severity = re.sub(r"[^A-Za-z]", "", str(value or "")).upper()
+    if severity in {"CRITICAL", "ERROR", "FAILED", "FAIL", "BLOCKED"}:
+        return "critical"
+    if severity in {"WARNING", "WARN"}:
+        return "warning"
+    return ""
+
+
+def validate_summary_matches_findings(section_name: str, summary: str, rows: list[dict[str, str]]) -> None:
+    if not rows:
+        return
+
+    lowered_summary = summary.lower()
+    severities = [severity_rank(row.get("severity", "")) for row in rows]
+    has_critical = "critical" in severities
+    has_warning = "warning" in severities
+    has_non_ok = has_critical or has_warning
+
+    if has_non_ok:
+        for phrase in BAD_SUMMARY_CLEAN_PHRASES:
+            if phrase in lowered_summary:
+                fail(
+                    f"{section_name}: Findings Summary uses clean-state wording "
+                    f"{phrase!r} while Findings table contains warning or critical rows"
+                )
+
+    if has_critical and not any(term in lowered_summary for term in CRITICAL_SUMMARY_TERMS):
+        fail(
+            f"{section_name}: Findings Summary must call out critical or blocking risk "
+            "when the Findings table contains critical rows"
+        )
+
+    if has_warning and not any(term in lowered_summary for term in WARNING_SUMMARY_TERMS):
+        fail(
+            f"{section_name}: Findings Summary must call out warning-level risk, gaps, "
+            "review needs, or evidence limits when the Findings table contains warning rows"
+        )
+
+
+def validate_posture_summary_accuracy(markdown: str) -> None:
+    lines = markdown.splitlines()
+    sections = []  # type: list[tuple[int, str]]
+    for line_no, line in enumerate(lines, 1):
+        if line.startswith("## "):
+            sections.append((line_no, line[3:].strip()))
+
+    posture_titles = {section_title for _, section_title in POSTURE_SECTION_TITLES}
+    for idx, (start, title) in enumerate(sections):
+        if title not in posture_titles:
+            continue
+        end = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines) + 1
+        block = lines[start - 1 : end - 1]
+        summary = extract_summary_text(block, "### Findings Summary", "### Findings", ("#### ",))
+        findings = extract_finding_rows(block, "### Findings")
+        validate_summary_matches_findings(title, summary, findings)
+
+
+def validate_capability_summary_accuracy(markdown: str) -> None:
+    lines = markdown.splitlines()
+    start_idx = None
+    end_idx = None
+    for idx, line in enumerate(lines):
+        if line.strip() == "## Day 2 Production Readiness":
+            start_idx = idx + 1
+            continue
+        if start_idx is not None and line.startswith("## "):
+            end_idx = idx
+            break
+    if start_idx is None:
+        return
+    block = lines[start_idx:end_idx]
+    capability_indexes = [
+        (idx, line[5:].strip())
+        for idx, line in enumerate(block)
+        if line.startswith("#### ") and not line.startswith("##### ")
+    ]
+    for pos, (idx, title) in enumerate(capability_indexes):
+        next_idx = capability_indexes[pos + 1][0] if pos + 1 < len(capability_indexes) else len(block)
+        capability_block = block[idx:next_idx]
+        summary = extract_summary_text(capability_block, "##### Findings Summary", "##### Findings")
+        findings = extract_finding_rows(capability_block, "##### Findings")
+        validate_summary_matches_findings(f"capability {title}", summary, findings)
 
 
 def validate_markdown_tables(markdown: str) -> None:
@@ -179,6 +434,8 @@ def validate_markdown(path: Path) -> None:
 
     validate_cluster_posture_sections(markdown)
     validate_day2_capability_markdown_sections(markdown)
+    validate_posture_summary_accuracy(markdown)
+    validate_capability_summary_accuracy(markdown)
 
     for marker in REQUIRED_DAY2_MARKERS:
         if marker not in markdown:
@@ -200,6 +457,129 @@ def validate_markdown_matches_json(markdown_path: Path, json_path: Path) -> None
             fail(f"{markdown_path}: markdown must show completed Day 2 capability assessment state")
 
 
+def as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def domain_summary(domain: dict[str, Any]) -> dict[str, Any]:
+    summary = domain.get("summary") if isinstance(domain, dict) else {}
+    return summary if isinstance(summary, dict) else {}
+
+
+def require_summary_count(
+    path: Path,
+    domain_name: str,
+    summary: dict[str, Any],
+    count_key: str,
+    rows: Any,
+) -> None:
+    if not isinstance(rows, list):
+        fail(f"{path}: {domain_name}.{count_key} source list must be a list")
+    expected = len(rows)
+    actual = as_int(summary.get(count_key), default=-1)
+    if actual != expected:
+        fail(
+            f"{path}: {domain_name}.summary.{count_key}={actual} "
+            f"does not match rendered payload list length {expected}"
+        )
+
+
+def validate_high_risk_json_summaries(path: Path, payload: dict[str, Any]) -> None:
+    domains = payload.get("domains") or {}
+    if not isinstance(domains, dict):
+        fail(f"{path}: domains must be a JSON object")
+
+    workload = domains.get("workload_health") or {}
+    workload_summary = domain_summary(workload)
+    if workload_summary:
+        require_summary_count(
+            path,
+            "workload_health",
+            workload_summary,
+            "unhealthy_user_pod_count",
+            workload.get("unhealthy_user_pods") or [],
+        )
+        require_summary_count(
+            path,
+            "workload_health",
+            workload_summary,
+            "high_restart_pod_count",
+            workload.get("restart_hotspots") or [],
+        )
+        require_summary_count(
+            path,
+            "workload_health",
+            workload_summary,
+            "workload_health_issue_count",
+            workload.get("workload_health_issues") or [],
+        )
+        workload_status = str(workload_summary.get("status") or "").strip().upper()
+        if (
+            as_int(workload_summary.get("unhealthy_user_pod_count")) > 0
+            or as_int(workload_summary.get("workload_health_issue_count")) > 0
+        ) and workload_status not in {"CRITICAL", "FAILED", "FAIL", "ERROR", "BLOCKED"}:
+            fail(
+                f"{path}: workload_health summary must not hide unhealthy pods or rollout issues "
+                f"behind status {workload_status!r}"
+            )
+
+    node = domains.get("node_health_and_capacity") or {}
+    node_summary = domain_summary(node)
+    if node_summary:
+        require_summary_count(
+            path,
+            "node_health_and_capacity",
+            node_summary,
+            "high_pod_density_node_count",
+            node.get("high_pod_density_nodes") or [],
+        )
+        node_rows = node.get("nodes") or []
+        if isinstance(node_rows, list) and as_int(node_summary.get("nodes"), len(node_rows)) != len(node_rows):
+            fail(
+                f"{path}: node_health_and_capacity.summary.nodes does not match "
+                f"node list length {len(node_rows)}"
+            )
+        node_status = str(node_summary.get("status") or "").strip().upper()
+        if (
+            as_int(node_summary.get("not_ready_node_count")) > 0
+            or as_int(node_summary.get("node_pressure_count")) > 0
+            or as_int(node_summary.get("critical_pod_density_node_count")) > 0
+        ) and node_status in {"OK", "HEALTHY"}:
+            fail(
+                f"{path}: node_health_and_capacity summary must not be healthy when "
+                "not-ready, pressured, or critical-density nodes are present"
+            )
+
+    capacity = domains.get("capacity_planning_snapshot") or {}
+    capacity_summary = domain_summary(capacity)
+    if capacity_summary:
+        capacity_status = str(capacity_summary.get("status") or "").strip().lower()
+        if bool(capacity_summary.get("zero_allocatable_suspect")) and capacity_status in {"healthy", "ok"}:
+            fail(
+                f"{path}: capacity_planning_snapshot summary must not be healthy when "
+                "zero allocatable resource data is suspect"
+            )
+        if bool(capacity_summary.get("object_count_partial")) and capacity_status in {"healthy", "ok"}:
+            fail(
+                f"{path}: capacity_planning_snapshot summary must not be healthy when "
+                "object-count evidence is partial"
+            )
+
+    day2 = domains.get("production_day2_readiness") or {}
+    day2_summary = domain_summary(day2)
+    if day2_summary:
+        top_blockers = day2_summary.get("top_blockers") or []
+        day2_status = str(day2_summary.get("status") or "").strip().upper()
+        if isinstance(top_blockers, list) and top_blockers and day2_status in {"OK", "HEALTHY"}:
+            fail(
+                f"{path}: production_day2_readiness summary must not be healthy when "
+                "top blockers are present"
+            )
+
+
 def validate_json(path: Path) -> None:
     payload = read_json(path)
     text = json.dumps(payload, sort_keys=True)
@@ -210,6 +590,8 @@ def validate_json(path: Path) -> None:
     metadata = payload.get("metadata", {})
     if metadata.get("platform_family") != "openshift":
         fail(f"{path}: metadata.platform_family must be openshift")
+
+    validate_high_risk_json_summaries(path, payload)
 
     day2_domain = (
         ((payload.get("domains") or {}).get("production_day2_readiness") or {})

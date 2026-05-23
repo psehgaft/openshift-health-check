@@ -1,14 +1,3 @@
-- name: Normalize warning event timestamps
-  ansible.builtin.set_fact:
-    warning_event_items_unsorted: "{{ warning_event_items_unsorted | default([]) + [item | combine({'_sort_timestamp': ((item.lastTimestamp | default(item.eventTime | default(item.metadata.creationTimestamp | default('')))) | string)})] }}"
-  loop: "{{ (analysis_graph.events | default({})).get('items', []) }}"
-  changed_when: false
-
-- name: Sort warning events
-  ansible.builtin.set_fact:
-    warning_event_items: "{{ (warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list }}"
-    recent_warning_events: "{{ ((warning_event_items_unsorted | default([])) | sort(attribute='_sort_timestamp', reverse=true) | map('combine', {}) | list)[:warning_event_limit] }}"
-
 - name: Run Prometheus signal helper
   ansible.builtin.command:
     argv:
@@ -56,11 +45,14 @@
 - name: Normalize Prometheus helper output
   ansible.builtin.set_fact:
     prom_query_helper_data: "{{ prom_query_helper_cmd.stdout | from_json if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {'prom_available': false, 'transport': 'unavailable', 'route_working': false, 'proxy_working': false, 'route_error': '', 'proxy_error': '', 'results': {}, 'query_errors': {}, 'query_statuses': {}} }}"
-    prom_available: "{{ ((prom_query_helper_cmd.stdout | from_json).prom_available) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else false }}"
-    prom_result_map: "{{ ((prom_query_helper_cmd.stdout | from_json).results) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
-    prom_query_error_map: "{{ ((prom_query_helper_cmd.stdout | from_json).query_errors) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
-    prom_query_status_map: "{{ ((prom_query_helper_cmd.stdout | from_json).query_statuses) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else {} }}"
-    prom_collection_transport: "{{ ((prom_query_helper_cmd.stdout | from_json).transport) if (prom_query_helper_cmd.rc == 0 and (prom_query_helper_cmd.stdout | default('') | length > 0)) else 'unavailable' }}"
+
+- name: Apply Prometheus helper output
+  ansible.builtin.set_fact:
+    prom_available: "{{ prom_query_helper_data.prom_available | default(false) }}"
+    prom_result_map: "{{ prom_query_helper_data.results | default({}) }}"
+    prom_query_error_map: "{{ prom_query_helper_data.query_errors | default({}) }}"
+    prom_query_status_map: "{{ prom_query_helper_data.query_statuses | default({}) }}"
+    prom_collection_transport: "{{ prom_query_helper_data.transport | default('unavailable') }}"
 
 - name: Build Prometheus evidence summary
   ansible.builtin.set_fact:

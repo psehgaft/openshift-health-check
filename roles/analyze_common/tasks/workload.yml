@@ -1,59 +1,25 @@
 ---
-- name: Initialize workload-noise filter facts
-  ansible.builtin.set_fact:
-    operator_managed_namespace_names: []
-
-- name: Detect operator-managed workload namespaces from namespace metadata
-  ansible.builtin.set_fact:
-    operator_managed_namespace_names: "{{ ((operator_managed_namespace_names | default([])) + [ns_name]) | unique }}"
-  loop: "{{ (analysis_graph.namespaces | default({})).get('items', []) }}"
-  vars:
-    ns_name: "{{ item.metadata.name | default('') }}"
-    labels: "{{ item.metadata.labels | default({}) }}"
-    annotations: "{{ item.metadata.annotations | default({}) }}"
-    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
-    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
-    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
-  when:
-    - ns_name | length > 0
-    - has_operator_marker_keys or (managed_by_value in ['olm', 'operator-lifecycle-manager']) or ('operator' in managed_by_value) or (ns_name | lower == 'operators') or ((ns_name | lower) is regex('.*-(operator|operators)$'))
+- name: Detect operator-managed workload namespaces
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_operator_managed_namespaces.py"
+    stdin: "{{ {
+      'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
+      'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+      'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
+      'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+      'deploymentconfigs': ((analysis_graph.deploymentconfigs | default({})).get('items', [])),
+      'subscriptions': ((analysis_graph.subscriptions | default({})).get('items', []))
+    } | to_json }}"
+  register: operator_managed_namespaces_cmd
   changed_when: false
+  failed_when: operator_managed_namespaces_cmd.rc != 0 or (operator_managed_namespaces_cmd.stdout | default('') | length == 0)
 
-- name: Detect operator-managed workload namespaces from workload inventory
+- name: Normalize operator-managed workload namespaces
   ansible.builtin.set_fact:
-    operator_managed_namespace_names: "{{ ((operator_managed_namespace_names | default([])) + [ns_name]) | unique }}"
-  loop: "{{ ((analysis_graph.deployments | default({})).get('items', [])) + ((analysis_graph.statefulsets | default({})).get('items', [])) + ((analysis_graph.daemonsets | default({})).get('items', [])) + ((analysis_graph.deploymentconfigs | default({})).get('items', [])) }}"
-  vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    workload_name_lower: "{{ (item.metadata.name | default('') | string | lower) }}"
-    labels: "{{ item.metadata.labels | default({}) }}"
-    annotations: "{{ item.metadata.annotations | default({}) }}"
-    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
-    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
-    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
-    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
-    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
-    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
-  when:
-    - ns_name | length > 0
-    - has_operator_marker_keys
-      or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
-      or ('operator' in managed_by_value)
-      or ('-operator' in workload_name_lower)
-      or ('operator-' in workload_name_lower)
-      or ('controller-manager' in workload_name_lower)
-      or ('-operator' in app_name_lower)
-      or ('operator-' in app_name_lower)
-      or has_csv_owner
-  changed_when: false
-
-- name: Detect operator-managed workload namespaces from subscription inventory
-  ansible.builtin.set_fact:
-    operator_managed_namespace_names: "{{ ((operator_managed_namespace_names | default([])) + [ns_name]) | unique }}"
-  loop: "{{ (analysis_graph.subscriptions | default({})).get('items', []) }}"
-  vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-  when: ns_name | length > 0
+    operator_managed_namespace_names: "{{ (operator_managed_namespaces_cmd.stdout | from_json).operator_managed_namespace_names | default([]) }}"
   changed_when: false
 
 - name: Run common workload health and resilience analysis
@@ -62,5 +28,6 @@
 - name: Run common workload governance analysis
   ansible.builtin.include_tasks: workload/governance.yml
 
-- name: Run common workload probe coverage analysis
+- name: Run common workload probe coverage analysis when not bundled
   ansible.builtin.include_tasks: workload/probe_coverage.yml
+  when: workload_analysis_bundle is not defined

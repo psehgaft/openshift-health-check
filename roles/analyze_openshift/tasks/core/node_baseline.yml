@@ -1,15 +1,7 @@
 ---
 - name: Initialize node facts
   ansible.builtin.set_fact:
-    openshift_node_items: >-
-      {{
-        ((analysis_graph.nodes | default({})).get('items', []))
-        | selectattr('kind', 'defined')
-        | selectattr('kind', 'equalto', 'Node')
-        | selectattr('metadata.name', 'defined')
-        | rejectattr('metadata.name', 'equalto', 'cluster')
-        | list
-      }}
+    openshift_node_items: []
     not_ready_nodes: []
     pressure_nodes: []
     primary_node_role_counts: {}
@@ -25,6 +17,31 @@
     openshift_control_plane_node_count: 0
     openshift_worker_node_count: 0
     openshift_infra_node_count: 0
+  when: report_scope_requires_core_node_analysis | default(true) | bool
+
+- name: Build node baseline facts
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_node_baseline_facts.py"
+    stdin: "{{ {'analysis_graph': (analysis_graph | default({}))} | to_json }}"
+  register: node_baseline_facts_cmd
+  changed_when: false
+  when: report_scope_requires_core_node_analysis | default(true) | bool
+
+- name: Normalize node baseline facts
+  vars:
+    node_baseline_facts: "{{ (node_baseline_facts_cmd.stdout | from_json) if (node_baseline_facts_cmd.stdout | default('') | length > 0) else {} }}"
+  ansible.builtin.set_fact:
+    openshift_node_items: "{{ node_baseline_facts.openshift_node_items | default([]) }}"
+    not_ready_nodes: "{{ node_baseline_facts.not_ready_nodes | default([]) }}"
+    pressure_nodes: "{{ node_baseline_facts.pressure_nodes | default([]) }}"
+    primary_node_role_counts: "{{ node_baseline_facts.primary_node_role_counts | default({}) }}"
+    kubelet_version_counts: "{{ node_baseline_facts.kubelet_version_counts | default({}) }}"
+    openshift_control_plane_node_count: "{{ node_baseline_facts.openshift_control_plane_node_count | default(0) }}"
+    openshift_worker_node_count: "{{ node_baseline_facts.openshift_worker_node_count | default(0) }}"
+    openshift_infra_node_count: "{{ node_baseline_facts.openshift_infra_node_count | default(0) }}"
   when: report_scope_requires_core_node_analysis | default(true) | bool
 
 - name: Build pod count and restart hotspots
@@ -78,40 +95,3 @@
     - report_scope_requires_core_node_analysis | default(true) | bool
     - node_pod_count_fallback_cmd is defined
   changed_when: false
-
-- name: Build node health facts
-  ansible.builtin.set_fact:
-    not_ready_nodes: "{{ not_ready_nodes + ([item.metadata.name] if not node_is_ready else []) }}"
-    pressure_nodes: "{{ pressure_nodes + ([{'name': item.metadata.name, 'pressures': pressure_types}] if pressure_types | length > 0 else []) }}"
-    primary_node_role_counts: "{{ primary_node_role_counts | combine({primary_node_role: ((primary_node_role_counts[primary_node_role] | default(0)) + 1)}, recursive=True) }}"
-    kubelet_version_counts: "{{ kubelet_version_counts | combine({kubelet_version: ((kubelet_version_counts[kubelet_version] | default(0)) + 1)}, recursive=True) }}"
-    openshift_control_plane_node_count: "{{ (openshift_control_plane_node_count | int) + (1 if primary_node_role in ['master', 'control-plane'] else 0) }}"
-    openshift_worker_node_count: "{{ (openshift_worker_node_count | int) + (1 if primary_node_role == 'worker' else 0) }}"
-    openshift_infra_node_count: "{{ (openshift_infra_node_count | int) + (1 if primary_node_role == 'infra' else 0) }}"
-  loop: "{{ openshift_node_items | default([]) }}"
-  vars:
-    ready_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default('Unknown')) }}"
-    node_is_ready: "{{ (ready_status | string | lower) in ['true', 'ready'] }}"
-    pressure_types: "{{ item.status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | list }}"
-    node_roles: "{{ item.metadata.labels | default({}) | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | list }}"
-    primary_node_role: >-
-      {{
-        'master'
-        if 'master' in node_roles
-        else (
-          'control-plane'
-          if 'control-plane' in node_roles
-          else (
-            'infra'
-            if 'infra' in node_roles
-            else (
-              'worker'
-              if 'worker' in node_roles
-              else ((node_roles | sort | first) | default('worker'))
-            )
-          )
-        )
-      }}
-    kubelet_version: "{{ item.status.nodeInfo.kubeletVersion | default('unknown') }}"
-  changed_when: false
-  when: report_scope_requires_core_node_analysis | default(true) | bool

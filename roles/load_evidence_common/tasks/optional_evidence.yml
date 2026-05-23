@@ -1,197 +1,43 @@
 ---
-- name: Parse optional cluster-compare evidence
+- name: Parse optional collected evidence bundle
   ansible.builtin.command:
     argv:
       - python3
-      - "{{ playbook_dir }}/../scripts/parse_cluster_compare.py"
-      - "{{ cluster_compare_path }}"
-  register: cluster_compare_parse_cmd
+      - "{{ playbook_dir }}/../scripts/parse_optional_evidence_bundle.py"
+    stdin: "{{ optional_evidence_bundle_input | to_json }}"
+  register: optional_evidence_bundle_cmd
   changed_when: false
-  when:
-    - cluster_compare_path | default('') | trim | length > 0
-    - report_scope_requires_cluster_compare_evidence | default(true) | bool
-
-- name: Merge optional cluster-compare evidence
   vars:
-    cluster_compare_payload: "{{ (cluster_compare_parse_cmd.stdout | from_json) if (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
-    cluster_compare_source:
-      name: cluster-compare
-      type: report-file
-      mode: offline
-      path: "{{ cluster_compare_path }}"
-      parser: parse_cluster_compare.py
-  ansible.builtin.set_fact:
-    cluster_compare_data: "{{ cluster_compare_payload }}"
-    evidence_sources: "{{ evidence_sources + ([cluster_compare_source] if (cluster_compare_parse_cmd.rc == 0 and (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (cluster_compare_parse_cmd.rc == 0 and (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['cluster-compare'] if (cluster_compare_parse_cmd.rc == 0 and (cluster_compare_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'cluster_compare_path': cluster_compare_path}, recursive=True) }}"
-    evidence_limitations: "{{ evidence_limitations | default([]) }}"
-  when:
-    - cluster_compare_path | default('') | trim | length > 0
-    - report_scope_requires_cluster_compare_evidence | default(true) | bool
+    optional_evidence_bundle_input:
+      evidence_sources: "{{ evidence_sources | default([]) }}"
+      evidence_summary: "{{ evidence_summary | default({'source_count': 0, 'source_labels': []}) }}"
+      evidence_limitations: "{{ evidence_limitations | default([]) }}"
+      evidence_mode: "{{ evidence_mode | default('auto') }}"
+      must_gather_path: "{{ must_gather_path | default('') }}"
+      cluster_compare_path: "{{ cluster_compare_path | default('') }}"
+      inspect_path: "{{ inspect_path | default('') }}"
+      managed_gates_path: "{{ managed_gates_path | default('') }}"
+      sosreport_paths: "{{ sosreport_paths | default([]) }}"
+      advisor_export_path: "{{ advisor_export_path | default('') }}"
+      insights_archive_path: "{{ insights_archive_path | default('') }}"
+      requires_cluster_compare: "{{ report_scope_requires_cluster_compare_evidence | default(true) | bool }}"
+      requires_inspect: "{{ report_scope_requires_inspect_evidence | default(true) | bool }}"
+      requires_managed_gates: "{{ report_scope_requires_managed_gates_evidence | default(true) | bool }}"
+      requires_sosreport: "{{ report_scope_requires_sosreport_evidence | default(true) | bool }}"
+      requires_advisor_export: "{{ report_scope_requires_advisor_export_evidence | default(true) | bool }}"
+      requires_insights_archive: "{{ report_scope_requires_insights_archive_evidence | default(true) | bool }}"
 
-- name: Parse optional inspect evidence
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/parse_inspect.py"
-      - "{{ inspect_path }}"
-  register: inspect_parse_cmd
-  changed_when: false
-  when:
-    - inspect_path | default('') | trim | length > 0
-    - report_scope_requires_inspect_evidence | default(true) | bool
-
-- name: Merge optional inspect evidence
+- name: Merge optional collected evidence bundle
   vars:
-    inspect_payload: "{{ (inspect_parse_cmd.stdout | from_json) if (inspect_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
-    inspect_source:
-      name: inspect
-      type: resource-directory
-      mode: offline
-      path: "{{ inspect_path }}"
-      parser: parse_inspect.py
+    optional_evidence_bundle_payload: "{{ (optional_evidence_bundle_cmd.stdout | from_json) if (optional_evidence_bundle_cmd.stdout | default('') | trim | length > 0) else {} }}"
   ansible.builtin.set_fact:
-    inspect_data: "{{ inspect_payload }}"
-    evidence_sources: "{{ evidence_sources + ([inspect_source] if (inspect_parse_cmd.rc == 0 and (inspect_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (inspect_parse_cmd.rc == 0 and (inspect_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['inspect'] if (inspect_parse_cmd.rc == 0 and (inspect_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'inspect_path': inspect_path}, recursive=True) }}"
-    evidence_limitations: "{{ evidence_limitations | default([]) }}"
-  when:
-    - inspect_path | default('') | trim | length > 0
-    - report_scope_requires_inspect_evidence | default(true) | bool
-
-- name: Resolve evidence mode
-  ansible.builtin.set_fact:
-    evidence_mode_resolved: "{{ resolved_mode }}"
-    evidence_summary: "{{ evidence_summary | combine({'mode': resolved_mode}, recursive=True) }}"
-  vars:
-    resolved_mode: >-
-      {{
-        (
-          'hybrid'
-          if ((must_gather_path | default('') | trim | length > 0) and (inspect_path | default('') | trim | length > 0))
-          else ('must_gather' if (must_gather_path | default('') | trim | length > 0) else 'inspect')
-        )
-        if (evidence_mode | default('auto')) == 'auto'
-        else (evidence_mode | default('auto'))
-      }}
-
-- name: Parse optional managed gates evidence
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/parse_managed_gates.py"
-      - "{{ managed_gates_path }}"
-  register: managed_gates_parse_cmd
-  changed_when: false
-  when:
-    - managed_gates_path | default('') | trim | length > 0
-    - report_scope_requires_managed_gates_evidence | default(true) | bool
-
-- name: Merge optional managed gates evidence
-  vars:
-    managed_gates_payload: "{{ (managed_gates_parse_cmd.stdout | from_json) if (managed_gates_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
-    managed_gates_source:
-      name: managed-gates
-      type: report-file
-      mode: offline
-      path: "{{ managed_gates_path }}"
-      parser: parse_managed_gates.py
-  ansible.builtin.set_fact:
-    managed_gates_data: "{{ managed_gates_payload }}"
-    evidence_sources: "{{ evidence_sources + ([managed_gates_source] if (managed_gates_parse_cmd.rc == 0 and (managed_gates_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (managed_gates_parse_cmd.rc == 0 and (managed_gates_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['managed-gates'] if (managed_gates_parse_cmd.rc == 0 and (managed_gates_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'managed_gates_path': managed_gates_path}, recursive=True) }}"
-    evidence_limitations: "{{ evidence_limitations | default([]) }}"
-  when:
-    - managed_gates_path | default('') | trim | length > 0
-    - report_scope_requires_managed_gates_evidence | default(true) | bool
-
-- name: Parse optional sosreport evidence
-  ansible.builtin.command:
-    argv: >-
-      {{
-        ['python3', playbook_dir ~ '/../scripts/parse_sosreport.py']
-        + (sosreport_paths | default([]))
-      }}
-  register: sosreport_parse_cmd
-  changed_when: false
-  when:
-    - (sosreport_paths | default([]) | length) > 0
-    - report_scope_requires_sosreport_evidence | default(true) | bool
-
-- name: Merge optional sosreport evidence
-  vars:
-    parsed_sosreport_data: "{{ (sosreport_parse_cmd.stdout | from_json) if (sosreport_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
-    sosreport_sources: >-
-      {{
-        (parsed_sosreport_data.reports | default([]))
-        | map('combine', {'name': 'sosreport', 'type': 'node-archive', 'mode': 'offline', 'parser': 'parse_sosreport.py'})
-        | list
-      }}
-  ansible.builtin.set_fact:
-    sosreport_data: "{{ parsed_sosreport_data }}"
-    evidence_sources: "{{ evidence_sources + (sosreport_sources if (sosreport_parse_cmd.rc == 0 and (sosreport_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + ((sosreport_sources | length) if (sosreport_parse_cmd.rc == 0 and (sosreport_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['sosreport'] if ((sosreport_parse_cmd.rc == 0 and (sosreport_parse_cmd.stdout | default('') | trim | length > 0)) and ((sosreport_sources | length) > 0)) else [])), 'sosreport_count': (parsed_sosreport_data.summary.count | default(0))}, recursive=True) }}"
-    evidence_limitations: "{{ evidence_limitations | default([]) }}"
-  when:
-    - (sosreport_paths | default([]) | length) > 0
-    - report_scope_requires_sosreport_evidence | default(true) | bool
-
-- name: Parse optional advisor export evidence
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/parse_advisor_export.py"
-      - "{{ advisor_export_path }}"
-  register: advisor_export_parse_cmd
-  changed_when: false
-  when:
-    - advisor_export_path | default('') | trim | length > 0
-    - report_scope_requires_advisor_export_evidence | default(true) | bool
-
-- name: Merge optional advisor export evidence
-  vars:
-    advisor_export_payload: "{{ (advisor_export_parse_cmd.stdout | from_json) if (advisor_export_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
-    advisor_source:
-      name: advisor-export
-      type: report-file
-      mode: offline
-      path: "{{ advisor_export_path }}"
-      parser: parse_advisor_export.py
-  ansible.builtin.set_fact:
-    advisor_export_data: "{{ advisor_export_payload }}"
-    evidence_sources: "{{ evidence_sources + ([advisor_source] if (advisor_export_parse_cmd.rc == 0 and (advisor_export_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (advisor_export_parse_cmd.rc == 0 and (advisor_export_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['advisor-export'] if (advisor_export_parse_cmd.rc == 0 and (advisor_export_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'advisor_export_path': advisor_export_path}, recursive=True) }}"
-    evidence_limitations: "{{ evidence_limitations | default([]) }}"
-  when:
-    - advisor_export_path | default('') | trim | length > 0
-    - report_scope_requires_advisor_export_evidence | default(true) | bool
-
-- name: Parse optional insights archive evidence
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/parse_insights_archive.py"
-      - "{{ insights_archive_path }}"
-  register: insights_archive_parse_cmd
-  changed_when: false
-  when:
-    - insights_archive_path | default('') | trim | length > 0
-    - report_scope_requires_insights_archive_evidence | default(true) | bool
-
-- name: Merge optional insights archive evidence
-  vars:
-    insights_archive_payload: "{{ (insights_archive_parse_cmd.stdout | from_json) if (insights_archive_parse_cmd.stdout | default('') | trim | length > 0) else {} }}"
-    insights_archive_source:
-      name: insights-archive
-      type: archive-directory
-      mode: offline
-      path: "{{ insights_archive_path }}"
-      parser: parse_insights_archive.py
-  ansible.builtin.set_fact:
-    insights_archive_data: "{{ insights_archive_payload }}"
-    evidence_sources: "{{ evidence_sources + ([insights_archive_source] if (insights_archive_parse_cmd.rc == 0 and (insights_archive_parse_cmd.stdout | default('') | trim | length > 0)) else []) }}"
-    evidence_summary: "{{ evidence_summary | combine({'source_count': ((evidence_summary.source_count | default(0) | int) + (1 if (insights_archive_parse_cmd.rc == 0 and (insights_archive_parse_cmd.stdout | default('') | trim | length > 0)) else 0)), 'source_labels': ((evidence_summary.source_labels | default([])) + (['insights-archive'] if (insights_archive_parse_cmd.rc == 0 and (insights_archive_parse_cmd.stdout | default('') | trim | length > 0)) else [])), 'insights_archive_path': insights_archive_path}, recursive=True) }}"
-    evidence_limitations: "{{ evidence_limitations | default([]) }}"
-  when:
-    - insights_archive_path | default('') | trim | length > 0
-    - report_scope_requires_insights_archive_evidence | default(true) | bool
+    cluster_compare_data: "{{ optional_evidence_bundle_payload.cluster_compare_data | default(cluster_compare_data | default({})) }}"
+    inspect_data: "{{ optional_evidence_bundle_payload.inspect_data | default(inspect_data | default({})) }}"
+    managed_gates_data: "{{ optional_evidence_bundle_payload.managed_gates_data | default(managed_gates_data | default({})) }}"
+    sosreport_data: "{{ optional_evidence_bundle_payload.sosreport_data | default(sosreport_data | default({})) }}"
+    advisor_export_data: "{{ optional_evidence_bundle_payload.advisor_export_data | default(advisor_export_data | default({})) }}"
+    insights_archive_data: "{{ optional_evidence_bundle_payload.insights_archive_data | default(insights_archive_data | default({})) }}"
+    evidence_mode_resolved: "{{ optional_evidence_bundle_payload.evidence_mode_resolved | default(evidence_mode_resolved | default('inspect')) }}"
+    evidence_sources: "{{ optional_evidence_bundle_payload.evidence_sources | default(evidence_sources | default([])) }}"
+    evidence_summary: "{{ optional_evidence_bundle_payload.evidence_summary | default(evidence_summary | default({'source_count': 0, 'source_labels': []})) }}"
+    evidence_limitations: "{{ optional_evidence_bundle_payload.evidence_limitations | default(evidence_limitations | default([])) }}"

@@ -478,42 +478,9 @@ Platform engineering and SRE
 {{ merge_reference_urls(defaults, docs) }}
 {%- endmacro %}
 
-{% macro operating_questions(gap, why, action, owner, done, references='', notes='') -%}
-1. **What is the gap?**
-
-   {{ gap | replace('\n', ' ') | replace('|', '\\|') }}
-
-2. **Why does it matter?**
-
-   {{ why | replace('\n', ' ') | replace('|', '\\|') }}
-
-3. **What should be done?**
-
-   {{ action | replace('\n', ' ') | replace('|', '\\|') }}{% if notes | default('') | trim | length > 0 %}<br>
-
-    **Operating model note**
-
-    {{ notes | replace('\n', ' ') | replace('|', '\\|') }}{% endif %}{% if references | default('') | trim | length > 0 %}<br>
-
-    **Reference**
-
-{% for ref in references.split('\n') if ref | trim %}
-      - {{ ref | trim | replace('|', '\\|') }}
-{% endfor %}{% endif %}
-
-4. **Who likely owns the action?**
-
-   {{ owner | replace('\n', ' ') | replace('|', '\\|') }}
-
-5. **How can the team tell it is fixed?**
-
-   {{ done | replace('\n', ' ') | replace('|', '\\|') }}
-{%- endmacro %}
 
 {% set posture_profile = (cluster_health_profile | default({})).get('postures', {}) %}
 {% set capability_profile = (cluster_health_profile | default({})).get('capabilities', {}) %}
-{% set enabled_posture_items = posture_profile | dict2items | rejectattr('value.enabled', 'equalto', false) | list %}
-{% set enabled_capability_items = capability_profile | dict2items | rejectattr('value.enabled', 'equalto', false) | list %}
 {% set collected_report_payload = supportability_report_payload | default({}) %}
 {% set graph = analysis_graph | default({}) %}
 {% set live_support = live_support_data | default({}) %}
@@ -525,21 +492,43 @@ Platform engineering and SRE
 {% set report_collection_failures_list = report_collection_failures | default([]) %}
 {% set report_collection_skipped_list = report_collection_skipped_optional_commands | default([]) %}
 {% set report_collection_success_pct = report_collection_success_rate_pct | default(0) %}
-{% set clusteroperators_items = (graph.clusteroperators | default({})).get('items', []) %}
-{% set clusterversion_obj = graph.clusterversion | default({}) %}
+{% set template_graph_render = openshift_template_graph_render | default({}) %}
+{% set template_table_render = openshift_template_table_render | default({}) %}
+{% if template_graph_render.nodes is defined %}
+{% set nodes_items = template_graph_render.nodes %}
+{% else %}
 {% set nodes_items = ((graph.nodes | default({})).get('items', []) | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'Node') | selectattr('metadata.name', 'defined') | selectattr('status.nodeInfo', 'defined') | list) %}
+{% endif %}
+{% if template_graph_render.machineconfigpools is defined %}
+{% set machineconfigpools_items = template_graph_render.machineconfigpools %}
+{% else %}
 {% set machineconfigpools_items = (graph.machineconfigpools | default({})).get('items', []) %}
-{% set apiservices_items = (graph.apiservices | default({})).get('items', []) %}
-{% set routes_items = (graph.routes | default({})).get('items', []) %}
-{% set ingresses_items = (graph.ingresses | default({})).get('items', []) %}
-{% set buildconfigs_items = (graph.buildconfigs | default({})).get('items', []) %}
-{% set builds_items = (graph.builds | default({})).get('items', []) %}
-{% set imagestreams_items = (graph.imagestreams | default({})).get('items', []) %}
-{% set pipelines_items = (graph.pipelines | default({})).get('items', []) %}
-{% set pipelineruns_items = (graph.pipelineruns | default({})).get('items', []) %}
-{% set securitycontextconstraints_items = (graph.securitycontextconstraints | default({})).get('items', []) %}
-{% set secrets_items = (graph.secrets | default({})).get('items', []) %}
-{% set compliancesuites_items = (graph.compliancesuites | default({})).get('items', []) %}
+{% endif %}
+{% if template_graph_render.apiservices_count is defined %}
+{% set apiservices_count = template_graph_render.apiservices_count | int %}
+{% else %}
+{% set apiservices_count = (graph.apiservices | default({})).get('items', []) | length %}
+{% endif %}
+{% if template_graph_render.routes_count is defined %}
+{% set routes_count = template_graph_render.routes_count | int %}
+{% else %}
+{% set routes_count = (graph.routes | default({})).get('items', []) | length %}
+{% endif %}
+{% if template_graph_render.ingresses_count is defined %}
+{% set ingresses_count = template_graph_render.ingresses_count | int %}
+{% else %}
+{% set ingresses_count = (graph.ingresses | default({})).get('items', []) | length %}
+{% endif %}
+{% if template_graph_render.securitycontextconstraints_count is defined %}
+{% set securitycontextconstraints_count = template_graph_render.securitycontextconstraints_count | int %}
+{% else %}
+{% set securitycontextconstraints_count = (graph.securitycontextconstraints | default({})).get('items', []) | length %}
+{% endif %}
+{% if template_graph_render.secrets_count is defined %}
+{% set secrets_count = template_graph_render.secrets_count | int %}
+{% else %}
+{% set secrets_count = (graph.secrets | default({})).get('items', []) | length %}
+{% endif %}
 {% set report_context_checkpoint_stage = report_resume_last_completed_stage | default('none') or 'none' %}
 {% set report_context_resume_next_stage = report_resume_last_resume_next_stage | default('none') or 'none' %}
 {% set report_context_value = report_context | default(oc_context_cmd.stdout | default('unknown') | trim) %}
@@ -556,7 +545,6 @@ Platform engineering and SRE
 
 ## Cluster Health Overview
 
-{% set optional_access_denied_count = report_collection_skipped_list | selectattr('category', 'equalto', 'optional-access-denied') | list | length %}
 {% set top_risk_areas = [] %}
 {% if (degraded_operators | default([]) | length) > 0 or (unavailable_operators | default([]) | length) > 0 %}
 {% set _ = top_risk_areas.append('cluster operators are degraded or unavailable') %}
@@ -607,9 +595,7 @@ Platform engineering and SRE
 | Primary risk themes | `{{ top_risk_areas | length }}` | {{ status_badge('WARN' if (top_risk_areas | length) > 0 else 'OK') }} |
 | Priority actions | `{{ derived_priority_count }}` | {{ status_badge('WARN' if derived_priority_count > 0 else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - `{{ top_risk_areas[:3] | join('; ') or 'no major risk themes were detected in this run' }}`.
 
 ### Findings
@@ -622,7 +608,7 @@ Platform engineering and SRE
 | Priority actions | `{{ derived_priority_count }}` |
 | First recommended action | {{ first_recommended_action }} |
 
-#### Action Plan
+**Action Plan**
 
 {% if top_priority_items | length == 0 and (top_risk_areas | length) == 0 %}
 | When | Outcome | Why it matters | Suggested owner | Success signal |
@@ -642,9 +628,9 @@ Platform engineering and SRE
 {% endfor %}
 {% endif %}
 
-### Control Plane Signals
+**Control Plane Signals**
 
-#### API Readiness
+**API Readiness**
 
 | Signal | Value | Status |
 | --- | --- | --- |
@@ -716,21 +702,29 @@ Platform engineering and SRE
 {% if control_plane_query_errors | length > 0 %}
 | Metrics Signal | Detail |
 | --- | --- |
-| `Prometheus query issues` | `{% for item in control_plane_query_errors | dict2items | sort(attribute='key') %}{{ item.key }}={{ item.value | replace('|', '\\|') }}{% if not loop.last %}; {% endif %}{% endfor %}` |
+{% set control_plane_query_error_rows = template_table_render.control_plane_query_error_rows | default([]) %}
+| `Prometheus query issues` | `{% if control_plane_query_error_rows | length > 0 %}{% for item in control_plane_query_error_rows %}{{ item.key }}={{ item.value | replace('|', '\\|') }}{% if not loop.last %}; {% endif %}{% endfor %}{% else %}{% for item in control_plane_query_errors | dict2items | sort(attribute='key') %}{{ item.key }}={{ item.value | replace('|', '\\|') }}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}` |
 {% endif %}
 
 {% if (firing_alerts_by_severity | default({}) | length) > 0 %}
-#### Firing Alert Severity Summary
+**Firing Alert Severity Summary**
 
 | Severity | Count |
 | --- | --- |
+{% set firing_alert_severity_rows = template_table_render.firing_alert_severity_rows | default([]) %}
+{% if firing_alert_severity_rows | length > 0 %}
+{% for item in firing_alert_severity_rows %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (firing_alerts_by_severity | dict2items | sort(attribute='key')) %}
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if top_alert_groups | default([]) | length > 0 %}
-#### Top Firing Alert Names
+**Top Firing Alert Names**
 
 | Alert | Count |
 | --- | --- |
@@ -740,7 +734,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_alert_namespaces | default([]) | length > 0 %}
-#### Firing Alerts By Namespace
+**Firing Alerts By Namespace**
 
 | Namespace | Alert Count |
 | --- | --- |
@@ -785,22 +779,8 @@ Platform engineering and SRE
 | Evidence confidence | `{{ supportability_confidence }}` | {{ status_badge('WARN' if supportability_confidence in ['low', 'unknown', 'not-derived'] else 'OK') }} |
 | Node diagnostics | `{{ supportability_node_diagnostics_verdict }}` | {{ status_badge('WARN' if supportability_node_diagnostics_verdict in ['review-required', 'insufficient-evidence', 'not-derived', 'unknown'] else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if supportability_needs_review %}{% if supportability_confidence in ['low', 'unknown', 'not-derived'] %}The report confidence is limited: supportability verdict=`{{ supportability_verdict }}`, health=`{{ supportability_health }}`, confidence=`{{ supportability_confidence }}`.{% else %}Supportability posture still needs follow-up: verdict=`{{ supportability_verdict }}`, health=`{{ supportability_health }}`, confidence=`{{ supportability_confidence }}`.{% endif %} Missing or weak supportability evidence can hide unsupported configuration, incomplete troubleshooting context, or metric-backed health issues.{% else %}The supportability evidence is sufficient for this run: verdict=`{{ supportability_verdict }}` and confidence=`{{ supportability_confidence }}`.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Supportability is ' ~ supportability_verdict ~ ' with evidence confidence ' ~ supportability_confidence ~ '.',
-  'Weak or incomplete support evidence can hide unsupported configuration, unresolved product risk, or missing diagnostics during escalation.',
-  (recommended_action_with_posture_docs('Resolve the named unsupported, review-required, or incomplete supportability conditions before using lower-priority sections for final sign-off.', 'WARNING', ['supportability', 'collection'], 'evidence_and_supportability') if supportability_needs_review else recommended_action_with_posture_docs('No supportability remediation is required for this posture.', 'OK', ['supportability', 'collection'], 'evidence_and_supportability')),
-  posture_owner('evidence_and_supportability', 'supportability'),
-  posture_verification('evidence_and_supportability', gap_done_when('CRITICAL' if supportability_verdict in ['unsupported-risk', 'critical'] else ('WARNING' if supportability_needs_review else ('OK' if supportability_verdict in ['supported', 'healthy'] else 'UNKNOWN')))),
-  posture_reference_urls(['supportability', 'collection'], 'evidence_and_supportability'),
-  posture_notes('evidence_and_supportability')
-) }}
 
 ### Findings
 
@@ -893,22 +873,8 @@ Platform engineering and SRE
 | API and etcd runtime | `{{ platform_api_etcd_runtime_value }}` | {{ status_badge('CRITICAL' if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 else ('WARN' if (platform_health_summary.apiserver_runtime_degraded | default(0) | int) > 0 or (platform_health_summary.etcd_runtime_degraded | default(0) | int) > 0 else ('INFO' if platform_api_etcd_runtime_has_evidence_gaps else 'OK'))) }} |
 | Ingress and APIService access | `{{ platform_access_value }}` | {{ status_badge('CRITICAL' if platform_access_blockers > 0 else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if platform_runtime_has_findings or (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 %}Core platform runtime needs review: {{ platform_reason or 'one or more platform runtime signals require review' }}. Current blockers are `operators={{ platform_operator_blockers }}`, `nodeOrMcp={{ platform_node_blockers }}`, `apiOrEtcd={{ platform_control_plane_blockers }}`, and `ingressOrApiService={{ platform_access_blockers }}`. {% if (platform_health_summary.apiservice_issues | default(0) | int) > 0 %}`{{ platform_health_summary.apiservice_issues }}` APIService registrations need backing Service, Endpoint, serving certificate, or CA-bundle remediation. {% endif %}{% if (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 %}`{{ platform_health_summary.operators_progressing_high_impact }}` high-impact operators are progressing and should settle before upgrade or workload-change decisions. {% endif %}{% else %}No material operator, node, MCP, API, etcd, ingress, route, APIService, platform pod, or registry runtime gaps were detected for this posture.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  (platform_reason or ('platform status is ' ~ platform_status)),
-  'Core platform instability affects control-plane availability, scheduling, networking, and every dependent workload.',
-  (recommended_action_with_posture_docs('Stabilize core platform health first: restore degraded or unavailable control-plane components, recover not-ready nodes or MCP degradation, and resolve API, ingress, or etcd runtime faults before working lower-priority posture items.', 'CRITICAL' if platform_status == 'CRITICAL' else ('WARNING' if platform_status == 'WARNING' else 'OK'), ['core', 'nodes'], 'platform_health') if platform_runtime_has_findings or (platform_health_summary.operators_progressing_high_impact | default(0) | int) > 0 else recommended_action_with_posture_docs('No platform-health remediation is required for this posture.', 'OK', ['core'], 'platform_health')),
-  posture_owner('platform_health', 'platform'),
-  posture_verification('platform_health', gap_done_when('CRITICAL' if platform_status == 'CRITICAL' else ('WARNING' if platform_status == 'WARNING' else ('OK' if platform_status == 'HEALTHY' else 'UNKNOWN')))),
-  posture_reference_urls(['core', 'nodes'], 'platform_health'),
-  posture_notes('platform_health')
-) }}
 
 ### Findings
 
@@ -920,19 +886,19 @@ Platform engineering and SRE
 | `Control-plane diagnostics` | `{% if platform_etcd_diag_verdict == 'unsupported-risk' or platform_omc_diag_verdict == 'unsupported-risk' %}CRITICAL{% elif platform_etcd_diag_verdict == 'review-required' or platform_omc_diag_verdict == 'review-required' %}WARNING{% elif platform_control_plane_diagnostics_missing %}INFO{% else %}OK{% endif %}` | `etcdDiagnostics={{ platform_etcd_diag_verdict }}, omcDiagnostics={{ platform_omc_diag_verdict }}` | `Unsupported or incomplete control-plane diagnostics can hide etcd instability, alerting blind spots, or escalation risk even when live runtime signals look clean.` | `etcdFindings={{ platform_etcd_diag_findings | length }}, omcFindings={{ platform_omc_findings | length }}` | `{% if platform_etcd_diag_verdict == 'unsupported-risk' or platform_omc_diag_verdict == 'unsupported-risk' %}{{ recommended_action_with_docs('Resolve unsupported control-plane diagnostic findings before treating platform health as clean, even if live API and etcd runtime signals are currently green.', 'CRITICAL', ['core', 'observability']) }}{% elif platform_etcd_diag_verdict == 'review-required' or platform_omc_diag_verdict == 'review-required' %}{{ recommended_action_with_docs('Review control-plane diagnostic findings and close the remaining etcd or OMC evidence gaps before treating platform health as steady state.', 'WARNING', ['core', 'observability']) }}{% elif platform_control_plane_diagnostics_missing %}{{ recommended_action_with_docs('Control-plane diagnostics were not collected in this run. Confirm whether that absence is intentional for this report mode or capture targeted etcd and OMC evidence before treating platform health as fully evidenced.', 'INFO', ['core', 'observability']) }}{% else %}{{ recommended_action_with_docs('No control-plane diagnostic remediation is required for this posture.', 'OK', ['core', 'observability']) }}{% endif %}` | `{{ gap_owner('platform') }}` | `{% if platform_etcd_diag_verdict == 'unsupported-risk' or platform_omc_diag_verdict == 'unsupported-risk' %}{{ gap_done_when('CRITICAL') }}{% elif platform_etcd_diag_verdict == 'review-required' or platform_omc_diag_verdict == 'review-required' %}{{ gap_done_when('WARNING') }}{% elif platform_control_plane_diagnostics_missing %}The operating expectation is confirmed and any follow-up decision is documented.{% else %}{{ gap_done_when('OK') }}{% endif %}` |
 | `Ingress and APIService access` | `{% if platform_access_blockers > 0 %}CRITICAL{% else %}OK{% endif %}` | `routes={{ platform_health_summary.route_issues | default(0) }}, ingress={{ platform_health_summary.ingress_issues | default(0) }}, ingressControllers={{ platform_health_summary.ingresscontroller_issues | default(0) }}, apiServices={{ platform_health_summary.apiservice_issues | default(0) }}` | `Broken ingress, route, or aggregated API paths can cause broad application or platform-service outages.` | `routeHostConflicts={{ platform_health_summary.route_host_conflicts | default(0) }}, ingressHostConflicts={{ platform_health_summary.ingress_host_conflicts | default(0) }}` | `{% if platform_access_blockers > 0 %}{{ recommended_action_with_docs('Repair ingress-controller conditions, route or ingress admission issues, host conflicts, and unavailable APIService backing services or CA bundles.', 'CRITICAL', ['network', 'core']) }}{% else %}{{ recommended_action_with_docs('No ingress or APIService runtime remediation is required for this posture.', 'OK', ['network', 'core']) }}{% endif %}` | `{{ gap_owner('network') }}` | `{{ gap_done_when('CRITICAL' if platform_access_blockers > 0 else 'OK') }}` |
 
-#### APIService Availability
+**APIService Availability**
 {% if top_apiservice_issues | default([]) | length > 0 %}
 {% set apiservice_items = top_apiservice_issues %}
 {% set apiservice_use_status_badge = true %}
 {% include 'partials/openshift_apiservice_findings.md.j2' %}
-{% elif apiservices_items | length > 0 %}
+{% elif apiservices_count > 0 %}
 | Check | Result | Detail |
 | --- | --- | --- |
 | `APIService availability` | `no issues detected` | `No APIService availability issues were detected in the available APIService registrations.` |
 {% endif %}
 
 {% if (audit_report.domains.platform_health.etcd_ocp_diag_summary.present | default(false)) or (audit_report.domains.platform_health.etcd_ocp_diag_findings | default([]) | length > 0) %}
-#### etcd Must-Gather Diagnostics
+**etcd Must-Gather Diagnostics**
 
 {% set etcd_diag_summary = audit_report.domains.platform_health.etcd_ocp_diag_summary %}
 {% set etcd_diag_findings = audit_report.domains.platform_health.etcd_ocp_diag_findings | default([]) %}
@@ -940,7 +906,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if (audit_report.domains.platform_health.omc_summary.present | default(false)) or (audit_report.domains.platform_health.omc_findings | default([]) | length > 0) %}
-#### OMC Must-Gather Diagnostics
+**OMC Must-Gather Diagnostics**
 
 {% set omc_summary = audit_report.domains.platform_health.omc_summary %}
 {% set omc_findings = audit_report.domains.platform_health.omc_findings | default([]) %}
@@ -1003,22 +969,8 @@ Platform engineering and SRE
 | Utilization hotspot count | `{{ node_utilization_hotspot_display }}` | {{ status_badge('WARN' if node_hotspot_count > 0 else ('INFO' if node_metric_evidence_missing else 'OK')) }} |
 | Node diagnostics verdict | `{{ node_health_capacity_summary.diagnostics_verdict | default('unknown') }}` | {{ status_badge('OK' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['supported', 'basic-supported'] else ('WARN' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['review-required', 'insufficient-evidence'] else ('INFO' if (node_health_capacity_summary.diagnostics_verdict | default('unknown')) in ['node-level-not-requested', 'node-level-no-targets'] else 'UNKNOWN'))) }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if node_has_actionable_capacity_findings or node_has_diagnostics_gap %}{% set ns = namespace(items=[]) %}{% if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (node_health_capacity_summary.not_ready_node_count | string) ~ '` nodes are NotReady.') %}{% endif %}{% if (node_health_capacity_summary.node_pressure_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (node_health_capacity_summary.node_pressure_count | string) ~ '` nodes report pressure.') %}{% endif %}{% if (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int) > 0 or (node_health_capacity_summary.high_pod_density_node_count | default(0) | int) > 0 %}{% set _ = ns.items.append('pod density is high or critical on `' ~ (((node_health_capacity_summary.high_pod_density_node_count | default(0) | int) + (node_health_capacity_summary.critical_pod_density_node_count | default(0) | int)) | string) ~ '` nodes.') %}{% endif %}{% if (node_health_capacity_summary.quota_pressure_finding_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (node_health_capacity_summary.quota_pressure_finding_count | string) ~ '` quota pressure findings were detected.') %}{% endif %}{% if (node_health_capacity_summary.high_cpu_node_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (node_health_capacity_summary.high_cpu_node_count | string) ~ '` nodes show high CPU utilization.') %}{% endif %}{% if (node_health_capacity_summary.high_memory_node_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (node_health_capacity_summary.high_memory_node_count | string) ~ '` nodes show high memory utilization.') %}{% endif %}{% if (node_health_capacity_summary.high_disk_node_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (node_health_capacity_summary.high_disk_node_count | string) ~ '` nodes show high disk utilization.') %}{% endif %}{% if node_has_diagnostics_gap %}{% set _ = ns.items.append('node diagnostic confidence is `' ~ (node_health_capacity_summary.diagnostics_verdict | default('unknown')) ~ '`.') %}{% endif %}Node gaps detected: {{ prose_clause_join(ns.items) }}{% elif node_inventory_missing %}Node inventory was not available to this report, so per-node readiness, role, and density evidence was not fully assessed.{% elif (node_health_capacity_summary.diagnostics_verdict | default('unknown')) == 'basic-supported' %}No NotReady nodes, node pressure, pod-density hotspots, quota pressure, or high utilization nodes were detected; diagnostic coverage is sufficient for object-level node review.{% elif node_metric_evidence_missing %}Object-state node checks did not find actionable node health or capacity gaps; utilization hotspot confidence is limited because metric-backed evidence was not available.{% else %}No NotReady nodes, node pressure, pod-density hotspots, quota pressure, high utilization nodes, or node-diagnostic gaps were detected.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  ('Node posture is partially assessed because node inventory was unavailable; summary status=' ~ (node_health_capacity_summary.status | default('unknown')) ~ ' and diagnostics verdict=' ~ (node_health_capacity_summary.diagnostics_verdict | default('unknown')) ~ '.') if node_inventory_missing else ('Node posture is ' ~ (node_health_capacity_summary.status | default('unknown')) ~ ' with diagnostics verdict ' ~ (node_health_capacity_summary.diagnostics_verdict | default('unknown')) ~ '.'),
-  'Node instability or saturation reduces schedulable capacity and slows recovery from workload or host failures.',
-  (recommended_action_with_posture_docs('Review node readiness, pressure, pod density, quotas, utilization hotspots, and targeted node diagnostics before treating node capacity as healthy.', 'WARNING', ['nodes', 'capacity', 'collection'], 'node_health_and_capacity') if (node_has_actionable_capacity_findings or node_has_diagnostics_gap) else (recommended_action_with_posture_docs('Collect full node inventory before treating this posture as fully assessed.', 'INFO', ['nodes', 'capacity', 'collection'], 'node_health_and_capacity') if node_inventory_missing else (recommended_action_with_posture_docs('Metric-backed utilization evidence was limited in this run; treat capacity hotspot conclusions as object-state only until metrics are collected.', 'INFO', ['nodes', 'capacity', 'collection'], 'node_health_and_capacity') if node_metric_evidence_missing else recommended_action_with_posture_docs('No node-health or node-capacity remediation is required for this posture.', 'OK', ['nodes', 'capacity', 'collection'], 'node_health_and_capacity')))),
-  posture_owner('node_health_and_capacity', 'node'),
-  posture_verification('node_health_and_capacity', gap_done_when('CRITICAL' if (node_health_capacity_summary.not_ready_node_count | default(0) | int) > 0 else ('WARNING' if (node_has_actionable_capacity_findings or node_has_diagnostics_gap) else ('INFO' if (node_inventory_missing or node_metric_evidence_missing) else 'OK')))),
-  posture_reference_urls(['nodes', 'capacity', 'collection'], 'node_health_and_capacity'),
-  posture_notes('node_health_and_capacity')
-) }}
 
 ### Findings
 
@@ -1037,18 +989,34 @@ Platform engineering and SRE
 {% else %}
 | Node | Roles | Ready | Pressures | Kubelet | OS Image |
 | --- | --- | --- | --- | --- | --- |
+{% if (nodes_items_section[0].ready_status is defined) %}
+{% for item in nodes_items_section %}
+| `{{ item.name | default('unknown') }}` | `{{ item.roles | default('worker') }}` | {{ status_badge(item.ready_badge_status | default('OK' if item.ready_status | default('Unknown') == 'True' else ('UNKNOWN' if item.ready_status | default('Unknown') == 'Unknown' else 'WARN'))) }} | `{{ item.pressures | default('None') }}` | `{{ item.kubelet_version | default('unknown') }}` | `{{ item.os_image | default('unknown') }}` |
+{% endfor %}
+{% else %}
 {% for item in nodes_items_section %}
 {% set item_status = item.status | default({}) %}
 {% set item_node_info = item_status.nodeInfo | default({}) %}
 {% set item_metadata = item.metadata | default({}) %}
 {% set item_name = item_metadata.name | default(item.name | default('unknown')) %}
 {% set item_labels = item_metadata.labels | default(item.labels | default({})) %}
+{% if item.ready_status is defined %}
+{% set item_ready_status = item.ready_status %}
+{% set item_ready_badge_status = item.ready_badge_status | default('OK' if item_ready_status == 'True' else ('UNKNOWN' if item_ready_status == 'Unknown' else 'WARN')) %}
+{% set item_roles = item.roles | default('worker') %}
+{% set item_pressures = item.pressures | default('None') %}
+{% else %}
 {% set item_ready_status = ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first) | default(item.ready | default('Unknown'))) %}
-| `{{ item_name }}` | `{{ item_labels | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | join(', ') or 'worker' }}` | {{ status_badge('OK' if item_ready_status == 'True' else ('UNKNOWN' if item_ready_status == 'Unknown' else 'WARN')) }} | `{{ item_status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | join(', ') or 'None' }}` | `{{ item_node_info.kubeletVersion | default(item.kubelet_version | default('unknown')) }}` | `{{ item_node_info.osImage | default(item.os_image | default('unknown')) }}` |
+{% set item_ready_badge_status = 'OK' if item_ready_status == 'True' else ('UNKNOWN' if item_ready_status == 'Unknown' else 'WARN') %}
+{% set item_roles = item_labels | dict2items | map(attribute='key') | select('match', '^node-role.kubernetes.io/') | map('regex_replace', '^node-role.kubernetes.io/', '') | join(', ') or 'worker' %}
+{% set item_pressures = item_status.conditions | default([]) | selectattr('status', 'equalto', 'True') | map(attribute='type') | select('in', ['MemoryPressure', 'DiskPressure', 'PIDPressure', 'OutOfDisk', 'NetworkUnavailable']) | join(', ') or 'None' %}
+{% endif %}
+| `{{ item_name }}` | `{{ item_roles }}` | {{ status_badge(item_ready_badge_status) }} | `{{ item_pressures }}` | `{{ item_node_info.kubeletVersion | default(item.kubelet_version | default('unknown')) }}` | `{{ item_node_info.osImage | default(item.os_image | default('unknown')) }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
-#### MachineConfigPool Inventory
+**MachineConfigPool Inventory**
 
 {% if machineconfigpools_items_section | length == 0 %}
 | Signal | Value |
@@ -1058,19 +1026,37 @@ Platform engineering and SRE
 {% else %}
 | MCP | Updated | Updating | Degraded | Machine Count | Ready Count | Updated Count |
 | --- | --- | --- | --- | --- | --- | --- |
+{% if (machineconfigpools_items_section[0].updated_badge_status is defined) %}
+{% for item in machineconfigpools_items_section %}
+| `{{ item.name | default('unknown') }}` | {{ status_badge(item.updated_badge_status | default('UNKNOWN')) }} | {{ status_badge(item.updating_badge_status | default('UNKNOWN')) }} | {{ status_badge(item.degraded_badge_status | default('UNKNOWN')) }} | `{{ item.machine_count | default('n/a') }}` | `{{ item.ready_machine_count | default('n/a') }}` | `{{ item.updated_machine_count | default('n/a') }}` |
+{% endfor %}
+{% else %}
 {% for item in machineconfigpools_items_section %}
 {% set item_status = item.status | default({}) %}
 {% set item_metadata = item.metadata | default({}) %}
 {% set item_name = item_metadata.name | default(item.name | default('unknown')) %}
+{% if item.updated_badge_status is defined %}
+{% set item_updated = item.updated | default('Unknown') %}
+{% set item_updating = item.updating | default('Unknown') %}
+{% set item_degraded = item.degraded | default('Unknown') %}
+{% set item_updated_badge_status = item.updated_badge_status %}
+{% set item_updating_badge_status = item.updating_badge_status | default('INFO' if item_updating == 'True' else ('UNKNOWN' if item_updating == 'Unknown' else 'OK')) %}
+{% set item_degraded_badge_status = item.degraded_badge_status | default('WARN' if item_degraded == 'True' else ('UNKNOWN' if item_degraded == 'Unknown' else 'OK')) %}
+{% else %}
 {% set item_updated = ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Updated') | map(attribute='status') | first) | default(item.updated | default('Unknown'))) %}
 {% set item_updating = ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | first) | default(item.updating | default('Unknown'))) %}
 {% set item_degraded = ((item_status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default(item.degraded | default('Unknown'))) %}
-| `{{ item_name }}` | {{ status_badge('OK' if item_updated == 'True' else ('UNKNOWN' if item_updated == 'Unknown' else 'WARN')) }} | {{ status_badge('INFO' if item_updating == 'True' else ('UNKNOWN' if item_updating == 'Unknown' else 'OK')) }} | {{ status_badge('WARN' if item_degraded == 'True' else ('UNKNOWN' if item_degraded == 'Unknown' else 'OK')) }} | `{{ item_status.machineCount | default(item.machine_count | default('n/a')) }}` | `{{ item_status.readyMachineCount | default(item.ready_machine_count | default('n/a')) }}` | `{{ item_status.updatedMachineCount | default(item.updated_machine_count | default('n/a')) }}` |
+{% set item_updated_badge_status = 'OK' if item_updated == 'True' else ('UNKNOWN' if item_updated == 'Unknown' else 'WARN') %}
+{% set item_updating_badge_status = 'INFO' if item_updating == 'True' else ('UNKNOWN' if item_updating == 'Unknown' else 'OK') %}
+{% set item_degraded_badge_status = 'WARN' if item_degraded == 'True' else ('UNKNOWN' if item_degraded == 'Unknown' else 'OK') %}
+{% endif %}
+| `{{ item_name }}` | {{ status_badge(item_updated_badge_status) }} | {{ status_badge(item_updating_badge_status) }} | {{ status_badge(item_degraded_badge_status) }} | `{{ item_status.machineCount | default(item.machine_count | default('n/a')) }}` | `{{ item_status.readyMachineCount | default(item.ready_machine_count | default('n/a')) }}` | `{{ item_status.updatedMachineCount | default(item.updated_machine_count | default('n/a')) }}` |
 {% endfor %}
+{% endif %}
 {% endif %}
 
 {% if top_quota_pressure_findings_section | length > 0 %}
-#### Namespace Quota Pressure
+**Namespace Quota Pressure**
 
 | Namespace | Quota | Resource | Used | Hard | Percent |
 | --- | --- | --- | --- | --- | --- |
@@ -1080,10 +1066,18 @@ Platform engineering and SRE
 {% endif %}
 
 {% if node_capacity_summary_by_density_desc_section | length > 0 %}
-#### Highest Pod Density Nodes
+{% set node_capacity_density_desc_rows = template_table_render.node_capacity_density_desc_rows | default([]) %}
+{% set node_capacity_density_asc_rows = template_table_render.node_capacity_density_asc_rows | default([]) %}
+**Highest Pod Density Nodes**
 
 | Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
 | --- | --- | --- | --- | --- | --- |
+{% if node_capacity_density_desc_rows | length > 0 %}
+{% for item in node_capacity_density_desc_rows %}
+{% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | `{{ item.requested_cpu_pct | default('unknown') }}` |
+{% endfor %}
+{% else %}
 {% set highest_density_seen = namespace(nodes=[]) %}
 {% for item in node_capacity_summary_by_density_desc_section[:node_density_table_limit] %}
 {% if (item.name | default('unknown')) not in highest_density_seen.nodes %}
@@ -1092,11 +1086,18 @@ Platform engineering and SRE
 | `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | `{{ item.requested_cpu_pct | default('unknown') }}` |
 {% endif %}
 {% endfor %}
+{% endif %}
 
-#### Lowest Pod Density Nodes
+**Lowest Pod Density Nodes**
 
 | Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Requested CPU % |
 | --- | --- | --- | --- | --- | --- |
+{% if node_capacity_density_asc_rows | length > 0 %}
+{% for item in node_capacity_density_asc_rows %}
+{% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | `{{ item.requested_cpu_pct | default('unknown') }}` |
+{% endfor %}
+{% else %}
 {% set lowest_density_seen = namespace(nodes=[]) %}
 {% for item in node_capacity_summary_by_density_asc_section[:node_density_table_limit] %}
 {% if (item.name | default('unknown')) not in lowest_density_seen.nodes %}
@@ -1106,9 +1107,10 @@ Platform engineering and SRE
 {% endif %}
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if high_pod_density_nodes_section | length > 0 or high_cpu_nodes_section | length > 0 or high_memory_nodes_section | length > 0 or high_disk_nodes_section | length > 0 %}
-#### Metric-Backed Node Hotspots
+**Metric-Backed Node Hotspots**
 
 | Signal | Count |
 | --- | --- |
@@ -1174,23 +1176,9 @@ Platform engineering and SRE
 | Machine remediation findings | `{{ backup_recovery_summary.machine_healthcheck_findings | default(0) }}` | {{ status_badge('WARN' if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 else 'OK') }} |
 | Storage provider risk | `external={{ backup_recovery_summary.external_storage_provider_detected | default(false) }}, localOrEphemeralOnly={{ backup_recovery_summary.local_or_ephemeral_only_risk | default(false) }}` | {{ status_badge('WARN' if (backup_recovery_summary.local_or_ephemeral_only_risk | default(false)) else ('OK' if (backup_recovery_summary.external_storage_provider_detected | default(false)) else 'INFO')) }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {{ backup_workload_summary_line | trim }}
 - {{ backup_control_plane_summary_line | trim }}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Backup and recovery posture is ' ~ (backup_recovery_summary.status | default('unknown')) ~ ' with backup schedules=' ~ (backup_recovery_summary.backup_schedule_count | default(0) | string) ~ ', clean backups=' ~ (backup_recovery_summary.clean_successful_backup_count | default(0) | string) ~ ', and clean restores=' ~ (backup_recovery_summary.clean_completed_restore_count | default(0) | string) ~ '.',
-  'Without proven backup and restore paths, incidents can become prolonged outages or irrecoverable data loss.',
-  recommended_action_with_posture_docs('Validate OADP tooling, usable backup locations, active schedules, successful backups, restore drills, and control-plane backup evidence before treating disaster recovery as credible.', 'CRITICAL' if backup_recovery_has_findings else ('WARNING' if backup_control_plane_gap else 'OK'), ['backup'], 'backup_and_disaster_recovery'),
-  posture_owner('backup_and_disaster_recovery', 'backup'),
-  posture_verification('backup_and_disaster_recovery', gap_done_when('CRITICAL' if not (backup_recovery_summary.backup_tooling_detected | default(false)) or (backup_recovery_summary.available_backup_storage_location_count | default(0) | int) == 0 or (backup_recovery_summary.backup_schedule_count | default(0) | int) == 0 or (backup_recovery_summary.clean_successful_backup_count | default(0) | int) == 0 else ('WARNING' if (backup_recovery_has_findings or backup_control_plane_gap) else 'OK'))),
-  posture_reference_urls(['backup'], 'backup_and_disaster_recovery'),
-  posture_notes('backup_and_disaster_recovery')
-) }}
 
 ### Findings
 
@@ -1203,7 +1191,7 @@ Platform engineering and SRE
 | `Machine remediation` | `{% if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `expected={{ backup_machinehealthcheck_expected }}, findings={{ backup_recovery_summary.machine_healthcheck_findings | default(0) }}` | `Missing or paused MachineHealthChecks reduce automated worker recovery during node failure.` | `machineHealthChecks={{ machinehealthcheck_summary_section | default([]) | length }}, findings={{ backup_recovery_summary.machine_healthcheck_findings | default(0) }}` | `{% if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 %}{{ recommended_action_with_docs('Repair MachineHealthCheck coverage, paused state, or selectors for worker pools where automated remediation is expected.', 'WARNING', ['backup', 'nodes']) }}{% elif backup_machinehealthcheck_expected %}{{ recommended_action_with_docs('No machine-remediation finding was recorded here, but MachineHealthCheck coverage is still expected for this cluster shape; confirm that expectation in the Day 2 capability review.', 'OK', ['backup', 'nodes']) }}{% else %}{{ recommended_action_with_docs('No machine-remediation action is required for this posture because Machine API-based worker auto-remediation is not expected for this cluster shape.', 'OK', ['backup', 'nodes']) }}{% endif %}` | `{{ gap_owner('backup') }}` | `{{ gap_done_when('WARNING' if (backup_recovery_summary.machine_healthcheck_findings | default(0) | int) > 0 else 'OK') }}` |
 
 {% if dataprotectionapplication_summary | default([]) | length > 0 %}
-#### Data Protection Applications
+**Data Protection Applications**
 
 | Namespace | Name | Phase | Reconciled | Reason |
 | --- | --- | --- | --- | --- |
@@ -1213,7 +1201,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if backup_posture_findings_section | default([]) | length > 0 %}
-#### Backup Posture
+**Backup Posture**
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -1223,7 +1211,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if machinehealthcheck_summary_section | default([]) | length > 0 %}
-#### Machine Health Checks
+**Machine Health Checks**
 
 | Namespace | Name | Paused | Max Unhealthy | Expected Machines | Current Healthy | Empty Selector |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1233,7 +1221,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if machine_healthcheck_findings_section | default([]) | length > 0 %}
-#### Machine Remediation
+**Machine Remediation**
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -1243,7 +1231,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if backup_storage_location_summary_section | default([]) | length > 0 %}
-#### Backup Storage Locations
+**Backup Storage Locations**
 
 | Namespace | Name | Provider | Default | Available | Bucket | Prefix |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1253,7 +1241,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if backup_schedule_summary_section | default([]) | length > 0 %}
-#### Backup Schedules
+**Backup Schedules**
 
 | Namespace | Name | Paused | Schedule | Last Backup | Storage Location |
 | --- | --- | --- | --- | --- | --- |
@@ -1263,7 +1251,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if backup_summary_section | default([]) | length > 0 %}
-#### Recent Backups
+**Recent Backups**
 
 | Namespace | Name | Phase | Storage Location | Completed | Warnings | Errors |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1273,7 +1261,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if restore_summary_section | default([]) | length > 0 %}
-#### Recent Restores
+**Recent Restores**
 
 | Namespace | Name | Phase | Backup | Completed | Warnings | Errors |
 | --- | --- | --- | --- | --- | --- |
@@ -1282,7 +1270,7 @@ Platform engineering and SRE
 {% endfor %}
 {% endif %}
 
-#### Storage Posture
+**Storage Posture**
 
 | Signal | Value |
 | --- | --- |
@@ -1296,43 +1284,65 @@ Platform engineering and SRE
 | External storage provider detected | `{{ storage_posture_summary.has_external_storage_provider | default(false) }}` |
 | Local or ephemeral storage only risk | `{{ storage_posture_summary.local_or_ephemeral_only_risk | default(false) }}` |
 
-#### Storage Provider Summary
+**Storage Provider Summary**
 
 | Signal | Value |
 | --- | --- |
 | External storage provider posture | `{% if storage_posture_summary.external_storageclass_names | default([]) | length > 0 %}detected via StorageClass{% elif storage_posture_summary.has_external_storage_provider | default(false) %}detected via bound volumes{% else %}not detected{% endif %}` |
 | External StorageClasses | `{% if storage_posture_summary.external_storageclass_names | default([]) | length > 0 %}{{ storage_posture_summary.external_storageclass_names | join(', ') }}{% elif storage_posture_summary.has_external_storage_provider | default(false) %}not derived{% else %}none detected{% endif %}` |
-| Default StorageClasses | `{% if default_storageclasses | default([]) | length > 0 %}{{ default_storageclasses | map(attribute='name') | join(', ') }}{% else %}none detected{% endif %}` |
+{% set default_storageclass_names = template_table_render.default_storageclass_names | default([]) %}
+| Default StorageClasses | `{% if default_storageclass_names | length > 0 %}{{ default_storageclass_names | join(', ') }}{% elif default_storageclasses | default([]) | length > 0 %}{{ default_storageclasses | map(attribute='name') | join(', ') }}{% else %}none detected{% endif %}` |
 
 | StorageClass | Provisioner | Default | Volume Binding | Reclaim Policy |
 | --- | --- | --- | --- | --- |
+{% set storageclass_rows = template_table_render.storageclass_rows | default([]) %}
+{% if storageclass_rows | length > 0 %}
+{% for item in storageclass_rows %}
+| `{{ item.name }}` | `{{ item.provisioner }}` | `{{ item.is_default }}` | `{{ item.volume_binding_mode }}` | `{{ item.reclaim_policy }}` |
+{% endfor %}
+{% else %}
 {% for item in storageclass_summary | default([]) | sort(attribute='name') %}
 | `{{ item.name }}` | `{{ item.provisioner }}` | `{{ item.is_default }}` | `{{ item.volume_binding_mode }}` | `{{ item.reclaim_policy }}` |
 {% endfor %}
 {% if (storageclass_summary | default([]) | length) == 0 %}
 | `none` | `unknown` | `false` | `unknown` | `unknown` |
 {% endif %}
+{% endif %}
 
 | PV phases | Count |
 | --- | --- |
+{% set pv_phase_count_rows = template_table_render.pv_phase_count_rows | default([]) %}
+{% if pv_phase_count_rows | length > 0 %}
+{% for item in pv_phase_count_rows %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (pv_phase_counts | default({}) | dict2items | sort(attribute='key')) %}
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 {% if (pv_phase_counts | default({}) | length) == 0 %}
 | `unknown` | `0` |
 {% endif %}
+{% endif %}
 
 | PVC phases | Count |
 | --- | --- |
+{% set pvc_phase_count_rows = template_table_render.pvc_phase_count_rows | default([]) %}
+{% if pvc_phase_count_rows | length > 0 %}
+{% for item in pvc_phase_count_rows %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (pvc_phase_counts | default({}) | dict2items | sort(attribute='key')) %}
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 {% if (pvc_phase_counts | default({}) | length) == 0 %}
 | `unknown` | `0` |
 {% endif %}
+{% endif %}
 
 {% if backup_pv_issues_section | default([]) | length > 0 %}
-#### PV Issue Samples
+**PV Issue Samples**
 
 | PV | Phase | StorageClass | Claim |
 | --- | --- | --- | --- |
@@ -1342,7 +1352,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if backup_pvc_issues_section | default([]) | length > 0 %}
-#### Top 25 PVCs with Issues
+**Top 25 PVCs with Issues**
 
 | Namespace | PVC | Phase | StorageClass | Volume |
 | --- | --- | --- | --- | --- |
@@ -1364,8 +1374,8 @@ Platform engineering and SRE
 {% set ingress_host_conflicts_section = network_access_domain.ingress_host_conflicts | default(ingress_host_conflicts | default([])) %}
 {% set route_ingress_host_conflicts_section = network_access_domain.route_ingress_host_conflicts | default(route_ingress_host_conflicts | default([])) %}
 {% set services_without_endpoints_section = network_access_domain.services_without_endpoints | default(services_without_endpoints | default([])) %}
-{% set routes_object_count = network_access_domain.route_object_count | default(routes_items | default([]) | length) %}
-{% set ingresses_object_count = network_access_domain.ingress_object_count | default(ingresses_items | default([]) | length) %}
+{% set routes_object_count = network_access_domain.route_object_count | default(routes_count) %}
+{% set ingresses_object_count = network_access_domain.ingress_object_count | default(ingresses_count) %}
 {% set network_has_actionable_findings = (network_architecture_summary.route_issue_count | default(0) | int) > 0 or (network_architecture_summary.ingress_issue_count | default(0) | int) > 0 or (network_architecture_summary.route_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingress_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.cross_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingresscontroller_issue_count | default(0) | int) > 0 or (network_architecture_summary.service_endpoint_gap_count | default(0) | int) > 0 or (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 %}
 {% set network_has_policy_context = (network_architecture_summary.exposed_namespaces_without_networkpolicy | default([]) | length) > 0 or (network_architecture_summary.exposed_namespaces_missing_ingress_policies | default([]) | length) > 0 or (network_architecture_summary.exposed_namespaces_missing_egress_policies | default([]) | length) > 0 %}
 {% set network_policy_context_namespaces = ((network_architecture_summary.exposed_namespaces_without_networkpolicy | default([])) + (network_architecture_summary.exposed_namespaces_missing_ingress_policies | default([])) + (network_architecture_summary.exposed_namespaces_missing_egress_policies | default([]))) | unique %}
@@ -1399,22 +1409,8 @@ Platform engineering and SRE
 | noProxy entries | `{{ network_architecture_summary.no_proxy_entry_count | default(0) }}` | {{ status_badge('INFO') }} |
 | Proxy missing internal noProxy entries | `{{ network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | join(', ') or 'none' }}` | {{ status_badge('WARN' if (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if network_has_actionable_findings %}{% set ns = namespace(items=[]) %}{% if (network_architecture_summary.route_issue_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (network_architecture_summary.route_issue_count | string) ~ '` route issues need admission, certificate, or backend remediation.') %}{% endif %}{% if (network_architecture_summary.ingress_issue_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (network_architecture_summary.ingress_issue_count | string) ~ '` ingress issues need class, host, TLS, or service remediation.') %}{% endif %}{% if (network_architecture_summary.route_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.ingress_host_conflict_count | default(0) | int) > 0 or (network_architecture_summary.cross_host_conflict_count | default(0) | int) > 0 %}{% set _ = ns.items.append('host conflicts exist across Routes or Ingresses and need ownership cleanup.') %}{% endif %}{% if (network_architecture_summary.ingresscontroller_issue_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (network_architecture_summary.ingresscontroller_issue_count | string) ~ '` ingress controller issues need operator, domain, certificate, or replica remediation.') %}{% endif %}{% if (network_architecture_summary.service_endpoint_gap_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (network_architecture_summary.service_endpoint_gap_count | string) ~ '` Services have no ready endpoints and need selector, pod readiness, or stale Service cleanup.') %}{% endif %}{% if (network_architecture_summary.proxy_missing_internal_no_proxy_entries | default([]) | length) > 0 %}{% set _ = ns.items.append('proxy `noProxy` is missing internal entries `' ~ (network_architecture_summary.proxy_missing_internal_no_proxy_entries | join(', ')) ~ '`.') %}{% endif %}{% set _ = ns.items.append('Fix these traffic-path issues before treating application access as healthy.') %}Network access gaps detected: {{ prose_clause_join(ns.items) }}{% elif network_has_policy_context %}No route, ingress, service-endpoint, host-conflict, ingress-controller, or proxy failures were detected. The only network-related signal is namespace isolation context for exposed workloads, which should be validated against customer policy requirements.{% elif network_route_ingress_not_assessed %}Traffic-entry object health was not fully assessed in this run. No ingress-controller, service-endpoint, proxy, or exposed-namespace isolation gaps were detected from the available evidence.{% else %}No route, ingress, service-endpoint, host-conflict, ingress-controller, exposed-namespace policy, or proxy exclusion gaps were detected.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  ('Network access posture is partially assessed because traffic-entry objects were not fully evaluated; summary status=' ~ (network_architecture_summary.status | default('unknown')) ~ ', route issues=' ~ (network_architecture_summary.route_issue_count | default(0) | string) ~ ', ingress issues=' ~ (network_architecture_summary.ingress_issue_count | default(0) | string) ~ ', and endpoint gaps=' ~ (network_architecture_summary.service_endpoint_gap_count | default(0) | string) ~ '.') if network_route_ingress_not_assessed else ('Network access posture is ' ~ (network_architecture_summary.status | default('unknown')) ~ ' with route issues=' ~ (network_architecture_summary.route_issue_count | default(0) | string) ~ ', ingress issues=' ~ (network_architecture_summary.ingress_issue_count | default(0) | string) ~ ', and endpoint gaps=' ~ (network_architecture_summary.service_endpoint_gap_count | default(0) | string) ~ '.'),
-  'Traffic-path defects create user-visible outages even when pods appear healthy.',
-  (recommended_action_with_posture_docs('Repair route, ingress, host-ownership, service-endpoint, and proxy `noProxy` issues before treating application access as healthy.', 'WARNING', ['network', 'security'], 'application_access_and_network_isolation') if network_has_actionable_findings else (recommended_action_with_posture_docs('Validate exposed-workload isolation expectations against customer policy requirements and confirm whether Route or Ingress objects are intentionally absent from this cluster.', 'INFO', ['network', 'security'], 'application_access_and_network_isolation') if (network_has_policy_context or network_route_ingress_not_assessed) else recommended_action_with_posture_docs('No network-access remediation is required for this posture.', 'OK', ['network', 'security'], 'application_access_and_network_isolation'))),
-  posture_owner('application_access_and_network_isolation', 'network'),
-  posture_verification('application_access_and_network_isolation', gap_done_when('WARNING' if network_has_actionable_findings else ('INFO' if (network_has_policy_context or network_route_ingress_not_assessed) else 'OK'))),
-  posture_reference_urls(['network', 'security'], 'application_access_and_network_isolation'),
-  posture_notes('application_access_and_network_isolation')
-) }}
 
 ### Findings
 
@@ -1437,7 +1433,7 @@ Platform engineering and SRE
 {% endif %}
 {% else %}
 {% if route_issues_section | default([]) | length > 0 %}
-#### Route Issue Samples
+**Route Issue Samples**
 
 | Namespace | Route | Host | Issue | Detail |
 | --- | --- | --- | --- | --- |
@@ -1447,7 +1443,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if ingress_issues_section | default([]) | length > 0 %}
-#### Ingress Issue Samples
+**Ingress Issue Samples**
 
 | Namespace | Ingress | Hosts | Issue | Detail |
 | --- | --- | --- | --- | --- |
@@ -1457,7 +1453,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if route_host_conflicts_section | default([]) | length > 0 %}
-#### Route Host Conflicts
+**Route Host Conflicts**
 
 | Host | Owners |
 | --- | --- |
@@ -1467,7 +1463,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if ingress_host_conflicts_section | default([]) | length > 0 %}
-#### Ingress Host Conflicts
+**Ingress Host Conflicts**
 
 | Host | Owners |
 | --- | --- |
@@ -1477,7 +1473,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if route_ingress_host_conflicts_section | default([]) | length > 0 %}
-#### Cross Route And Ingress Host Conflicts
+**Cross Route And Ingress Host Conflicts**
 
 | Host | Route Owners | Ingress Owners |
 | --- | --- | --- |
@@ -1487,7 +1483,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if services_without_endpoints_section | default([]) | length > 0 %}
-#### Service Endpoint Gaps
+**Service Endpoint Gaps**
 
 | Namespace | Service | Type | Ready Endpoints |
 | --- | --- | --- | --- |
@@ -1566,22 +1562,8 @@ Platform engineering and SRE
 | Alert delivery verification status | `{{ observability_summary.alert_delivery_verification_status | default('not-configured') }}` | {{ status_badge('INFO' if (observability_summary.alert_delivery_verification_status | default('not-configured')) in ['not-verified', 'not-configured'] else ('OK' if (observability_summary.alert_delivery_verification_status | default('not-configured')) == 'verified' else 'UNKNOWN')) }} |
 | Metrics delivery verification status | `{{ observability_summary.metrics_delivery_verification_status | default('not-configured') }}` | {{ status_badge('INFO' if (observability_summary.metrics_delivery_verification_status | default('not-configured')) in ['not-verified', 'not-configured'] else ('OK' if (observability_summary.metrics_delivery_verification_status | default('not-configured')) == 'verified' else 'UNKNOWN')) }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if observability_has_findings %}{% set ns = namespace(items=[]) %}{% if not (observability_summary.monitoring_operator_healthy | default(false)) and not (observability_summary.vendor_managed_observability_configured | default(false)) %}{% set _ = ns.items.append('the monitoring ClusterOperator is not healthy and no configured vendor-managed observability telemetry path was identified.') %}{% elif not (observability_summary.monitoring_operator_healthy | default(false)) and (observability_summary.vendor_managed_observability_configured | default(false)) %}{% set _ = ns.items.append('the monitoring ClusterOperator is not healthy, but a vendor-managed observability telemetry path is configured from `' ~ (observability_summary.vendor_managed_observability_vendors | default([]) | join(',') or 'none') ~ '` and should be reviewed as the alternate path.') %}{% endif %}{% if (observability_summary.firing_alert_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (observability_summary.firing_alert_count | default(0) | string) ~ '` alerts are firing, including `' ~ (observability_summary.firing_critical_alert_count | default(0) | string) ~ '` critical alerts and `' ~ (observability_summary.firing_noncritical_alert_count | default(0) | string) ~ '` non-critical alerts.') %}{% endif %}{% if (observability_summary.log_gap_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (observability_summary.log_gap_count | default(0) | string) ~ '` log delivery gaps were found across application, infrastructure, or audit log collection/export.') %}{% elif observability_log_forwarding_needs_review %}{% set _ = ns.items.append('log delivery verification is `' ~ obs_logs_delivery_verification_status ~ '` and should be confirmed.') %}{% endif %}{% if (observability_summary.metrics_gap_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (observability_summary.metrics_gap_count | default(0) | string) ~ '` metrics forwarding gaps were found in native remote-write or vendor-managed metrics export coverage.') %}{% elif observability_metrics_forwarding_needs_review %}{% set _ = ns.items.append('metrics delivery verification is `' ~ obs_metrics_delivery_verification_status ~ '` and should be confirmed.') %}{% endif %}{% if (observability_summary.alerting_gap_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (observability_summary.alerting_gap_count | default(0) | string) ~ '` alert delivery gaps were found in Alertmanager receiver or route wiring.') %}{% elif observability_alert_delivery_issue or (obs_alert_delivery_verification_status in ['not-verified', 'not-configured']) or (obs_alert_delivery_state == 'not-configured') %}{% set _ = ns.items.append('external alert delivery is `' ~ obs_alert_delivery_state ~ '` and should be confirmed against the intended responder model.') %}{% endif %}{% if observability_metric_evidence_gap %}{% set _ = ns.items.append('metric-backed alert, API, etcd, node, pod, and density checks have reduced confidence because populated metric results were unavailable.') %}{% endif %}{% if (observability_summary.warning_event_count | default(0) | int) >= (observability_warning_event_threshold | default(10) | int) %}{% set _ = ns.items.append('`' ~ (observability_summary.warning_event_count | default(0) | string) ~ '` warning events exceed the threshold of `' ~ (observability_warning_event_threshold | default(10) | string) ~ '` and need reason-level triage.') %}{% endif %}{% if (observability_summary.insights_archive_findings | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (observability_summary.insights_archive_findings | default(0) | string) ~ '` Insights archive findings need review for gather failures, errors, or panics.') %}{% endif %}Observability gaps detected: {{ prose_clause_join(ns.items) }}{% else %}Monitoring health, vendor-managed observability telemetry paths, firing-alert load, warning-event threshold, log forwarding, metrics forwarding, alert delivery, metric-backed observability signals, and Insights archive parsing showed no material gaps.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Observability posture is ' ~ (observability_summary.status | default('unknown')) ~ ' with alerts=' ~ (observability_summary.firing_alert_count | default(0) | string) ~ ', log gaps=' ~ (observability_summary.log_gap_count | default(0) | string) ~ ', metrics gaps=' ~ (observability_summary.metrics_gap_count | default(0) | string) ~ ', and alerting gaps=' ~ (observability_summary.alerting_gap_count | default(0) | string) ~ '.',
-  'Weak telemetry, alert routing, or export paths delay incident detection and make troubleshooting less trustworthy.',
-  recommended_action_with_posture_docs('Stabilize the monitoring path, then verify log forwarding, metrics forwarding, and alert routing or external alert delivery to the intended destinations.', 'CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARNING' if observability_has_findings else 'OK'), ['observability', 'supportability'], 'observability'),
-  posture_owner('observability', 'observability'),
-  posture_verification('observability', gap_done_when('CRITICAL' if (observability_summary.status | default('unknown')) == 'CRITICAL' else ('WARNING' if observability_has_findings else 'OK'))),
-  posture_reference_urls(['observability', 'supportability'], 'observability'),
-  posture_notes('observability')
-) }}
 
 ### Findings
 
@@ -1595,7 +1577,7 @@ Platform engineering and SRE
 | `Warning event load` | `{% if (observability_summary.warning_event_count | default(0) | int) >= (observability_warning_event_threshold | default(10) | int) %}WARNING{% elif (observability_summary.warning_event_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `{{ observability_summary.warning_event_count | default(0) }} warning events` | `High warning volume may indicate drift or recurring instability.` | `warning events={{ observability_summary.warning_event_count | default(0) }}, threshold={{ observability_warning_event_threshold | default(10) }}` | `{% if (observability_summary.warning_event_count | default(0) | int) > 0 %}{{ recommended_action_with_docs('Review the dominant warning reasons and recurring objects.', 'WARNING' if (observability_summary.warning_event_count | default(0) | int) >= (observability_warning_event_threshold | default(10) | int) else 'INFO', ['observability']) }}{% else %}{{ recommended_action_with_docs('No warning-event remediation is required for this posture.', 'OK', ['observability']) }}{% endif %}` |
 | `Insights archive health` | `{% if (observability_summary.insights_archive_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ observability_summary.insights_archive_findings | default(0) }} findings` | `Insights gather failures can reduce supportability and hide advisor context.` | `insightsArchiveFindings={{ observability_summary.insights_archive_findings | default(0) }}` | `{% if (observability_summary.insights_archive_findings | default(0) | int) > 0 %}{{ recommended_action_with_docs('Review Insights archive gather errors, failed gathers, and panics, then re-collect after remediation.', 'WARNING', ['observability', 'supportability']) }}{% else %}{{ recommended_action_with_docs('No Insights archive remediation is required for this posture.', 'OK', ['observability', 'supportability']) }}{% endif %}` |
 
-#### Telemetry Coverage
+**Telemetry Coverage**
 
 | Area | Coverage | Evidence |
 | --- | --- | --- |
@@ -1610,7 +1592,7 @@ Platform engineering and SRE
 | `External alert delivery` | Additional Alertmanager configuration was detected, but no explicitly external receiver could be verified from parsed resources. |
 {% endif %}
 
-#### Observability Gap
+**Observability Gap**
 {% if observability_findings_section | default([]) | length == 0 %}
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -1626,7 +1608,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if observability_forwarding_summary_section.external_alert_receivers | default([]) | length > 0 %}
-#### External Alert Receiver
+**External Alert Receiver**
 
 | Namespace | AlertmanagerConfig | Receiver | Type | Target |
 | --- | --- | --- | --- | --- |
@@ -1636,7 +1618,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if observability_forwarding_summary_section.external_log_forwarding_outputs | default([]) | length > 0 %}
-#### External Log Output
+**External Log Output**
 
 | Namespace | ClusterLogForwarder | Output | Type | Target |
 | --- | --- | --- | --- | --- |
@@ -1646,7 +1628,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if observability_advisor_findings_section | default([]) | length > 0 %}
-#### Advisor
+**Advisor**
 
 | Signal | Severity | Detail |
 | --- | --- | --- |
@@ -1655,7 +1637,7 @@ Platform engineering and SRE
 {% endfor %}
 {% endif %}
 
-#### Warning Event
+**Warning Event**
 
 {% if top_event_reasons | default([]) | length == 0 %}
 | Reason | Count |
@@ -1668,7 +1650,7 @@ Platform engineering and SRE
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 
-#### Warning Event Sample
+**Warning Event Sample**
 
 | Namespace | Object | Reason | Last Seen | Message |
 | --- | --- | --- | --- | --- |
@@ -1709,12 +1691,12 @@ Platform engineering and SRE
 {% set top_stale_access_review_users_section = access_review_domain.stale_users | default(top_stale_access_review_users | default([])) %}
 {% set top_stale_access_review_groups_section = access_review_domain.stale_groups | default(top_stale_access_review_groups | default([])) %}
 {% set scc_domain = security_domain.scc | default({}) %}
-{% set securitycontextconstraints_item_count = scc_domain.item_count | default((securitycontextconstraints_items | default([])) | length) %}
+{% set securitycontextconstraints_item_count = scc_domain.item_count | default(securitycontextconstraints_count) %}
 {% set top_scc_pod_findings_section = scc_domain.pod_findings | default(top_scc_pod_findings | default([])) %}
 {% set top_scc_grant_findings_section = scc_domain.grant_findings | default(top_scc_grant_findings | default([])) %}
 {% set secret_inventory_domain = security_domain.secret_inventory | default({}) %}
 {% set likely_unused_secrets_section = secret_inventory_domain.likely_unused_secrets | default(likely_unused_secrets | default([])) %}
-{% set secret_total_count_section = secret_inventory_domain.secret_total_count | default(0) %}
+{% set secret_total_count_section = secret_inventory_domain.secret_total_count | default(secrets_count) %}
 {% set secret_type_counts_section = secret_inventory_domain.secret_type_counts | default(secret_type_counts | default({})) %}
 {% set expiring_certificates_warning_section = secret_inventory_domain.expiring_certificates_warning | default(expiring_certificates_warning | default([])) %}
 {% set expiring_certificates_critical_section = secret_inventory_domain.expiring_certificates_critical | default(expiring_certificates_critical | default([])) %}
@@ -1801,22 +1783,8 @@ Platform engineering and SRE
 | Configured compliance standards without active scans | `{{ security_governance_summary.compliance_configured_inactive_standard_count | default(0) }}` | {{ status_badge('INFO' if (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 else 'OK') }} |
 | Invalid compliance profile bundles | `{{ security_governance_summary.compliance_invalid_profilebundle_count | default(0) }}` | {{ status_badge('WARN' if (security_governance_summary.compliance_invalid_profilebundle_count | default(0) | int) > 0 else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if security_actionable %}{% set ns = namespace(items=[]) %}{% if auth_identity_gap %}{% set _ = ns.items.append('identity posture needs review: ' ~ (auth_posture_reason | default('identity provider or kubeadmin posture requires remediation')) ~ '.') %}{% endif %}{% if vulnerability_scanning_gap %}{% set _ = ns.items.append('workload vulnerability scanning evidence is not in the expected healthy state.') %}{% endif %}{% if secret_management_gap %}{% set _ = ns.items.append(secret_management_label ~ ' evidence is not in the expected healthy state.') %}{% endif %}{% if (security_governance_summary.privileged_access_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.privileged_access_count | string) ~ '` privileged access grants should be reduced or justified.') %}{% endif %}{% if (security_governance_summary.scc_grant_findings | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.scc_grant_findings | string) ~ '` high-risk SCC grants should be tightened.') %}{% endif %}{% if (security_governance_summary.high_signal_security_findings | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.high_signal_security_findings | string) ~ '` pod security findings expose privileged, host-level, root, seccomp, privilege-escalation, or Linux capability risk.') %}{% endif %}{% if (security_governance_summary.image_registry_findings | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.image_registry_findings | string) ~ '` image registry policy findings need registry exposure, import policy, insecure registry, or internal-image usage review.') %}{% endif %}{% if (security_governance_summary.expiring_certificates_critical | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.expiring_certificates_critical | string) ~ '` certificates expire within 7 days and must be rotated.') %}{% endif %}{% if (security_governance_summary.expiring_certificates_warning | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.expiring_certificates_warning | string) ~ '` certificates expire within 30 days and should be scheduled for renewal.') %}{% endif %}{% if (security_governance_summary.compliance_active_standards_review_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.compliance_active_standards_review_count | string) ~ '` active compliance standards need remediation or waiver decisions.') %}{% endif %}{% if (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.compliance_configured_inactive_standard_count | string) ~ '` configured standards are inactive and should be confirmed or removed.') %}{% endif %}{% if (security_governance_summary.compliance_invalid_profilebundle_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (security_governance_summary.compliance_invalid_profilebundle_count | string) ~ '` invalid compliance profile bundles need correction.') %}{% endif %}Security gaps detected: {{ prose_clause_join(ns.items) }}{% else %}No privileged-access, high-risk SCC, pod-security, image-registry, certificate-expiry, identity, vulnerability-scanning, secret-management, or compliance gaps were detected.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Security posture is ' ~ (security_governance_summary.status | default('unknown')) ~ ' with identity posture=' ~ auth_posture_reason ~ ', vulnerability scanning=' ~ (vulnerability_scanning_section.status | default('unknown')) ~ ', secret management=' ~ (secret_management_section.status | default('unknown')) ~ ', privileged access=' ~ (security_governance_summary.privileged_access_count | default(0) | string) ~ ', SCC findings=' ~ (security_governance_summary.scc_grant_findings | default(0) | string) ~ ', pod security findings=' ~ (security_governance_summary.high_signal_security_findings | default(0) | string) ~ ', and expiring certificates <=7d=' ~ (security_governance_summary.expiring_certificates_critical | default(0) | string) ~ '.',
-  'Access control, workload isolation, workload-scanner coverage, secret-delivery posture, certificate validity, and compliance posture directly affect breach risk, audit exposure, and service continuity.',
-  recommended_action_with_posture_docs('Close identity, vulnerability-scanning, secret-management, privileged-access, SCC, pod-security, registry, certificate, and compliance gaps in order of business risk and expiry urgency.', 'CRITICAL' if (security_governance_summary.expiring_certificates_critical | default(0) | int) > 0 else ('WARNING' if security_actionable else 'OK'), ['security'], 'security_and_governance'),
-  posture_owner('security_and_governance', 'security'),
-  posture_verification('security_and_governance', gap_done_when('CRITICAL' if (security_governance_summary.expiring_certificates_critical | default(0) | int) > 0 else ('WARNING' if security_actionable else 'OK'))),
-  posture_reference_urls(['security'], 'security_and_governance'),
-  posture_notes('security_and_governance')
-) }}
 
 ### Findings
 
@@ -1839,7 +1807,7 @@ Platform engineering and SRE
 | `Identity provider posture` | `{% if auth_identity_gap %}WARNING{% elif (auth_posture_summary.status | default('unknown')) == 'healthy' and auth_external_identity_provider_count > 0 %}OK{% else %}UNKNOWN{% endif %}` | `{{ auth_posture_reason }}` | `Weak or incomplete identity configuration can leave emergency credentials or local-only authentication as production risk.` | `idpCount={{ auth_identity_provider_count }}, externalIdp={{ auth_external_identity_provider_count }}, localIdp={{ auth_local_identity_provider_count }}, kubeadminSecret={{ auth_kubeadmin_secret_present }}` | `{% if auth_identity_gap %}Configure at least one approved external identity provider, make sure an alternate `cluster-admin` path exists, and remove `kubeadmin` when it is no longer required by the customer access standard.{% else %}No identity-provider remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if auth_identity_gap else ('OK' if (auth_posture_summary.status | default('unknown')) == 'healthy' and auth_external_identity_provider_count > 0 else 'UNKNOWN')) }}` |
 | `Workload vulnerability scanning` | `{% if vulnerability_scanning_gap %}WARNING{% elif vulnerability_scanning_clean %}OK{% else %}UNKNOWN{% endif %}` | `{{ vulnerability_scanning_section.status | default('unknown') }}` | `Missing or unhealthy workload-scanner coverage reduces image and runtime vulnerability visibility for workloads expected to be protected.` | `scanner={{ vulnerability_scanning_section.top_detail | default('no collected capability detail') }}, rhacs={{ advanced_cluster_security_section.status | default('unknown') }}` | `{% if vulnerability_scanning_gap %}Deploy or recover the expected workload scanning path and verify scanner coverage for the intended workloads, namespaces, or nodes.{% elif (vulnerability_scanning_section.status | default('unknown')) in ['not-assessed', 'unknown'] %}Collect enough scanner evidence to confirm whether workload vulnerability scanning is intentionally provided, healthy, and covering the expected workloads, then rerun the report.{% else %}No workload-vulnerability-scanning remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if vulnerability_scanning_gap else ('OK' if vulnerability_scanning_clean else 'UNKNOWN')) }}` |
 | `Secret management path` | `{% if secret_management_gap %}WARNING{% elif secret_management_clean %}OK{% else %}UNKNOWN{% endif %}` | `{{ secret_management_label }}: {{ secret_management_section.status | default('unknown') }}` | `Unhealthy or missing secret-management integration weakens application credential delivery confidence and can increase secret sprawl in namespaces.` | `selectedPath={{ secret_management_label }}, detail={{ secret_management_section.top_detail | default('no collected capability detail') }}, externalSecrets={{ external_secrets_operator_section.status | default('unknown') }}, conjur={{ cyberark_conjur_secrets_management_section.status | default('unknown') }}` | `{% if secret_management_gap %}Restore the intended secret-management path and verify application-facing secret synchronization or provider integration for the namespaces that depend on it.{% elif (secret_management_section.status | default('unknown')) in ['not-assessed', 'unknown'] %}Collect enough secret-management evidence to confirm the intended provider path and its health, then rerun the report before treating this control as satisfied.{% else %}No secret-management remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if secret_management_gap else ('OK' if secret_management_clean else 'UNKNOWN')) }}` |
-| `Privileged access` | `{% if (security_governance_summary.privileged_access_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ security_governance_summary.privileged_access_count | default(0) }} grants` | `Broad privileges increase blast radius and audit risk.` | `grants={{ security_governance_summary.privileged_access_count | default(0) }}` | `{% if (security_governance_summary.privileged_access_count | default(0) | int) > 0 %}Review privileged subjects and remove unnecessary cluster-admin access.{% else %}No privileged-access remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if (security_governance_summary.privileged_access_count | default(0) | int) > 0 else 'OK') }}` |
+| `Privileged access` | `{% if (security_governance_summary.privileged_access_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ security_governance_summary.privileged_access_count | default(0) }} grants` | `Broad privileges increase blast radius and audit risk.` | `Privileged access grants detected by this report: {{ security_governance_summary.privileged_access_count | default(0) }}.` | `{% if (security_governance_summary.privileged_access_count | default(0) | int) > 0 %}Review privileged subjects and remove unnecessary cluster-admin access.{% else %}No privileged-access remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if (security_governance_summary.privileged_access_count | default(0) | int) > 0 else 'OK') }}` |
 | `High-risk SCC exposure` | `{% if (security_governance_summary.scc_grant_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ security_governance_summary.scc_grant_findings | default(0) }} findings` | `Permissive SCC grants can weaken workload isolation.` | `scc findings={{ security_governance_summary.scc_grant_findings | default(0) }}` | `{% if (security_governance_summary.scc_grant_findings | default(0) | int) > 0 %}Review SCC bindings and reduce high-risk grants.{% else %}No SCC-remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if (security_governance_summary.scc_grant_findings | default(0) | int) > 0 else 'OK') }}` |
 | `Pod security context` | `{% if (security_governance_summary.high_signal_security_findings | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ security_governance_summary.high_signal_security_findings | default(0) }} high-signal findings` | `Privileged or host-level pod settings can bypass workload isolation and increase node compromise risk.` | `highSignalPodSecurity={{ security_governance_summary.high_signal_security_findings | default(0) }}, allPodSecurity={{ security_governance_summary.security_findings | default(0) }}` | `{% if (security_governance_summary.high_signal_security_findings | default(0) | int) > 0 %}Tighten pod security contexts, remove host access where not required, enforce non-root execution, seccomp, no privilege escalation, and dropped capabilities.{% else %}No high-signal pod security remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if (security_governance_summary.high_signal_security_findings | default(0) | int) > 0 else 'OK') }}` |
 | `Image and secret posture` | `{% if (security_governance_summary.image_registry_findings | default(0) | int) > 0 %}WARNING{% elif (security_governance_summary.likely_unused_secrets | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `imageRegistry={{ security_governance_summary.image_registry_findings | default(0) }}, likelyUnusedSecrets={{ security_governance_summary.likely_unused_secrets | default(0) }}` | `Registry exposure, insecure registry configuration, or unmanaged secrets can weaken supply-chain and credential hygiene.` | `dockerConfigSecrets={{ (secret_type_counts_section | default({})).get('kubernetes.io/dockerconfigjson', 0) }}, tlsSecrets={{ (secret_type_counts_section | default({})).get('kubernetes.io/tls', 0) }}` | `{% if (security_governance_summary.image_registry_findings | default(0) | int) > 0 and (security_governance_summary.likely_unused_secrets | default(0) | int) > 0 %}Review image registry route exposure, import policy, insecure registries, and internal-registry usage by user workloads, then review likely unused secrets and remove stale credentials where ownership confirms they are no longer needed.{% elif (security_governance_summary.image_registry_findings | default(0) | int) > 0 %}Review image registry route exposure, import policy, insecure registries, and internal-registry usage by user workloads.{% elif (security_governance_summary.likely_unused_secrets | default(0) | int) > 0 %}Review likely unused secrets and remove stale credentials where ownership confirms they are no longer needed.{% else %}No image registry or secret hygiene remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if (security_governance_summary.image_registry_findings | default(0) | int) > 0 else ('INFO' if (security_governance_summary.likely_unused_secrets | default(0) | int) > 0 else 'OK')) }}` |
@@ -1847,7 +1815,7 @@ Platform engineering and SRE
 | `Namespace guardrails` | `{% if (namespaces_without_networkpolicy_section | default([]) | length) > 0 or (namespaces_without_resourcequota_section | default([]) | length) > 0 or (namespaces_without_limitrange_section | default([]) | length) > 0 or (namespace_metadata_governance_findings_section | default([]) | length) > 0 %}INFO{% else %}OK{% endif %}` | `np={{ namespaces_without_networkpolicy_section | default([]) | length }}, quota={{ namespaces_without_resourcequota_section | default([]) | length }}, limit={{ namespaces_without_limitrange_section | default([]) | length }}, metadata={{ namespace_metadata_governance_findings_section | default([]) | length }}` | `Missing guardrails or namespace ownership and chargeback metadata reduce tenant governance, accountability, and cost allocation readiness.` | `networkPolicy={{ namespaces_without_networkpolicy_section | default([]) | length }}, quota={{ namespaces_without_resourcequota_section | default([]) | length }}, limitRange={{ namespaces_without_limitrange_section | default([]) | length }}, namespaceMetadata={{ namespace_metadata_governance_findings_section | default([]) | length }}` | `{% if (namespaces_without_networkpolicy_section | default([]) | length) > 0 or (namespaces_without_resourcequota_section | default([]) | length) > 0 or (namespaces_without_limitrange_section | default([]) | length) > 0 or (namespace_metadata_governance_findings_section | default([]) | length) > 0 %}Backfill baseline namespace policies, quotas, and limits, and add namespace metadata that identifies workload ownership and cost chargeback details.{% else %}No namespace guardrail remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('INFO' if (namespaces_without_networkpolicy_section | default([]) | length) > 0 or (namespaces_without_resourcequota_section | default([]) | length) > 0 or (namespaces_without_limitrange_section | default([]) | length) > 0 or (namespace_metadata_governance_findings_section | default([]) | length) > 0 else 'OK') }}` |
 | `Compliance posture` | `{% if (security_governance_summary.compliance_active_standards_review_count | default(0) | int) > 0 %}WARNING{% elif (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 %}INFO{% else %}OK{% endif %}` | `active review={{ security_governance_summary.compliance_active_standards_review_count | default(0) }}, inactive={{ security_governance_summary.compliance_configured_inactive_standard_count | default(0) }}` | `Unresolved compliance issues can delay audits or raise control gaps.` | `active review={{ security_governance_summary.compliance_active_standards_review_count | default(0) }}, inactive={{ security_governance_summary.compliance_configured_inactive_standard_count | default(0) }}` | `{% if (security_governance_summary.compliance_active_standards_review_count | default(0) | int) > 0 and (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 %}Review active compliance findings and decide whether configured but inactive standards should remain enabled for this cluster.{% elif (security_governance_summary.compliance_active_standards_review_count | default(0) | int) > 0 %}Review active compliance findings and resolve or waive the remaining standards that are not yet supported.{% elif (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 %}Decide whether configured but inactive standards should remain configured for this cluster.{% else %}No compliance remediation is required for this posture.{% endif %}` | `{{ gap_owner('security') }}` | `{{ gap_done_when('WARNING' if (security_governance_summary.compliance_active_standards_review_count | default(0) | int) > 0 else ('INFO' if (security_governance_summary.compliance_configured_inactive_standard_count | default(0) | int) > 0 else 'OK')) }}` |
 
-#### Namespace Guardrail
+**Namespace Guardrail**
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -1859,7 +1827,7 @@ Platform engineering and SRE
 | `Ownership and chargeback metadata` | {% if namespace_metadata_governance_findings_section | default([]) | length > 0 %}{{ status_badge('INFO') }} metadata gaps found{% elif user_namespace_names_section | default([]) | length > 0 %}{{ status_badge('OK') }} metadata present{% else %}{{ status_badge('UNKNOWN') }} not evaluated{% endif %} | {% if namespace_metadata_governance_findings_section | default([]) | length > 0 %}`{{ top_namespace_metadata_governance_gaps | map(attribute='namespace') | join(', ') }}`{% if (namespace_metadata_governance_findings_section | length) > (top_namespace_metadata_governance_gaps | length) %} and `{{ (namespace_metadata_governance_findings_section | length) - (top_namespace_metadata_governance_gaps | length) }}` more{% endif %}{% elif user_namespace_names_section | default([]) | length > 0 %}all evaluated user namespaces had ownership and cost metadata (`{{ user_namespace_names_section | length }}` namespaces checked){% else %}no user namespaces were in scope for the namespace metadata check{% endif %} |
 
 {% if top_namespace_metadata_governance_gaps | default([]) | length > 0 %}
-#### Namespace Ownership And Chargeback Metadata
+**Namespace Ownership And Chargeback Metadata**
 
 | Namespace | Missing Metadata | Present Ownership Tags | Present Cost Tags | Recommended Ownership Metadata | Recommended Chargeback Metadata |
 | --- | --- | --- | --- | --- | --- |
@@ -1868,7 +1836,7 @@ Platform engineering and SRE
 {% endfor %}
 {% endif %}
 
-#### Node Ownership And Chargeback Metadata
+**Node Ownership And Chargeback Metadata**
 
 | Node | Missing Metadata | Present Ownership Tags | Present Cost Tags | Recommended Ownership Metadata | Recommended Chargeback Metadata |
 | --- | --- | --- | --- | --- | --- |
@@ -1881,17 +1849,24 @@ Platform engineering and SRE
 {% endif %}
 
 {% if (security_issue_type_counts_section | default({}) | length) > 0 %}
-#### Pod Security Summary
+**Pod Security Summary**
 
 | Finding | Count |
 | --- | --- |
+{% set security_issue_type_count_rows = template_table_render.pod_security_issue_type_count_rows | default([]) %}
+{% if security_issue_type_count_rows | length > 0 %}
+{% for item in security_issue_type_count_rows %}
+| `{{ item.label }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (security_issue_type_counts_section | dict2items | sort(attribute='value', reverse=true)) %}
 | `{% if item.key == 'privileged-containers' %}Privileged containers{% elif item.key == 'host-network' %}Host network{% elif item.key == 'host-pid' %}Host PID{% elif item.key == 'host-ipc' %}Host IPC{% elif item.key == 'hostpath-volume' %}Local hostPath storage{% elif item.key == 'run-as-root' %}Run as root{% elif item.key == 'missing-seccomp-profile' %}Missing seccomp profile{% elif item.key == 'unconfined-seccomp-profile' %}Unconfined seccomp profile{% elif item.key == 'allow-privilege-escalation-not-disabled' %}Privilege escalation not disabled{% elif item.key == 'run-as-non-root-not-enforced' %}Run as non-root not enforced{% elif item.key == 'read-only-root-filesystem-not-enabled' %}Read-only root filesystem not enabled{% elif item.key == 'capabilities-not-fully-dropped' %}Capabilities not fully dropped{% elif item.key == 'literal-sensitive-env' %}Literal sensitive env values{% elif item.key == 'literal-sensitive-arg' %}Literal sensitive command or arg values{% else %}{{ item.key }}{% endif %}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if top_security_findings_section | default([]) | length > 0 %}
-#### Pod Security
+**Pod Security**
 
 | Namespace | Pod | Check | Detail |
 | --- | --- | --- | --- |
@@ -1904,10 +1879,10 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_privileged_serviceaccount_access_section | default([]) | length > 0 or top_privileged_user_access_section | default([]) | length > 0 or top_privileged_group_access_section | default([]) | length > 0 %}
-#### Privileged Access
+**Privileged Access**
 
 {% if top_privileged_serviceaccount_access_section | default([]) | length > 0 %}
-#### Privileged Service Account
+**Privileged Service Account**
 
 | Namespace | Service Account | Scope | Grant Source |
 | --- | --- | --- | --- |
@@ -1917,7 +1892,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_privileged_user_access_section | default([]) | length > 0 %}
-#### Privileged User
+**Privileged User**
 
 | User | Scope | Grant Source |
 | --- | --- | --- |
@@ -1927,7 +1902,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_privileged_group_access_section | default([]) | length > 0 %}
-#### Privileged Group
+**Privileged Group**
 
 | Group | Scope | Grant Source |
 | --- | --- | --- |
@@ -1938,10 +1913,10 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_stale_access_review_serviceaccounts_section | default([]) | length > 0 or top_stale_access_review_users_section | default([]) | length > 0 or top_stale_access_review_groups_section | default([]) | length > 0 %}
-#### Access Review
+**Access Review**
 
 {% if top_stale_access_review_serviceaccounts_section | default([]) | length > 0 %}
-#### Service Account Review
+**Service Account Review**
 
 | Namespace | Service Account | Evidence |
 | --- | --- | --- |
@@ -1951,7 +1926,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_stale_access_review_users_section | default([]) | length > 0 %}
-#### User Review
+**User Review**
 
 | User | Scope | Grant Source | Review Reason |
 | --- | --- | --- | --- |
@@ -1961,7 +1936,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_stale_access_review_groups_section | default([]) | length > 0 %}
-#### Group Review
+**Group Review**
 
 | Group | Scope | Grant Source | Review Reason |
 | --- | --- | --- | --- |
@@ -1972,7 +1947,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if securitycontextconstraints_item_count | int > 0 %}
-#### Privileged SCC Usage
+**Privileged SCC Usage**
 
 {% if (top_scc_pod_findings_section | default([]) | length) == 0 and (top_scc_grant_findings_section | default([]) | length) == 0 %}
 | Check | Result | Detail |
@@ -1989,7 +1964,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_scc_grant_findings_section | default([]) | length > 0 %}
-#### Privileged SCC Grants
+**Privileged SCC Grants**
 
 | SCC | Subject Kind | Subject | Risk Summary |
 | --- | --- | --- | --- |
@@ -2000,7 +1975,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if auth_posture_summary | default({}) | length > 0 %}
-#### Authentication
+**Authentication**
 
 | Signal | Value |
 | --- | --- |
@@ -2021,7 +1996,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if vulnerability_scanning_enabled or advanced_cluster_security_enabled or (vulnerability_scanning_section | length) > 0 or (advanced_cluster_security_section | length) > 0 %}
-#### Workload Protection Platforms
+**Workload Protection Platforms**
 
 | Capability | Status | What Was Found |
 | --- | --- | --- |
@@ -2030,7 +2005,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if conjur_enabled or external_secrets_enabled or (cyberark_conjur_secrets_management_section | length) > 0 or (external_secrets_operator_section | length) > 0 %}
-#### Secret Management
+**Secret Management**
 
 | Capability | Status | What Was Found |
 | --- | --- | --- |
@@ -2038,11 +2013,11 @@ Platform engineering and SRE
 | `External Secrets Operator` | `{{ external_secrets_operator_section.status | default('unknown') }}` | `{{ external_secrets_operator_section.top_detail | default('No collected external-secrets detail was mapped for this posture.') }}` |
 {% endif %}
 
-#### Secret And Certificate Inventory
+**Secret And Certificate Inventory**
 
 | Signal | Value |
 | --- | --- |
-| Total secrets | `{{ secret_total_count_section | default(secrets_items | length) }}` |
+| Total secrets | `{{ secret_total_count_section }}` |
 | TLS secrets | `{{ (secret_type_counts_section | default({})).get('kubernetes.io/tls', 0) }}` |
 | Docker config secrets | `{{ (secret_type_counts_section | default({})).get('kubernetes.io/dockerconfigjson', 0) }}` |
 | Likely unused secrets | `{{ likely_unused_secrets_section | default([]) | length }}` |
@@ -2050,7 +2025,7 @@ Platform engineering and SRE
 | Certificates expiring in <= 7d | `{{ expiring_certificates_critical_section | default([]) | length }}` |
 
 {% if expiring_certificates_critical_section | default([]) | length > 0 or expiring_certificates_warning_section | default([]) | length > 0 %}
-#### Certificate Expiry Samples
+**Certificate Expiry Samples**
 {% set certificate_issue_table_limit = top_metadata_table_limit | default(10) | int %}
 
 | Secret | Severity | Expires At | Days Remaining |
@@ -2066,7 +2041,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_image_registry_findings_section | default([]) | length > 0 or top_internal_registry_workloads_section | default([]) | length > 0 %}
-#### Image Registry Security
+**Image Registry Security**
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -2085,7 +2060,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if compliance_suite_summary_section | default([]) | length > 0 or (compliance_operator_summary_section.get('present', false)) %}
-#### Compliance
+**Compliance**
 
 {% set requested_compliance_standards = ((capability_profile.get('compliance_requirements_validation', {}) | default({})).get('standards', []) | default([])) %}
 
@@ -2109,9 +2084,16 @@ Platform engineering and SRE
 {% if (compliance_result_counts_section | default({}) | length) > 0 %}
 | Result | Count |
 | --- | --- |
+{% set compliance_result_count_rows = template_table_render.compliance_result_count_rows | default([]) %}
+{% if compliance_result_count_rows | length > 0 %}
+{% for item in compliance_result_count_rows %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (compliance_result_counts_section | dict2items | sort(attribute='key')) %}
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
+{% endif %}
 {% endif %}
 
 | Namespace | ComplianceSuite | Phase | Result |
@@ -2218,22 +2200,8 @@ Platform engineering and SRE
 | Pod rightsizing candidates | `{% if workload_rightsizing_confidence_limited and not workload_rightsizing_has_action %}not fully assessed{% else %}{{ workload_rightsizing_candidate_count }}{% endif %}` | {{ status_badge('INFO' if (workload_rightsizing_has_action or workload_rightsizing_confidence_limited) else 'OK') }} |
 | Overprovisioning context | `{% if workload_rightsizing_confidence_limited and not workload_rightsizing_has_action %}usage evidence limited{% else %}{{ workload_rightsizing_candidate_count }}{% endif %}` | {{ status_badge('INFO' if (workload_rightsizing_has_action or workload_rightsizing_confidence_limited) else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if workload_has_remediation %}{% set ns = namespace(items=[]) %}{% if (workload_summary.unhealthy_user_pod_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (workload_summary.unhealthy_user_pod_count | string) ~ '` user pods are unhealthy and need pod status, events, logs, image, dependency, node, or storage remediation.') %}{% endif %}{% if (workload_summary.workload_health_issue_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (workload_summary.workload_health_issue_count | string) ~ '` rollout issues need Deployment, DeploymentConfig, StatefulSet, or DaemonSet availability remediation.') %}{% endif %}{% if (workload_summary.high_restart_pod_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (workload_summary.high_restart_pod_count | string) ~ '` restart hotspots need log, event, probe, dependency, and resource investigation.') %}{% endif %}{% if (workload_resilience_gap_count | int) > 0 %}{% set _ = ns.items.append('`' ~ (workload_resilience_summary_section.multi_replica_workloads_without_pdb | default(0) | string) ~ '` multi-replica workloads are missing a matching PodDisruptionBudget, `' ~ (workload_resilience_summary_section.multi_replica_workloads_without_usable_pdb | default(0) | string) ~ '` have a matching PDB that still requires review, and `' ~ (workload_resilience_summary_section.multi_replica_workloads_without_spread_policy | default(0) | string) ~ '` are missing spread controls such as topology spread constraints or pod anti-affinity.') %}{% endif %}{% if (workload_summary.workload_probe_finding_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (workload_summary.workload_probe_finding_count | string) ~ '` probe findings mean liveness, readiness, or startup probes are missing and should be added where the application supports health endpoints.') %}{% endif %}{% if (workload_soft_hygiene_count | int) > 0 %}{% set _ = ns.items.append('`' ~ (workload_soft_hygiene_count | string) ~ '` resource, ownership, label, or replica-density hygiene findings need cleanup after runtime issues are stable.') %}{% endif %}Workload gaps detected: {{ prose_clause_join(ns.items) }}{% else %}No unhealthy user pods, rollout issues, restart hotspots, resilience-control gaps, probe gaps, or workload hygiene remediation items were detected.{% endif %}{% if (workload_summary.overprovisioned_pod_count | default(0) | int) > 0 %} Overprovisioning was also detected on `{{ workload_summary.overprovisioned_pod_count }}` pods; treat this as rightsizing context, not an immediate health blocker unless it is contributing to capacity pressure.{% elif workload_metric_evidence_missing %} Pod usage and rightsizing conclusions are limited because metric-backed usage values were `{{ workload_metric_source_status }}` for this run.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  workload_gap_summary,
-  'Application instability directly affects service availability, release safety, and incident recovery.',
-  recommended_action_with_posture_docs(workload_recommendation_text, workload_recommendation_severity, ['workloads'], 'workload_health'),
-  posture_owner('workload_health', 'workload'),
-  posture_verification('workload_health', gap_done_when(workload_recommendation_severity)),
-  posture_reference_urls(['workloads'], 'workload_health'),
-  posture_notes('workload_health')
-) }}
 
 ### Findings
 
@@ -2249,7 +2217,7 @@ Platform engineering and SRE
 | `Rightsizing context` | `{% if (workload_summary.overprovisioned_pod_count | default(0) | int) > 0 %}INFO{% elif workload_rightsizing_confidence_limited %}INFO{% else %}OK{% endif %}` | `{% if workload_rightsizing_confidence_limited and (workload_summary.overprovisioned_pod_count | default(0) | int) == 0 %}usage evidence limited{% else %}{{ workload_summary.overprovisioned_pod_count | default(0) }} overprovisioned pods{% endif %}` | `Overprovisioning can waste capacity, but it is follow-on optimization unless capacity pressure exists.` | `overprovisionedPods={{ workload_summary.overprovisioned_pod_count | default(0) }}, usageStatus={{ workload_metric_source_status }}` | `{% if (workload_summary.overprovisioned_pod_count | default(0) | int) > 0 %}Right-size pods after health blockers are resolved, using usage values when available and application owner validation before changing requests or limits.{% elif workload_rightsizing_confidence_limited %}Use this rightsizing signal only as incomplete context until metric-backed usage evidence is restored for the run.{% else %}No rightsizing action is required for this posture.{% endif %}` | `{{ gap_owner('workload') }}` | `{{ gap_done_when('INFO' if ((workload_summary.overprovisioned_pod_count | default(0) | int) > 0 or workload_rightsizing_confidence_limited) else 'OK') }}` |
 
 {% if top_unhealthy_user_pods_section | default([]) | length > 0 %}
-#### Unhealthy Pods
+**Unhealthy Pods**
 
 | Namespace | Pod | Phase | Ready |
 | --- | --- | --- | --- |
@@ -2259,7 +2227,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_workload_health_issues_section | default([]) | length > 0 %}
-#### Rollout
+**Rollout**
 
 | Kind | Namespace | Name | Desired | Ready | Updated |
 | --- | --- | --- | --- | --- | --- |
@@ -2269,7 +2237,7 @@ Platform engineering and SRE
 {% endif %}
 
 {% if top_high_restart_pods_section | default([]) | length > 0 %}
-#### Top Restarting Pods (>3 Restarts)
+**Top Restarting Pods (>3 Restarts)**
 
 Showing up to the top 100 pods with more than 3 restarts.
 
@@ -2280,7 +2248,7 @@ Showing up to the top 100 pods with more than 3 restarts.
 {% endfor %}
 {% endif %}
 
-#### Workload Resilience Controls
+**Workload Resilience Controls**
 
 | Multi-Replica Workloads Checked | Without Matching PodDisruptionBudget | With PDB Requiring Review | Without Spread Policy | With Node Or Zone Spread Policy | With Other Spread Policy |
 | --- | --- | --- | --- | --- | --- |
@@ -2303,19 +2271,26 @@ Showing up to the top 100 pods with more than 3 restarts.
 {% endif %}
 
 {% if top_aged_user_pods_section | default([]) | length > 0 %}
-#### Pods Older Than 30 Days
+{% set aged_user_pod_rows = template_table_render.aged_user_pod_rows | default([]) %}
+**Pods Older Than 30 Days**
 
 Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30 days. Cluster component and operator-managed pods are excluded.
 
 | Namespace | Owner | Pod | Phase | Age (days) | Created At |
 | --- | --- | --- | --- | --- | --- |
+{% if aged_user_pod_rows | length > 0 %}
+{% for item in aged_user_pod_rows %}
+| `{{ item.namespace }}` | `{{ item.owner_kind }}/{{ item.owner_name }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.age_days }}` | `{{ item.created_at }}` |
+{% endfor %}
+{% else %}
 {% for item in top_aged_user_pods_section[:old_pod_table_limit] %}
 | `{{ item.namespace }}` | `{{ item.owner_kind }}/{{ item.owner_name }}` | `{{ item.name }}` | `{{ item.phase }}` | `{{ item.age_days }}` | `{{ item.created_at }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if top_high_replica_workloads_section | default([]) | length > 0 %}
-#### Replica Density
+**Replica Density**
 
 | Kind | Namespace | Name | Desired Replicas |
 | --- | --- | --- | --- |
@@ -2325,7 +2300,7 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 {% endif %}
 
 {% if top_orphan_pods_section | default([]) | length > 0 %}
-#### Orphan Pods
+**Orphan Pods**
 
 | Namespace | Pod | Phase |
 | --- | --- | --- |
@@ -2335,7 +2310,7 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 {% endif %}
 
 {% if top_workload_label_governance_findings_section | default([]) | length > 0 %}
-#### Label Governance
+**Label Governance**
 
 | Kind | Namespace | Name | Recommended Labels | Recommended Annotations |
 | --- | --- | --- | --- | --- |
@@ -2344,7 +2319,7 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 {% endfor %}
 {% endif %}
 
-#### Node Label Governance
+**Node Label Governance**
 
 | Node | Roles | Zone | Instance Type | Missing Governance Metadata | Recommended Labels | Recommended Annotations |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -2357,7 +2332,7 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 {% endif %}
 
 {% if top_workload_resource_findings_section | default([]) | length > 0 %}
-#### Resource Request And Limit Hygiene
+**Resource Request And Limit Hygiene**
 
 | Kind | Namespace | Name | Issue | Containers |
 | --- | --- | --- | --- | --- |
@@ -2367,17 +2342,24 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 {% endif %}
 
 {% if workload_probe_issue_type_counts_section | default({}) | length > 0 %}
-#### Probe Coverage Summary
+**Probe Coverage Summary**
 
 | Missing Probe Type | Count |
 | --- | --- |
+{% set workload_probe_issue_type_count_rows = template_table_render.workload_probe_issue_type_count_rows | default([]) %}
+{% if workload_probe_issue_type_count_rows | length > 0 %}
+{% for item in workload_probe_issue_type_count_rows %}
+| `{{ item.label }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (workload_probe_issue_type_counts_section | dict2items | sort(attribute='value', reverse=true)) %}
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if top_workload_probe_findings_section | default([]) | length > 0 %}
-#### Probe Coverage
+**Probe Coverage**
 
 | Kind | Namespace | Name | Missing Probe Type | Containers |
 | --- | --- | --- | --- | --- |
@@ -2387,7 +2369,7 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 {% endif %}
 
 {% if top_overprovisioned_pods_section | default([]) | length > 0 %}
-#### Overprovisioning Context
+**Overprovisioning Context**
 
 | Namespace | Pod | CPU Request m | CPU Usage m | Memory Request MiB | Memory Usage MiB | Reason |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -2398,7 +2380,8 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 
 {% if top_pod_cpu_usage_summary_section | default([]) | length > 0 %}
 {% set top_pod_cpu_signal = (runtime_signal_resolution_map | default({})).get('top_pod_cpu_usage', {}) %}
-#### {% if top_pod_cpu_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested CPU Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By CPU Utilization{% endif %}
+{% set pod_cpu_usage_rows = template_table_render.pod_cpu_usage_rows | default([]) %}
+**{% if top_pod_cpu_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested CPU Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By CPU Utilization{% endif %}**
 
 Showing up to the top {{ pod_usage_table_limit }} pods from the available CPU signal.
 
@@ -2406,14 +2389,21 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available CPU si
 
 | Namespace | Pod | {% if top_pod_cpu_signal.get('status') == 'derived' %}Requested CPU m{% else %}CPU Usage m{% endif %} |
 | --- | --- | --- |
+{% if pod_cpu_usage_rows | length > 0 %}
+{% for item in pod_cpu_usage_rows %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) * 1000) | round(1) }}`{% if top_pod_cpu_signal.get('status') == 'derived' %} `requested`{% endif %} |
+{% endfor %}
+{% else %}
 {% for item in top_pod_cpu_usage_summary_section[:pod_usage_table_limit] %}
 | `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) * 1000) | round(1) }}`{% if top_pod_cpu_signal.get('status') == 'derived' %} `requested`{% endif %} |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if top_pod_memory_usage_summary_section | default([]) | length > 0 %}
 {% set top_pod_memory_signal = (runtime_signal_resolution_map | default({})).get('top_pod_memory_usage', {}) %}
-#### {% if top_pod_memory_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested Memory Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By Memory Utilization{% endif %}
+{% set pod_memory_usage_rows = template_table_render.pod_memory_usage_rows | default([]) %}
+**{% if top_pod_memory_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested Memory Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By Memory Utilization{% endif %}**
 
 Showing up to the top {{ pod_usage_table_limit }} pods from the available memory signal.
 
@@ -2421,9 +2411,15 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 
 | Namespace | Pod | {% if top_pod_memory_signal.get('status') == 'derived' %}Requested Memory MiB{% else %}Memory Usage MiB{% endif %} |
 | --- | --- | --- |
+{% if pod_memory_usage_rows | length > 0 %}
+{% for item in pod_memory_usage_rows %}
+| `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}`{% if top_pod_memory_signal.get('status') == 'derived' %} `requested`{% endif %} |
+{% endfor %}
+{% else %}
 {% for item in top_pod_memory_usage_summary_section[:pod_usage_table_limit] %}
 | `{{ item.metric.namespace | default('') }}` | `{{ item.metric.pod | default('') }}` | `{{ ((item.value[1] | float) / 1048576) | round(1) }}`{% if top_pod_memory_signal.get('status') == 'derived' %} `requested`{% endif %} |
 {% endfor %}
+{% endif %}
 {% endif %}
 
 {% endif %}
@@ -2472,22 +2468,8 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | Cluster classification confidence | `{{ architecture_lifecycle_summary.cluster_classification_confidence | default(architecture_lifecycle_summary.deployment_type_confidence | default(cluster_profile.cluster_classification_confidence | default(cluster_profile.deployment_type_confidence | default('unknown')))) }}` | {{ status_badge('INFO' if architecture_lifecycle_summary.deployment_type_confidence_warning | default(false) else 'OK') }} |
 | Machine networks known | `{{ architecture_lifecycle_summary.machine_networks_known | default(false) }}` | {{ status_badge('INFO' if not (architecture_lifecycle_summary.machine_networks_known | default(false)) else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if lifecycle_needs_review %}{% set ns = namespace(items=[]) %}{% if (architecture_lifecycle_summary.support_status | default('unknown')) != 'supported' %}{% set _ = ns.items.append('release support is `' ~ (architecture_lifecycle_summary.support_status | default('unknown')) ~ '` and must be verified or corrected with an upgrade plan.') %}{% endif %}{% if upgrade_blockers > 0 %}{% set _ = ns.items.append('`' ~ (upgrade_blockers | string) ~ '` upgrade blockers must be cleared before scheduling an update.') %}{% endif %}{% if upgrade_warnings > 0 %}{% set _ = ns.items.append('`' ~ (upgrade_warnings | string) ~ '` upgrade warnings should be remediated or formally accepted before change windows.') %}{% endif %}{% if conditional_risks > 0 %}{% set _ = ns.items.append('`' ~ (conditional_risks | string) ~ '` conditional update risks require advisory review.') %}{% endif %}{% if topology_warning_count > 0 %}{% set _ = ns.items.append('`' ~ (topology_warning_count | string) ~ '` topology warnings require failure-domain, zone-label, or worker-pool spread remediation: ' ~ topology_reason ~ '.') %}{% endif %}{% if architecture_lifecycle_summary.deployment_type_confidence_warning | default(false) %}{% set _ = ns.items.append('cluster classification confidence is `' ~ (architecture_lifecycle_summary.cluster_classification_confidence | default(architecture_lifecycle_summary.deployment_type_confidence | default('unknown'))) ~ '`, so ownership, install-model, and topology assumptions need confirmation before architecture decisions.') %}{% endif %}{% if architecture_lifecycle_summary.machine_networks_evidence_gap | default(false) %}{% set _ = ns.items.append('machine-network CIDRs were not derived, so network boundary assumptions are incomplete.') %}{% endif %}Architecture and lifecycle gaps detected: {{ prose_clause_join(ns.items) }}{% else %}Lifecycle support, upgrade readiness, conditional update risk, topology spread, cluster classification, and machine-network signals showed no material gaps.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Lifecycle posture is ' ~ architecture_status ~ ' with support=' ~ (architecture_lifecycle_summary.support_status | default('unknown')) ~ ', upgrade blockers=' ~ (upgrade_blockers | string) ~ ', upgrade warnings=' ~ (upgrade_warnings | string) ~ ', conditional risks=' ~ (conditional_risks | string) ~ ', and topology warnings=' ~ (topology_warning_count | string) ~ '.',
-  'Unsupported releases, blocked upgrades, or weak failure-domain design increase outage risk and constrain safe change windows.',
-  recommended_action_with_posture_docs('Verify support status, clear upgrade blockers, address conditional update guidance, and correct topology or boundary assumptions before the next maintenance window.', 'CRITICAL' if upgrade_blockers > 0 else ('WARNING' if lifecycle_needs_review else 'OK'), ['lifecycle'], 'platform_architecture_and_lifecycle'),
-  posture_owner('platform_architecture_and_lifecycle', 'lifecycle'),
-  posture_verification('platform_architecture_and_lifecycle', gap_done_when('CRITICAL' if upgrade_blockers > 0 else ('WARNING' if lifecycle_needs_review else 'OK'))),
-  posture_reference_urls(['lifecycle'], 'platform_architecture_and_lifecycle'),
-  posture_notes('platform_architecture_and_lifecycle')
-) }}
 
 ### Findings
 
@@ -2495,12 +2477,12 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `Lifecycle support` | `{% if (architecture_lifecycle_summary.support_status | default('unknown')) not in ['supported', 'unknown'] %}WARNING{% elif (architecture_lifecycle_summary.support_status | default('unknown')) == 'supported' %}OK{% else %}UNKNOWN{% endif %}` | `status={{ architecture_lifecycle_summary.support_status | default('unknown') }}, phase={{ architecture_lifecycle_summary.support_phase | default('unknown') }}` | `Unsupported lifecycle state increases operational and upgrade risk.` | `status={{ architecture_lifecycle_summary.support_status | default('unknown') }}, phase={{ architecture_lifecycle_summary.support_phase | default('unknown') }}` | `{% if (architecture_lifecycle_summary.support_status | default('unknown')) not in ['supported', 'unknown'] %}Plan the next supported upgrade or validate EUS coverage before the maintenance window.{% elif (architecture_lifecycle_summary.support_status | default('unknown')) == 'unknown' %}Verify release support evidence with collected cluster version and lifecycle data before using this posture for upgrade planning.{% else %}Maintain standard lifecycle review before planned upgrades.{% endif %}` | `{{ gap_owner('lifecycle') }}` | `{{ gap_done_when('WARNING' if (architecture_lifecycle_summary.support_status | default('unknown')) not in ['supported', 'unknown'] else ('OK' if (architecture_lifecycle_summary.support_status | default('unknown')) == 'supported' else 'UNKNOWN')) }}` |
 | `Upgrade readiness` | `{% if (upgrade_readiness_summary.status | default('unknown')) == 'BLOCKED' %}CRITICAL{% elif (upgrade_readiness_summary.status | default('unknown')) == 'WARNING' %}WARNING{% elif (upgrade_readiness_summary.status | default('unknown')) == 'READY' %}OK{% else %}UNKNOWN{% endif %}` | `blockers={{ upgrade_readiness_summary.blocker_count | default(0) }}, warnings={{ upgrade_readiness_summary.warning_count | default(0) }}` | `Upgrade work may fail or require pre-remediation.` | `blockers={{ upgrade_readiness_summary.blocker_count | default(0) }}, warnings={{ upgrade_readiness_summary.warning_count | default(0) }}` | `{% if (upgrade_readiness_summary.blocker_count | default(0) | int) > 0 %}Clear all blocking findings before scheduling the next update.{% elif (upgrade_readiness_summary.warning_count | default(0) | int) > 0 %}Review, remediate, or formally accept upgrade warnings before the change window.{% else %}No upgrade-readiness remediation is required for this posture.{% endif %}` | `{{ gap_owner('lifecycle') }}` | `{{ gap_done_when('CRITICAL' if (upgrade_readiness_summary.status | default('unknown')) == 'BLOCKED' else ('WARNING' if (upgrade_readiness_summary.status | default('unknown')) == 'WARNING' else ('OK' if (upgrade_readiness_summary.status | default('unknown')) == 'READY' else 'UNKNOWN'))) }}` |
-| `Conditional update risk` | `{% if (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ architecture_lifecycle_summary.conditional_update_count | default(0) }} risks` | `Known release risks can affect upgrade safety.` | `risks={{ architecture_lifecycle_summary.conditional_update_count | default(0) }}` | `{% if (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0 %}Review conditional update advisories and mitigation guidance.{% else %}No conditional-update remediation is required for this posture.{% endif %}` | `{{ gap_owner('lifecycle') }}` | `{{ gap_done_when('WARNING' if (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0 else 'OK') }}` |
+| `Conditional update risk` | `{% if (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0 %}WARNING{% else %}OK{% endif %}` | `{{ architecture_lifecycle_summary.conditional_update_count | default(0) }} risks` | `Known release risks can affect upgrade safety.` | `Conditional update risks reported by the cluster version evidence: {{ architecture_lifecycle_summary.conditional_update_count | default(0) }}.` | `{% if (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0 %}Review conditional update advisories and mitigation guidance.{% else %}No conditional-update remediation is required for this posture.{% endif %}` | `{{ gap_owner('lifecycle') }}` | `{{ gap_done_when('WARNING' if (architecture_lifecycle_summary.conditional_update_count | default(0) | int) > 0 else 'OK') }}` |
 | `Failure-domain topology` | `{% if topology_warning_count > 0 %}WARNING{% else %}OK{% endif %}` | `{% if topology_warning_count > 0 %}{{ topology_reason }}{% else %}no topology warnings{% endif %}` | `Weak topology spread can reduce resilience during maintenance or failure.` | `workerDomains={{ topology_resilience.worker_failure_domains_observed | default([]) | join(', ') or 'not-derived' }}, workerMissingZone={{ topology_resilience.worker_nodes_without_zone_label | default(0) }}, singleZonePools={{ topology_resilience.single_zone_worker_pool_count | default(0) }}, workerPoolsMissingZone={{ topology_resilience.machinesets_without_zone_label | default(0) }}` | `{% if topology_warning_count > 0 %}Correct worker failure-domain spread, missing zone labels, and worker-pool replica imbalance before major maintenance or upgrade windows.{% else %}No topology remediation is required for this posture.{% endif %}` | `{{ gap_owner('lifecycle') }}` | `{{ gap_done_when('WARNING' if topology_warning_count > 0 else 'OK') }}` |
 | `Architecture and network boundaries` | `{% if architecture_lifecycle_summary.machine_networks_evidence_gap | default(false) %}INFO{% else %}OK{% endif %}` | `classification={{ cluster_current_state.cluster_classification_label | default(cluster_current_state.deployment_type | default(cluster_profile.cluster_classification_label | default(cluster_profile.deployment_type | default('openshift')))) }}, serviceModel={{ cluster_current_state.service_model | default(cluster_profile.service_model | default('unknown')) }}, installModel={{ cluster_current_state.install_model | default(cluster_profile.install_model | default('unknown')) }}, machineNetworksKnown={{ architecture_lifecycle_summary.machine_networks_known | default(false) }}` | `Cluster shape and machine-network boundaries affect topology expectations, network planning, and remediation ownership.` | `machineNetworks={{ architecture_lifecycle_summary.machine_networks | default([]) | join(', ') or 'not-derived' }}, platform={{ cluster_profile.platform | default('unknown') }}, publicCloud={{ cluster_current_state.public_cloud | default(cluster_profile.public_cloud | default(false)) }}` | `{% if architecture_lifecycle_summary.machine_networks_evidence_gap | default(false) %}Confirm machine-network CIDRs with installation or network records before using this section for topology or capacity decisions.{% else %}No architecture-boundary remediation is required for this posture.{% endif %}` | `{{ gap_owner('lifecycle') }}` | `{{ gap_done_when('INFO' if (architecture_lifecycle_summary.machine_networks_evidence_gap | default(false)) else 'OK') }}` |
 | `Deprecated API exposure` | `{% if deprecated_crd_warning_count > 0 or deprecated_api_warning_count > 0 %}WARNING{% else %}OK{% endif %}` | `crd={{ deprecated_crd_warning_count }}, api={{ deprecated_api_warning_count }}` | `Deprecated APIs can block future upgrades.` | `crd={{ deprecated_crd_warning_count }}, api={{ deprecated_api_warning_count }}` | `{% if deprecated_crd_warning_count > 0 or deprecated_api_warning_count > 0 %}Remediate deprecated CRD versions and API usage ahead of upgrade planning.{% else %}No deprecated-API remediation is required for this posture.{% endif %}` | `{{ gap_owner('lifecycle') }}` | `{{ gap_done_when('WARNING' if (deprecated_crd_warning_count > 0 or deprecated_api_warning_count > 0) else 'OK') }}` |
 
-#### Upgrade Readiness
+**Upgrade Readiness**
 
 | Upgrade Signal | Detail |
 | --- | --- |
@@ -2516,7 +2498,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | Conditional update risks | `{{ upgrade_readiness_summary.conditional_update_count | default(0) }}` |
 
 {% if upgrade_readiness_summary.blocker_findings | default([]) | length > 0 %}
-#### Upgrade Blockers
+**Upgrade Blockers**
 
 | Issue | Detail |
 | --- | --- |
@@ -2526,7 +2508,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 
 {% if upgrade_readiness_summary.warning_findings | default([]) | length > 0 %}
-#### Upgrade Warnings
+**Upgrade Warnings**
 
 | Issue | Detail |
 | --- | --- |
@@ -2544,26 +2526,40 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | --- | --- |
 | `Available and conditional updates` | No available or conditional updates were returned by `ClusterVersion`. |
 {% else %}
+{% set available_update_rows = template_table_render.available_update_rows | default([]) %}
+{% set conditional_update_rows = template_table_render.conditional_update_rows | default([]) %}
 {% if available_updates | default([]) | length > 0 %}
-#### Available Updates
+**Available Updates**
 | Version | Image |
 | --- | --- |
+{% if available_update_rows | length > 0 %}
+{% for item in available_update_rows %}
+| `{{ item.version | default('unknown') }}` | `{{ item.image | default('unknown') }}` |
+{% endfor %}
+{% else %}
 {% for item in available_updates[:(top_release_table_limit | default(10) | int)] %}
 | `{{ item.version | default('unknown') }}` | `{{ item.image | default('unknown') }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if conditional_updates | default([]) | length > 0 %}
-#### Conditional Update Risks
+**Conditional Update Risks**
 | Version | Risk |
 | --- | --- |
+{% if conditional_update_rows | length > 0 %}
+{% for item in conditional_update_rows %}
+| `{{ item.release.version | default('unknown') }}` | `{{ item.risks[0].name | default('unknown') if (item.risks | default([]) | length > 0) else 'unknown' }}` |
+{% endfor %}
+{% else %}
 {% for item in conditional_updates[:(top_release_table_limit | default(10) | int)] %}
 | `{{ item.release.version | default('unknown') }}` | `{{ item.risks[0].name | default('unknown') if (item.risks | default([]) | length > 0) else 'unknown' }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if top_live_cluster_compare_findings | default([]) | length > 0 %}
-#### Baseline Comparison
+**Baseline Comparison**
 
 | Signal | Severity | Detail |
 | --- | --- | --- |
@@ -2573,7 +2569,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 
 {% if top_live_managed_gate_findings | default([]) | length > 0 %}
-#### Managed-Service Gate
+**Managed-Service Gate**
 
 | Signal | Severity | Detail |
 | --- | --- | --- |
@@ -2583,7 +2579,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 {% endif %}
 
-#### Failure Domain And Zone Spread
+**Failure Domain And Zone Spread**
 
 | Signal | Value |
 | --- | --- |
@@ -2596,7 +2592,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | Machine API worker-pool replica imbalance detected | `{{ topology_resilience.machineset_replica_unbalanced | default(false) }}` |
 
 {% if topology_resilience.worker_zone_counts | default([]) | length > 0 %}
-#### Worker Nodes By Failure Domain
+**Worker Nodes By Failure Domain**
 
 | Failure Domain | Worker Nodes |
 | --- | ---: |
@@ -2618,7 +2614,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 {% endfor %}
 {% if single_zone_worker_pools_ns.count > 0 %}
-#### Worker Pool Groups Limited To One Zone
+**Worker Pool Groups Limited To One Zone**
 
 | Role | Type | Provider | Architecture | Zone |
 | --- | --- | --- | --- | --- |
@@ -2633,7 +2629,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 {% endfor %}
 {% else %}
-#### Worker Pool Groups Limited To One Zone
+**Worker Pool Groups Limited To One Zone**
 
 | Topology Signal | Detail |
 | --- | --- |
@@ -2649,7 +2645,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 {% endfor %}
 {% if machineset_summary_ns.count > 0 %}
-#### Machine API Worker Pools By Failure Domain
+**Machine API Worker Pools By Failure Domain**
 
 | Namespace | Worker Pool Resource | Replicas | Failure Domain |
 | --- | --- | ---: | --- |
@@ -2659,7 +2655,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 {% endfor %}
 {% else %}
-#### Machine API Worker Pools By Failure Domain
+**Machine API Worker Pools By Failure Domain**
 
 | Topology Signal | Detail |
 | --- | --- |
@@ -2679,7 +2675,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | `Single node OpenShift` | A single control plane node is expected. Default ingress replica count is treated as `1` for this cluster type. |
 {% endif %}
 
-#### API And CRD Lifecycle
+**API And CRD Lifecycle**
 
 {% if top_deprecated_crd_findings | default([]) | length == 0 and top_deprecated_api_lines | default([]) | length == 0 %}
 | Lifecycle Signal | Detail |
@@ -2687,7 +2683,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 | `Deprecated APIs and CRDs` | No deprecated CRD versions or deprecated API resources were identified from the available cluster data. |
 {% else %}
 {% if top_deprecated_crd_findings | default([]) | length > 0 %}
-#### Deprecated CRD Versions
+**Deprecated CRD Versions**
 
 | CRD | Group | Deprecated Versions |
 | --- | --- | --- |
@@ -2696,7 +2692,7 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endfor %}
 {% endif %}
 {% if top_deprecated_api_lines | default([]) | length > 0 %}
-#### Deprecated API Resources
+**Deprecated API Resources**
 
 | Resource Detail |
 | --- |
@@ -2706,16 +2702,23 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% endif %}
 {% endif %}
 
-#### Update History
+**Update History**
 
+{% set cluster_update_history_rows = template_table_render.cluster_update_history_rows | default([]) %}
 {% if cluster_update_history | default([]) | length == 0 %}
 Cluster update history was not returned.
 {% else %}
 | Version | State | Started | Completed |
 | --- | --- | --- | --- |
+{% if cluster_update_history_rows | length > 0 %}
+{% for item in cluster_update_history_rows %}
+| `{{ item.version | default('unknown') }}` | `{{ item.state | default('unknown') }}` | `{{ item.startedTime | default('unknown') }}` | `{{ item.completionTime | default('in-progress') }}` |
+{% endfor %}
+{% else %}
 {% for item in cluster_update_history[:5] %}
 | `{{ item.version | default('unknown') }}` | `{{ item.state | default('unknown') }}` | `{{ item.startedTime | default('unknown') }}` | `{{ item.completionTime | default('in-progress') }}` |
 {% endfor %}
+{% endif %}
 {% endif %}
 
 {% endif %}
@@ -2742,7 +2745,8 @@ Cluster update history was not returned.
 {% set capacity_node_inventory_missing = (capacity_node_counts.total | default(0) | int) == 0 %}
 {% set capacity_resource_partial = (capacity_resources.total_cpu_millicores | default('not-derived')) == 'not-derived' or (capacity_resources.total_memory_mib | default('not-derived')) == 'not-derived' %}
 {% set capacity_zero_allocatable_suspect = (capacity_node_counts.total | default(0) | int) > 0 and (capacity_resources.total_cpu_millicores | default('not-derived') | string) == '0' and (capacity_resources.total_memory_mib | default('not-derived') | string) == '0' %}
-{% set capacity_shape_placeholder_present = ((capacity_worker_pools | selectattr('type', 'defined') | map(attribute='type') | select('search', '-unknown$|not-assessed$') | list | length) > 0) or ((capacity_node_shapes | selectattr('shape', 'defined') | map(attribute='shape') | select('search', '-unknown$|not-assessed$') | list | length) > 0) %}
+{% set capacity_current_state_render = template_table_render.capacity_current_state_summary | default({}) %}
+{% set capacity_shape_placeholder_present = capacity_current_state_render.shape_placeholder_present | default(((capacity_worker_pools | selectattr('type', 'defined') | map(attribute='type') | select('search', '-unknown$|not-assessed$') | list | length) > 0) or ((capacity_node_shapes | selectattr('shape', 'defined') | map(attribute='shape') | select('search', '-unknown$|not-assessed$') | list | length) > 0)) %}
 {% set capacity_object_count_partial = ((capacity_object_counts.pods | default(0) | int) == 0 and (capacity_object_counts.namespaces | default(0) | int) > 0) or ((capacity_object_counts.deployments | default(0) | int) == 0 and (capacity_object_counts.namespaces | default(0) | int) > 0) %}
 {% set capacity_nodes_display = 'not-derived' if capacity_node_inventory_missing else (capacity_node_counts.total | default(0) | string) %}
 {% set capacity_workers_display = 'not-derived' if capacity_node_inventory_missing else (capacity_node_counts.worker | default(0) | string) %}
@@ -2761,22 +2765,8 @@ Cluster update history was not returned.
 | Worker nodes | `{{ capacity_workers_display }}` | {{ status_badge('INFO' if not capacity_node_inventory_missing else 'UNKNOWN') }} |
 | Pods | `{{ capacity_pods_display }}` | {{ status_badge('INFO' if (not capacity_node_inventory_missing and (capacity_object_counts.pods | default(0) | int) > 0) else ('WARN' if not capacity_node_inventory_missing else 'UNKNOWN')) }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if capacity_node_inventory_missing %}Capacity snapshot could not be built because node inventory is unavailable in the report; capacity values are not safe for sizing decisions.{% elif capacity_resource_partial or capacity_zero_allocatable_suspect %}Cluster size is available, but allocatable CPU or memory capacity was not credibly derived from node inventory; use this as a partial sizing snapshot only.{% elif capacity_object_count_partial or capacity_shape_placeholder_present %}Cluster size and allocatable capacity are available, but workload object counts or node shape details remain incomplete or placeholder-derived; treat this as a partial sizing snapshot until those inputs are reconciled.{% else %}Cluster size, object counts, and aggregate node CPU and memory capacity are available for sizing context.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Capacity snapshot shows nodes=' ~ capacity_nodes_display ~ ', workers=' ~ capacity_workers_display ~ ', cpu=' ~ capacity_cpu_display ~ ', and memory=' ~ capacity_memory_display ~ '.',
-  'Sizing, growth planning, and incident response decisions are weaker when baseline allocatable capacity or node inventory is missing.',
-  recommended_action_with_posture_docs('Use this section for sizing only when node inventory, allocatable CPU and memory, workload object counts, and node shape details are fully derived; otherwise rerun collection or confirm synthesis inputs before using it for planning.', 'INFO' if capacity_node_inventory_missing or capacity_snapshot_partial else 'OK', ['capacity'], 'capacity_planning_snapshot'),
-  posture_owner('capacity_planning_snapshot', 'capacity'),
-  posture_verification('capacity_planning_snapshot', gap_done_when('INFO' if capacity_node_inventory_missing or capacity_snapshot_partial else 'OK')),
-  posture_reference_urls(['capacity'], 'capacity_planning_snapshot'),
-  posture_notes('capacity_planning_snapshot')
-) }}
 
 ### Findings
 
@@ -2820,7 +2810,7 @@ Cluster update history was not returned.
 | Machine networks source | `{{ capacity_architecture_lifecycle_summary.machine_networks_source | default(capacity_cluster_profile.machine_networks_source | default('unknown')) }}` |
 | Machine networks known | `{{ capacity_architecture_lifecycle_summary.machine_networks_known | default(false) }}` |
 
-#### Cluster Size
+**Cluster Size**
 
 | Signal | Value |
 | --- | --- |
@@ -2843,7 +2833,7 @@ Cluster update history was not returned.
 | Ingresses | `{{ capacity_object_counts.ingresses | default(0) }}` |
 | StorageClasses | `{{ capacity_object_counts.storageclasses | default(0) }}` |
 
-#### Capacity And Average Utilization
+**Capacity And Average Utilization**
 
 {% set avg_pod_density_kind = capacity_resources.average_pod_density_signal_kind | default('density') %}
 {% set avg_pod_density_approx = capacity_resources.average_pod_density_is_approximation | default(false) %}
@@ -2868,14 +2858,14 @@ Cluster update history was not returned.
 | {% if avg_memory_kind == 'requested-pressure' %}Average memory requested pressure{% else %}Average memory utilization{% endif %} | `{{ pct_with_basis((None if capacity_zero_allocatable_suspect else (capacity_resources.average_memory_utilization_pct | default(None))), avg_memory_kind, avg_memory_approx) }}` |
 | {% if avg_disk_kind == 'requested-pressure' %}Average ephemeral storage requested pressure{% else %}Average disk utilization{% endif %} | `{{ pct_with_basis((None if capacity_zero_allocatable_suspect else (capacity_resources.average_disk_utilization_pct | default(None))), avg_disk_kind, avg_disk_approx) }}` |
 
-#### Service And Pod IP Capacity
+**Service And Pod IP Capacity**
 
 | Capacity Basis | Detail |
 | --- | --- |
 | `Service and pod ranges` | Service, pod, and node range values reflect the cluster network configuration and current Service, Pod, and Node objects available to the report. |
 | `Node IP ranges` | Node IP range values use machine-network CIDRs when present, otherwise node InternalIP ranges are used as the practical capacity boundary. |
 
-{% if capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-services') | list | length > 0 or capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-pods') | list | length > 0 %}
+{% if capacity_current_state_render.has_ip_capacity_findings | default(capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-services') | list | length > 0 or capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'ip-capacity-pods') | list | length > 0) %}
 | Sanity Check | Detail |
 | --- | --- |
 | `IP capacity derivation` | {% for item in capacity_cluster_current_state_sanity_findings | default([]) if item.area in ['ip-capacity-services', 'ip-capacity-pods'] %}`{{ item.detail }}`{% if not loop.last %}; {% endif %}{% endfor %} |
@@ -2895,7 +2885,7 @@ Cluster update history was not returned.
 | Node IPs taken | `{{ capacity_node_ip.taken_ips | default(0) }}` |
 | Node IPs available | `{{ 'not-derived' if (capacity_node_ip.available_ips | default('unknown')) == 'unknown' else (capacity_node_ip.available_ips | default('unknown')) }}` |
 
-#### Node Growth Headroom
+**Node Growth Headroom**
 
 | Capacity Basis | Detail |
 | --- | --- |
@@ -2912,7 +2902,7 @@ Cluster update history was not returned.
 | Node IPs available | `{{ 'not-derived' if (capacity_node_growth.node_ips_available | default('unknown')) == 'unknown' else (capacity_node_growth.node_ips_available | default('unknown')) }}` |
 
 {% if capacity_node_growth.network_slot_details | default([]) | length > 0 %}
-#### Node Slot Estimate Details
+**Node Slot Estimate Details**
 
 | Pod Network CIDR | Host Prefix | Node Slots |
 | --- | --- | ---: |
@@ -2921,12 +2911,12 @@ Cluster update history was not returned.
 {% endfor %}
 {% endif %}
 
-#### Node Platform Summary
+**Node Platform Summary**
 
 | Platform Basis | Detail |
 | --- | --- |
 | `Node platform summary` | Summarizes node labels, allocatable resources, and kubelet metadata visible in the cluster inventory. |
-{% if capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'node-platform-version') | list | length > 0 or capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'worker-pools') | list | length > 0 or capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'machineconfigpools') | list | length > 0 %}
+{% if capacity_current_state_render.has_node_shape_findings | default(capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'node-platform-version') | list | length > 0 or capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'worker-pools') | list | length > 0 or capacity_cluster_current_state_sanity_findings | default([]) | selectattr('area', 'equalto', 'machineconfigpools') | list | length > 0) %}
 | Sanity Check | Detail |
 | --- | --- |
 | `Node platform derivation` | {% for item in capacity_cluster_current_state_sanity_findings | default([]) if item.area in ['node-platform-version', 'worker-pools', 'machineconfigpools'] %}`{{ item.detail }}`{% if not loop.last %}; {% endif %}{% endfor %} |
@@ -2956,26 +2946,26 @@ Cluster update history was not returned.
 | Kubernetes versions | `{% for item in capacity_cluster_current_state.kubernetes_versions %}{{ item.version }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.instance_types | default([]) | length > 0 %}
-| Cloud instance types | `{% for item in capacity_cluster_current_state.instance_types[:(top_capacity_summary_limit | default(10) | int)] %}{{ item.instance_type }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| Cloud instance types | `{% if capacity_current_state_render.instance_types | default('') | length > 0 %}{{ capacity_current_state_render.instance_types }}{% else %}{% for item in capacity_cluster_current_state.instance_types[:(top_capacity_summary_limit | default(10) | int)] %}{{ item.instance_type }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}` |
 {% endif %}
 {% if capacity_cluster_current_state.node_shapes | default([]) | length > 0 %}
-| Node shapes | `{% for item in capacity_cluster_current_state.node_shapes[:(top_capacity_shape_summary_limit | default(12) | int)] %}{{ ('not-derived' if (item.shape | default('unknown')) in ['unknown', 'not-assessed'] or (item.shape | default('unknown')) | regex_search('-unknown$|not-assessed$') else item.shape) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| Node shapes | `{% if capacity_current_state_render.node_shapes | default('') | length > 0 %}{{ capacity_current_state_render.node_shapes }}{% else %}{% for item in capacity_cluster_current_state.node_shapes[:(top_capacity_shape_summary_limit | default(12) | int)] %}{{ ('not-derived' if (item.shape | default('unknown')) in ['unknown', 'not-assessed'] or (item.shape | default('unknown')) | regex_search('-unknown$|not-assessed$') else item.shape) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}` |
 {% endif %}
 {% if capacity_cluster_current_state.provider_types | default([]) | length > 0 %}
 | Node providers | `{% for item in capacity_cluster_current_state.provider_types %}{{ item.provider }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% if capacity_cluster_current_state.os_images | default([]) | length > 0 %}
-| OS images | `{% for item in capacity_cluster_current_state.os_images[:(top_capacity_summary_limit | default(10) | int)] %}{{ ('not-derived' if (item.os_image | default('unknown')) in ['unknown', 'not-assessed'] else item.os_image) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| OS images | `{% if capacity_current_state_render.os_images | default('') | length > 0 %}{{ capacity_current_state_render.os_images }}{% else %}{% for item in capacity_cluster_current_state.os_images[:(top_capacity_summary_limit | default(10) | int)] %}{{ ('not-derived' if (item.os_image | default('unknown')) in ['unknown', 'not-assessed'] else item.os_image) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}` |
 {% endif %}
 {% if capacity_cluster_current_state.container_runtimes | default([]) | length > 0 %}
-| Container runtimes | `{% for item in capacity_cluster_current_state.container_runtimes[:(top_capacity_summary_limit | default(10) | int)] %}{{ ('not-derived' if (item.runtime | default('unknown')) in ['unknown', 'not-assessed'] else item.runtime) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
+| Container runtimes | `{% if capacity_current_state_render.container_runtimes | default('') | length > 0 %}{{ capacity_current_state_render.container_runtimes }}{% else %}{% for item in capacity_cluster_current_state.container_runtimes[:(top_capacity_summary_limit | default(10) | int)] %}{{ ('not-derived' if (item.runtime | default('unknown')) in ['unknown', 'not-assessed'] else item.runtime) }}={{ item.count }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}` |
 {% endif %}
 {% if capacity_cluster_current_state.top_node_features | default([]) | length > 0 %}
 | Top node features | `{% for item in capacity_cluster_current_state.top_node_features %}{{ item.feature }}={{ item.node_count }}{% if not loop.last %}, {% endif %}{% endfor %}` |
 {% endif %}
 {% endif %}
 
-#### Worker Pools
+**Worker Pools**
 
 {% if capacity_cluster_current_state.worker_pools | default([]) | length == 0 %}
 | Role | Type | Source | Provider | Architecture | Nodes | Zones |
@@ -2993,7 +2983,7 @@ Cluster update history was not returned.
 {% endfor %}
 {% endif %}
 
-#### MachineConfigPool Snapshot
+**MachineConfigPool Snapshot**
 
 {% if capacity_cluster_current_state.is_hosted_control_plane | default(false) %}
 | Platform Signal | Detail |
@@ -3042,22 +3032,8 @@ Cluster update history was not returned.
 | Day 2 capability checks inventoried | `{{ declarative_operations_summary.day2_check_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.day2_check_count | default(0) | int) > 0 else 'UNKNOWN') }} |
 | Day 2 capability warnings | `{{ declarative_operations_summary.capability_check_warning_count | default(0) }}` | {{ status_badge('INFO' if (declarative_operations_summary.capability_check_warning_count | default(0) | int) > 0 else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if (declarative_operations_summary.status | default('unknown')) == 'WARNING' %}Declarative operations gap detected: the collected inventory does not yet show a complete declarative operating model. GitOps present=`{{ declarative_operations_summary.gitops_present | default(false) }}`, GitOps Applications=`{{ declarative_operations_summary.gitops_application_count | default(0) }}`, repo-backed Applications=`{{ declarative_operations_summary.gitops_repo_backed_application_count | default(0) }}`, automated-sync Applications=`{{ declarative_operations_summary.gitops_automated_sync_application_count | default(0) }}`, and AppProjects=`{{ declarative_operations_summary.gitops_appproject_count | default(0) }}`.{% else %}Declarative operations resources were detected with `{{ declarative_operations_summary.gitops_application_count | default(0) }}` GitOps Applications, `{{ declarative_operations_summary.gitops_repo_backed_application_count | default(0) }}` repo-backed Applications, `{{ declarative_operations_summary.gitops_automated_sync_application_count | default(0) }}` automated-sync Applications, and `{{ declarative_operations_summary.gitops_appproject_count | default(0) }}` AppProjects.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Declarative operations posture is ' ~ (declarative_operations_summary.status | default('unknown')) ~ ' with GitOps present=' ~ (declarative_operations_summary.gitops_present | default(false) | string) ~ ', applications=' ~ (declarative_operations_summary.gitops_application_count | default(0) | string) ~ ', repo-backed applications=' ~ (declarative_operations_summary.gitops_repo_backed_application_count | default(0) | string) ~ ', and automated sync applications=' ~ (declarative_operations_summary.gitops_automated_sync_application_count | default(0) | string) ~ '.',
-  'A weak declarative operating model makes change control, repeatability, auditability, and environment recovery harder.',
-  recommended_action_with_posture_docs(declarative_operations_recommendations, 'WARNING' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'), ['operations'], 'declarative_operations'),
-  posture_owner('declarative_operations', 'operations'),
-  posture_verification('declarative_operations', gap_done_when('WARNING' if (declarative_operations_summary.status | default('unknown')) == 'WARNING' else ('OK' if (declarative_operations_summary.status | default('unknown')) == 'HEALTHY' else 'UNKNOWN'))),
-  posture_reference_urls(['operations'], 'declarative_operations'),
-  posture_notes('declarative_operations')
-) }}
 
 ### Findings
 
@@ -3104,22 +3080,8 @@ Cluster update history was not returned.
 | Builds | `{{ release_engineering_summary.build_count | default(0) }}` | {{ status_badge('INFO' if (release_engineering_summary.build_count | default(0) | int) > 0 else 'OK') }} |
 | ImageStreams | `{{ release_engineering_summary.imagestream_count | default(0) }}` | {{ status_badge('INFO' if (release_engineering_summary.imagestream_count | default(0) | int) > 0 else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 or triggerless_buildconfig_warning_count > 0 or (cicd_runner_present and ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 or (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 or (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0)) %}{% set ns = namespace(items=[]) %}{% if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (release_engineering_summary.failed_pipelinerun_count | string) ~ '` failed PipelineRuns were found and need pipeline task, credential, image, service account, workspace, quota, or cluster-resource remediation.') %}{% endif %}{% if triggerless_buildconfig_warning_count > 0 %}{% set _ = ns.items.append('`' ~ (triggerless_buildconfig_warning_count | string) ~ '` BuildConfigs have no triggers and no alternate delivery automation signal, so trigger ownership or external automation ownership is missing.') %}{% endif %}{% if cicd_runner_present and ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 or (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0) %}{% set _ = ns.items.append('`' ~ (cicd_runner_summary.unhealthy_pod_count | default(0) | string) ~ '` CI/CD runner pods are unhealthy or restarting and `' ~ (cicd_runner_summary.unschedulable_pod_count | default(0) | string) ~ '` are unschedulable, which can increase delivery queue time.') %}{% endif %}{% if cicd_runner_present and (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0 %}{% set _ = ns.items.append('`' ~ (cicd_runner_summary.privileged_pod_count | string) ~ '` runner pods are privileged and need isolation, service-account, and namespace policy review.') %}{% endif %}Release-engineering gaps detected: {{ prose_clause_join(ns.items) }}{% elif (release_engineering_summary.status | default('unknown')) == 'HEALTHY' %}No failed PipelineRuns or triggerless BuildConfigs requiring remediation were detected{% if cicd_runner_present %}; no unhealthy, unschedulable, or privileged cluster-hosted runner pods were detected; runnerPods=`{{ cicd_runner_summary.runner_pod_count | default(0) }}`{% endif %}. Delivery inventory was found: pipelines=`{{ release_engineering_summary.pipeline_count | default(0) }}`, PipelineRuns=`{{ release_engineering_summary.pipelinerun_count | default(0) }}`, BuildConfigs=`{{ release_engineering_summary.buildconfig_count | default(0) }}`.{% elif triggerless_buildconfig_info_count > 0 %}Triggerless BuildConfigs were detected but are treated as delivery-automation context because other pipeline, runner, or external delivery signals are present.{% else %}No release-engineering footprint was found in the cluster objects available to this report. Treat this as absence of delivery-tool signal, not a defect, unless the customer expects CI/CD or build resources on this cluster.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Release-engineering posture is ' ~ (release_engineering_summary.status | default('unknown')) ~ ' with failed PipelineRuns=' ~ (release_engineering_summary.failed_pipelinerun_count | default(0) | string) ~ ', triggerless BuildConfigs needing review=' ~ (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | string) ~ ', and runner warnings=' ~ (cicd_runner_warning_count | string) ~ '.',
-  'Delivery failures and unowned automation slow releases, increase manual change risk, and can block urgent remediation.',
-  recommended_action_with_posture_docs(release_engineering_recommendations, 'WARNING' if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 or (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | int) > 0 or (cicd_runner_present and ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 or (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 or (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0)) else ('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else 'INFO'), ['release'], 'container_platform_adoption_and_release_engineering'),
-  posture_owner('container_platform_adoption_and_release_engineering', 'release'),
-  posture_verification('container_platform_adoption_and_release_engineering', gap_done_when('WARNING' if (release_engineering_summary.failed_pipelinerun_count | default(0) | int) > 0 or (release_engineering_summary.triggerless_buildconfig_warning_count | default(0) | int) > 0 or (cicd_runner_present and ((cicd_runner_summary.unhealthy_pod_count | default(0) | int) > 0 or (cicd_runner_summary.unschedulable_pod_count | default(0) | int) > 0 or (cicd_runner_summary.privileged_pod_count | default(0) | int) > 0)) else ('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else 'INFO'))),
-  posture_reference_urls(['release'], 'container_platform_adoption_and_release_engineering'),
-  posture_notes('container_platform_adoption_and_release_engineering')
-) }}
 
 ### Findings
 
@@ -3133,27 +3095,41 @@ Cluster update history was not returned.
 | `Delivery inventory context` | `{% if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' %}OK{% else %}INFO{% endif %}` | `pipelines={{ release_engineering_summary.pipeline_count | default(0) }}, buildconfigs={{ release_engineering_summary.buildconfig_count | default(0) }}, imagestreams={{ release_engineering_summary.imagestream_count | default(0) }}` | `Delivery inventory explains how applications may be built or released on the platform.` | `builds={{ release_engineering_summary.build_count | default(0) }}, pipelineRuns={{ release_engineering_summary.pipelinerun_count | default(0) }}, externalAutomationSignal={{ release_engineering_summary.external_delivery_evidence_present | default(false) }}` | `{% if (release_engineering_summary.status | default('unknown')) == 'INFO' %}Confirm whether CI/CD or build resources are expected on this cluster; if not, treat the absence of delivery footprint as context only.{% elif (release_engineering_summary.status | default('unknown')) == 'HEALTHY' %}No delivery-inventory remediation is required for this posture.{% else %}Use this as delivery inventory context and investigate only the failed runs, runner issues, or unowned automation called out above.{% endif %}` | `{{ gap_owner('release') }}` | `{{ gap_done_when('OK' if (release_engineering_summary.status | default('unknown')) == 'HEALTHY' else 'INFO') }}` |
 
 {% if (buildconfig_strategy_counts | default({}) | length) > 0 %}
-#### Build Strategy
+**Build Strategy**
 
 | Strategy | Count |
 | --- | --- |
+{% set buildconfig_strategy_count_rows = template_table_render.buildconfig_strategy_count_rows | default([]) %}
+{% if buildconfig_strategy_count_rows | length > 0 %}
+{% for item in buildconfig_strategy_count_rows %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (buildconfig_strategy_counts | dict2items | sort(attribute='key')) %}
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if (pipelinerun_status_counts | default({}) | length) > 0 %}
-#### Pipeline Status
+**Pipeline Status**
 
 | Status | Count |
 | --- | --- |
+{% set pipelinerun_status_count_rows = template_table_render.pipelinerun_status_count_rows | default([]) %}
+{% if pipelinerun_status_count_rows | length > 0 %}
+{% for item in pipelinerun_status_count_rows %}
+| `{{ item.key }}` | `{{ item.value }}` |
+{% endfor %}
+{% else %}
 {% for item in (pipelinerun_status_counts | dict2items | sort(attribute='key')) %}
 | `{{ item.key }}` | `{{ item.value }}` |
 {% endfor %}
 {% endif %}
+{% endif %}
 
 {% if top_failed_pipelineruns | default([]) | length > 0 %}
-#### Failed PipelineRuns
+**Failed PipelineRuns**
 
 | Namespace | PipelineRun | Pipeline | Reason | Started | Completed |
 | --- | --- | --- | --- | --- | --- |
@@ -3163,7 +3139,7 @@ Cluster update history was not returned.
 {% endif %}
 
 {% if top_buildconfigs_without_triggers | default([]) | length > 0 %}
-#### {% if triggerless_buildconfig_warning_count > 0 %}BuildConfigs Without Triggers Requiring Review{% elif triggerless_buildconfig_info_count > 0 %}Triggerless BuildConfigs Treated As Automation Context{% else %}BuildConfigs Without Triggers{% endif %}
+**{% if triggerless_buildconfig_warning_count > 0 %}BuildConfigs Without Triggers Requiring Review{% elif triggerless_buildconfig_info_count > 0 %}Triggerless BuildConfigs Treated As Automation Context{% else %}BuildConfigs Without Triggers{% endif %}**
 
 {% if triggerless_buildconfig_info_count > 0 and triggerless_buildconfig_warning_count == 0 %}
 These `BuildConfig` objects have no direct triggers, but this report is treating them as delivery context because other automation evidence is present.
@@ -3176,7 +3152,7 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 {% endfor %}
 {% endif %}
 
-### Cluster-Hosted CI/CD Runner Pods
+**Cluster-Hosted CI/CD Runner Pods**
 
 | Signal | Value | Status |
 | --- | --- | --- |
@@ -3199,7 +3175,7 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 {% endfor %}
 
 {% if cicd_runner_summary.top_runner_pods | default([]) | length > 0 %}
-#### Active Runner Pods
+**Active Runner Pods**
 
 | Namespace | Pod | Provider | Phase | Ready | Restarts | Node |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -3226,7 +3202,12 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 {% set day2_security_status = day2_readiness_summary.security_compliance_status | default('not-derived') %}
 {% set day2_operations_status = day2_readiness_summary.declarative_operations_status | default('not-derived') %}
 {% set day2_capability_sections_raw = day2_domain.capability_sections | default([]) %}
+{% set day2_capability_render = template_table_render.day2_capability_render | default({}) %}
+{% set day2_capability_render_sections = day2_capability_render.sections | default([]) %}
 {% set ns_day2_filter = namespace(sections=[]) %}
+{% if day2_capability_render_sections | length > 0 %}
+{% set day2_capability_sections = day2_capability_render_sections %}
+{% else %}
 {% for section in day2_capability_sections_raw %}
 {% set section_key = section.key | default('') | string | trim %}
 {% if section_key and capability_profile.get(section_key, {}).get('enabled', false) %}
@@ -3234,12 +3215,22 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 {% endif %}
 {% endfor %}
 {% set day2_capability_sections = ns_day2_filter.sections %}
+{% endif %}
 {% set day2_capability_assessment_state = day2_domain.capability_assessment_state | default(day2_readiness_summary.capability_assessment_state | default('unknown')) %}
 {% set day2_capability_assessment_error = day2_domain.capability_assessment_error | default(day2_readiness_summary.capability_assessment_error | default('')) %}
 {% set day2_capability_assessment_failed = day2_capability_assessment_state not in ['completed'] %}
 {% set day2_critical_blocker_present = day2_upgrade_status == 'BLOCKED' or day2_observability_status == 'CRITICAL' or day2_backup_status == 'CRITICAL' or day2_security_status == 'CRITICAL' %}
 {% set day2_warning_blocker_present = day2_lifecycle_status not in ['supported', 'unknown', 'not-derived'] or day2_upgrade_status == 'WARNING' or day2_observability_status == 'WARNING' or day2_backup_status == 'WARNING' or day2_security_status == 'WARNING' or day2_operations_status == 'WARNING' %}
+{% set day2_capability_counts = day2_capability_render.counts | default({}) %}
 {% set ns_day2 = namespace(ok=0, warn=0, critical=0, unknown=0, required_gaps=0, required_total=0) %}
+{% if day2_capability_counts | length > 0 %}
+{% set ns_day2.ok = day2_capability_counts.ok | default(0) | int %}
+{% set ns_day2.warn = day2_capability_counts.warn | default(0) | int %}
+{% set ns_day2.critical = day2_capability_counts.critical | default(0) | int %}
+{% set ns_day2.unknown = day2_capability_counts.unknown | default(0) | int %}
+{% set ns_day2.required_gaps = day2_capability_counts.required_gaps | default(0) | int %}
+{% set ns_day2.required_total = day2_capability_counts.required_total | default(0) | int %}
+{% else %}
 {% for section in day2_capability_sections %}
 {% set section_status = section.status | default('UNKNOWN') | string | trim | upper %}
 {% if section_status in ['OK', 'HEALTHY', 'PASS', 'PASSED', 'PRESENT', 'SUPPORTED'] %}
@@ -3258,6 +3249,7 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 {% endif %}
 {% endif %}
 {% endfor %}
+{% endif %}
 
 ### Health Score
 
@@ -3271,24 +3263,8 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 | Critical blocker state | `upgrade={{ day2_upgrade_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}` | {{ status_badge('CRITICAL' if day2_critical_blocker_present else ('INFO' if day2_warning_blocker_present else 'OK')) }} |
 | Warning blocker state | `lifecycle={{ day2_lifecycle_status }}, observability={{ day2_observability_status }}, backup={{ day2_backup_status }}, security={{ day2_security_status }}, operations={{ day2_operations_status }}` | {{ status_badge('WARN' if day2_warning_blocker_present else 'OK') }} |
 
-### Recommendations
-
-**Findings Summary**
+### Findings Summary
 - {% if day2_capability_assessment_state != 'completed' %}Capability assessment did not complete cleanly in this run, so the capability sections below are fallback placeholders rather than collected assessment results. Treat `gap status` and `capability key` rows marked `not-assessed` as a rerun requirement. {% if day2_capability_assessment_error %}Analyzer detail: `{{ day2_capability_assessment_error | replace('|', '\\|') }}`.{% endif %}{% elif day2_top_blockers | length > 0 %}The cluster should not be treated as fully Day 2 production-ready until these blockers are resolved: `{{ day2_top_blockers | join('; ') }}`. The readiness roll-up shows `{{ day2_readiness_summary.reason_summary | default('one or more readiness domains require review') }}`.{% elif day2_status == 'HEALTHY' %}No Day 2 production-readiness blockers were summarized by the owning postures. Readiness confidence is `{{ day2_evidence_confidence }}` and the owning postures did not report blocking lifecycle, upgrade, recovery, security, or operations gaps.{% else %}The Day 2 production-readiness decision is incomplete because the roll-up status is `{{ day2_status }}` and no blocker list was produced. Resolve the incomplete readiness inputs in the owning posture sections before using this section as the production-readiness decision.{% endif %}
-
-### Operating Questions
-
-{{ operating_questions(
-  'Day 2 readiness decision is ' ~ day2_status ~ ' with blockers=' ~ (day2_top_blockers | join('; ') or 'none') ~ ', evidence confidence=' ~ day2_evidence_confidence ~ ', and capability assessment state=' ~ day2_capability_assessment_state ~ '.',
-  'This roll-up is the final operating call on whether the cluster is ready for sustained production support, upgrades, incident response, and recovery.',
-  recommended_action_with_posture_docs(day2_recommendations, 'CRITICAL' if day2_critical_blocker_present else ('WARNING' if day2_warning_blocker_present or day2_top_blockers | length > 0 or day2_capability_assessment_state != 'completed' else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN')), ['day2'], 'day2_production_readiness'),
-  posture_owner('day2_production_readiness', 'operations'),
-  posture_verification('day2_production_readiness', gap_done_when('CRITICAL' if day2_critical_blocker_present else ('WARNING' if day2_warning_blocker_present or day2_top_blockers | length > 0 or day2_capability_assessment_state != 'completed' else ('OK' if day2_status == 'HEALTHY' else 'UNKNOWN')))),
-  posture_reference_urls(['day2'], 'day2_production_readiness'),
-  posture_notes('day2_production_readiness')
-) }}
-
-#### Capability Summary
 
 | Capability posture | Count | Meaning |
 | --- | --- | --- |
@@ -3299,10 +3275,9 @@ These `BuildConfig` objects have no direct triggers, but this report is treating
 | `required capabilities at risk` | `{{ ns_day2.required_gaps }}` | Required capabilities that are not yet in a clean state. {% if day2_capability_assessment_failed and ns_day2.required_total > 0 %}Because capability assessment failed, unresolved required capabilities are being counted from the fallback sections rather than collected check results.{% endif %} |
 
 {% if day2_capability_sections | length > 0 %}
-### Capability Assessments
 
 {% if day2_capability_assessment_state != 'completed' %}
-Capability assessment note: collected capability analysis did not complete cleanly in this run. The sections below preserve ownership, expected evidence, and remediation framing, but they are not substitutes for a successful capability assessment rerun.
+Capability assessment note: collected capability analysis did not complete cleanly in this run. The capability findings below preserve ownership, expected evidence, and remediation framing, but they are not substitutes for a successful capability assessment rerun.
 {% endif %}
 
 {% for section in day2_capability_sections %}
@@ -3312,77 +3287,39 @@ Capability assessment note: collected capability analysis did not complete clean
 {% set section_needs_verification = section_status_value in ['UNKNOWN', 'NOT-ASSESSED', 'NOT ASSESSED'] or section_accounting_state_value in ['not-assessed', 'not assessed', 'profile-enabled-no-direct-check'] %}
 #### {{ section.title | default(section.key | replace('_', ' ')) | title }}
 
-Leadership view
-
-{{ capability_outcome_phrase(section) }}
-
-Technical focus
-
-{{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}
-
-##### Assessment Summary
-
-{{ operating_questions(
-  capability_gap_statement(section),
-  capability_business_impact(section),
-  recommended_action_with_capability_docs(section.recommended_action | default('Review the expected evidence for this capability.'), section),
-  likely_owner_label(section.owner | default('platform')),
-  capability_success_signal(section),
-  capability_reference_urls(section),
-  section.notes | default('')
-) }}
+##### Health Score
 
 | Signal | Value | Status |
 | --- | --- | --- |
 | Capability key | `{{ section.key }}` | {{ status_badge(section.status | default('UNKNOWN')) }} |
 | Gap status | `{{ 'needs verification' if section_needs_verification else (('recommended but not evidenced' if not (section.required | default(false)) else 'gap identified') if not section_is_clean else 'criteria met') }}` | {{ status_badge(section.status | default('UNKNOWN')) }} |
 | Required | `{{ section.required | default(false) }}` | {{ status_badge('WARN' if (section.required | default(false)) and not section_is_clean else ('OK' if section_is_clean else 'INFO')) }} |
-| Expected state | `{{ section.expected_state | default('present') }}` | {{ status_badge('INFO') }} |
-| Suggested owner | `{{ section.owner | default('platform') }}` | {{ status_badge('INFO') }} |
 | Criticality | `{{ section.criticality | default('medium') }}` | {{ status_badge('INFO') }} |
 | Evidence required | `{{ section.evidence_required | default([]) | join(', ') or 'none-declared' }}` | {{ status_badge('INFO') }} |
 | Accounting state | `{{ section.accounting_state | default('assessed') }}` | {{ status_badge('UNKNOWN' if section_accounting_state_value in ['not-assessed', 'not assessed'] else ('INFO' if section_accounting_state_value != 'assessed' else 'OK')) }} |
 | Checks mapped | `{{ section.check_count | default(0) }}` | {{ status_badge('INFO' if (section.check_count | default(0) | int) > 0 else 'UNKNOWN') }} |
 | Findings mapped | `{{ section.finding_count | default(0) }}` | {{ status_badge('WARN' if (section.finding_count | default(0) | int) > 0 else ('UNKNOWN' if (section.check_count | default(0) | int) == 0 and section_needs_verification else 'OK')) }} |
-| What was found | `{{ section.top_detail | default('No collected check detail was mapped for this capability.') | replace('|', '\\|') }}` | {{ status_badge(section.status | default('UNKNOWN')) }} |
-| Why it matters | `{{ capability_business_impact(section) }}` | {{ status_badge('INFO') }} |
-| Action plan | `{{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
-| Done when | `{{ capability_success_signal(section) | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
-| Reference | `{{ profile_text(section.docs | default('not-declared')) | replace('|', '\\|') }}` | {{ status_badge('INFO') }} |
 
-{% if (section.notes | default('') | trim | length > 0) or (profile_text(section.docs | default('')) | trim | length > 0) %}
-Expected operating model
+##### Findings Summary
 
-{% if section.notes | default('') | trim | length > 0 %}
-{{ section.notes | replace('|', '\\|') }}
-{% endif %}
+- {{ capability_outcome_phrase(section) }} {{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}
 
-{% if profile_text(section.docs | default('')) | trim | length > 0 %}
-Implementation reference
+##### Findings
 
-{{ profile_text(section.docs | default('')) }}
-{% endif %}
-{% endif %}
-
-{% if section.checks | default([]) | length > 0 %}
-Checks
-
-| Check | Status | Level | Source | Detail |
-| --- | --- | --- | --- | --- |
+| Finding | Severity | Current State | Business Impact | Technical Evidence | Action Plan | Suggested Owner | Done When |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `Capability readiness` | `{{ section.status | default('UNKNOWN') }}` | `required={{ section.required | default(false) }}, expected={{ section.expected_state | default('present') }}, accounting={{ section.accounting_state | default('assessed') }}` | `{{ capability_business_impact(section) | replace('|', '\\|') }}` | `checks={{ section.check_count | default(0) }}, findings={{ section.finding_count | default(0) }}, detail={{ section.top_detail | default('No collected check detail was mapped for this capability.') | replace('|', '\\|') }}` | `{{ section.recommended_action | default('Review the expected evidence for this capability.') | replace('|', '\\|') }}` | `{{ likely_owner_label(section.owner | default('platform')) }}` | `{{ capability_success_signal(section) | replace('|', '\\|') }}` |
 {% for item in section.checks | default([]) %}
-| `{{ item.capability | default(section.key) }}` | `{{ item.status | default('UNKNOWN') }}` | `{{ item.level | default('recommended') }}` | `{{ item.source | default('collected-evidence') }}` | {{ item.detail | default('No detail provided.') | replace('|', '\\|') }} |
+{% set item_status_value = item.status | default('UNKNOWN') | string | trim | upper %}
+{% set item_is_clean = item_status_value in ['OK', 'HEALTHY', 'PASS', 'PASSED', 'PRESENT', 'SUPPORTED'] %}
+{% set item_action = item.recommended_action | default(section.recommended_action | default('Review this capability check against the expected outcome: ' ~ capability_success_signal(section) ~ ' Compare the technical evidence with the expected state, implement or restore the missing control, collect the missing evidence if needed, and rerun the report to confirm the check is clean.')) %}
+| `{{ item.capability | default(section.key) }}` | `{{ item.status | default('UNKNOWN') }}` | `level={{ item.level | default('recommended') }}` | `{{ 'Capability check result should be reviewed when it is not clean or when the capability is required.' if not item_is_clean or (section.required | default(false)) else 'The capability check is currently clean; retain the current control and monitor for drift.' }}` | `source={{ item.source | default('collected-evidence') }}, detail={{ item.detail | default('No detail provided.') | replace('|', '\\|') }}` | `{{ ('No remediation is required for this check beyond keeping the control healthy in future report runs.' if item_is_clean else item_action) | replace('|', '\\|') }}` | `{{ likely_owner_label(section.owner | default('platform')) }}` | `The check is clean in the next report run, or the remaining condition is explicitly accepted by the owning team.` |
 {% endfor %}
-{% endif %}
-
-{% if section.findings | default([]) | length > 0 %}
-Findings
-
-| Severity | Gap | Evidence | Action plan | Done when |
-| --- | --- | --- | --- | --- |
 {% for item in section.findings | default([]) %}
-| `{{ item.severity | default('warning') }}` | {{ item.issue | default(section.title | default(section.key | replace('_', ' '))) | replace('|', '\\|') }} | `{{ item.source | default('capability') }}` | {{ item.recommended_action | default(item.detail | default('Review and remediate this capability gap.')) | replace('|', '\\|') }} | {{ finding_success_signal(item) | replace('|', '\\|') }} |
+{% set finding_action = item.recommended_action | default(section.recommended_action | default('Review this finding against the expected outcome: ' ~ capability_success_signal(section) ~ ' Restore or implement the expected capability control, collect the missing evidence if needed, and rerun the report to confirm the finding is cleared.')) %}
+| `{{ item.issue | default(section.title | default(section.key | replace('_', ' '))) | replace('|', '\\|') }}` | `{{ item.severity | default('warning') }}` | `source={{ item.source | default('capability') }}` | `This capability gap can reduce production readiness or increase operational follow-up effort.` | `{{ item.detail | default(item.source | default('capability')) | replace('|', '\\|') }}` | `{{ finding_action | replace('|', '\\|') }}` | `{{ likely_owner_label(section.owner | default('platform')) }}` | `{{ finding_success_signal(item) | replace('|', '\\|') }}` |
 {% endfor %}
-{% endif %}
+
 {% endfor %}
 {% endif %}
 

@@ -35,10 +35,7 @@ def collect_route_receivers(route_obj, result):
         collect_route_receivers(child, result)
 
 
-def main():
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
+def build(data):
     findings = []
     receivers = []
     config_sources = []
@@ -112,7 +109,7 @@ def main():
             "detail": "additional Alertmanager configuration was detected, but no explicit externally routed receivers were visible in AlertmanagerConfig resources"
         })
 
-    print(json.dumps({
+    return {
         "findings": findings,
         "receivers": receivers,
         "config_sources": config_sources,
@@ -122,9 +119,15 @@ def main():
         "alert_routing_to_external_receiver_configured": configs_with_external_routes > 0,
         "alertmanagerconfigs_with_external_routes": configs_with_external_routes,
         "alertmanagerconfigs_without_route_receivers": configs_without_route_receivers
-    }))
+    }
+
+
+def main():
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    print(json.dumps(build(data)))
 
 
 if __name__ == "__main__":
     main()
-

@@ -1,15 +1,4 @@
 ---
-- name: Find OpenShift capability artifacts
-  ansible.builtin.find:
-    paths: "{{ report_run_workspace_capabilities_dir }}"
-    patterns: "*.json"
-    file_type: file
-  register: openshift_capability_artifact_files
-
-- name: Initialize loaded OpenShift capability artifacts
-  ansible.builtin.set_fact:
-    openshift_capability_artifacts: "{{ openshift_capability_artifacts | default({}) }}"
-
 - name: Load OpenShift capability artifacts in bulk
   ansible.builtin.command:
     argv:
@@ -18,12 +7,10 @@
       - "{{ report_run_workspace_capabilities_dir }}"
   register: openshift_capability_artifacts_cmd
   changed_when: false
-  when: (openshift_capability_artifact_files.matched | default(0) | int) > 0
 
 - name: Merge OpenShift capability artifacts
   ansible.builtin.set_fact:
     openshift_capability_artifacts: "{{ (openshift_capability_artifacts | default({})) | combine((openshift_capability_artifacts_cmd.stdout | from_json), recursive=True) }}"
   when:
-    - openshift_capability_artifacts_cmd is defined
     - (openshift_capability_artifacts_cmd.rc | default(1)) == 0
     - (openshift_capability_artifacts_cmd.stdout | default('') | length) > 0

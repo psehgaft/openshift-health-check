@@ -1,129 +1,24 @@
 ---
-- name: Build deployment probe coverage findings
-  ansible.builtin.set_fact:
-    workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (analysis_graph.deployments | default({})).get('items', []) }}"
-  vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    workload_name: "{{ item.metadata.name | default('') }}"
-    containers: "{{ item.spec.template.spec.containers | default([]) }}"
-    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
-    labels: "{{ item.metadata.labels | default({}) }}"
-    annotations: "{{ item.metadata.annotations | default({}) }}"
-    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
-    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
-    workload_name_lower: "{{ (workload_name | string | lower) }}"
-    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
-    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
-    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
-    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
-    is_operator_managed_workload: >-
+- name: Build workload probe coverage findings
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_workload_probe_findings.py"
+    stdin: >-
       {{
-        (ns_name in (operator_managed_namespace_names | default([])))
-        or has_operator_marker_keys
-        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
-        or ('operator' in managed_by_value)
-        or ('-operator' in workload_name_lower)
-        or ('operator-' in workload_name_lower)
-        or ('controller-manager' in workload_name_lower)
-        or ('-operator' in app_name_lower)
-        or ('operator-' in app_name_lower)
-        or has_csv_owner
+        {
+          'analysis_graph': (analysis_graph | default({})),
+          'user_namespaces_exclude_regex': (user_namespaces_exclude_regex | default('')),
+          'operator_managed_namespace_names': (operator_managed_namespace_names | default([])),
+          'workload_probe_findings': (workload_probe_findings | default([]))
+        } | to_json
       }}
-    missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
-    missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
-    missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
-    probe_findings: >-
-      {{
-        ([] +
-        ([{'kind': 'Deployment', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-liveness-probe', 'containers': missing_liveness_containers, 'detail': missing_liveness_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
-        ([{'kind': 'Deployment', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-readiness-probe', 'containers': missing_readiness_containers, 'detail': missing_readiness_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
-        ([{'kind': 'Deployment', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-startup-probe', 'containers': missing_startup_containers, 'detail': missing_startup_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
-      }}
+  register: workload_probe_findings_cmd
   changed_when: false
 
-- name: Build statefulset probe coverage findings
-  ansible.builtin.set_fact:
-    workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (analysis_graph.statefulsets | default({})).get('items', []) }}"
+- name: Normalize workload probe coverage findings
   vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    workload_name: "{{ item.metadata.name | default('') }}"
-    containers: "{{ item.spec.template.spec.containers | default([]) }}"
-    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
-    labels: "{{ item.metadata.labels | default({}) }}"
-    annotations: "{{ item.metadata.annotations | default({}) }}"
-    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
-    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
-    workload_name_lower: "{{ (workload_name | string | lower) }}"
-    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
-    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
-    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
-    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
-    is_operator_managed_workload: >-
-      {{
-        (ns_name in (operator_managed_namespace_names | default([])))
-        or has_operator_marker_keys
-        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
-        or ('operator' in managed_by_value)
-        or ('-operator' in workload_name_lower)
-        or ('operator-' in workload_name_lower)
-        or ('controller-manager' in workload_name_lower)
-        or ('-operator' in app_name_lower)
-        or ('operator-' in app_name_lower)
-        or has_csv_owner
-      }}
-    missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
-    missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
-    missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
-    probe_findings: >-
-      {{
-        ([] +
-        ([{'kind': 'StatefulSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-liveness-probe', 'containers': missing_liveness_containers, 'detail': missing_liveness_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
-        ([{'kind': 'StatefulSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-readiness-probe', 'containers': missing_readiness_containers, 'detail': missing_readiness_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
-        ([{'kind': 'StatefulSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-startup-probe', 'containers': missing_startup_containers, 'detail': missing_startup_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
-      }}
-  changed_when: false
-
-- name: Build daemonset probe coverage findings
+    workload_probe_findings_result: "{{ (workload_probe_findings_cmd.stdout | from_json) if (workload_probe_findings_cmd.stdout | default('') | length > 0) else {} }}"
   ansible.builtin.set_fact:
-    workload_probe_findings: "{{ workload_probe_findings | default([]) + probe_findings }}"
-  loop: "{{ (analysis_graph.daemonsets | default({})).get('items', []) }}"
-  vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    workload_name: "{{ item.metadata.name | default('') }}"
-    containers: "{{ item.spec.template.spec.containers | default([]) }}"
-    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
-    labels: "{{ item.metadata.labels | default({}) }}"
-    annotations: "{{ item.metadata.annotations | default({}) }}"
-    marker_items: "{{ (labels | dict2items) + (annotations | dict2items) }}"
-    managed_by_value: "{{ (labels.get('app.kubernetes.io/managed-by', annotations.get('app.kubernetes.io/managed-by', '')) | string | lower) }}"
-    workload_name_lower: "{{ (workload_name | string | lower) }}"
-    app_name_lower: "{{ (labels.get('app.kubernetes.io/name', '') | string | lower) }}"
-    owner_refs: "{{ item.metadata.ownerReferences | default([]) }}"
-    has_operator_marker_keys: "{{ (marker_items | selectattr('key', 'match', '^(operators\\.coreos\\.com/|olm\\.|operatorframework\\.io/)') | list | length) > 0 }}"
-    has_csv_owner: "{{ (owner_refs | selectattr('kind', 'equalto', 'ClusterServiceVersion') | list | length) > 0 }}"
-    is_operator_managed_workload: >-
-      {{
-        (ns_name in (operator_managed_namespace_names | default([])))
-        or has_operator_marker_keys
-        or (managed_by_value in ['olm', 'operator-lifecycle-manager'])
-        or ('operator' in managed_by_value)
-        or ('-operator' in workload_name_lower)
-        or ('operator-' in workload_name_lower)
-        or ('controller-manager' in workload_name_lower)
-        or ('-operator' in app_name_lower)
-        or ('operator-' in app_name_lower)
-        or has_csv_owner
-      }}
-    missing_liveness_containers: "{{ containers | rejectattr('livenessProbe', 'defined') | map(attribute='name') | list }}"
-    missing_readiness_containers: "{{ containers | rejectattr('readinessProbe', 'defined') | map(attribute='name') | list }}"
-    missing_startup_containers: "{{ containers | rejectattr('startupProbe', 'defined') | map(attribute='name') | list }}"
-    probe_findings: >-
-      {{
-        ([] +
-        ([{'kind': 'DaemonSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-liveness-probe', 'containers': missing_liveness_containers, 'detail': missing_liveness_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_liveness_containers | length > 0 else []) +
-        ([{'kind': 'DaemonSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-readiness-probe', 'containers': missing_readiness_containers, 'detail': missing_readiness_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_readiness_containers | length > 0 else []) +
-        ([{'kind': 'DaemonSet', 'namespace': ns_name, 'name': workload_name, 'issue': 'missing-startup-probe', 'containers': missing_startup_containers, 'detail': missing_startup_containers | join(', ')}] if (is_user_namespace | bool) and not (is_operator_managed_workload | bool) and containers | length > 0 and missing_startup_containers | length > 0 else []))
-      }}
-  changed_when: false
+    workload_probe_findings: "{{ workload_probe_findings_result.workload_probe_findings | default(workload_probe_findings | default([])) }}"

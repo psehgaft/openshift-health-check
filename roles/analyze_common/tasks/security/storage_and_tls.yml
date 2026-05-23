@@ -1,71 +1,75 @@
-- name: Build storage summaries
-  ansible.builtin.set_fact:
-    storageclass_summary: "{{ storageclass_summary | default([]) + [sc_entry] }}"
-  loop: "{{ (analysis_graph.storageclasses | default({})).get('items', []) }}"
-  vars:
-    sc_entry:
-      name: "{{ item.metadata.name }}"
-      provisioner: "{{ item.provisioner | default('unknown') }}"
-      is_default: "{{ ((item.metadata.annotations['storageclass.kubernetes.io/is-default-class'] | default(item.metadata.annotations['storageclass.beta.kubernetes.io/is-default-class'] | default(false))) | string | lower) == 'true' }}"
-      volume_binding_mode: "{{ item.volumeBindingMode | default('Immediate') }}"
-      reclaim_policy: "{{ item.reclaimPolicy | default('Delete') }}"
-  changed_when: false
-
-- name: Build storage posture summary
+- name: Build bundled storage and TLS input facts
   ansible.builtin.command:
     argv:
       - python3
       - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_storage_posture_summary.py"
+      - "{{ playbook_dir }}/../scripts/build_common_storage_tls_bundle.py"
     stdin: >-
       {{
         {
-          "storageclasses": storageclass_summary | default([]),
+          "storageclasses": (analysis_graph.storageclasses | default({})).get('items', []),
           "persistentvolumes": (analysis_graph.persistentvolumes | default({})).get('items', []),
+          "persistentvolumeclaims": (analysis_graph.persistentvolumeclaims | default({})).get('items', []),
+          "secrets": (analysis_graph.secrets | default({})).get('items', []),
           "security_findings": security_findings | default([]),
           "workload_practice_findings": workload_practice_findings | default([])
         } | to_json
       }}
-  register: storage_posture_summary_cmd
+  register: storage_tls_bundle_cmd
   changed_when: false
   failed_when: false
 
-- name: Normalize storage posture summary
+- name: Normalize bundled storage and TLS input facts
   ansible.builtin.set_fact:
-    storage_posture_summary: "{{ storage_posture_summary_cmd.stdout | from_json if (storage_posture_summary_cmd.rc == 0 and (storage_posture_summary_cmd.stdout | default('') | length > 0)) else {'external_storageclass_count': 0, 'local_storageclass_count': 0, 'default_external_storageclass_count': 0, 'external_storageclass_names': [], 'local_storageclass_names': [], 'external_pv_count': 0, 'local_pv_count': 0, 'hostpath_workload_count': 0, 'ephemeral_workload_count': 0, 'has_external_storage_provider': false, 'local_or_ephemeral_only_risk': false, 'findings': []} }}"
+    storage_tls_bundle: >-
+      {{
+        storage_tls_bundle_cmd.stdout | from_json
+        if (storage_tls_bundle_cmd.rc == 0 and (storage_tls_bundle_cmd.stdout | default('') | length > 0))
+        else {
+          'storage_tls_input_facts': {
+            'storageclass_summary': [],
+            'pv_phase_counts': {},
+            'pv_issues': [],
+            'pvc_phase_counts': {},
+            'pvc_issues': [],
+            'tls_secret_expiry_targets': [],
+            'certificate_expiry_findings': []
+          },
+          'storageclass_summary': [],
+          'pv_phase_counts': {},
+          'pv_issues': [],
+          'pvc_phase_counts': {},
+          'pvc_issues': [],
+          'tls_secret_expiry_targets': [],
+          'certificate_expiry_findings': [],
+          'storage_posture_summary': {
+            'external_storageclass_count': 0,
+            'local_storageclass_count': 0,
+            'default_external_storageclass_count': 0,
+            'external_storageclass_names': [],
+            'local_storageclass_names': [],
+            'external_pv_count': 0,
+            'local_pv_count': 0,
+            'hostpath_workload_count': 0,
+            'ephemeral_workload_count': 0,
+            'has_external_storage_provider': false,
+            'local_or_ephemeral_only_risk': false,
+            'findings': []
+          }
+        }
+      }}
 
-- name: Build PV summary
+- name: Expand bundled storage and TLS input facts
   ansible.builtin.set_fact:
-    pv_phase_counts: "{{ pv_phase_counts | default({}) | combine({pv_phase: ((pv_phase_counts[pv_phase] | default(0)) + 1)}, recursive=True) }}"
-    pv_issues: "{{ pv_issues | default([]) + ([{'name': item.metadata.name, 'phase': pv_phase, 'storageClassName': item.spec.storageClassName | default(''), 'claimRef': ((item.spec.claimRef.namespace | default('')) ~ '/' ~ (item.spec.claimRef.name | default(''))) if (item.spec.claimRef is defined) else ''}] if pv_phase not in ['Bound', 'Available'] else []) }}"
-  loop: "{{ (analysis_graph.persistentvolumes | default({})).get('items', []) }}"
-  vars:
-    pv_phase: "{{ item.status.phase | default('Unknown') }}"
-  changed_when: false
-
-- name: Build PVC summary
-  ansible.builtin.set_fact:
-    pvc_phase_counts: "{{ pvc_phase_counts | default({}) | combine({pvc_phase: ((pvc_phase_counts[pvc_phase] | default(0)) + 1)}, recursive=True) }}"
-    pvc_issues: "{{ pvc_issues | default([]) + ([{'namespace': item.metadata.namespace | default(''), 'name': item.metadata.name, 'phase': pvc_phase, 'storageClassName': item.spec.storageClassName | default(''), 'volumeName': item.spec.volumeName | default('')}] if pvc_phase != 'Bound' else []) }}"
-  loop: "{{ (analysis_graph.persistentvolumeclaims | default({})).get('items', []) }}"
-  vars:
-    pvc_phase: "{{ item.status.phase | default('Unknown') }}"
-  changed_when: false
-
-- name: Build TLS secret expiry targets
-  ansible.builtin.set_fact:
-    tls_secret_expiry_targets: "{{ (tls_secret_expiry_targets | default([])) + [tls_secret_expiry_target] }}"
-  loop: "{{ (analysis_graph.secrets | default({})).get('items', []) }}"
-  vars:
-    tls_secret_expiry_target:
-      namespace: "{{ item.metadata.namespace | default('') }}"
-      name: "{{ item.metadata.name | default('') }}"
-      type: "{{ item.type | default('') }}"
-      tls_crt: "{{ item.data['tls.crt'] | default('') }}"
-  when:
-    - (item.type | default('')) == 'kubernetes.io/tls'
-    - item.data is defined
-    - item.data['tls.crt'] is defined
+    storage_tls_input_facts: "{{ storage_tls_bundle.storage_tls_input_facts | default({}) }}"
+    storageclass_summary: "{{ storage_tls_bundle.storageclass_summary | default([]) }}"
+    pv_phase_counts: "{{ storage_tls_bundle.pv_phase_counts | default({}) }}"
+    pv_issues: "{{ storage_tls_bundle.pv_issues | default([]) }}"
+    pvc_phase_counts: "{{ storage_tls_bundle.pvc_phase_counts | default({}) }}"
+    pvc_issues: "{{ storage_tls_bundle.pvc_issues | default([]) }}"
+    tls_secret_expiry_targets: "{{ storage_tls_bundle.tls_secret_expiry_targets | default([]) }}"
+    certificate_expiry_findings: "{{ storage_tls_bundle.certificate_expiry_findings | default([]) }}"
+    storage_posture_summary: "{{ storage_tls_bundle.storage_posture_summary | default({'external_storageclass_count': 0, 'local_storageclass_count': 0, 'default_external_storageclass_count': 0, 'external_storageclass_names': [], 'local_storageclass_names': [], 'external_pv_count': 0, 'local_pv_count': 0, 'hostpath_workload_count': 0, 'ephemeral_workload_count': 0, 'has_external_storage_provider': false, 'local_or_ephemeral_only_risk': false, 'findings': []}) }}"
   changed_when: false
 
 - name: Collect TLS secret certificate expiry with openssl
@@ -87,7 +91,22 @@
   failed_when: false
 
 - name: Build certificate expiry findings
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_storage_tls_facts.py"
+    stdin: >-
+      {{
+        {
+          "certificate_expiry_results": ((tls_secret_cert_expiry_cmd.stdout | from_json).results if (tls_secret_cert_expiry_cmd.rc == 0 and (tls_secret_cert_expiry_cmd.stdout | default('') | length > 0)) else [])
+        } | to_json
+      }}
+  register: certificate_expiry_findings_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize certificate expiry findings
   ansible.builtin.set_fact:
-    certificate_expiry_findings: "{{ certificate_expiry_findings | default([]) + ([{'namespace': item.namespace | default(''), 'name': item.name | default(''), 'type': item.type | default(''), 'not_after': item.not_after | default('')}] if (item.rc | default(1) | int) == 0 and (item.not_after | default('') | length > 0) else []) }}"
-  loop: "{{ (tls_secret_cert_expiry_cmd.stdout | from_json).results if (tls_secret_cert_expiry_cmd.rc == 0 and (tls_secret_cert_expiry_cmd.stdout | default('') | length > 0)) else [] }}"
+    certificate_expiry_findings: "{{ (certificate_expiry_findings_cmd.stdout | from_json).certificate_expiry_findings if (certificate_expiry_findings_cmd.rc == 0 and (certificate_expiry_findings_cmd.stdout | default('') | length > 0)) else [] }}"
   changed_when: false

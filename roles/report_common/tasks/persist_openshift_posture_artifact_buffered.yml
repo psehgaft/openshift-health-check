@@ -1,0 +1,49 @@
+---
+- name: Build and buffer OpenShift posture artifact payload
+  vars:
+    posture_artifact_dependency_keys_resolved: >-
+      {{
+        posture_artifact_dependency_keys
+        if (posture_artifact_dependency_keys is defined)
+        else ((report_posture_artifact_dependency_keys_by_key | default({})).get(posture_artifact_key, (report_scope_posture_dependency_map | default({})).get(posture_artifact_key, [])))
+      }}
+    posture_artifact_shared_inputs_used_resolved: >-
+      {{
+        posture_artifact_shared_inputs_used
+        if (posture_artifact_shared_inputs_used is defined)
+        else ((report_posture_artifact_shared_inputs_by_key | default({})).get(posture_artifact_key, []))
+      }}
+    posture_artifact_payload_current: >-
+      {{
+        (
+          {
+            'schema_version': (report_artifact_schema_version | default('1')),
+            'repo_contract_version': (report_repo_contract_version | default('openshift-artifact-workspace-v1')),
+            'run_id': (report_run_id | default('')),
+            'platform_family': (platform_family | default('openshift')),
+            'report_mode': (report_mode_resolved | default('live')),
+            'key': posture_artifact_key,
+            'kind': 'posture',
+            'requested_by_selector': ((report_requested_postures | default([])) | length > 0) and (posture_artifact_key in (report_requested_postures | default([]))),
+            'dependency_keys': posture_artifact_dependency_keys_resolved,
+            'shared_inputs_used': posture_artifact_shared_inputs_used_resolved,
+            'upstream_shared_artifact_hashes': (report_current_shared_artifact_hashes | default({})),
+            'section_scope': {
+              'postures': (report_effective_selected_postures | default([])),
+              'capabilities': (report_effective_selected_capabilities | default([]))
+            },
+            'enabled': (((cluster_health_profile | default({})).get('postures', {})).get(posture_artifact_key, {}).get('enabled', true)),
+            'required': (((cluster_health_profile | default({})).get('postures', {})).get(posture_artifact_key, {}).get('required', false)),
+            'generated_at': (report_generated_at | default(ansible_date_time.iso8601)),
+            'status': 'render-ready',
+            'errors': [],
+            'analysis_summary': (posture_artifact_analysis_summary | default({})),
+            'findings': (posture_artifact_findings | default({})),
+            'render_inputs': (posture_artifact_render_inputs | default({})),
+            'collection_inputs': (posture_artifact_collection_inputs | default({}))
+          }
+          | combine((posture_artifact_section_fields | default({})), recursive=True)
+        )
+      }}
+  ansible.builtin.set_fact:
+    report_buffered_posture_artifacts: "{{ (report_buffered_posture_artifacts | default({})) | combine({posture_artifact_key: posture_artifact_payload_current}, recursive=False) }}"

@@ -86,18 +86,18 @@
     - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
     - not ((report_resume_artifact_plan | default({})).get('report', {}).get('bundle_reusable', false) | bool)
 
-- name: Render final Markdown report
-  ansible.builtin.template:
-    src: "{{ report_markdown_template }}"
-    dest: "{{ report_path }}"
-    mode: "0644"
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
-
-- name: Normalize unknown-state labels in final Markdown report
-  ansible.builtin.replace:
-    path: "{{ report_path }}"
-    regexp: "\\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN|Unknown|unknown)\\b"
-    replace: "not-assessed"
+- name: Write final Markdown report artifacts
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_files.py"
+      - "{{ report_path }}"
+      - "{{ report_run_workspace_report_dir }}/{{ report_path | basename }}"
+      - --mode
+      - "0644"
+      - --normalize-unknown-labels
+    stdin: "{{ lookup('template', report_markdown_template) }}"
+  changed_when: true
   when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Render final HTML report when pandoc is available
@@ -134,34 +134,19 @@
     - report_pdf_engine | length > 0
     - ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
-- name: Write final JSON report
-  ansible.builtin.copy:
-    dest: "{{ report_json_path }}"
-    mode: "0644"
-    content: "{{ audit_report | to_nice_json }}"
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
-
-- name: Persist assembled live payload into run workspace
-  ansible.builtin.copy:
-    dest: "{{ report_run_workspace_report_dir }}/payload.json"
-    mode: "0644"
-    content: "{{ audit_report | to_nice_json }}"
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
-
-- name: Persist final Markdown report into run workspace
-  ansible.builtin.copy:
-    src: "{{ report_path }}"
-    dest: "{{ report_run_workspace_report_dir }}/{{ report_path | basename }}"
-    mode: "0644"
-    remote_src: true
-  when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
-
-- name: Persist final JSON report into run workspace
-  ansible.builtin.copy:
-    src: "{{ report_json_path }}"
-    dest: "{{ report_run_workspace_report_dir }}/{{ report_json_path | basename }}"
-    mode: "0644"
-    remote_src: true
+- name: Write final live JSON report artifacts
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_files.py"
+      - "{{ report_run_workspace_report_dir }}/payload.json"
+      - "{{ report_json_path }}"
+      - "{{ report_run_workspace_report_dir }}/{{ report_json_path | basename }}"
+      - --mode
+      - "0644"
+      - --json-pretty
+    stdin: "{{ audit_report | to_json }}"
+  changed_when: false
   when: ((report_resume_artifact_plan | default({})).get('report', {}).get('should_build', true) | bool)
 
 - name: Record final report artifacts in workspace manifest tracking

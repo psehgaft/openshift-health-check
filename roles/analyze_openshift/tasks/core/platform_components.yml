@@ -1,156 +1,32 @@
 ---
-- name: Capture cluster version history and updates
-  ansible.builtin.set_fact:
-    cluster_update_history: "{{ analysis_graph.clusterversion.status.history | default([]) }}"
-    available_updates: "{{ analysis_graph.clusterversion.status.availableUpdates | default([]) }}"
-    conditional_updates: "{{ analysis_graph.clusterversion.status.conditionalUpdates | default([]) }}"
-  when: report_scope_requires_core_platform_component_analysis | default(true) | bool
-
-- name: Extract cluster version conditions
-  ansible.builtin.set_fact:
-    cv_available: "{{ ((analysis_graph.clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
-    cv_progressing: "{{ ((analysis_graph.clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
-    cv_failing: "{{ ((analysis_graph.clusterversion.status.conditions | default([]) | selectattr('type', 'equalto', 'Failing') | map(attribute='status') | first) | default('Unknown')) }}"
-  when: report_scope_requires_core_platform_component_analysis | default(true) | bool
-
-- name: Initialize operator facts
-  ansible.builtin.set_fact:
-    degraded_operators: []
-    unavailable_operators: []
-    progressing_operators: []
-    clusteroperator_status_map: {}
-  when: report_scope_requires_core_platform_component_analysis | default(true) | bool
-
-- name: Build operator facts
-  ansible.builtin.set_fact:
-    degraded_operators: "{{ degraded_operators + ([item.metadata.name] if degraded_status == 'True' else []) }}"
-    unavailable_operators: "{{ unavailable_operators + ([item.metadata.name] if available_status == 'False' else []) }}"
-    progressing_operators: "{{ progressing_operators + ([item.metadata.name] if progressing_status == 'True' else []) }}"
-    clusteroperator_status_map: "{{ clusteroperator_status_map | combine({item.metadata.name: {'available': available_status, 'degraded': degraded_status, 'progressing': progressing_status, 'version': operator_version}}, recursive=True) }}"
-  loop: "{{ (analysis_graph.clusteroperators | default({'items': []})).get('items', []) }}"
-  vars:
-    available_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
-    degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
-    progressing_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
-    operator_version: "{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}"
+- name: Build platform component facts
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_platform_component_facts.py"
+    stdin: "{{ {'analysis_graph': (analysis_graph | default({})), 'cluster_profile': (cluster_profile | default({}))} | to_json }}"
+  register: platform_component_facts_cmd
   changed_when: false
   when: report_scope_requires_core_platform_component_analysis | default(true) | bool
 
-- name: Build ingress controller summary
-  ansible.builtin.set_fact:
-    ingresscontroller_summary: "{{ ingresscontroller_summary | default([]) + [summary_entry] }}"
-    ingresscontroller_issues: "{{ ingresscontroller_issues | default([]) + issue_entries }}"
-  loop: "{{ (analysis_graph.ingresscontrollers | default({'items': []})).get('items', []) }}"
+- name: Normalize platform component facts
   vars:
-    desired_replicas: "{{ item.spec.replicas | default((1 if (cluster_profile.control_plane_topology | default('unknown')) == 'SingleReplica' else 2)) | int }}"
-    available_replicas: "{{ item.status.availableReplicas | default(0) | int }}"
-    unavailable_replicas: "{{ item.status.unavailableReplicas | default(0) | int }}"
-    ic_available_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')) }}"
-    ic_progressing_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')) }}"
-    ic_degraded_status: "{{ ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown')) }}"
-    summary_entry:
-      name: "{{ item.metadata.name | default('unknown') }}"
-      domain: "{{ item.status.domain | default(item.spec.domain | default('unknown')) }}"
-      available: "{{ ic_available_status }}"
-      progressing: "{{ ic_progressing_status }}"
-      degraded: "{{ ic_degraded_status }}"
-      desired_replicas: "{{ desired_replicas }}"
-      available_replicas: "{{ available_replicas }}"
-      unavailable_replicas: "{{ unavailable_replicas }}"
-    issue_entries: >-
-      {{
-        ([] +
-        ([{
-          'component': 'ingresscontroller/' ~ (item.metadata.name | default('unknown')),
-          'issue': 'ingresscontroller-unavailable',
-          'detail': 'available=' ~ ic_available_status ~ ' availableReplicas=' ~ (available_replicas | string) ~ '/' ~ (desired_replicas | string)
-        }] if ic_available_status == 'False' or available_replicas < desired_replicas else []) +
-        ([{
-          'component': 'ingresscontroller/' ~ (item.metadata.name | default('unknown')),
-          'issue': 'ingresscontroller-degraded',
-          'detail': 'degraded=' ~ ic_degraded_status
-        }] if ic_degraded_status == 'True' else []))
-      }}
-  changed_when: false
-  when: report_scope_requires_core_platform_component_analysis | default(true) | bool
-
-- name: Build infrastructure component summary
+    platform_component_facts: "{{ (platform_component_facts_cmd.stdout | from_json) if (platform_component_facts_cmd.stdout | default('') | length > 0) else {} }}"
   ansible.builtin.set_fact:
-    infrastructure_component_summary:
-      - component: authentication
-        available: "{{ clusteroperator_status_map.authentication.available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map.authentication.progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map.authentication.degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map.authentication.version | default('unknown') }}"
-        detail: "identityProviders={{ analysis_graph.oauth_config.spec.identityProviders | default([]) | length }}"
-      - component: console
-        available: "{{ clusteroperator_status_map.console.available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map.console.progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map.console.degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map.console.version | default('unknown') }}"
-        detail: "console operator health"
-      - component: dns
-        available: "{{ clusteroperator_status_map.dns.available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map.dns.progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map.dns.degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map.dns.version | default('unknown') }}"
-        detail: "baseDomain={{ analysis_graph.dns_config.spec.baseDomain | default('unknown') }}"
-      - component: etcd
-        available: "{{ clusteroperator_status_map.etcd.available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map.etcd.progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map.etcd.degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map.etcd.version | default('unknown') }}"
-        detail: "etcd operator health"
-      - component: image-registry
-        available: "{{ clusteroperator_status_map['image-registry'].available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map['image-registry'].progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map['image-registry'].degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map['image-registry'].version | default('unknown') }}"
-        detail: "managementState={{ analysis_graph.image_registry_config.spec.managementState | default('unknown') }}"
-      - component: ingress
-        available: "{{ clusteroperator_status_map.ingress.available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map.ingress.progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map.ingress.degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map.ingress.version | default('unknown') }}"
-        detail: "controllers={{ ingresscontroller_summary | default([]) | length }}"
-      - component: kube-apiserver
-        available: "{{ clusteroperator_status_map['kube-apiserver'].available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map['kube-apiserver'].progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map['kube-apiserver'].degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map['kube-apiserver'].version | default('unknown') }}"
-        detail: "apiServerURL={{ cluster_profile.api_url | default('unknown') }}"
-      - component: monitoring
-        available: "{{ clusteroperator_status_map.monitoring.available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map.monitoring.progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map.monitoring.degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map.monitoring.version | default('unknown') }}"
-        detail: "monitoring operator health"
-      - component: network
-        available: "{{ clusteroperator_status_map.network.available | default('Unknown') }}"
-        progressing: "{{ clusteroperator_status_map.network.progressing | default('Unknown') }}"
-        degraded: "{{ clusteroperator_status_map.network.degraded | default('Unknown') }}"
-        version: "{{ clusteroperator_status_map.network.version | default('unknown') }}"
-        detail: "networkType={{ analysis_graph.network_config.status.networkType | default('unknown') }}"
-  when: report_scope_requires_core_platform_component_analysis | default(true) | bool
-
-- name: Build infrastructure component issues
-  ansible.builtin.set_fact:
-    infrastructure_component_issues: "{{ infrastructure_component_issues | default([]) + issue_entries }}"
-  loop: "{{ infrastructure_component_summary | default([]) }}"
-  vars:
-    issue_entries: >-
-      {{
-        ([] +
-        ([{
-          'component': item.component,
-          'issue': 'component-unavailable',
-          'detail': 'available=' ~ (item.available | string)
-        }] if item.available == 'False' else []) +
-        ([{
-          'component': item.component,
-          'issue': 'component-degraded',
-          'detail': 'degraded=' ~ (item.degraded | string)
-        }] if item.degraded == 'True' else []))
-      }}
-  changed_when: false
+    cluster_update_history: "{{ platform_component_facts.cluster_update_history | default([]) }}"
+    available_updates: "{{ platform_component_facts.available_updates | default([]) }}"
+    conditional_updates: "{{ platform_component_facts.conditional_updates | default([]) }}"
+    cv_available: "{{ platform_component_facts.cv_available | default('Unknown') }}"
+    cv_progressing: "{{ platform_component_facts.cv_progressing | default('Unknown') }}"
+    cv_failing: "{{ platform_component_facts.cv_failing | default('Unknown') }}"
+    degraded_operators: "{{ platform_component_facts.degraded_operators | default([]) }}"
+    unavailable_operators: "{{ platform_component_facts.unavailable_operators | default([]) }}"
+    progressing_operators: "{{ platform_component_facts.progressing_operators | default([]) }}"
+    clusteroperator_status_map: "{{ platform_component_facts.clusteroperator_status_map | default({}) }}"
+    cluster_operator_version_mismatches: "{{ platform_component_facts.cluster_operator_version_mismatches | default([]) }}"
+    ingresscontroller_summary: "{{ platform_component_facts.ingresscontroller_summary | default([]) }}"
+    ingresscontroller_issues: "{{ platform_component_facts.ingresscontroller_issues | default([]) }}"
+    infrastructure_component_summary: "{{ platform_component_facts.infrastructure_component_summary | default([]) }}"
+    infrastructure_component_issues: "{{ platform_component_facts.infrastructure_component_issues | default([]) }}"
   when: report_scope_requires_core_platform_component_analysis | default(true) | bool

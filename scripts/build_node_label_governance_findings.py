@@ -58,10 +58,7 @@ def node_roles(labels):
     return sorted(set(roles)) or ["worker"]
 
 
-def main() -> int:
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
+def build(data):
     findings = []
     for node in data.get("nodes") or []:
         metadata = node.get("metadata") or {}
@@ -135,7 +132,14 @@ def main() -> int:
             }
         )
 
-    print(json.dumps({"node_label_governance_findings": findings}))
+    return {"node_label_governance_findings": findings}
+
+
+def main() -> int:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    print(json.dumps(build(data)))
     return 0
 
 

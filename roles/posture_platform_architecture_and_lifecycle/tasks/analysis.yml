@@ -385,42 +385,19 @@
       recommendation: "{{ upgrade_readiness_recommendation }}"
 
 - name: Build OpenShift topology resilience summary
-  block:
-    - name: Create OpenShift topology resilience input file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: cluster-health-ocp-topology-
-        suffix: .json
-      register: topology_resilience_input_file
-      changed_when: false
-
-    - name: Write OpenShift topology resilience input data
-      ansible.builtin.copy:
-        dest: "{{ topology_resilience_input_file.path }}"
-        mode: "0600"
-        content: "{{ {
-          'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
-          'worker_pools': (cluster_current_state.worker_pools | default([])),
-          'machinesets': ((analysis_graph.machinesets | default({})).get('items', []))
-        } | to_json }}"
-      changed_when: false
-
-    - name: Run OpenShift topology resilience summary
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/build_openshift_topology_resilience.py"
-          - "{{ topology_resilience_input_file.path }}"
-      register: topology_resilience_cmd
-      changed_when: false
-      failed_when: false
-  always:
-    - name: Remove OpenShift topology resilience input file
-      ansible.builtin.file:
-        path: "{{ topology_resilience_input_file.path }}"
-        state: absent
-      when: topology_resilience_input_file is defined and (topology_resilience_input_file.path | default('') | length > 0)
-      changed_when: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_openshift_topology_resilience.py"
+    stdin: "{{ {
+      'nodes': ((analysis_graph.nodes | default({})).get('items', [])),
+      'worker_pools': (cluster_current_state.worker_pools | default([])),
+      'machinesets': ((analysis_graph.machinesets | default({})).get('items', []))
+    } | to_json }}"
+  register: topology_resilience_cmd
+  changed_when: false
+  failed_when: false
 
 - name: Normalize OpenShift topology resilience summary
   ansible.builtin.set_fact:

@@ -32,10 +32,7 @@ def normalize_inputs(pipeline):
     return []
 
 
-def main():
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
+def build(data):
     findings = []
     outputs = []
     external_outputs = []
@@ -109,15 +106,21 @@ def main():
                     "detail": f"{log_type} logs appear to be collected but not forwarded to an external destination"
                 })
 
-    print(json.dumps({
+    return {
         "findings": findings,
         "outputs": outputs,
         "external_outputs": external_outputs,
         "pipeline_counts": pipeline_counts,
         "external_pipeline_counts": external_pipeline_counts
-    }))
+    }
+
+
+def main():
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    print(json.dumps(build(data)))
 
 
 if __name__ == "__main__":
     main()
-

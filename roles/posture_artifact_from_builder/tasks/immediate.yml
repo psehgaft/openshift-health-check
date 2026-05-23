@@ -1,0 +1,17 @@
+---
+- name: Resolve posture artifact resume decision
+  ansible.builtin.set_fact:
+    posture_artifact_resume_decision: "{{ ((report_resume_artifact_plan | default({})).get('postures', {})).get((posture_artifact_key_hint | default(role_name | regex_replace('^posture_', ''))), {'should_build': true, 'reusable': false}) }}"
+  when: report_run_mode | default('fresh') == 'resume_last_failure'
+
+- name: Build posture artifact facts from local builder task
+  ansible.builtin.include_tasks: "{{ posture_artifact_builder_tasks_from }}"
+  when: >
+    (report_run_mode | default('fresh')) != 'resume_last_failure'
+    or (posture_artifact_resume_decision.should_build | default(true) | bool)
+
+- name: Persist posture artifact from immediate shared writer
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/report_common/tasks/persist_openshift_posture_artifact_immediate.yml"
+  when: >
+    (report_run_mode | default('fresh')) != 'resume_last_failure'
+    or (posture_artifact_resume_decision.should_build | default(true) | bool)

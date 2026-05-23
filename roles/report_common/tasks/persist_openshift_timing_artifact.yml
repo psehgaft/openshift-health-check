@@ -1,0 +1,47 @@
+---
+- name: Ensure shared artifact workspace exists for timing
+  ansible.builtin.file:
+    path: "{{ report_run_workspace_shared_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Build OpenShift run timing artifact
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_report_timing_artifact.py"
+    stdin: >-
+      {{
+        {
+          'schema_version': (report_artifact_schema_version | default('1')),
+          'repo_contract_version': (report_repo_contract_version | default('openshift-artifact-workspace-v1')),
+          'run_id': (report_run_id | default('')),
+          'platform_family': (platform_family | default('openshift')),
+          'report_mode': (report_mode_resolved | default('live')),
+          'generated_at': (report_generated_at | default(ansible_date_time.iso8601)),
+          'status': (report_timing_status | default('in-progress')),
+          'events': (report_timing_events | default([])),
+          'live_support_data': (live_support_data | default({}))
+        }
+        | to_nice_json
+      }}
+  register: report_timing_artifact_cmd
+  changed_when: false
+  failed_when: report_timing_artifact_cmd.rc != 0
+
+- name: Write OpenShift run timing artifact
+  ansible.builtin.copy:
+    dest: "{{ report_run_workspace_shared_dir }}/timing.json"
+    content: "{{ (report_timing_artifact_cmd.stdout | from_json) | to_nice_json }}\n"
+    mode: "0644"
+  changed_when: false
+
+- name: Print OpenShift run timing summary
+  vars:
+    report_timing_artifact: "{{ (report_timing_artifact_cmd.stdout_lines | join('\n')) | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      Timing artifact written to {{ report_run_workspace_shared_dir }}/timing.json with
+      {{ (report_timing_artifact.stages | default([])) | length }} stage summaries and
+      {{ (report_timing_artifact.live_collectors | default([])) | length }} live collector timings.

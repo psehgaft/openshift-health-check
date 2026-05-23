@@ -1,60 +1,21 @@
 ---
-- name: Initialize loaded OpenShift shared artifacts
-  ansible.builtin.set_fact:
-    openshift_shared_artifacts: "{{ openshift_shared_artifacts | default({}) }}"
-
-- name: Find OpenShift shared artifacts
-  ansible.builtin.find:
-    paths: "{{ report_run_workspace_shared_dir }}"
-    patterns: "*.json"
-    file_type: file
-  register: openshift_shared_artifact_files
-
 - name: Load OpenShift shared artifacts in bulk
   ansible.builtin.command:
     argv:
       - python3
-      - "{{ playbook_dir }}/../scripts/load_json_artifact_dir.py"
+      - "{{ playbook_dir }}/../scripts/load_openshift_shared_artifacts.py"
       - "{{ report_run_workspace_shared_dir }}"
   register: openshift_shared_artifacts_cmd
   changed_when: false
-  when: (openshift_shared_artifact_files.matched | default(0) | int) > 0
 
-- name: Merge OpenShift shared artifacts
-  ansible.builtin.set_fact:
-    openshift_shared_artifacts: >-
-      {{
-        (openshift_shared_artifacts | default({}))
-        | combine(
-            {
-              shared_artifact_key: shared_artifact
-            },
-            recursive=True
-          )
-      }}
+- name: Merge OpenShift shared artifacts and restore canonical facts
   vars:
-    shared_artifact: "{{ item.value | default({}) }}"
-    shared_artifact_key: >-
-      {{
-        (
-          'collection'
-          if ((shared_artifact.kind | default('')) == 'shared-collection')
-          else (
-            'analysis_graph'
-            if ((shared_artifact.kind | default('')) == 'shared-analysis-graph')
-            else item.key
-          )
-        )
-      }}
-  loop: "{{ ((openshift_shared_artifacts_cmd.stdout | default('{}')) | from_json | dict2items) if (openshift_shared_artifacts_cmd is defined and (openshift_shared_artifacts_cmd.rc | default(1)) == 0 and (openshift_shared_artifacts_cmd.stdout | default('') | length) > 0) else [] }}"
-  when:
-    - shared_artifact | length > 0
-
-- name: Restore canonical facts from OpenShift shared artifacts
-  vars:
-    openshift_shared_collection_artifact: "{{ (openshift_shared_artifacts | default({})).get('collection', {}) }}"
-    openshift_shared_analysis_graph_artifact: "{{ (openshift_shared_artifacts | default({})).get('analysis_graph', {}) }}"
+    openshift_shared_artifacts_loaded: "{{ (openshift_shared_artifacts_cmd.stdout | from_json) if (openshift_shared_artifacts_cmd.stdout | default('') | length > 0) else {} }}"
+    openshift_shared_artifacts_merged: "{{ (openshift_shared_artifacts | default({})) | combine(openshift_shared_artifacts_loaded, recursive=True) }}"
+    openshift_shared_collection_artifact: "{{ openshift_shared_artifacts_merged.get('collection', {}) }}"
+    openshift_shared_analysis_graph_artifact: "{{ openshift_shared_artifacts_merged.get('analysis_graph', {}) }}"
   ansible.builtin.set_fact:
+    openshift_shared_artifacts: "{{ openshift_shared_artifacts_merged }}"
     collected_resource_graph: >-
       {{
         openshift_shared_collection_artifact.collected_resource_graph
@@ -98,3 +59,5 @@
         openshift_shared_collection_artifact.live_support_data
         | default(live_support_data | default({}))
       }}
+  when:
+    - (openshift_shared_artifacts_cmd.rc | default(1)) == 0

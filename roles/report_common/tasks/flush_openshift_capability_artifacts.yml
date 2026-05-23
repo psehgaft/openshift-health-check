@@ -1,0 +1,29 @@
+---
+- name: Flush buffered OpenShift capability artifacts
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/write_json_artifact_map.py"
+      - "{{ report_run_workspace_capabilities_dir }}"
+      - --prefix
+      - "capabilities/"
+      - --mode
+      - "0644"
+    stdin: "{{ report_buffered_capability_artifacts | default({}) | to_json }}"
+  register: report_buffered_capability_artifacts_flush_cmd
+  changed_when: false
+  when:
+    - (report_artifact_persistence_mode | default('buffered')) == 'buffered'
+    - (report_buffered_capability_artifacts | default({}) | length) > 0
+
+- name: Record flushed OpenShift capability artifacts and clear buffer
+  vars:
+    capability_flush_result: "{{ (report_buffered_capability_artifacts_flush_cmd.stdout | from_json) if (report_buffered_capability_artifacts_flush_cmd.stdout | default('') | length > 0) else {'completed': []} }}"
+    capability_completed_artifacts: "{{ capability_flush_result.completed | default([]) }}"
+  ansible.builtin.set_fact:
+    report_workspace_completed_artifacts: "{{ (report_workspace_completed_artifacts | default([])) + capability_completed_artifacts }}"
+    report_workspace_failed_artifacts: "{{ (report_workspace_failed_artifacts | default([])) | difference(capability_completed_artifacts) }}"
+    report_buffered_capability_artifacts: {}
+  when:
+    - (report_artifact_persistence_mode | default('buffered')) == 'buffered'
+    - report_buffered_capability_artifacts_flush_cmd is defined

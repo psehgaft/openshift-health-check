@@ -1,0 +1,75 @@
+---
+- name: Build and buffer OpenShift capability artifact payload
+  vars:
+    capability_artifact_section_override_current: "{{ capability_artifact_section_override | default({}) }}"
+    capability_artifact_section_from_map: "{{ (day2_capability_sections_by_key | default({})).get(capability_artifact_key, {}) }}"
+    capability_artifact_dependency_keys_resolved: >-
+      {{
+        capability_artifact_dependency_keys
+        if (capability_artifact_dependency_keys is defined)
+        else ((report_capability_artifact_dependency_keys_by_key | default({})).get(capability_artifact_key, (report_scope_capability_dependency_map | default({})).get(capability_artifact_key, [])))
+      }}
+    capability_artifact_shared_inputs_used_resolved: >-
+      {{
+        capability_artifact_shared_inputs_used
+        if (capability_artifact_shared_inputs_used is defined)
+        else ((report_capability_artifact_shared_inputs_by_key | default({})).get(capability_artifact_key, []))
+      }}
+    capability_artifact_section_current: >-
+      {{
+        capability_artifact_section_override_current
+        if (
+          (capability_artifact_section_override_current | length) > 0
+          and ((capability_artifact_section_override_current.get('key', '')) | string) == (capability_artifact_key | string)
+        )
+        else (
+          capability_artifact_section_from_map
+          if (capability_artifact_section_from_map | length) > 0
+          else {}
+        )
+      }}
+    capability_artifact_payload_current: >-
+      {{
+        {
+          'schema_version': (report_artifact_schema_version | default('1')),
+          'repo_contract_version': (report_repo_contract_version | default('openshift-artifact-workspace-v1')),
+          'run_id': (report_run_id | default('')),
+          'platform_family': (platform_family | default('openshift')),
+          'report_mode': (report_mode_resolved | default('live')),
+          'key': capability_artifact_key,
+          'kind': 'capability',
+          'requested_by_selector': ((report_requested_capabilities | default([])) | length > 0) and (capability_artifact_key in (report_requested_capabilities | default([]))),
+          'dependency_keys': capability_artifact_dependency_keys_resolved,
+          'shared_inputs_used': capability_artifact_shared_inputs_used_resolved,
+          'upstream_shared_artifact_hashes': (report_current_shared_artifact_hashes | default({})),
+          'section_scope': {
+            'postures': (report_effective_selected_postures | default([])),
+            'capabilities': (report_effective_selected_capabilities | default([]))
+          },
+          'enabled': (((cluster_health_profile | default({})).get('capabilities', {})).get(capability_artifact_key, {}).get('enabled', true)),
+          'required': (((cluster_health_profile | default({})).get('capabilities', {})).get(capability_artifact_key, {}).get('required', false)),
+          'generated_at': (report_generated_at | default(ansible_date_time.iso8601)),
+          'status': 'render-ready',
+          'errors': [],
+          'analysis_summary': (
+            {
+              'assessment_state': ((day2_posture_summary | default({})).get('capability_assessment_state', 'unknown')),
+              'status': (capability_artifact_section_current.status | default('UNKNOWN')),
+              'accounting_state': (capability_artifact_section_current.accounting_state | default('unknown')),
+              'finding_count': ((capability_artifact_section_current.finding_count | default(0)) | int),
+              'check_count': ((capability_artifact_section_current.check_count | default(0)) | int),
+              'top_detail': (capability_artifact_section_current.top_detail | default(''))
+            }
+            | combine((capability_artifact_analysis_summary | default({})), recursive=True)
+          ),
+          'findings': (capability_artifact_section_current.findings | default([])),
+          'render_inputs': (
+            (capability_artifact_render_inputs | default({}))
+            | combine({'section': capability_artifact_section_current}, recursive=True)
+          ),
+          'section': capability_artifact_section_current,
+          'collection_inputs': (capability_artifact_collection_inputs | default({}))
+        }
+      }}
+  ansible.builtin.set_fact:
+    report_buffered_capability_artifacts: "{{ (report_buffered_capability_artifacts | default({})) | combine({capability_artifact_key: capability_artifact_payload_current}, recursive=False) }}"

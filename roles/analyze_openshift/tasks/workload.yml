@@ -1,89 +1,4 @@
 ---
-- name: Build OpenShift workload health findings
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_workload_health_findings.py"
-    stdin: "{{ {
-      'pods': ((analysis_graph.pods | default({})).get('items', [])),
-      'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
-      'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
-      'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
-      'deploymentconfigs': ((analysis_graph.deploymentconfigs | default({})).get('items', [])),
-      'platform_namespaces_regex': (platform_namespaces_regex | default('^$')),
-      'user_namespaces_exclude_regex': (user_namespaces_exclude_regex | default('^$')),
-      'operator_managed_namespace_names': (operator_managed_namespace_names | default([])),
-      'filter_operator_managed_user_pods': false,
-      'filter_operator_managed_workloads': false,
-      'include_aged_user_pods': false,
-      'include_high_replica_workloads': true,
-      'high_replica_threshold': 10,
-      'include_probe_findings': true
-    } | to_json }}"
-  register: openshift_workload_health_findings_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Normalize OpenShift workload health findings
-  ansible.builtin.set_fact:
-    openshift_workload_health_findings_data: >-
-      {{
-        openshift_workload_health_findings_cmd.stdout | from_json
-        if (openshift_workload_health_findings_cmd.rc == 0 and (openshift_workload_health_findings_cmd.stdout | default('') | length > 0))
-        else {
-          'platform_pod_issues': [],
-          'deployment_issues': [],
-          'statefulset_issues': [],
-          'daemonset_issues': [],
-          'deploymentconfig_issues': [],
-          'workload_health_issues': [],
-          'high_replica_workloads': [],
-          'workload_probe_findings': []
-        }
-      }}
-
-- name: Expand OpenShift workload health findings
-  ansible.builtin.set_fact:
-    platform_pod_issues: "{{ openshift_workload_health_findings_data.platform_pod_issues | default([]) }}"
-    deployment_issues: "{{ openshift_workload_health_findings_data.deployment_issues | default([]) }}"
-    statefulset_issues: "{{ openshift_workload_health_findings_data.statefulset_issues | default([]) }}"
-    daemonset_issues: "{{ openshift_workload_health_findings_data.daemonset_issues | default([]) }}"
-    deploymentconfig_issues: "{{ openshift_workload_health_findings_data.deploymentconfig_issues | default([]) }}"
-    workload_health_issues: "{{ openshift_workload_health_findings_data.workload_health_issues | default([]) }}"
-    high_replica_workloads: "{{ openshift_workload_health_findings_data.high_replica_workloads | default([]) }}"
-    workload_probe_findings: "{{ openshift_workload_health_findings_data.workload_probe_findings | default([]) }}"
-
-- name: Build pod team ownership label review findings
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_workload_label_governance_findings.py"
-    stdin: "{{ {
-      'user_namespaces_exclude_regex': user_namespaces_exclude_regex,
-      'operator_managed_namespace_names': (operator_managed_namespace_names | default([])),
-      'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
-      'pods': ((analysis_graph.pods | default({})).get('items', [])),
-      'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
-      'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
-      'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
-      'deploymentconfigs': ((analysis_graph.deploymentconfigs | default({})).get('items', [])),
-      'serviceaccounts': ((analysis_graph.serviceaccounts | default({})).get('items', [])),
-      'gitops_applications': ((analysis_graph.gitops_applications | default({})).get('items', []))
-    } | to_json }}"
-  register: workload_label_governance_cmd
-  changed_when: false
-  failed_when: false
-
-- name: Normalize pod team ownership label review findings
-  ansible.builtin.set_fact:
-    workload_label_governance_findings: >-
-      {{
-        ((workload_label_governance_cmd.stdout | default('{}') | from_json).workload_label_governance_findings | default([]))
-      }}
-  changed_when: false
-
 - name: Resolve node label governance source nodes
   ansible.builtin.set_fact:
     node_label_governance_source_nodes: >-
@@ -102,202 +17,111 @@
       }}
   changed_when: false
 
-- name: Build node label governance findings
+- name: Build OpenShift workload analysis bundle
   ansible.builtin.command:
     argv:
       - python3
-      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
-      - "{{ playbook_dir }}/../scripts/build_node_label_governance_findings.py"
+      - "{{ playbook_dir }}/../scripts/run_json_helpers_from_stdin.py"
     stdin: "{{ {
-      'nodes': (node_label_governance_source_nodes | default([]))
+      'fail_on_error': true,
+      'helpers': [
+        {
+          'name': 'workload_health',
+          'script': 'scripts/build_workload_health_findings.py',
+          'input': {
+            'pods': ((analysis_graph.pods | default({})).get('items', [])),
+            'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+            'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
+            'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+            'deploymentconfigs': ((analysis_graph.deploymentconfigs | default({})).get('items', [])),
+            'platform_namespaces_regex': (platform_namespaces_regex | default('^$')),
+            'user_namespaces_exclude_regex': (user_namespaces_exclude_regex | default('^$')),
+            'operator_managed_namespace_names': (operator_managed_namespace_names | default([])),
+            'filter_operator_managed_user_pods': false,
+            'filter_operator_managed_workloads': false,
+            'include_aged_user_pods': false,
+            'include_high_replica_workloads': true,
+            'high_replica_threshold': 10,
+            'include_probe_findings': true
+          }
+        },
+        {
+          'name': 'workload_label_governance',
+          'script': 'scripts/build_workload_label_governance_findings.py',
+          'input': {
+            'user_namespaces_exclude_regex': user_namespaces_exclude_regex,
+            'operator_managed_namespace_names': (operator_managed_namespace_names | default([])),
+            'namespaces': ((analysis_graph.namespaces | default({})).get('items', [])),
+            'pods': ((analysis_graph.pods | default({})).get('items', [])),
+            'deployments': ((analysis_graph.deployments | default({})).get('items', [])),
+            'statefulsets': ((analysis_graph.statefulsets | default({})).get('items', [])),
+            'daemonsets': ((analysis_graph.daemonsets | default({})).get('items', [])),
+            'deploymentconfigs': ((analysis_graph.deploymentconfigs | default({})).get('items', [])),
+            'serviceaccounts': ((analysis_graph.serviceaccounts | default({})).get('items', [])),
+            'gitops_applications': ((analysis_graph.gitops_applications | default({})).get('items', []))
+          }
+        },
+        {
+          'name': 'node_label_governance',
+          'script': 'scripts/build_node_label_governance_findings.py',
+          'input': {
+            'nodes': (node_label_governance_source_nodes | default([]))
+          }
+        },
+        {
+          'name': 'deploymentconfig_resource_findings',
+          'script': 'scripts/build_deploymentconfig_resource_findings.py',
+          'input': {
+            'deploymentconfigs': ((analysis_graph.deploymentconfigs | default({})).get('items', [])),
+            'exclude_regex': (user_namespaces_exclude_regex | default('^$'))
+          }
+        },
+        {
+          'name': 'route_ingress_findings',
+          'script': 'scripts/build_route_ingress_findings.py',
+          'input': {
+            'services': ((analysis_graph.services | default({})).get('items', [])),
+            'routes': ((analysis_graph.routes | default({})).get('items', [])),
+            'ingresses': ((analysis_graph.ingresses | default({})).get('items', [])),
+            'warn_on_ingress_without_class': (warn_on_ingress_without_class | default(false))
+          }
+        }
+      ]
     } | to_json }}"
-  register: node_label_governance_cmd
+  register: openshift_workload_analysis_bundle_cmd
   changed_when: false
-  failed_when: false
+  failed_when: openshift_workload_analysis_bundle_cmd.rc != 0 or (openshift_workload_analysis_bundle_cmd.stdout | default('') | length == 0)
 
-- name: Normalize node label governance findings
-  ansible.builtin.set_fact:
-    node_label_governance_findings: >-
-      {{
-        ((node_label_governance_cmd.stdout | default('{}') | from_json).node_label_governance_findings | default([]))
-      }}
-  changed_when: false
-
-- name: Build deploymentconfig resource requirement findings
-  ansible.builtin.set_fact:
-    workload_resource_findings: "{{ (workload_resource_findings | default([])) + resource_entries }}"
-  loop: "{{ (analysis_graph.deploymentconfigs | default({})).get('items', []) }}"
+- name: Normalize OpenShift workload analysis bundle
   vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    is_user_namespace: "{{ (not (ns_name is match(user_namespaces_exclude_regex))) | bool }}"
-    pod_spec: "{{ item.spec.template.spec | default({}) }}"
-    containers: "{{ (pod_spec.containers | default([])) + (pod_spec.initContainers | default([])) }}"
-    containers_without_requests: "{{ containers | rejectattr('resources.requests', 'defined') | map(attribute='name') | list }}"
-    containers_without_limits: "{{ containers | rejectattr('resources.limits', 'defined') | map(attribute='name') | list }}"
-    resource_entries: >-
-      {{
-        ([] +
-        ([{
-          'kind': 'DeploymentConfig',
-          'namespace': ns_name,
-          'name': item.metadata.name | default('unknown'),
-          'issue': 'workload-missing-resource-requests',
-          'detail': containers_without_requests | join(', ')
-        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_requests | length > 0 else []) +
-        ([{
-          'kind': 'DeploymentConfig',
-          'namespace': ns_name,
-          'name': item.metadata.name | default('unknown'),
-          'issue': 'workload-missing-resource-limits',
-          'detail': containers_without_limits | join(', ')
-        }] if (is_user_namespace | bool) and containers | length > 0 and containers_without_limits | length > 0 else []))
-      }}
+    openshift_workload_analysis_bundle_results: "{{ (openshift_workload_analysis_bundle_cmd.stdout | from_json).results | default({}) }}"
+  ansible.builtin.set_fact:
+    openshift_workload_health_findings_data: "{{ openshift_workload_analysis_bundle_results.workload_health.output | default({}) }}"
+    workload_label_governance_data: "{{ openshift_workload_analysis_bundle_results.workload_label_governance.output | default({}) }}"
+    node_label_governance_data: "{{ openshift_workload_analysis_bundle_results.node_label_governance.output | default({}) }}"
+    deploymentconfig_resource_findings_data: "{{ openshift_workload_analysis_bundle_results.deploymentconfig_resource_findings.output | default({}) }}"
+    route_ingress_findings_data: "{{ openshift_workload_analysis_bundle_results.route_ingress_findings.output | default({}) }}"
   changed_when: false
 
-- name: Build route admission findings
+- name: Expand OpenShift workload analysis bundle
   ansible.builtin.set_fact:
-    service_names_by_namespace: "{{ service_names_by_namespace | default({}) | combine({ns_name: ((((service_names_by_namespace | default({}))[ns_name] | default([])) + [svc_name]) | unique)}, recursive=True) }}"
-  loop: "{{ (analysis_graph.services | default({})).get('items', []) }}"
-  vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    svc_name: "{{ item.metadata.name | default('') }}"
-  changed_when: false
-
-- name: Build route issue findings
-  ansible.builtin.set_fact:
-    route_issues: "{{ route_issues | default([]) + route_issue_entry }}"
-  loop: "{{ (analysis_graph.routes | default({})).get('items', []) }}"
-  vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    route_name: "{{ item.metadata.name | default('') }}"
-    route_host: "{{ item.spec.host | default('') }}"
-    admitted_status: "{{ ((item.status.ingress | default([]) | map(attribute='conditions') | list | flatten | selectattr('type', 'equalto', 'Admitted') | map(attribute='status') | first) | default('Unknown')) }}"
-    target_kind: "{{ item.spec.to.kind | default('Service') }}"
-    target_service_name: "{{ item.spec.to.name | default('') }}"
-    missing_target_service: "{{ (target_kind == 'Service') and (target_service_name != '') and (target_service_name not in (((service_names_by_namespace | default({}))[ns_name] | default([])))) }}"
-    route_issue_entry: >-
-      {{
-        ([] +
-        ([{
-          'kind': 'Route',
-          'namespace': ns_name,
-          'name': route_name,
-          'host': route_host,
-          'issue': 'route-not-admitted',
-          'detail': 'admitted=' ~ admitted_status
-        }] if admitted_status != 'True' else []) +
-        ([{
-          'kind': 'Route',
-          'namespace': ns_name,
-          'name': route_name,
-          'host': route_host,
-          'issue': 'route-missing-service',
-          'detail': target_service_name
-        }] if missing_target_service else []))
-      }}
-  changed_when: false
-
-- name: Build ingress issue findings
-  ansible.builtin.set_fact:
-    ingress_issues: "{{ ingress_issues | default([]) + ingress_issue_entries }}"
-  loop: "{{ (analysis_graph.ingresses | default({})).get('items', []) }}"
-  vars:
-    ns_name: "{{ item.metadata.namespace | default('') }}"
-    ingress_name: "{{ item.metadata.name | default('') }}"
-    ingress_class: "{{ item.spec.ingressClassName | default(item.metadata.annotations['kubernetes.io/ingress.class'] | default('')) }}"
-    rule_hosts: "{{ item.spec.rules | default([]) | map(attribute='host') | select('defined') | reject('equalto', '') | list }}"
-    path_backends: "{{ item.spec.rules | default([]) | map(attribute='http.paths') | select('defined') | list | flatten }}"
-    rule_backend_services: "{{ path_backends | map(attribute='backend.service.name') | select('defined') | list }}"
-    default_backend_service: "{{ item.spec.defaultBackend.service.name | default('') }}"
-    backend_service_names: "{{ (rule_backend_services + ([default_backend_service] if default_backend_service != '' else [])) | unique }}"
-    missing_backend_services: "{{ backend_service_names | difference(((service_names_by_namespace | default({}))[ns_name] | default([]))) }}"
-    ingress_issue_entries: >-
-      {{
-        ([] +
-        ([{
-          'kind': 'Ingress',
-          'namespace': ns_name,
-          'name': ingress_name,
-          'host': (rule_hosts | join(', ')),
-          'issue': 'ingress-no-rules-or-default-backend',
-          'detail': 'no rules and no default backend'
-        }] if (rule_hosts | length == 0 and backend_service_names | length == 0) else []) +
-        ([{
-          'kind': 'Ingress',
-          'namespace': ns_name,
-          'name': ingress_name,
-          'host': (rule_hosts | join(', ')),
-          'issue': 'ingress-missing-service',
-          'detail': missing_backend_services | join(', ')
-        }] if missing_backend_services | length > 0 else []) +
-        ([{
-          'kind': 'Ingress',
-          'namespace': ns_name,
-          'name': ingress_name,
-          'host': (rule_hosts | join(', ')),
-          'issue': 'ingress-without-class',
-          'detail': 'ingressClassName and ingress.class annotation are unset'
-        }] if (warn_on_ingress_without_class | bool) and (rule_hosts | length > 0 or backend_service_names | length > 0) and ingress_class == '' else []))
-      }}
-  changed_when: false
-
-- name: Build route host owner map
-  ansible.builtin.set_fact:
-    route_host_owners: "{{ route_host_owners | default({}) | combine({item.spec.host: ((route_host_owners[item.spec.host] | default([])) + [item.metadata.namespace ~ '/' ~ item.metadata.name]) | unique}, recursive=True) }}"
-  loop: "{{ (analysis_graph.routes | default({})).get('items', []) }}"
-  when: (item.spec.host | default('')) != ''
-  changed_when: false
-
-- name: Build ingress host owner map
-  ansible.builtin.set_fact:
-    ingress_host_records: "{{ ingress_host_records | default([]) + host_records }}"
-  loop: "{{ (analysis_graph.ingresses | default({})).get('items', []) }}"
-  vars:
-    ingress_hosts: "{{ item.spec.rules | default([]) | map(attribute='host') | select('defined') | reject('equalto', '') | list }}"
-    host_records: "{{ ingress_hosts | map('regex_replace', '^(.*)$', item.metadata.namespace ~ '/' ~ item.metadata.name ~ '|' ~ '\\1') | list }}"
-  changed_when: false
-
-- name: Normalize ingress host owner map
-  ansible.builtin.set_fact:
-    ingress_host_owners: "{{ ingress_host_owners | default({}) | combine({host_name: ((ingress_host_owners[host_name] | default([])) + [host_owner]) | unique}, recursive=True) }}"
-  loop: "{{ ingress_host_records | default([]) }}"
-  vars:
-    host_name: "{{ (item.split('|', 1) | first) | default('') }}"
-    host_owner: "{{ (item.split('|', 1) | last) | default('') }}"
-  when: host_name != '' and host_owner != ''
-  changed_when: false
-
-- name: Build route host conflict findings
-  ansible.builtin.set_fact:
-    route_host_conflicts: "{{ route_host_conflicts | default([]) + [{'host': item.key, 'owners': item.value, 'issue': 'duplicate-route-host'}] }}"
-  loop: "{{ route_host_owners | default({}) | dict2items }}"
-  when: (item.value | default([]) | length) > 1
-  changed_when: false
-
-- name: Build ingress host conflict findings
-  ansible.builtin.set_fact:
-    ingress_host_conflicts: "{{ ingress_host_conflicts | default([]) + [{'host': item.key, 'owners': item.value, 'issue': 'duplicate-ingress-host'}] }}"
-  loop: "{{ ingress_host_owners | default({}) | dict2items }}"
-  when: (item.value | default([]) | length) > 1
-  changed_when: false
-
-- name: Build cross route and ingress host conflict findings
-  ansible.builtin.set_fact:
-    route_ingress_host_conflicts: "{{ (route_ingress_host_conflicts | default([])) + conflict_entry }}"
-  loop: "{{ (((route_host_owners | default({})).keys() | list) + ((ingress_host_owners | default({})).keys() | list)) | unique }}"
-  vars:
-    route_owners_for_host: "{{ (route_host_owners | default({}))[item] | default([]) }}"
-    ingress_owners_for_host: "{{ (ingress_host_owners | default({}))[item] | default([]) }}"
-    conflict_entry: >-
-      {{
-        [{
-          'host': item,
-          'route_owners': route_owners_for_host,
-          'ingress_owners': ingress_owners_for_host,
-          'owners': (route_owners_for_host + ingress_owners_for_host),
-          'issue': 'duplicate-route-ingress-host'
-        }]
-        if ((route_owners_for_host | length) > 0 and (ingress_owners_for_host | length) > 0)
-        else []
-      }}
+    platform_pod_issues: "{{ openshift_workload_health_findings_data.platform_pod_issues | default([]) }}"
+    deployment_issues: "{{ openshift_workload_health_findings_data.deployment_issues | default([]) }}"
+    statefulset_issues: "{{ openshift_workload_health_findings_data.statefulset_issues | default([]) }}"
+    daemonset_issues: "{{ openshift_workload_health_findings_data.daemonset_issues | default([]) }}"
+    deploymentconfig_issues: "{{ openshift_workload_health_findings_data.deploymentconfig_issues | default([]) }}"
+    workload_health_issues: "{{ openshift_workload_health_findings_data.workload_health_issues | default([]) }}"
+    high_replica_workloads: "{{ openshift_workload_health_findings_data.high_replica_workloads | default([]) }}"
+    workload_probe_findings: "{{ openshift_workload_health_findings_data.workload_probe_findings | default([]) }}"
+    workload_label_governance_findings: "{{ workload_label_governance_data.workload_label_governance_findings | default([]) }}"
+    node_label_governance_findings: "{{ node_label_governance_data.node_label_governance_findings | default([]) }}"
+    workload_resource_findings: "{{ (workload_resource_findings | default([])) + (deploymentconfig_resource_findings_data.deploymentconfig_resource_findings | default([])) }}"
+    service_names_by_namespace: "{{ route_ingress_findings_data.service_names_by_namespace | default({}) }}"
+    route_issues: "{{ route_ingress_findings_data.route_issues | default([]) }}"
+    ingress_issues: "{{ route_ingress_findings_data.ingress_issues | default([]) }}"
+    route_host_owners: "{{ route_ingress_findings_data.route_host_owners | default({}) }}"
+    ingress_host_owners: "{{ route_ingress_findings_data.ingress_host_owners | default({}) }}"
+    route_host_conflicts: "{{ route_ingress_findings_data.route_host_conflicts | default([]) }}"
+    ingress_host_conflicts: "{{ route_ingress_findings_data.ingress_host_conflicts | default([]) }}"
+    route_ingress_host_conflicts: "{{ route_ingress_findings_data.route_ingress_host_conflicts | default([]) }}"
   changed_when: false

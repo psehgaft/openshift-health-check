@@ -1,48 +1,57 @@
-- name: Build Prometheus alert summaries
-  ansible.builtin.set_fact:
-    firing_alerts_by_severity: "{{ firing_alerts_by_severity | default({}) | combine({severity: ((((firing_alerts_by_severity | default({}))[severity] | default(0)) + 1))}, recursive=True) }}"
-    firing_alert_name_counts: "{{ firing_alert_name_counts | default({}) | combine({alert_name: ((((firing_alert_name_counts | default({}))[alert_name] | default(0)) + 1))}, recursive=True) }}"
-    firing_alert_namespace_counts: "{{ firing_alert_namespace_counts | default({}) | combine({alert_namespace: ((((firing_alert_namespace_counts | default({}))[alert_namespace] | default(0)) + 1))}, recursive=True) }}"
-  loop: "{{ firing_alerts | default([]) }}"
+- name: Build observability metric summaries
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_observability_metric_summaries.py"
+    stdin: "{{ {
+      'firing_alerts': (firing_alerts | default([])),
+      'node_cpu_utilization_results': (node_cpu_utilization_results | default([])),
+      'node_memory_utilization_results': (node_memory_utilization_results | default([])),
+      'node_disk_utilization_results': (node_disk_utilization_results | default([])),
+      'kubelet_pod_density_results': (kubelet_pod_density_results | default([])),
+      'runtime_signal_resolution_map': (runtime_signal_resolution_map | default({})),
+      'pod_density_warn_pct': (pod_density_warn_pct | default(0)),
+      'pod_density_critical_pct': (pod_density_critical_pct | default(0))
+    } | to_json }}"
+  register: observability_metric_summaries_cmd
+  changed_when: false
+  failed_when: observability_metric_summaries_cmd.rc != 0
+
+- name: Normalize observability metric summaries
   vars:
-    severity: "{{ item.metric.severity | default('unknown') }}"
-    alert_name: "{{ item.metric.alertname | default('unknown') }}"
-    alert_namespace: "{{ item.metric.namespace | default('cluster') }}"
+    observability_metric_summaries_default:
+      firing_alerts_by_severity: {}
+      firing_alert_name_counts: {}
+      firing_alert_namespace_counts: {}
+      low_cpu_nodes: []
+      high_cpu_nodes: []
+      low_memory_nodes: []
+      high_memory_nodes: []
+      high_disk_nodes: []
+      high_pod_density_nodes: []
+      critical_pod_density_nodes: []
+  ansible.builtin.set_fact:
+    observability_metric_summaries: >-
+      {{
+        (observability_metric_summaries_cmd.stdout | from_json)
+        if (observability_metric_summaries_cmd.stdout | default('') | trim | length > 0)
+        else observability_metric_summaries_default
+      }}
   changed_when: false
 
-- name: Build utilization summaries
+- name: Apply observability metric summaries
   ansible.builtin.set_fact:
-    low_cpu_nodes: "{{ low_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (cpu_value | float)}] if (cpu_value | float) < 20 else []) }}"
-    high_cpu_nodes: "{{ high_cpu_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (cpu_value | float)}] if (cpu_value | float) > 85 else []) }}"
-  loop: "{{ node_cpu_utilization_results | default([]) if ((runtime_signal_resolution_map.node_cpu_utilization | default({})).get('status') == 'observed') else [] }}"
-  vars:
-    cpu_value: "{{ (item.value[1] | float | round(1)) }}"
-  changed_when: false
-
-- name: Build memory summaries
-  ansible.builtin.set_fact:
-    low_memory_nodes: "{{ low_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (mem_value | float)}] if (mem_value | float) < 30 else []) }}"
-    high_memory_nodes: "{{ high_memory_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (mem_value | float)}] if (mem_value | float) > 85 else []) }}"
-  loop: "{{ node_memory_utilization_results | default([]) if ((runtime_signal_resolution_map.node_memory_utilization | default({})).get('status') == 'observed') else [] }}"
-  vars:
-    mem_value: "{{ (item.value[1] | float | round(1)) }}"
-  changed_when: false
-
-- name: Build disk summaries
-  ansible.builtin.set_fact:
-    high_disk_nodes: "{{ high_disk_nodes | default([]) + ([{'instance': item.metric.instance | default('unknown'), 'value': (disk_value | float)}] if (disk_value | float) > 85 else []) }}"
-  loop: "{{ node_disk_utilization_results | default([]) if ((runtime_signal_resolution_map.node_disk_utilization | default({})).get('status') == 'observed') else [] }}"
-  vars:
-    disk_value: "{{ (item.value[1] | float | round(1)) }}"
-  changed_when: false
-
-- name: Build pod density summaries
-  ansible.builtin.set_fact:
-    high_pod_density_nodes: "{{ high_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': (density_value | float)}] if (density_value | float) > (pod_density_warn_pct | float) else []) }}"
-    critical_pod_density_nodes: "{{ critical_pod_density_nodes | default([]) + ([{'node': item.metric.node | default('unknown'), 'value': (density_value | float)}] if (density_value | float) > (pod_density_critical_pct | float) else []) }}"
-  loop: "{{ kubelet_pod_density_results | default([]) }}"
-  vars:
-    density_value: "{{ (item.value[1] | float | round(1)) }}"
+    firing_alerts_by_severity: "{{ observability_metric_summaries.firing_alerts_by_severity | default({}) }}"
+    firing_alert_name_counts: "{{ observability_metric_summaries.firing_alert_name_counts | default({}) }}"
+    firing_alert_namespace_counts: "{{ observability_metric_summaries.firing_alert_namespace_counts | default({}) }}"
+    low_cpu_nodes: "{{ observability_metric_summaries.low_cpu_nodes | default([]) }}"
+    high_cpu_nodes: "{{ observability_metric_summaries.high_cpu_nodes | default([]) }}"
+    low_memory_nodes: "{{ observability_metric_summaries.low_memory_nodes | default([]) }}"
+    high_memory_nodes: "{{ observability_metric_summaries.high_memory_nodes | default([]) }}"
+    high_disk_nodes: "{{ observability_metric_summaries.high_disk_nodes | default([]) }}"
+    high_pod_density_nodes: "{{ observability_metric_summaries.high_pod_density_nodes | default([]) }}"
+    critical_pod_density_nodes: "{{ observability_metric_summaries.critical_pod_density_nodes | default([]) }}"
   changed_when: false
 
 - name: Build certificate expiry severity buckets

@@ -1,125 +1,167 @@
 ---
-- name: Build aggregate lists
-  vars:
-    restart_limit: "{{ top_restart_pod_limit | default(10) | int }}"
-    restart_table_limit: "{{ top_restart_pod_table_limit | default(100) | int }}"
-    restart_table_threshold: "{{ top_restart_pod_table_threshold | default(3) | int }}"
-    old_pod_table_limit: "{{ top_old_pod_table_limit | default(20) | int }}"
-    pvc_issue_limit: "{{ top_pvc_issue_limit | default(10) | int }}"
-    event_reason_limit: "{{ top_event_reason_limit | default(10) | int }}"
-    alert_group_limit: "{{ top_alert_group_limit | default(10) | int }}"
-    namespace_issue_limit: "{{ top_namespace_issue_limit | default(10) | int }}"
-    workload_issue_limit: "{{ top_workload_issue_limit | default(10) | int }}"
-    security_issue_limit: "{{ top_security_issue_limit | default(10) | int }}"
-    deprecated_api_limit: "{{ top_deprecated_api_limit | default(10) | int }}"
-  ansible.builtin.set_fact:
-    scored_day2_posture_findings: "{{ scored_day2_posture_findings | default(day2_posture_findings | default([])) }}"
-    scored_workload_practice_findings: "{{ workload_practice_findings | default([]) | rejectattr('issue', 'equalto', 'missing-pod-disruption-budget') | list }}"
-    default_storageclasses: "{{ storageclass_summary | default([]) | selectattr('is_default', 'equalto', true) | list }}"
-    top_pod_restart_hotspots: "{{ (pod_restart_hotspots | default([]) | sort(attribute='restarts', reverse=true) | list)[:(restart_limit | int)] }}"
-    high_restart_pods: "{{ (pod_restart_hotspots | default([]) | selectattr('restarts', 'gt', (restart_table_threshold | int)) | sort(attribute='restarts', reverse=true) | list) }}"
-    top_high_restart_pods: "{{ ((pod_restart_hotspots | default([]) | selectattr('restarts', 'gt', (restart_table_threshold | int)) | sort(attribute='restarts', reverse=true) | list)[:(restart_table_limit | int)]) }}"
-    top_pvc_issues: "{{ (pvc_issues | default([]))[:(pvc_issue_limit | int)] }}"
-    top_pv_issues: "{{ (pv_issues | default([]))[:(pvc_issue_limit | int)] }}"
-    top_event_reasons: "{{ (warning_event_reason_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | list)[:(event_reason_limit | int)] }}"
-    top_alert_groups: "{{ (firing_alert_name_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | list)[:(alert_group_limit | int)] }}"
-    top_alert_namespaces: "{{ (firing_alert_namespace_counts | default({}) | dict2items | sort(attribute='value', reverse=true) | list)[:(namespace_issue_limit | int)] }}"
-    top_namespace_issue_summary: "{{ (namespace_issue_summary | default([]))[:(namespace_issue_limit | int)] }}"
-    top_workload_health_issues: "{{ (workload_health_issues | default([]))[:(workload_issue_limit | int)] }}"
-    top_unhealthy_user_pods: "{{ (unhealthy_user_pods | default([]))[:(workload_issue_limit | int)] }}"
-    top_high_replica_workloads: "{{ (high_replica_workloads | default([]) | sort(attribute='replicas', reverse=true) | list)[:(workload_issue_limit | int)] }}"
-    top_workload_resilience_findings: "{{ (workload_resilience_data.findings | default([]))[:(workload_issue_limit | int)] }}"
-    top_workload_resilience_pdb_review_findings: "{{ (workload_resilience_data.pdb_review_findings | default([]))[:(workload_issue_limit | int)] }}"
-    top_aged_user_pods: "{{ ((aged_user_pods | default([])) | sort(attribute='age_days', reverse=true) | list)[:(old_pod_table_limit | int)] }}"
-    top_orphan_pods: "{{ (orphan_pods | default([]))[:(workload_issue_limit | int)] }}"
-    top_workload_label_governance_findings: "{{ (workload_label_governance_findings | default([]))[:(workload_issue_limit | int)] }}"
-    top_node_label_governance_findings: "{{ (node_label_governance_findings | default([]))[:(workload_issue_limit | int)] }}"
-    top_workload_resource_findings: "{{ (workload_resource_findings | default([]))[:(workload_issue_limit | int)] }}"
-    top_workload_probe_findings: "{{ (workload_probe_findings | default([]))[:(workload_issue_limit | int)] }}"
-    top_overprovisioned_pods: "{{ (overprovisioned_pods | default([]))[:(workload_issue_limit | int)] }}"
-    top_quota_pressure_findings: "{{ (quota_pressure_findings | default([]))[:(workload_issue_limit | int)] }}"
-    top_security_findings: "{{ (security_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_workload_practice_findings: "{{ (workload_practice_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_route_issues: "{{ (route_issues | default([]))[:(workload_issue_limit | int)] }}"
-    top_ingress_issues: "{{ (ingress_issues | default([]))[:(workload_issue_limit | int)] }}"
-    top_route_host_conflicts: "{{ (route_host_conflicts | default([]))[:(workload_issue_limit | int)] }}"
-    top_ingress_host_conflicts: "{{ (ingress_host_conflicts | default([]))[:(workload_issue_limit | int)] }}"
-    top_deprecated_crd_findings: "{{ (deprecated_crd_findings | default([]))[:(deprecated_api_limit | int)] }}"
-    top_deprecated_api_lines: "{{ (deprecated_api_lines | default([]))[:(deprecated_api_limit | int)] }}"
-    top_services_without_endpoints: "{{ (services_without_endpoints | default([]))[:(workload_issue_limit | int)] }}"
-    top_likely_unused_serviceaccounts: "{{ (likely_unused_serviceaccounts | default([]))[:(workload_issue_limit | int)] }}"
-    top_likely_unused_configmaps: "{{ (likely_unused_configmaps | default([]))[:(workload_issue_limit | int)] }}"
-    top_likely_unused_secrets: "{{ (likely_unused_secrets | default([]))[:(workload_issue_limit | int)] }}"
-    top_likely_unused_crds: "{{ (likely_unused_crds | default([]))[:(deprecated_api_limit | int)] }}"
-    top_image_registry_findings: "{{ (image_registry_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_internal_registry_workloads: "{{ (internal_registry_workloads | default([]))[:(workload_issue_limit | int)] }}"
-    top_feature_findings: "{{ (feature_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_observability_findings: "{{ (observability_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_apiservice_issues: "{{ (apiservice_issues | default([]))[:(security_issue_limit | int)] }}"
-    top_failed_pipelineruns: "{{ (failed_pipelineruns | default([]))[:(workload_issue_limit | int)] }}"
-    top_buildconfigs_without_triggers: "{{ (buildconfigs_without_triggers | default([]))[:(workload_issue_limit | int)] }}"
-    top_compliance_suite_findings: "{{ (compliance_suite_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_compliance_standards_findings: "{{ (compliance_standards_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_backup_posture_findings: "{{ (backup_posture_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_machine_healthcheck_findings: "{{ (machine_healthcheck_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_day2_posture_findings: "{{ (day2_posture_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_live_cluster_compare_findings: "{{ (live_cluster_compare_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_live_managed_gate_findings: "{{ (live_managed_gate_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_live_advisor_findings: "{{ (live_advisor_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_live_must_gather_findings: "{{ (live_must_gather_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_live_omc_findings: "{{ (omc_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_live_inspect_findings: "{{ (live_inspect_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_live_sosreport_findings: "{{ (live_sosreport_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_scc_grant_findings: "{{ (scc_grant_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_scc_pod_findings: "{{ (scc_pod_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_namespace_metadata_governance_findings: "{{ (namespace_metadata_governance_findings | default([]))[:(security_issue_limit | int)] }}"
-    top_privileged_serviceaccount_access: "{{ (privileged_serviceaccount_access | default([]) | sort(attribute='namespace') | sort(attribute='name'))[:(security_issue_limit | int)] }}"
-    top_privileged_user_access: "{{ (privileged_user_access | default([]) | sort(attribute='name'))[:(security_issue_limit | int)] }}"
-    top_privileged_group_access: "{{ (privileged_group_access | default([]) | sort(attribute='name'))[:(security_issue_limit | int)] }}"
-    top_stale_access_review_serviceaccounts: "{{ (stale_access_review_serviceaccounts | default([]) | sort(attribute='namespace') | sort(attribute='name'))[:(security_issue_limit | int)] }}"
-    top_stale_access_review_users: "{{ (stale_access_review_users | default([]) | unique(attribute='name') | sort(attribute='name'))[:(security_issue_limit | int)] }}"
-    top_stale_access_review_groups: "{{ (stale_access_review_groups | default([]) | unique(attribute='name') | sort(attribute='name'))[:(security_issue_limit | int)] }}"
-  changed_when: false
-
-- name: Build security issue type counts
-  ansible.builtin.set_fact:
-    security_issue_type_counts: "{{ security_issue_type_counts | default({}) | combine({item.issue: ((((security_issue_type_counts | default({}))[item.issue] | default(0)) + 1))}, recursive=True) }}"
-  loop: "{{ security_findings | default([]) }}"
-  changed_when: false
-
-- name: Build workload practice issue type counts
-  ansible.builtin.set_fact:
-    workload_practice_issue_type_counts: "{{ workload_practice_issue_type_counts | default({}) | combine({item.issue: ((((workload_practice_issue_type_counts | default({}))[item.issue] | default(0)) + 1))}, recursive=True) }}"
-  loop: "{{ workload_practice_findings | default([]) }}"
-  changed_when: false
-
-- name: Build workload probe issue type counts
-  ansible.builtin.set_fact:
-    workload_probe_issue_type_counts: "{{ workload_probe_issue_type_counts | default({}) | combine({item.issue: ((((workload_probe_issue_type_counts | default({}))[item.issue] | default(0)) + 1))}, recursive=True) }}"
-  loop: "{{ workload_probe_findings | default([]) }}"
-  changed_when: false
-
-- name: Build cluster operator version mismatch list
-  ansible.builtin.set_fact:
-    cluster_operator_version_mismatches: "{{ cluster_operator_version_mismatches | default([]) + mismatch_entry }}"
-  loop: "{{ (analysis_graph.clusteroperators | default({})).get('items', []) }}"
-  vars:
-    desired_version: "{{ analysis_graph.clusterversion.status.desired.version | default('unknown') }}"
-    operator_version: "{{ item.status.versions[0].version | default('unknown') if (item.status.versions | default([]) | length > 0) else 'unknown' }}"
-    mismatch_entry: >-
+- name: Build aggregate lists and issue type counts
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/run_json_helper_from_stdin.py"
+      - "{{ playbook_dir }}/../scripts/build_openshift_aggregate_facts.py"
+    stdin: >-
       {{
-        [{
-          'name': item.metadata.name | default('unknown'),
-          'operator_version': operator_version,
-          'cluster_version': desired_version,
-          'available': ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown')),
-          'progressing': ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first) | default('Unknown')),
-          'degraded': ((item.status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown'))
-        }]
-        if (
-          desired_version not in ['unknown', '']
-          and operator_version not in ['unknown', '']
-          and operator_version != desired_version
-        ) else []
+        {
+          'limits': {
+            'restart_limit': (top_restart_pod_limit | default(10) | int),
+            'restart_table_limit': (top_restart_pod_table_limit | default(100) | int),
+            'restart_table_threshold': (top_restart_pod_table_threshold | default(3) | int),
+            'old_pod_table_limit': (top_old_pod_table_limit | default(20) | int),
+            'pvc_issue_limit': (top_pvc_issue_limit | default(10) | int),
+            'event_reason_limit': (top_event_reason_limit | default(10) | int),
+            'alert_group_limit': (top_alert_group_limit | default(10) | int),
+            'namespace_issue_limit': (top_namespace_issue_limit | default(10) | int),
+            'workload_issue_limit': (top_workload_issue_limit | default(10) | int),
+            'security_issue_limit': (top_security_issue_limit | default(10) | int),
+            'deprecated_api_limit': (top_deprecated_api_limit | default(10) | int)
+          },
+          'scored_day2_posture_findings': (scored_day2_posture_findings | default(None)),
+          'day2_posture_findings': (day2_posture_findings | default([])),
+          'workload_practice_findings': (workload_practice_findings | default([])),
+          'storageclass_summary': (storageclass_summary | default([])),
+          'pod_restart_hotspots': (pod_restart_hotspots | default([])),
+          'pvc_issues': (pvc_issues | default([])),
+          'pv_issues': (pv_issues | default([])),
+          'warning_event_reason_counts': (warning_event_reason_counts | default({})),
+          'firing_alert_name_counts': (firing_alert_name_counts | default({})),
+          'firing_alert_namespace_counts': (firing_alert_namespace_counts | default({})),
+          'namespace_issue_summary': (namespace_issue_summary | default([])),
+          'workload_health_issues': (workload_health_issues | default([])),
+          'unhealthy_user_pods': (unhealthy_user_pods | default([])),
+          'high_replica_workloads': (high_replica_workloads | default([])),
+          'workload_resilience_data': (workload_resilience_data | default({})),
+          'aged_user_pods': (aged_user_pods | default([])),
+          'orphan_pods': (orphan_pods | default([])),
+          'workload_label_governance_findings': (workload_label_governance_findings | default([])),
+          'node_label_governance_findings': (node_label_governance_findings | default([])),
+          'workload_resource_findings': (workload_resource_findings | default([])),
+          'workload_probe_findings': (workload_probe_findings | default([])),
+          'overprovisioned_pods': (overprovisioned_pods | default([])),
+          'quota_pressure_findings': (quota_pressure_findings | default([])),
+          'security_findings': (security_findings | default([])),
+          'route_issues': (route_issues | default([])),
+          'ingress_issues': (ingress_issues | default([])),
+          'route_host_conflicts': (route_host_conflicts | default([])),
+          'ingress_host_conflicts': (ingress_host_conflicts | default([])),
+          'deprecated_crd_findings': (deprecated_crd_findings | default([])),
+          'deprecated_api_lines': (deprecated_api_lines | default([])),
+          'services_without_endpoints': (services_without_endpoints | default([])),
+          'likely_unused_serviceaccounts': (likely_unused_serviceaccounts | default([])),
+          'likely_unused_configmaps': (likely_unused_configmaps | default([])),
+          'likely_unused_secrets': (likely_unused_secrets | default([])),
+          'likely_unused_crds': (likely_unused_crds | default([])),
+          'image_registry_findings': (image_registry_findings | default([])),
+          'internal_registry_workloads': (internal_registry_workloads | default([])),
+          'feature_findings': (feature_findings | default([])),
+          'observability_findings': (observability_findings | default([])),
+          'apiservice_issues': (apiservice_issues | default([])),
+          'failed_pipelineruns': (failed_pipelineruns | default([])),
+          'buildconfigs_without_triggers': (buildconfigs_without_triggers | default([])),
+          'compliance_suite_findings': (compliance_suite_findings | default([])),
+          'compliance_standards_findings': (compliance_standards_findings | default([])),
+          'backup_posture_findings': (backup_posture_findings | default([])),
+          'machine_healthcheck_findings': (machine_healthcheck_findings | default([])),
+          'live_cluster_compare_findings': (live_cluster_compare_findings | default([])),
+          'live_managed_gate_findings': (live_managed_gate_findings | default([])),
+          'live_advisor_findings': (live_advisor_findings | default([])),
+          'live_must_gather_findings': (live_must_gather_findings | default([])),
+          'omc_findings': (omc_findings | default([])),
+          'live_inspect_findings': (live_inspect_findings | default([])),
+          'live_sosreport_findings': (live_sosreport_findings | default([])),
+          'scc_grant_findings': (scc_grant_findings | default([])),
+          'scc_pod_findings': (scc_pod_findings | default([])),
+          'namespace_metadata_governance_findings': (namespace_metadata_governance_findings | default([])),
+          'privileged_serviceaccount_access': (privileged_serviceaccount_access | default([])),
+          'privileged_user_access': (privileged_user_access | default([])),
+          'privileged_group_access': (privileged_group_access | default([])),
+          'stale_access_review_serviceaccounts': (stale_access_review_serviceaccounts | default([])),
+          'stale_access_review_users': (stale_access_review_users | default([])),
+          'stale_access_review_groups': (stale_access_review_groups | default([]))
+        } | to_json
       }}
+  register: openshift_aggregate_facts_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Normalize aggregate lists and issue type counts
+  ansible.builtin.set_fact:
+    openshift_aggregate_facts: "{{ openshift_aggregate_facts_cmd.stdout | from_json if (openshift_aggregate_facts_cmd.rc == 0 and (openshift_aggregate_facts_cmd.stdout | default('') | length > 0)) else {} }}"
+
+- name: Expand aggregate lists and issue type counts
+  ansible.builtin.set_fact:
+    scored_day2_posture_findings: "{{ openshift_aggregate_facts.scored_day2_posture_findings | default(day2_posture_findings | default([])) }}"
+    scored_workload_practice_findings: "{{ openshift_aggregate_facts.scored_workload_practice_findings | default([]) }}"
+    default_storageclasses: "{{ openshift_aggregate_facts.default_storageclasses | default([]) }}"
+    top_pod_restart_hotspots: "{{ openshift_aggregate_facts.top_pod_restart_hotspots | default([]) }}"
+    high_restart_pods: "{{ openshift_aggregate_facts.high_restart_pods | default([]) }}"
+    top_high_restart_pods: "{{ openshift_aggregate_facts.top_high_restart_pods | default([]) }}"
+    top_pvc_issues: "{{ openshift_aggregate_facts.top_pvc_issues | default([]) }}"
+    top_pv_issues: "{{ openshift_aggregate_facts.top_pv_issues | default([]) }}"
+    top_event_reasons: "{{ openshift_aggregate_facts.top_event_reasons | default([]) }}"
+    top_alert_groups: "{{ openshift_aggregate_facts.top_alert_groups | default([]) }}"
+    top_alert_namespaces: "{{ openshift_aggregate_facts.top_alert_namespaces | default([]) }}"
+    top_namespace_issue_summary: "{{ openshift_aggregate_facts.top_namespace_issue_summary | default([]) }}"
+    top_workload_health_issues: "{{ openshift_aggregate_facts.top_workload_health_issues | default([]) }}"
+    top_unhealthy_user_pods: "{{ openshift_aggregate_facts.top_unhealthy_user_pods | default([]) }}"
+    top_high_replica_workloads: "{{ openshift_aggregate_facts.top_high_replica_workloads | default([]) }}"
+    top_workload_resilience_findings: "{{ openshift_aggregate_facts.top_workload_resilience_findings | default([]) }}"
+    top_workload_resilience_pdb_review_findings: "{{ openshift_aggregate_facts.top_workload_resilience_pdb_review_findings | default([]) }}"
+    top_aged_user_pods: "{{ openshift_aggregate_facts.top_aged_user_pods | default([]) }}"
+    top_orphan_pods: "{{ openshift_aggregate_facts.top_orphan_pods | default([]) }}"
+    top_workload_label_governance_findings: "{{ openshift_aggregate_facts.top_workload_label_governance_findings | default([]) }}"
+    top_node_label_governance_findings: "{{ openshift_aggregate_facts.top_node_label_governance_findings | default([]) }}"
+    top_workload_resource_findings: "{{ openshift_aggregate_facts.top_workload_resource_findings | default([]) }}"
+    top_workload_probe_findings: "{{ openshift_aggregate_facts.top_workload_probe_findings | default([]) }}"
+    top_overprovisioned_pods: "{{ openshift_aggregate_facts.top_overprovisioned_pods | default([]) }}"
+    top_quota_pressure_findings: "{{ openshift_aggregate_facts.top_quota_pressure_findings | default([]) }}"
+    top_security_findings: "{{ openshift_aggregate_facts.top_security_findings | default([]) }}"
+    top_workload_practice_findings: "{{ openshift_aggregate_facts.top_workload_practice_findings | default([]) }}"
+    top_route_issues: "{{ openshift_aggregate_facts.top_route_issues | default([]) }}"
+    top_ingress_issues: "{{ openshift_aggregate_facts.top_ingress_issues | default([]) }}"
+    top_route_host_conflicts: "{{ openshift_aggregate_facts.top_route_host_conflicts | default([]) }}"
+    top_ingress_host_conflicts: "{{ openshift_aggregate_facts.top_ingress_host_conflicts | default([]) }}"
+    top_deprecated_crd_findings: "{{ openshift_aggregate_facts.top_deprecated_crd_findings | default([]) }}"
+    top_deprecated_api_lines: "{{ openshift_aggregate_facts.top_deprecated_api_lines | default([]) }}"
+    top_services_without_endpoints: "{{ openshift_aggregate_facts.top_services_without_endpoints | default([]) }}"
+    top_likely_unused_serviceaccounts: "{{ openshift_aggregate_facts.top_likely_unused_serviceaccounts | default([]) }}"
+    top_likely_unused_configmaps: "{{ openshift_aggregate_facts.top_likely_unused_configmaps | default([]) }}"
+    top_likely_unused_secrets: "{{ openshift_aggregate_facts.top_likely_unused_secrets | default([]) }}"
+    top_likely_unused_crds: "{{ openshift_aggregate_facts.top_likely_unused_crds | default([]) }}"
+    top_image_registry_findings: "{{ openshift_aggregate_facts.top_image_registry_findings | default([]) }}"
+    top_internal_registry_workloads: "{{ openshift_aggregate_facts.top_internal_registry_workloads | default([]) }}"
+    top_feature_findings: "{{ openshift_aggregate_facts.top_feature_findings | default([]) }}"
+    top_observability_findings: "{{ openshift_aggregate_facts.top_observability_findings | default([]) }}"
+    top_apiservice_issues: "{{ openshift_aggregate_facts.top_apiservice_issues | default([]) }}"
+    top_failed_pipelineruns: "{{ openshift_aggregate_facts.top_failed_pipelineruns | default([]) }}"
+    top_buildconfigs_without_triggers: "{{ openshift_aggregate_facts.top_buildconfigs_without_triggers | default([]) }}"
+    top_compliance_suite_findings: "{{ openshift_aggregate_facts.top_compliance_suite_findings | default([]) }}"
+    top_compliance_standards_findings: "{{ openshift_aggregate_facts.top_compliance_standards_findings | default([]) }}"
+    top_backup_posture_findings: "{{ openshift_aggregate_facts.top_backup_posture_findings | default([]) }}"
+    top_machine_healthcheck_findings: "{{ openshift_aggregate_facts.top_machine_healthcheck_findings | default([]) }}"
+    top_day2_posture_findings: "{{ openshift_aggregate_facts.top_day2_posture_findings | default([]) }}"
+    top_live_cluster_compare_findings: "{{ openshift_aggregate_facts.top_live_cluster_compare_findings | default([]) }}"
+    top_live_managed_gate_findings: "{{ openshift_aggregate_facts.top_live_managed_gate_findings | default([]) }}"
+    top_live_advisor_findings: "{{ openshift_aggregate_facts.top_live_advisor_findings | default([]) }}"
+    top_live_must_gather_findings: "{{ openshift_aggregate_facts.top_live_must_gather_findings | default([]) }}"
+    top_live_omc_findings: "{{ openshift_aggregate_facts.top_live_omc_findings | default([]) }}"
+    top_live_inspect_findings: "{{ openshift_aggregate_facts.top_live_inspect_findings | default([]) }}"
+    top_live_sosreport_findings: "{{ openshift_aggregate_facts.top_live_sosreport_findings | default([]) }}"
+    top_scc_grant_findings: "{{ openshift_aggregate_facts.top_scc_grant_findings | default([]) }}"
+    top_scc_pod_findings: "{{ openshift_aggregate_facts.top_scc_pod_findings | default([]) }}"
+    top_namespace_metadata_governance_findings: "{{ openshift_aggregate_facts.top_namespace_metadata_governance_findings | default([]) }}"
+    top_privileged_serviceaccount_access: "{{ openshift_aggregate_facts.top_privileged_serviceaccount_access | default([]) }}"
+    top_privileged_user_access: "{{ openshift_aggregate_facts.top_privileged_user_access | default([]) }}"
+    top_privileged_group_access: "{{ openshift_aggregate_facts.top_privileged_group_access | default([]) }}"
+    top_stale_access_review_serviceaccounts: "{{ openshift_aggregate_facts.top_stale_access_review_serviceaccounts | default([]) }}"
+    top_stale_access_review_users: "{{ openshift_aggregate_facts.top_stale_access_review_users | default([]) }}"
+    top_stale_access_review_groups: "{{ openshift_aggregate_facts.top_stale_access_review_groups | default([]) }}"
+    security_issue_type_counts: "{{ openshift_aggregate_facts.security_issue_type_counts | default({}) }}"
+    workload_practice_issue_type_counts: "{{ openshift_aggregate_facts.workload_practice_issue_type_counts | default({}) }}"
+    workload_probe_issue_type_counts: "{{ openshift_aggregate_facts.workload_probe_issue_type_counts | default({}) }}"
   changed_when: false

@@ -67,60 +67,12 @@
     report_resume_last_completed_stage: "{{ run_checkpoint_stage if (run_checkpoint_status | default('completed')) == 'completed' else (report_resume_last_completed_stage | default('')) }}"
     report_resume_last_resume_next_stage: "{{ run_checkpoint_resume_next_stage if (run_checkpoint_status | default('completed')) == 'completed' else (report_resume_last_resume_next_stage | default('')) }}"
 
-- name: Write run checkpoint manifest
+- name: Write run checkpoint manifests
   ansible.builtin.command:
     argv:
       - python3
-      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
+      - "{{ playbook_dir }}/../scripts/write_stdin_to_files.py"
       - "{{ report_resume_manifest_path }}"
-      - --mode
-      - "0644"
-    stdin: >-
-      {{
-        {
-          'schema_version': (report_artifact_schema_version | default('1')),
-          'repo_contract_version': (report_repo_contract_version | default('openshift-artifact-workspace-v1')),
-          'run_id': (report_run_id | default('')),
-          'run_workspace_dir': (report_run_workspace_dir | default('')),
-          'run_workspace_manifest_path': (report_run_workspace_manifest_path | default('')),
-          'run_workspace_shared_dir': (report_run_workspace_shared_dir | default('')),
-          'run_workspace_postures_dir': (report_run_workspace_postures_dir | default('')),
-          'run_workspace_capabilities_dir': (report_run_workspace_capabilities_dir | default('')),
-          'run_workspace_report_dir': (report_run_workspace_report_dir | default('')),
-          'status': (run_checkpoint_status | default('completed')),
-          'platform_family': (platform_family | default('unknown')),
-          'report_mode': (report_mode_resolved | default('unknown')),
-          'failed_stage': (run_checkpoint_stage if (run_checkpoint_status | default('completed')) == 'failed' else ''),
-          'failed_task': (run_checkpoint_failed_task | default('')),
-          'failed_message': (run_checkpoint_failed_message | default('')),
-          'last_completed_stage': (report_resume_last_completed_stage | default('')),
-          'resume_next_stage': (report_resume_last_resume_next_stage | default('')),
-          'snapshot_path': (report_resume_last_snapshot_path | default('')),
-          'updated_at': (ansible_date_time.iso8601 | default('')),
-          'report_run_mode': (report_run_mode | default('fresh')),
-          'selected_postures': (report_requested_postures | default([])),
-          'selected_capabilities': (report_requested_capabilities | default([])),
-          'effective_section_scope': (report_effective_section_scope | default({'postures': [], 'capabilities': []})),
-          'resolved_dependency_tags': (report_scope_selected_dependency_tags | default([])),
-          'resolved_shared_inputs_used': (report_scope_selected_shared_inputs_used | default([])),
-          'artifact_counts': {
-            'shared': ((report_workspace_completed_artifacts | default([]) | unique | select('match', '^shared/') | list | length) | int),
-            'postures': ((report_workspace_completed_artifacts | default([]) | unique | select('match', '^postures/') | list | length) | int),
-            'capabilities': ((report_workspace_completed_artifacts | default([]) | unique | select('match', '^capabilities/') | list | length) | int),
-            'report': ((report_workspace_completed_artifacts | default([]) | unique | select('match', '^report/') | list | length) | int)
-          },
-          'completed_artifacts': (report_workspace_completed_artifacts | default([]) | unique | list),
-          'failed_artifacts': (report_workspace_failed_artifacts | default([]))
-        }
-        | to_nice_json
-      }}
-  changed_when: false
-
-- name: Write workspace run manifest
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ playbook_dir }}/../scripts/write_stdin_to_file.py"
       - "{{ report_run_workspace_manifest_path }}"
       - --mode
       - "0644"

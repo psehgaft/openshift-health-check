@@ -24,8 +24,14 @@ EXPECTED_SECTIONS = [
 
 REQUIRED_SUBSECTIONS = [
     "### Health Score",
-    "### Recommendations",
+    "### Findings Summary",
     "### Findings",
+]
+
+ALLOWED_POSTURE_SUBSECTIONS = [
+    "Health Score",
+    "Findings Summary",
+    "Findings",
 ]
 
 POSTURE_SECTIONS = {
@@ -46,6 +52,12 @@ POSTURE_SECTIONS = {
 FORBIDDEN_PATTERNS = [
     (r"\{% if false %\}", "disabled legacy blocks must be removed"),
     (r"^#### Execution Context$", "execution context must not render in the report"),
+    (r"^### Recommendations$", "legacy Recommendations subsections must not render"),
+    (r"^### Operating Questions$", "legacy Operating Questions subsections must not render"),
+    (r"^### Capability Assessments$", "legacy Capability Assessments heading must not render"),
+    (r"^##### Assessment Summary$", "capability sections must use Findings Summary instead of Assessment Summary"),
+    (r"^\*\*Leadership view\*\*", "capability sections must not render separate Leadership view labels"),
+    (r"^\*\*Technical focus\*\*", "capability sections must not render separate Technical focus labels"),
     (r"Run time (seconds|minutes)", "execution runtime stats must not render in the report"),
     (r"\baro-gitops\b", "customer report must not mention aro-gitops"),
     (r"\baro-classic-terraform/", "customer report must not mention aro-classic-terraform"),
@@ -102,10 +114,22 @@ def main() -> int:
         end = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines) + 1
         block = "\n".join(lines[start - 1 : end - 1])
         missing = [heading for heading in REQUIRED_SUBSECTIONS if heading not in block]
-        if title in POSTURE_SECTIONS and "### Operating Questions" not in block:
-            missing.append("### Operating Questions")
         if missing:
             fail(f"{title!r} at line {start} missing {', '.join(missing)}")
+        if title not in POSTURE_SECTIONS:
+            continue
+        direct_subsections = [
+            line[4:].strip()
+            for line in lines[start : end - 1]
+            if line.startswith("### ") and not line.startswith("#### ")
+        ]
+        if direct_subsections != ALLOWED_POSTURE_SUBSECTIONS:
+            fail(
+                f"{title!r} at line {start} must contain only "
+                + ", ".join(ALLOWED_POSTURE_SUBSECTIONS)
+                + "; found "
+                + ", ".join(direct_subsections)
+            )
 
     for pattern, message in FORBIDDEN_PATTERNS:
         if re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE):

@@ -10,10 +10,7 @@ def is_external_url(url):
     return not (".svc" in s or ".cluster.local" in s or s.startswith("http://localhost") or s.startswith("https://localhost"))
 
 
-def main():
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
+def build(data):
     findings = []
     cluster_external = [item for item in data["cluster_remote_write"] if is_external_url(item.get("url", ""))]
     user_external = [item for item in data["user_remote_write"] if is_external_url(item.get("url", ""))]
@@ -41,13 +38,19 @@ def main():
                 "detail": "user workload remoteWrite targets appear cluster-local only"
             })
 
-    print(json.dumps({
+    return {
         "findings": findings,
         "cluster_external_count": len(cluster_external),
         "user_external_count": len(user_external)
-    }))
+    }
+
+
+def main():
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    print(json.dumps(build(data)))
 
 
 if __name__ == "__main__":
     main()
-
