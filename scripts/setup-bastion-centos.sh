@@ -67,6 +67,42 @@ resolve_bootstrap_user() {
   printf '%s\n' ""
 }
 
+repair_repo_runtime_permissions() {
+  local bootstrap_user="$1"
+  local bootstrap_group
+
+  if [[ -z "${bootstrap_user}" ]]; then
+    return
+  fi
+
+  bootstrap_group="$(id -gn "${bootstrap_user}")"
+
+  mkdir -p \
+    "${REPO_ROOT}/.runtime" \
+    "${REPO_ROOT}/.runtime/tmp" \
+    "${REPO_ROOT}/.runtime/ansible" \
+    "${REPO_ROOT}/.runtime/ansible/tmp" \
+    "${REPO_ROOT}/.runtime/ansible/remote_tmp" \
+    "${REPO_ROOT}/.logs"
+
+  chown -R "${bootstrap_user}:${bootstrap_group}" \
+    "${REPO_ROOT}/.runtime" \
+    "${REPO_ROOT}/.logs"
+  chmod -R u+rwX \
+    "${REPO_ROOT}/.runtime" \
+    "${REPO_ROOT}/.logs"
+
+  if [[ -e "${REPO_ROOT}/.ansible" ]]; then
+    chown -R "${bootstrap_user}:${bootstrap_group}" "${REPO_ROOT}/.ansible"
+    chmod -R u+rwX "${REPO_ROOT}/.ansible"
+  fi
+
+  if [[ -e "${REPO_ROOT}/.venv" ]]; then
+    chown -R "${bootstrap_user}:${bootstrap_group}" "${REPO_ROOT}/.venv"
+    chmod -R u+rwX "${REPO_ROOT}/.venv"
+  fi
+}
+
 bootstrap_repo_runtime() {
   local bootstrap_user="$1"
 
@@ -81,14 +117,11 @@ bootstrap_repo_runtime() {
   fi
 
   log "Preparing repo-local runtime ownership for ${bootstrap_user}"
-  mkdir -p "${REPO_ROOT}/.runtime/ansible/tmp" "${REPO_ROOT}/.runtime/ansible/remote_tmp"
-  chown -R "${bootstrap_user}:${bootstrap_user}" "${REPO_ROOT}/.ansible"
-  if [[ -e "${REPO_ROOT}/.venv" ]]; then
-    chown -R "${bootstrap_user}:${bootstrap_user}" "${REPO_ROOT}/.venv"
-  fi
+  repair_repo_runtime_permissions "${bootstrap_user}"
 
   log "Bootstrapping repo-local Python virtual environment as ${bootstrap_user}"
   runuser -u "${bootstrap_user}" -- bash "${REPO_ROOT}/scripts/setup-ansible-venv.sh"
+  repair_repo_runtime_permissions "${bootstrap_user}"
 }
 
 log "Installing EPEL when available"
@@ -102,6 +135,9 @@ ${PKG_MGR} install -y "${CORE_PACKAGES[@]}"
 
 log "Installing optional document-conversion packages when available"
 ${PKG_MGR} install -y "${OPTIONAL_PACKAGES[@]}" || true
+
+BOOTSTRAP_USER="$(resolve_bootstrap_user)"
+repair_repo_runtime_permissions "${BOOTSTRAP_USER}"
 
 mkdir -p "${REPO_ROOT}/.runtime/tmp"
 TMP_DIR="$(mktemp -d "${REPO_ROOT}/.runtime/tmp/bootstrap.XXXXXX")"
@@ -117,7 +153,6 @@ tar -C "${TMP_DIR}" -xzf "${TMP_DIR}/openshift-client-linux.tar.gz"
 install -m 0755 "${TMP_DIR}/oc" /usr/local/bin/oc
 install -m 0755 "${TMP_DIR}/kubectl" /usr/local/bin/kubectl
 
-BOOTSTRAP_USER="$(resolve_bootstrap_user)"
 bootstrap_repo_runtime "${BOOTSTRAP_USER}"
 
 cat <<EOF
