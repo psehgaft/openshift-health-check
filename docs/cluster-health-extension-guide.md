@@ -11,7 +11,7 @@ Use it when you need to:
 - make selector-scoped execution honor new dependencies
 - preserve collected-state and resume behavior while changing report logic
 
-This guide focuses on the current architecture, not the earlier migration plan.
+This guide describes the current architecture. It is not a migration plan.
 
 ## Core Design Rules
 
@@ -23,7 +23,7 @@ Treat this repo as a report-contract codebase.
 - shared report roles own persistence, payload assembly, rendering, and resume logic
 - templates render normalized report data; they should not become the only place where business logic lives
 
-Current bias:
+Default approach:
 
 - prefer the smallest owning layer
 - prefer role-local builders over shared one-off branches
@@ -57,7 +57,7 @@ Current mode rules:
 
 OpenShift live runs use `report_performance_profile` to choose the default evidence depth before preflight.
 
-- `full` is the default and should remain the safest first-run behavior. It enables the broadest support collection path, including `must-gather`, `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available.
+- `full` is the default. It enables the broadest support collection path, including `must-gather`, `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available.
 - `standard` is the lower-cost live path for routine runs. It keeps API and metric evidence plus lower-cost support evidence while avoiding `must-gather`, `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation unless explicitly requested.
 - `fast` is the narrowest live path. It keeps required API evidence and skips optional support collectors and PDF generation.
 

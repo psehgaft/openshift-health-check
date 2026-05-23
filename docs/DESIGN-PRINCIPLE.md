@@ -1,6 +1,6 @@
 # Kubernetes Cluster Health Check Design Notes
 
-This guide explains how the cluster health report in this repo is designed and why it works the way it does.
+This guide explains the report design used in this repo.
 
 If you are new here, read the docs in this order:
 
@@ -21,7 +21,7 @@ The execution model is also broader than the original live-only design:
 - a collected-state reprocessing path for `must-gather`, `inspect`, `cluster-compare`, Advisor export, managed gates, `sosreport`, and case bundles
 - one shared OpenShift analysis/report model used by both paths
 
-That matters because the design is not only about what gets checked. It is also about making live scans and collected-state analysis land in the same report structure and the same decision model.
+The important rule is that live scans and collected-state runs must produce the same report shape and use the same decision model.
 
 ## Current OpenShift Model
 
@@ -44,7 +44,7 @@ The goal is to let these tools enrich the report, not split the repo into separa
 
 ## Current Report Model
 
-The OpenShift report now follows one order, from immediate risk to broader readiness:
+The OpenShift report follows one order, from immediate risk to broader readiness:
 
 1. Platform Health
 2. Node Health And Capacity
@@ -79,7 +79,7 @@ More importantly, every major posture section should answer the same five questi
 
 That is the section contract for this repo. The report should behave like a practical remediation guide, not just a status dump.
 
-In the current template, that contract shows up as a recurring findings-first section structure:
+In the template, that contract shows up as a recurring findings-first structure:
 
 - a short leadership-oriented summary
 - evidence-backed findings
@@ -101,7 +101,7 @@ For nested capability sections, the heading depth may follow the nesting level, 
 2. `Findings Summary`
 3. `Findings`
 
-Postures and capabilities must not add separate customer-facing subsections such as `Recommendations`, `Operating Questions`, `Leadership view`, `Technical focus`, `Assessment Summary`, `Checks`, or `Capability Assessments`. Useful content from those older blocks belongs in `Findings Summary` or in the standard `Findings` table.
+Postures and capabilities must not add separate customer-facing subsections such as `Recommendations`, `Operating Questions`, `Leadership view`, `Technical focus`, `Assessment Summary`, `Checks`, or `Capability Assessments`. Useful content from those older blocks belongs in `Findings Summary` or the standard `Findings` table.
 
 The report should not need separate `Recommendations` or `Operating Questions` subsections for customer-facing posture and capability content. The recommendations and operating questions belong in the findings model itself:
 
@@ -113,7 +113,17 @@ The report should not need separate `Recommendations` or `Operating Questions` s
 
 `Findings Summary` must be derived from the same evidence and severity represented in the findings table. It must not describe a section as healthy when the table contains warning, critical, missing-evidence, or not-collected states. It also must not introduce risks or recommendations that are absent from the table.
 
-If you want the short version of that review flow, start with the first three report sections and move down only after supportability and platform health look trustworthy.
+Short version: start with the first three report sections. Move deeper only after supportability and platform health look trustworthy.
+
+## Live Collection Profiles
+
+OpenShift live runs use `report_performance_profile` to set the default collection depth.
+
+- `full` is the default. It enables the broadest evidence path: API and metric evidence, `must-gather`, `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available.
+- `standard` is for routine runs where lower runtime and lower collection impact matter more than maximum evidence. It keeps API, metrics, `inspect`, and Insights evidence, and skips the heavier support collectors unless explicitly enabled.
+- `fast` is for narrow checks. It keeps required API evidence and skips optional support collectors and PDF generation.
+
+Node diagnostics are controlled separately by `collect_live_sosreport`. Setting `collect_live_sosreport=false` disables `oc debug node/<node>` and `sosreport` even when the profile is `full`. Use that for production clusters where node-level inspection is not approved.
 
 ## Supported Cluster Types
 
@@ -190,11 +200,11 @@ How those sources are used:
 - AKS, EKS, and GKE guidance shape the provider-aware sections in the Kubernetes path
 - Prometheus/Thanos metrics from OpenShift monitoring are treated as an official data source for checks where time-series evidence improves accuracy, after cluster-state evidence sources have established object and configuration context
 
-This repo does not try to copy one vendor document line by line. It turns the common themes from those sources into a practical review model that can run from inside the cluster with cluster-local data.
+This repo does not copy one vendor document line by line. It turns common operational guidance into a review model that can run from cluster-local data.
 
 Rancher-managed Kubernetes and Minikube are supported cluster types in the repo, but the current best-practice model for those paths is still driven mostly by the shared Kubernetes guidance above, not by a deep Rancher-specific or Minikube-specific source set.
 
-The best-practice checks in the repo are a blend of those sources, not a direct copy of any single document.
+The checks are a blend of those sources, not a direct copy of any single document.
 
 ## The Basic Idea
 
@@ -234,7 +244,7 @@ At a minimum, a useful cluster health check should cover:
 - upgrade readiness
 - advisory findings
 
-If a solution skips most of that, it may still be useful as a quick script, but it is not really a full cluster health review.
+If a solution skips most of that, it may still be useful as a quick script, but it is not a full cluster health review.
 
 ## Review Scope Mapping
 
@@ -289,7 +299,7 @@ That distinction matters because several important customer review topics are no
 - Container image management: `partial`
   The report evaluates image-registry posture, internal image-registry use in workloads, and some registry policy risks, but not the full external image governance chain.
 
-The design goal is not to overclaim. The report should help an assessor move faster, show strong technical evidence, and clearly point out where human review is still needed.
+The report must not overclaim. It should show useful evidence, speed up review, and make manual follow-up clear.
 
 ## What The Different Sources Agree On
 
@@ -676,7 +686,7 @@ That is why the report favors:
 - suggested next steps
 - a separate JSON artifact for automation
 
-The same thinking applies to wording. If a field is inferred from operator state, topology, labels, or observed configuration, the report should say that plainly instead of presenting it as a stronger fact than the data supports.
+The same rule applies to wording. If a field is inferred from operator state, topology, labels, or observed configuration, the report should say that plainly instead of presenting it as a stronger fact than the data supports.
 
 The report should also avoid debug-log presentation. Findings are more useful when they are rendered as tables or short structured summaries with plain-language labels instead of internal issue codes.
 
@@ -701,7 +711,7 @@ This tool treats collection quality as part of the result:
 - core collection failures affect scoring
 - the report tells you when it may be incomplete
 
-That was a deliberate design choice.
+That is part of the report contract.
 
 ## Alerting And Operational Style
 
@@ -714,7 +724,7 @@ Useful rules:
 - map page-level alerts to runbooks
 - avoid findings that are too opinionated unless they are clearly marked
 
-This is why the tool separates stronger health signals from more heuristic best-practice checks.
+The tool separates strong health signals from heuristic best-practice checks.
 
 ## Why The Tool Includes Heuristics At All
 
@@ -783,7 +793,7 @@ The structure is split into roles:
 - `report`
   Score, render, and write artifacts
 
-That split keeps the code easier to reason about and easier to maintain than one very long playbook.
+That split is easier to maintain than one long playbook.
 
 ## Why Markdown And JSON
 
@@ -797,7 +807,7 @@ That split is intentional:
 
 Optional HTML and PDF exist for teams that want easy sharing, but the core outputs are still `md` and `json`.
 
-For HTML and PDF output, the repo now uses a shared stylesheet so wide tables are easier to read. The print path prefers smaller table fonts, aggressive cell wrapping, tighter cell padding, repeated headers, and landscape output for both `wkhtmltopdf` and LaTeX-based fallback PDF engines.
+HTML and PDF output use a shared stylesheet. Wide tables use smaller fonts, tighter padding, repeated headers, and landscape output where the renderer supports it.
 
 ## Limits Of Any Health Report
 

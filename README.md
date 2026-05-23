@@ -28,8 +28,7 @@ It is read-only, so it does not make changes to the cluster.
 By default, it collects data in parallel so the run finishes faster. It also tells you about collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete. Optional collectors that target APIs or config objects which are not installed on the cluster are tracked separately as not applicable, rather than counted as hard collection failures.
 
 > [!IMPORTANT]
-> This tool is a reporting aid, not a replacement for operator judgment. It helps surface health signals, risks, and likely issues, but no automated report can fully understand every cluster design,
-  business requirement, or accepted exception. Review the findings critically and use your own operational judgment before making decisions.
+> This tool is a reporting aid, not a replacement for operator judgment. It helps surface health signals, risks, and likely issues, but no automated report can fully understand every cluster design, business requirement, or accepted exception. Review the findings before making decisions.
 
 ## Start Here
 
@@ -47,43 +46,50 @@ Use the design notes when you want to understand why the checks exist and how th
 
 ## Quick Start
 
-Use these steps from the repo root.
+Run these commands from the repo root.
 
-1. Prepare the Python environment:
+1. Set up the Ansible virtual environment:
 
 ```bash
 ./scripts/setup-ansible-venv.sh
+```
+
+2. Source the virtual environment:
+
+```bash
 source .venv/bin/activate
 ```
 
-2. Log in to the cluster before running the report:
+3. Log in to OpenShift:
 
 ```bash
 oc login https://api.<cluster-name>.<domain>:6443
 oc whoami
 ```
 
-3. Pick the run mode that matches the engagement:
+4. Run the report:
 
 ```bash
-# Most complete first run. Includes node diagnostics when prerequisites exist.
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_mode=live
-
-# Production-friendly full run. Enables full support collection but skips
-# node-level diagnostics through oc debug node/<node> and sosreport.
-ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  -e report_mode=live \
-  -e report_performance_profile=full \
-  -e collect_live_sosreport=false
-
-# Faster routine run. Keeps lower-cost API, metrics, inspect, and Insights evidence.
-ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  -e report_mode=live \
-  -e report_performance_profile=standard
 ```
 
-The default OpenShift run uses `report_performance_profile=full` so new users get the most complete report without needing to discover optional flags. For customer environments where node-level inspection is not approved, use the production-friendly full command above.
+The default OpenShift run uses `report_performance_profile=full`. For production clusters where node-level diagnostics are not approved, use the `collect_live_sosreport=false` variant below.
+
+### Common Arguments
+
+Most users only need the Quick Start command. These arguments cover the common alternatives:
+
+| Argument | Values | When to use it |
+| --- | --- | --- |
+| `report_mode` | `live`, `collected`, `auto`, `offline` | `live` reads from the current cluster. `collected` reprocesses existing support data. `auto` switches to collected mode when collected inputs are provided. `offline` is an alias for `collected`. |
+| `report_performance_profile` | `full`, `standard`, `fast` | `full` is the default and collects the broadest evidence set. `standard` skips expensive support collectors. `fast` keeps the run narrow. |
+| `collect_live_sosreport` | `true`, `false` | Set this to `false` when node-level diagnostics are not approved. This disables `oc debug node/<node>` and `sosreport` even when `report_performance_profile=full`. |
+| `report_run_mode` | `fresh`, `resume_last_failure` | Use `resume_last_failure` after a failed run to reuse completed artifacts. |
+| `selected_postures` | comma-separated posture keys | Limit the rendered report to specific posture sections. |
+| `selected_capabilities` | comma-separated capability keys | Limit the rendered report to specific capability sections. |
+| `report_output_dir` | path | Write reports somewhere other than `reports/`. |
+| `report_generate_html`, `report_generate_pdf` | `true`, `false` | Disable optional rendered formats when Markdown and JSON are enough. |
 
 If you are preparing a fresh bastion host first, use the OS bootstrap that matches the host:
 
@@ -95,11 +101,11 @@ sudo bash scripts/setup-bastion-ubuntu.sh
 sudo bash scripts/setup-bastion-centos.sh
 ```
 
-Those bastion scripts are safe to run with `sudo`. They install system packages as `root`, then bootstrap the repo-local `.venv` and `.runtime/ansible/tmp` as the invoking non-root user when possible so later `ansible-playbook` runs do not fail on root-owned repo runtime files.
+The bastion scripts install system packages as `root`, then prepare the repo-local `.venv` and `.runtime/ansible/tmp` for the invoking non-root user when possible. This avoids later `ansible-playbook` failures caused by root-owned runtime files.
 
 If you are trying the repo for the first time, start with OpenShift. OpenShift is the original cluster type this solution was designed around, and `playbooks/openshift_cluster_health_report.yml` remains the primary entrypoint and deepest report path in the repo.
 
-For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It is the main live cluster entrypoint and defaults to the `full` performance profile so first-time users get the most complete evidence set without needing to discover optional flags. That includes API and metric evidence, `must-gather`, live `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available. Use `report_performance_profile=standard` or `report_performance_profile=fast` when you intentionally want a shorter live run.
+For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It defaults to the `full` performance profile. That includes API and metric evidence, `must-gather`, live `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available. Use `report_performance_profile=standard` or `report_performance_profile=fast` when you intentionally want a shorter live run.
 
 For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
 
