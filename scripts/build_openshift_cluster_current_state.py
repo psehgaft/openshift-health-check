@@ -188,6 +188,14 @@ def unique_named_items(items):
     return unique
 
 
+def valid_node(item):
+    if not isinstance(item, dict):
+        return False
+    metadata = item.get("metadata") or {}
+    name = str(metadata.get("name") or "").strip()
+    return item.get("kind") == "Node" and bool(name) and name != "cluster"
+
+
 def is_pod_healthy(pod):
     status = (pod.get("status", {}) or {}) if isinstance(pod, dict) else {}
     phase = str(status.get("phase") or "Unknown")
@@ -589,7 +597,7 @@ def main():
     pod_items = normalize_items(data.get("pods"))
     resourcequota_items = normalize_items(data.get("resourcequotas"))
     node_items_raw = normalize_items(data.get("nodes"))
-    node_items = unique_named_items(node_items_raw)
+    node_items = unique_named_items([item for item in node_items_raw if valid_node(item)])
     cluster_profile = data.get("cluster_profile") or {}
     try:
         cluster_max_pods_per_node_default = int(data.get("cluster_max_pods_per_node_default", 250) or 250)

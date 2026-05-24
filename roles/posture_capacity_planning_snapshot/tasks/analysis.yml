@@ -157,12 +157,59 @@
       {%- set ns = namespace(names=[]) -%}
       {%- for node in (graph.nodes | default({})).get('items', []) -%}
       {%- set node_name = (node.metadata.name | default('') | string | trim) -%}
-      {%- if (node_name | length) > 0 and node_name not in ns.names -%}
+      {%- if (node.kind | default('') == 'Node') and (node_name | length) > 0 and node_name != 'cluster' and node_name not in ns.names -%}
       {%- set ns.names = ns.names + [node_name] -%}
       {%- endif -%}
       {%- endfor -%}
       {{ ns.names | length }}
     fallback_node_count: "{{ fallback_node_name_count | int if (fallback_node_name_count | int) > 0 else (fallback_raw_node_count | int) }}"
+    fallback_node_role_counts: >-
+      {%- set ns = namespace(names={}, control_plane=0, worker=0, infra=0, other=0) -%}
+      {%- for node in (graph.nodes | default({})).get('items', []) -%}
+      {%- set node_name = (node.metadata.name | default('') | string | trim) -%}
+      {%- if (node.kind | default('') == 'Node') and (node_name | length) > 0 and node_name != 'cluster' and node_name not in ns.names -%}
+      {%- set labels = node.metadata.labels | default({}) -%}
+      {%- set role_keys = labels.keys() | select('match', '^node-role\\.kubernetes\\.io/') | list -%}
+      {%- set roles = role_keys | map('regex_replace', '^node-role\\.kubernetes\\.io/', '') | list -%}
+      {%- set primary_role = 'worker' -%}
+      {%- if 'master' in roles -%}
+      {%- set primary_role = 'master' -%}
+      {%- elif 'control-plane' in roles -%}
+      {%- set primary_role = 'control-plane' -%}
+      {%- elif 'infra' in roles -%}
+      {%- set primary_role = 'infra' -%}
+      {%- elif 'worker' in roles -%}
+      {%- set primary_role = 'worker' -%}
+      {%- elif (roles | length) > 0 -%}
+      {%- set primary_role = roles | sort | first -%}
+      {%- endif -%}
+      {%- set ns.names = ns.names | combine({node_name: true}) -%}
+      {%- if primary_role in ['master', 'control-plane'] -%}
+      {%- set ns.control_plane = ns.control_plane + 1 -%}
+      {%- elif primary_role == 'infra' -%}
+      {%- set ns.infra = ns.infra + 1 -%}
+      {%- elif primary_role == 'worker' -%}
+      {%- set ns.worker = ns.worker + 1 -%}
+      {%- else -%}
+      {%- set ns.other = ns.other + 1 -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ {'control_plane': ns.control_plane, 'worker': ns.worker, 'infra': ns.infra, 'other': ns.other} }}
+    fallback_node_role_counts_map: "{{ fallback_node_role_counts | from_yaml }}"
+    fallback_control_plane_count_unclamped: "{{ fallback_node_role_counts_map.control_plane | default(openshift_control_plane_node_count | default(cluster_profile.control_plane_node_count | default(0))) | int }}"
+    fallback_infra_count_unclamped: "{{ fallback_node_role_counts_map.infra | default(openshift_infra_node_count | default(cluster_profile.infra_node_count | default(0))) | int }}"
+    fallback_worker_count_unclamped: >-
+      {{
+        fallback_node_role_counts_map.worker | int
+        if ((fallback_node_role_counts_map.worker | default(0) | int) > 0 or (fallback_node_count | int) > 0)
+        else (openshift_worker_node_count | default(cluster_profile.worker_node_count | default(0)) | int)
+      }}
+    fallback_control_plane_count: "{{ [fallback_control_plane_count_unclamped | int, fallback_node_count | int] | min }}"
+    fallback_infra_count: "{{ [fallback_infra_count_unclamped | int, [0, (fallback_node_count | int) - (fallback_control_plane_count | int)] | max] | min }}"
+    fallback_worker_count: "{{ [fallback_worker_count_unclamped | int, [0, (fallback_node_count | int) - (fallback_control_plane_count | int) - (fallback_infra_count | int)] | max] | min }}"
+    fallback_role_sum: "{{ (fallback_control_plane_count | int) + (fallback_worker_count | int) + (fallback_infra_count | int) }}"
+    fallback_other_count: "{{ [0, (fallback_node_count | int) - (fallback_role_sum | int)] | max }}"
     fallback_total_node_slots: >-
       {%- set ns = namespace(total=0) -%}
       {%- for item in fallback_cluster_networks -%}
@@ -255,10 +302,10 @@
       worker_pool_count: 0
       node_counts:
         total: "{{ fallback_node_count | int }}"
-        control_plane: "{{ ((cluster_profile.control_plane_node_count | default(0)) | int) }}"
-        worker: "{{ ((cluster_profile.worker_node_count | default(0)) | int) }}"
-        infra: "{{ ((cluster_profile.infra_node_count | default(0)) | int) }}"
-        other: "{{ [0, (fallback_node_count | int) - ((cluster_profile.control_plane_node_count | default(0) | int) + (cluster_profile.worker_node_count | default(0) | int) + (cluster_profile.infra_node_count | default(0) | int))] | max }}"
+        control_plane: "{{ fallback_control_plane_count | int }}"
+        worker: "{{ fallback_worker_count | int }}"
+        infra: "{{ fallback_infra_count | int }}"
+        other: "{{ fallback_other_count | int }}"
       object_counts:
         namespaces: "{{ (graph.namespaces | default({})).get('items', []) | length }}"
         pods: "{{ (graph.pods | default({})).get('items', []) | length }}"

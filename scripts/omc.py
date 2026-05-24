@@ -324,6 +324,197 @@ def format_bytes(value: int) -> str:
     return f"{value} B"
 
 
+def normalize_endpoint_key(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^[a-z]+://", "", text, flags=re.IGNORECASE)
+    text = text.split("/", 1)[0]
+    text = text.rsplit(":", 1)[0] if ":" in text and text.count(":") == 1 else text
+    if text.startswith("etcd-ip-"):
+        text = text.removeprefix("etcd-ip-").replace("-", ".")
+    elif text.startswith("etcd-"):
+        text = text.removeprefix("etcd-")
+    return text.lower()
+
+
+def endpoint_keys(value: str) -> List[str]:
+    key = normalize_endpoint_key(value)
+    values = [key]
+    if key and re.fullmatch(r"\d+(?:\.\d+){3}", key):
+        values.extend([f"https://{key}:2379", f"etcd-{key}", f"etcd-ip-{key.replace('.', '-')}"])
+    return values
+
+
+def parse_size_value(value: Any) -> Optional[int]:
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*([kmgtp]?i?b|bytes?)?", text, re.IGNORECASE)
+    if not match:
+        return None
+    number = float(match.group(1))
+    unit = (match.group(2) or "b").lower()
+    multipliers = {
+        "b": 1,
+        "byte": 1,
+        "bytes": 1,
+        "kb": 1000,
+        "mb": 1000 ** 2,
+        "gb": 1000 ** 3,
+        "tb": 1000 ** 4,
+        "pb": 1000 ** 5,
+        "kib": 1024,
+        "mib": 1024 ** 2,
+        "gib": 1024 ** 3,
+        "tib": 1024 ** 4,
+        "pib": 1024 ** 5,
+    }
+    return int(number * multipliers.get(unit, 1))
+
+
+def parse_bool_value(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"true", "yes", "y", "1"}:
+        return True
+    if text in {"false", "no", "n", "0"}:
+        return False
+    return None
+
+
+def first_present(data: Dict[str, Any], keys: Iterable[str]) -> Any:
+    lowered = {str(key).lower().replace(" ", "_").replace("/", "_"): value for key, value in data.items()}
+    for key in keys:
+        normalized = key.lower().replace(" ", "_").replace("/", "_")
+        if normalized in lowered and lowered[normalized] not in (None, ""):
+            return lowered[normalized]
+    return None
+
+
+def endpoint_status_from_dict(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    endpoint = first_present(data, ["endpoint", "ENDPOINT", "name"])
+    status = data.get("Status") or data.get("status") or data
+    if not isinstance(status, dict):
+        status = data
+    if not endpoint:
+        endpoint = first_present(status, ["endpoint", "ENDPOINT", "name"])
+    if not endpoint:
+        return None
+
+    header = status.get("header") if isinstance(status.get("header"), dict) else {}
+    member_id = first_present(status, ["id", "ID", "member_id", "memberId"]) or first_present(header, ["member_id", "memberId"])
+    leader_id = first_present(status, ["leader", "leader_id", "leaderId"])
+    is_leader = parse_bool_value(first_present(status, ["is_leader", "isLeader", "IS LEADER"]))
+    if is_leader is None and member_id not in (None, "") and leader_id not in (None, ""):
+        is_leader = str(member_id) == str(leader_id)
+
+    db_size = parse_size_value(first_present(status, ["db_size", "dbSize", "DB SIZE"]))
+    db_in_use = parse_size_value(first_present(status, ["db_in_use", "dbSizeInUse", "db_size_in_use", "DB IN USE"]))
+    errors = first_present(status, ["errors", "error", "ERRORS"]) or ""
+    if is_leader is None and db_size is None and db_in_use is None and not str(errors).strip():
+        return None
+    return {
+        "endpoint": str(endpoint),
+        "db_size": db_size,
+        "db_in_use": db_in_use,
+        "is_leader": is_leader,
+        "errors": str(errors),
+    }
+
+
+def iter_nested_dicts(data: Any) -> Iterable[Dict[str, Any]]:
+    if isinstance(data, dict):
+        yield data
+        for value in data.values():
+            yield from iter_nested_dicts(value)
+    elif isinstance(data, list):
+        for value in data:
+            yield from iter_nested_dicts(value)
+
+
+def parse_pipe_status_table(text: str) -> List[Dict[str, Any]]:
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    table_lines = [line for line in lines if line.lstrip().startswith("|") and line.rstrip().endswith("|")]
+    if len(table_lines) < 2:
+        return []
+    headers = [cell.strip().lower().replace(" ", "_").replace("/", "_") for cell in table_lines[0].strip("|").split("|")]
+    rows = []
+    for line in table_lines[1:]:
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) != len(headers):
+            continue
+        if all(cell and set(cell) <= {"-"} for cell in cells):
+            continue
+        item = dict(zip(headers, cells))
+        endpoint = item.get("endpoint")
+        if not endpoint:
+            continue
+        combined = item.get("db_size_in_use", "")
+        db_size = item.get("db_size", "")
+        db_in_use = item.get("db_in_use", "")
+        if combined and "/" in combined:
+            db_size, db_in_use = [part.strip() for part in combined.split("/", 1)]
+        elif combined:
+            db_size = combined
+        rows.append({
+            "endpoint": endpoint,
+            "db_size": parse_size_value(db_size),
+            "db_in_use": parse_size_value(db_in_use),
+            "is_leader": parse_bool_value(item.get("is_leader")),
+            "errors": item.get("errors", ""),
+        })
+    return rows
+
+
+def collect_etcd_status_facts(root: Path) -> Dict[str, Dict[str, Any]]:
+    facts = {}  # type: Dict[str, Dict[str, Any]]
+    for path in sorted(root.glob("**/*")):
+        if not path.is_file():
+            continue
+        path_key = str(path).lower()
+        if "etcd" not in path_key or not any(token in path_key for token in ("status", "endpoint")):
+            continue
+        try:
+            if path.stat().st_size > 2_000_000:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        discovered = []
+        parsed = None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            if yaml is not None and path.suffix.lower() in {".yaml", ".yml"}:
+                try:
+                    parsed = yaml.safe_load(text)
+                except Exception as exc:
+                    if yaml is not None and exc.__class__.__module__.startswith("yaml"):
+                        parsed = None
+                    else:
+                        raise
+        if parsed is not None:
+            for item in iter_nested_dicts(parsed):
+                fact = endpoint_status_from_dict(item)
+                if fact:
+                    discovered.append(fact)
+        else:
+            discovered.extend(parse_pipe_status_table(text))
+
+        for fact in discovered:
+            key = normalize_endpoint_key(str(fact.get("endpoint", "")))
+            if not key:
+                continue
+            current = facts.setdefault(key, {})
+            for field in ("db_size", "db_in_use", "is_leader", "errors"):
+                if current.get(field) in (None, "") and fact.get(field) not in (None, ""):
+                    current[field] = fact.get(field)
+    return facts
+
+
 def etcd_db_size(root: Path, endpoint_name: str) -> str:
     endpoint_names = {endpoint_name}
     if endpoint_name.startswith("etcd-"):
@@ -351,6 +542,7 @@ def print_pipe_table(headers: List[str], rows: List[List[str]]) -> None:
 
 def cmd_etcd_status(root: Path) -> int:
     rows = []
+    status_facts = collect_etcd_status_facts(root)
     endpoints = select_resources(root, "endpoints", "openshift-etcd", "", "etcd")
     if not endpoints:
         endpoints = [obj for obj in iter_documents(root) if obj.get("kind") == "Endpoints" and meta(obj).get("namespace") == "openshift-etcd"]
@@ -360,24 +552,41 @@ def cmd_etcd_status(root: Path) -> int:
         all_addresses = ready_addresses + not_ready_addresses
         for index, address in enumerate(all_addresses):
             endpoint_name = f"etcd-{address}"
-            db_size = etcd_db_size(root, endpoint_name)
+            fact = status_facts.get(normalize_endpoint_key(address), {})
+            db_size_value = fact.get("db_size")
+            db_in_use_value = fact.get("db_in_use")
+            db_size = format_bytes(db_size_value) if isinstance(db_size_value, int) else etcd_db_size(root, endpoint_name)
+            db_in_use = format_bytes(db_in_use_value) if isinstance(db_in_use_value, int) else ""
+            db_combined = f"{db_size} / {db_in_use}" if db_size and db_in_use else db_size
+            is_leader = fact.get("is_leader")
             rows.append([
                 f"https://{address}:2379",
                 "",
                 "",
-                db_size,
+                db_combined,
                 "",
-                "true" if len(all_addresses) == 1 and index == 0 else "",
-                "",
-                "",
+                str(is_leader).lower() if isinstance(is_leader, bool) else ("true" if len(all_addresses) == 1 and index == 0 else ""),
                 "",
                 "",
-                "not-ready" if address in not_ready_addresses else "",
+                "",
+                "",
+                str(fact.get("errors") or ("not-ready" if address in not_ready_addresses else "")),
             ])
     if not rows:
         pods = find_etcd_pod_names(root)
         for index, pod in enumerate(pods):
-            rows.append([pod, "", "", etcd_db_size(root, pod), "", "true" if len(pods) == 1 and index == 0 else "", "", "", "", "", ""])
+            fact = {}
+            for key in endpoint_keys(pod):
+                fact = status_facts.get(normalize_endpoint_key(key), {})
+                if fact:
+                    break
+            db_size_value = fact.get("db_size")
+            db_in_use_value = fact.get("db_in_use")
+            db_size = format_bytes(db_size_value) if isinstance(db_size_value, int) else etcd_db_size(root, pod)
+            db_in_use = format_bytes(db_in_use_value) if isinstance(db_in_use_value, int) else ""
+            db_combined = f"{db_size} / {db_in_use}" if db_size and db_in_use else db_size
+            is_leader = fact.get("is_leader")
+            rows.append([pod, "", "", db_combined, "", str(is_leader).lower() if isinstance(is_leader, bool) else ("true" if len(pods) == 1 and index == 0 else ""), "", "", "", "", str(fact.get("errors") or "")])
     if not rows:
         return 1
     print_pipe_table(

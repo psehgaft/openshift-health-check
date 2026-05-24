@@ -18,7 +18,77 @@ FINDINGS_HEADER = (
     "Action Plan | Suggested Owner | Done When |"
 )
 FINDINGS_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- |"
-PROSE_COLUMN_INDEXES = {3, 5, 6, 7}
+FINDINGS_PROSE_COLUMN_INDEXES = {0, 1, 3, 5, 6, 7}
+TEXTUAL_TABLE_HEADERS = {
+    "action",
+    "action plan",
+    "apiservice",
+    "area",
+    "backing service",
+    "business impact",
+    "capability",
+    "capability gap",
+    "component",
+    "crd",
+    "current state",
+    "detail",
+    "done when",
+    "domain",
+    "finding",
+    "group",
+    "image",
+    "issue",
+    "kind",
+    "level",
+    "message",
+    "name",
+    "namespace",
+    "observed cluster state",
+    "owner",
+    "product",
+    "reason",
+    "recommended action",
+    "resource",
+    "role",
+    "service",
+    "severity",
+    "source",
+    "source alignment",
+    "suggested owner",
+    "type",
+    "version",
+}
+TEXTUAL_SIGNAL_LABEL_PATTERNS = (
+    "action",
+    "classification source",
+    "confidence source",
+    "detail",
+    "evidence required",
+    "finding",
+    "gap status",
+    "health reason summary",
+    "images",
+    "install model",
+    "instance types",
+    "kubernetes versions",
+    "lifecycle support phase",
+    "machine networks source",
+    "node providers",
+    "node shapes",
+    "os images",
+    "primary risk themes",
+    "reason summary",
+    "recommendation",
+    "recommended",
+    "risk themes",
+    "runtimes",
+    "source",
+    "status reason",
+    "summary",
+    "support phase",
+    "top blockers",
+    "verdict",
+)
 
 SEVERITY_RANK = {
     "critical": 0,
@@ -60,12 +130,40 @@ def strip_outer_backticks(value: str) -> str:
     return value
 
 
+def strip_outer_backticks_from_prose(value: str) -> str:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped.startswith("`") and stripped.endswith("`"):
+        inner = stripped[1:-1].strip()
+        if " " in inner or ";" in inner:
+            return inner
+    return value
+
+
 def normalize_prose_cells(row: str) -> str:
     cells = split_markdown_row(row)
     if len(cells) != 8:
         return row
-    for idx in PROSE_COLUMN_INDEXES:
+    for idx in FINDINGS_PROSE_COLUMN_INDEXES:
         cells[idx] = strip_outer_backticks(cells[idx])
+    return format_markdown_row(cells)
+
+
+def normalize_textual_table_cells(header_cells: list[str], row: str) -> str:
+    cells = split_markdown_row(row)
+    if len(cells) != len(header_cells):
+        return row
+    lower_headers = [header.strip().lower() for header in header_cells]
+    for idx, header in enumerate(header_cells):
+        header_key = header.strip().lower()
+        if header_key in TEXTUAL_TABLE_HEADERS:
+            cells[idx] = strip_outer_backticks(cells[idx])
+        elif header_key == "technical evidence":
+            cells[idx] = strip_outer_backticks_from_prose(cells[idx])
+    if len(cells) >= 2 and lower_headers[0] in {"signal", "item", "check"} and lower_headers[1] in {"value", "result"}:
+        label = cells[0].replace("`", "").strip().lower()
+        if any(pattern in label for pattern in TEXTUAL_SIGNAL_LABEL_PATTERNS):
+            cells[1] = strip_outer_backticks(cells[1])
+    cells = [strip_outer_backticks_from_prose(cell) for cell in cells]
     return format_markdown_row(cells)
 
 
@@ -114,9 +212,40 @@ def normalize_findings_tables(markdown: str) -> str:
     return "\n".join(output) + trailing_newline
 
 
+def normalize_textual_table_columns(markdown: str) -> str:
+    lines = markdown.splitlines()
+    output: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        if (
+            lines[index].startswith("|")
+            and index + 1 < len(lines)
+            and lines[index + 1].startswith("|")
+        ):
+            header_cells = split_markdown_row(lines[index])
+            separator_cells = split_markdown_row(lines[index + 1])
+            if header_cells and len(header_cells) == len(separator_cells) and all(
+                re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in separator_cells
+            ):
+                output.append(lines[index])
+                output.append(lines[index + 1])
+                index += 2
+                while index < len(lines) and lines[index].startswith("|"):
+                    output.append(normalize_textual_table_cells(header_cells, lines[index]))
+                    index += 1
+                continue
+
+        output.append(lines[index])
+        index += 1
+
+    trailing_newline = "\n" if markdown.endswith("\n") else ""
+    return "\n".join(output) + trailing_newline
+
+
 def normalize_file(path: Path) -> None:
     markdown = path.read_text(encoding="utf-8")
-    normalized = normalize_findings_tables(markdown)
+    normalized = normalize_textual_table_columns(normalize_findings_tables(markdown))
     if normalized != markdown:
         path.write_text(normalized, encoding="utf-8")
 

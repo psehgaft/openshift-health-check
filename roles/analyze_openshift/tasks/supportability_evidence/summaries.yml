@@ -23,6 +23,10 @@
     inspect_present_value: "{{ (inspect_file_count_value | int) > 0 }}"
     sosreport_count_value: "{{ support_evidence_parsed.sosreport.summary.count | default(0) | int }}"
     sosreport_present_value: "{{ (sosreport_count_value | int) > 0 }}"
+    etcd_clusteroperator_status: "{{ (clusteroperator_status_map | default({})).get('etcd', {}) }}"
+    omc_etcd_operator_available_raw: "{{ support_evidence_parsed.omc.summary.etcd_operator_available | default('unknown') }}"
+    omc_etcd_operator_degraded_raw: "{{ support_evidence_parsed.omc.summary.etcd_operator_degraded | default('unknown') }}"
+    omc_etcd_operator_progressing_raw: "{{ support_evidence_parsed.omc.summary.etcd_operator_progressing | default('unknown') }}"
     sosreport_complete_coverage: >-
       {{
         (sosreport_present_value | bool)
@@ -30,6 +34,13 @@
         and ((support_evidence_parsed.sosreport.summary.reports_with_crio_logs | default(0) | int) >= (sosreport_count_value | int))
         and ((support_evidence_parsed.sosreport.summary.reports_with_journal | default(0) | int) >= (sosreport_count_value | int))
         and ((support_evidence_parsed.sosreport.summary.reports_with_network_data | default(0) | int) >= (sosreport_count_value | int))
+      }}
+    sosreport_core_coverage: >-
+      {{
+        (sosreport_present_value | bool)
+        and ((support_evidence_parsed.sosreport.summary.reports_with_kubelet_logs | default(0) | int) >= (sosreport_count_value | int))
+        and ((support_evidence_parsed.sosreport.summary.reports_with_crio_logs | default(0) | int) >= (sosreport_count_value | int))
+        and ((support_evidence_parsed.sosreport.summary.reports_with_journal | default(0) | int) >= (sosreport_count_value | int))
       }}
     inspect_expected: >-
       {{
@@ -101,6 +112,7 @@
       etcd_status_present: "{{ support_evidence_parsed.omc.summary.etcd_status_present | default(false) }}"
       endpoint_count: "{{ support_evidence_parsed.omc.summary.endpoint_count | default(0) }}"
       leader_count: "{{ support_evidence_parsed.omc.summary.leader_count | default(0) }}"
+      leader_status_collected: "{{ support_evidence_parsed.omc.summary.leader_status_collected | default(false) }}"
       learner_count: "{{ support_evidence_parsed.omc.summary.learner_count | default(0) }}"
       endpoint_error_count: "{{ support_evidence_parsed.omc.summary.endpoint_error_count | default(0) }}"
       etcd_db_size_total: "{{ support_evidence_parsed.omc.summary.etcd_db_size_total | default('not-collected') }}"
@@ -113,9 +125,24 @@
       etcd_db_in_use_max_bytes: "{{ support_evidence_parsed.omc.summary.etcd_db_in_use_max_bytes | default('not-collected') }}"
       etcd_db_not_used_max_pct: "{{ support_evidence_parsed.omc.summary.etcd_db_not_used_max_pct | default('not-collected') }}"
       etcd_db_status_rows: "{{ support_evidence_parsed.omc.summary.etcd_db_status_rows | default([]) }}"
-      etcd_operator_available: "{{ support_evidence_parsed.omc.summary.etcd_operator_available | default('unknown') }}"
-      etcd_operator_degraded: "{{ support_evidence_parsed.omc.summary.etcd_operator_degraded | default('unknown') }}"
-      etcd_operator_progressing: "{{ support_evidence_parsed.omc.summary.etcd_operator_progressing | default('unknown') }}"
+      etcd_operator_available: >-
+        {{
+          etcd_clusteroperator_status.available | default('unknown')
+          if (omc_etcd_operator_available_raw | string | lower) in ['unknown', 'not-assessed', 'not-collected', '']
+          else omc_etcd_operator_available_raw
+        }}
+      etcd_operator_degraded: >-
+        {{
+          etcd_clusteroperator_status.degraded | default('unknown')
+          if (omc_etcd_operator_degraded_raw | string | lower) in ['unknown', 'not-assessed', 'not-collected', '']
+          else omc_etcd_operator_degraded_raw
+        }}
+      etcd_operator_progressing: >-
+        {{
+          etcd_clusteroperator_status.progressing | default('unknown')
+          if (omc_etcd_operator_progressing_raw | string | lower) in ['unknown', 'not-assessed', 'not-collected', '']
+          else omc_etcd_operator_progressing_raw
+        }}
       prom_rules_present: "{{ support_evidence_parsed.omc.summary.prom_rules_present | default(false) }}"
       prometheus_rule_alert_count: "{{ support_evidence_parsed.omc.summary.prometheus_rule_alert_count | default(0) }}"
       alert_count: "{{ support_evidence_parsed.omc.summary.alert_count | default(0) }}"
@@ -139,7 +166,7 @@
       verdict: >-
         {{
           'supported'
-          if (sosreport_complete_coverage | bool)
+          if ((sosreport_complete_coverage | bool) or (sosreport_core_coverage | bool))
           else (
             'review-required'
             if (sosreport_present_value | bool)

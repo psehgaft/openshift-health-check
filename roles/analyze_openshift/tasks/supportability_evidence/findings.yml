@@ -22,6 +22,8 @@
     inspect_node_marker_count_value: "{{ support_evidence_parsed.inspect.summary.resource_markers.nodes | default(0) | int }}"
     sosreport_count_value: "{{ support_evidence_parsed.sosreport.summary.count | default(0) | int }}"
     sosreport_present_value: "{{ (sosreport_count_value | int) > 0 }}"
+    sosreport_target_reasons_text: "{{ (sosreport_coverage_value.target_reasons | default({}) | to_json) if (sosreport_coverage_value is mapping) else '' }}"
+    sosreport_network_expected: "{{ (sosreport_target_reasons_text | lower) is search('network|latency|packet|dns|route|interface') }}"
     inspect_expected: >-
       {{
         (
@@ -65,7 +67,7 @@
         + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show kubelet log coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) | int) < (sosreport_count_value | int))) else [])
         + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show CRI-O log coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_crio_logs | default(0) | int) < (sosreport_count_value | int))) else [])
         + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show journal coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_journal | default(0) | int) < (sosreport_count_value | int))) else [])
-        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show network-data coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_network_data | default(0) | int) < (sosreport_count_value | int))) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show network-data coverage for all collected nodes.'}] if ((sosreport_network_expected | bool) and (sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_network_data | default(0) | int) < (sosreport_count_value | int))) else [])
       }}
     advisor_findings: >-
       {{

@@ -184,6 +184,13 @@ def parse_percent(value: str) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
+def normalize_unknown(value: str, default: str = "not-collected") -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"unknown", "n/a", "na", "<none>", "none", "null"}:
+        return default
+    return text
+
+
 def parse_etcd_db_fields(row: Dict[str, str]) -> Tuple[Optional[int], Optional[int], str, str, str, Optional[float]]:
     combined = row.get("db_size_in_use", "")
     db_size_text = row.get("db_size", "")
@@ -198,9 +205,9 @@ def parse_etcd_db_fields(row: Dict[str, str]) -> Tuple[Optional[int], Optional[i
     return (
         size_bytes,
         in_use_bytes,
-        db_size_text or "not-collected",
-        db_in_use_text or "not-collected",
-        not_used_text or "not-collected",
+        normalize_unknown(db_size_text),
+        normalize_unknown(db_in_use_text),
+        normalize_unknown(not_used_text),
         parse_percent(not_used_text),
     )
 
@@ -316,8 +323,18 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
     )
 
     etcd_rows = parse_pipe_table(etcd_result.get("stdout", "")) if etcd_result.get("ok") else []
-    endpoint_error_count = sum(1 for row in etcd_rows if row.get("errors", "").strip())
-    leader_count = sum(1 for row in etcd_rows if row.get("is_leader", "").lower() == "true")
+    endpoint_error_count = sum(
+        1
+        for row in etcd_rows
+        if normalize_unknown(row.get("errors", ""), default="").strip()
+    )
+    known_leader_rows = [
+        row
+        for row in etcd_rows
+        if str(row.get("is_leader", "")).strip().lower() in {"true", "false"}
+    ]
+    leader_count = sum(1 for row in known_leader_rows if row.get("is_leader", "").lower() == "true")
+    leader_count_value: Any = leader_count if known_leader_rows else "not-collected"
     learner_count = sum(1 for row in etcd_rows if row.get("is_learner", "").lower() == "true")
     db_stats = summarize_etcd_db_stats(etcd_rows)
 
@@ -337,7 +354,7 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
             "area": "omc-etcd-status",
             "detail": f"omc etcd status reported errors on {endpoint_error_count} endpoint(s).",
         })
-    if etcd_rows and leader_count != 1:
+    if known_leader_rows and leader_count != 1:
         findings.append({
             "severity": "warning",
             "area": "omc-etcd-status",
@@ -373,7 +390,8 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
             "omc_binary": omc_bin,
             "etcd_status_present": bool(etcd_rows),
             "endpoint_count": len(etcd_rows),
-            "leader_count": leader_count,
+            "leader_count": leader_count_value,
+            "leader_status_collected": bool(known_leader_rows),
             "learner_count": learner_count,
             "endpoint_error_count": endpoint_error_count,
             "etcd_operator_available": etcd_operator.get("available", "unknown"),
