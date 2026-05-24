@@ -33,6 +33,7 @@ def add_candidate(candidates, value, reason):
 
 def build(data):
     candidates = []
+    workload_candidates = []
     for item in as_list(data.get("not_ready_nodes")):
         add_candidate(candidates, item, "not-ready")
     for item in as_list(data.get("pressure_nodes")):
@@ -42,7 +43,7 @@ def build(data):
     for item in as_list(data.get("critical_pod_density_nodes")):
         add_candidate(candidates, item_attr(item, "node"), "critical-pod-density")
     for item in as_list(data.get("top_high_restart_pods")):
-        add_candidate(candidates, item_attr(item, "node"), "restart-hotspot")
+        add_candidate(workload_candidates, item_attr(item, "node"), "restart-hotspot")
 
     try:
         restart_threshold = int(data.get("pod_restart_warning_threshold", 5) or 5)
@@ -54,7 +55,7 @@ def build(data):
         except (TypeError, ValueError):
             restarts = 0
         if restarts >= restart_threshold:
-            add_candidate(candidates, item_attr(item, "node"), "restart-hotspot")
+            add_candidate(workload_candidates, item_attr(item, "node"), "restart-hotspot")
 
     nodes = []
     reason_map = {}
@@ -71,6 +72,7 @@ def build(data):
         "node_debug_target_candidates": candidates,
         "node_debug_target_nodes": nodes,
         "node_debug_target_reason_map": reason_map,
+        "workload_debug_target_candidates": workload_candidates,
     }
 
 

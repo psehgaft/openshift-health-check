@@ -356,7 +356,10 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
     }
     etcd_operator = parse_cluster_operator(etcd_operator_result.get("stdout", "")) if etcd_operator_result.get("ok") else {}
 
-    present = bool(etcd_rows or prom_summary["alert_count"] > 0 or etcd_result.get("ok") or prom_result.get("ok"))
+    etcd_operator_available = etcd_operator.get("available", "unknown")
+    etcd_operator_degraded = etcd_operator.get("degraded", "unknown")
+    etcd_operator_progressing = etcd_operator.get("progressing", "unknown")
+    present = bool(etcd_rows or etcd_operator or etcd_result.get("ok") or etcd_operator_result.get("ok"))
     findings = []
     if endpoint_error_count > 0:
         findings.append({
@@ -370,9 +373,27 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
             "area": "omc-etcd-status",
             "detail": f"omc etcd status reported {leader_count} leader endpoint(s); expected 1.",
         })
-    if prom_summary["firing_count"] > 0:
+    if etcd_operator_available == "False":
         findings.append({
             "severity": "warning",
+            "area": "omc-etcd-operator",
+            "detail": "omc reported etcd ClusterOperator Available=False.",
+        })
+    if etcd_operator_degraded == "True":
+        findings.append({
+            "severity": "warning",
+            "area": "omc-etcd-operator",
+            "detail": "omc reported etcd ClusterOperator Degraded=True.",
+        })
+    if etcd_operator_progressing == "True":
+        findings.append({
+            "severity": "info",
+            "area": "omc-etcd-operator",
+            "detail": "omc reported etcd ClusterOperator Progressing=True.",
+        })
+    if prom_summary["firing_count"] > 0:
+        findings.append({
+            "severity": "info",
             "area": "omc-prom-rules",
             "detail": f"omc prom rules reported {prom_summary['firing_count']} firing alert rule(s).",
         })
@@ -404,9 +425,9 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
             "leader_status_collected": bool(known_leader_rows),
             "learner_count": learner_count,
             "endpoint_error_count": endpoint_error_count,
-            "etcd_operator_available": etcd_operator.get("available", "unknown"),
-            "etcd_operator_degraded": etcd_operator.get("degraded", "unknown"),
-            "etcd_operator_progressing": etcd_operator.get("progressing", "unknown"),
+            "etcd_operator_available": etcd_operator_available,
+            "etcd_operator_degraded": etcd_operator_degraded,
+            "etcd_operator_progressing": etcd_operator_progressing,
             "prom_rules_present": prom_result.get("ok", False),
             "prometheus_rule_alert_count": prom_summary["alert_count"],
             "alert_count": prom_summary["alert_count"],
