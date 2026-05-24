@@ -194,7 +194,7 @@ Most-used OpenShift options:
 - `report_performance_profile`
   Choose live OpenShift collection depth. Default: `full`
 
-`must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates and Advisor export can run in the same scan when their command prerequisites are available. Node-level `oc debug node/<node>` plus `sosreport` collection is optional and runs only when `collect_live_sosreport=true`; when enabled, it targets derived symptom nodes by default and is capped by `live_support_sosreport_node_limit`. If no symptom-based targets are found, the collector skips cleanly instead of collecting arbitrary nodes. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
+`must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates and Advisor export can run in the same scan when their command prerequisites are available. Node-level `oc debug node/<node>` plus `sosreport` collection is optional and runs only when `collect_live_sosreport=true`; when enabled, it targets derived symptom nodes first and is capped by `live_support_sosreport_node_limit`. If no symptom-based targets are found, the full collector falls back to the cluster node inventory instead of reporting node diagnostics as not requested. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
 
 The same OpenShift playbook also supports collected-state reprocessing. If you set any of these inputs, the playbook automatically switches to the collected-state path:
 
@@ -1136,7 +1136,7 @@ These parameters work across the playbooks:
 - `collect_live_sosreport`
   Enable or disable live `oc debug node/<node>` sosreport collection. The default `full` profile enables it when applicable. `report_performance_profile=standard` and `report_performance_profile=fast` keep it disabled unless explicitly enabled. Setting it to `false` disables node debug even when `live_support_collection_profile=all`
 - `live_support_sosreport_nodes`
-  Optional explicit node list for live sosreport collection; when empty, the scan uses derived symptom nodes
+  Optional explicit node list for live sosreport collection; when empty, the scan uses derived symptom nodes, then falls back to the cluster node inventory when node diagnostics are enabled and no symptom target exists
 - `live_support_sosreport_node_limit`
   Maximum number of target nodes for default live sosreport collection
 - `case_bundle_path`

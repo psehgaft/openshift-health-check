@@ -264,7 +264,7 @@
                             'Collector prerequisites are available, but no command or baseline was configured.'
                             if not (item.value.configured | bool)
                             else (
-                              'No symptom-based node targets were derived; the default sosreport collector will skip without collecting arbitrary nodes.'
+                              'No symptom-based node targets were derived; the default sosreport collector will collect node diagnostics from the cluster node inventory.'
                               if (item.key == 'sosreport' and (live_support_sosreport_no_targets | default(false) | bool))
                               else 'Collector is planned for this scan.'
                             )
@@ -362,11 +362,6 @@
                 '--node-limit',
                 live_support_sosreport_node_limit | default(0) | string
               ]
-              + (
-                ['--require-explicit-nodes']
-                if (live_support_sosreport_no_targets | default(false) | bool)
-                else []
-              )
               + (
                 ['--node-selector', live_support_sosreport_node_selector]
                 if (live_support_sosreport_node_selector | default('') | trim | length > 0)
@@ -858,7 +853,7 @@
     evidence_limitations: >-
       {{
         []
-        + ([{'area': 'node diagnostics', 'detail': 'No symptom-based node targets were derived for oc debug node/<node> sosreport collection; no arbitrary node sosreport was collected.'}] if ((live_support_sosreport_data.summary.count | default(0) | int) == 0 and ((node_debug_target_nodes | default([])) | length == 0)) else [])
+        + ([{'area': 'node diagnostics', 'detail': 'No symptom-based node targets were derived for oc debug node/<node> sosreport collection, and no default node-level archive was collected.'}] if ((live_support_sosreport_data.summary.count | default(0) | int) == 0 and ((node_debug_target_nodes | default([])) | length == 0)) else [])
         + ([{'area': 'node diagnostics', 'detail': 'Targeted oc debug node/<node> sosreport collection was requested but no node-level archive was collected.'}] if ((live_support_sosreport_data.summary.count | default(0) | int) == 0 and ((node_debug_target_nodes | default([])) | length > 0)) else [])
         + ([{'area': 'targeted inspect evidence', 'detail': 'No oc adm inspect directory was collected during this scan.'}] if ((live_support_inspect_data.summary.file_count | default(0) | int) == 0) else [])
         + ([{'area': 'reference compliance', 'detail': 'No cluster-compare output or baseline reference was collected during this scan.'}] if (live_support_cluster_compare_data.summary is not defined) else [])

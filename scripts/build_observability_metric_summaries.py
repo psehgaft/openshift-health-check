@@ -61,7 +61,7 @@ def build_alert_summaries(alerts):
 def build_node_threshold_summaries(items, status, low_threshold=None, high_threshold=None):
     low = []
     high = []
-    if status != "observed":
+    if status not in {"observed", "derived"}:
         return low, high
 
     for item in as_list(items):
@@ -81,7 +81,7 @@ def build_node_threshold_summaries(items, status, low_threshold=None, high_thres
 def build_pod_density_summaries(items, status, warn_threshold, critical_threshold):
     high = []
     critical = []
-    if status != "observed":
+    if status not in {"observed", "derived"}:
         return high, critical
 
     for item in as_list(items):
