@@ -58,6 +58,7 @@ The OpenShift report follows one order, from immediate risk to broader readiness
 10. Declarative Operations
 11. Container Platform Adoption And Release Engineering
 12. Day 2 Production Readiness
+13. Capabilities Assessments
 
 `Evidence And Supportability` still exists, but it now renders under `Appendix` instead of the main section order.
 
@@ -101,7 +102,7 @@ For nested capability sections, the heading depth may follow the nesting level, 
 2. `Findings Summary`
 3. `Findings`
 
-Postures and capabilities must not add separate customer-facing subsections such as `Recommendations`, `Operating Questions`, `Leadership view`, `Technical focus`, `Assessment Summary`, `Checks`, or `Capability Assessments`. Useful content from those older blocks belongs in `Findings Summary` or the standard `Findings` table.
+Postures and capabilities must not add separate customer-facing subsections such as `Recommendations`, `Operating Questions`, `Leadership view`, `Technical focus`, `Assessment Summary`, or `Checks`. Useful content from those older blocks belongs in `Findings Summary` or the standard `Findings` table.
 
 The report should not need separate `Recommendations` or `Operating Questions` subsections for customer-facing posture and capability content. The recommendations and operating questions belong in the findings model itself:
 

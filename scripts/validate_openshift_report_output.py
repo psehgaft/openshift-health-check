@@ -40,14 +40,13 @@ ALLOWED_SECTION_LABELS = [
 ALLOWED_DAY2_SECTION_LABELS = [
     "Health Score",
     "Findings Summary",
-    "Capability Assessment",
     "Findings",
 ]
 
 REQUIRED_CAPABILITY_SUBSECTIONS = [
-    "##### Health Score",
-    "##### Findings Summary",
-    "##### Findings",
+    "#### Health Score",
+    "#### Findings Summary",
+    "#### Findings",
 ]
 
 FORBIDDEN_MARKDOWN_PATTERNS = [
@@ -55,7 +54,7 @@ FORBIDDEN_MARKDOWN_PATTERNS = [
     (r"^#### Execution Context$", "execution context must not render in the report"),
     (r"^### Recommendations$", "legacy Recommendations subsections must not render"),
     (r"^### Operating Questions$", "legacy Operating Questions subsections must not render"),
-    (r"^### Capability Assessments$", "legacy Capability Assessments heading must not render"),
+    (r"^### Capability Assessment$", "legacy Capability Assessment heading must not render"),
     (r"^##### Assessment Summary$", "capability sections must use Findings Summary instead of Assessment Summary"),
     (r"^\*\*Leadership view\*\*", "capability sections must not render separate Leadership view labels"),
     (r"^\*\*Technical focus\*\*", "capability sections must not render separate Technical focus labels"),
@@ -156,11 +155,14 @@ def expected_cluster_sections() -> list:
     profile_path = Path(__file__).resolve().parent.parent / "inputs" / "openshift-cluster-health-profile.yml"
     profile_payload = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
     posture_profile = ((profile_payload.get("cluster_health_profile") or {}).get("postures") or {})
+    capability_profile = ((profile_payload.get("cluster_health_profile") or {}).get("capabilities") or {})
     titles = ["Cluster Health Overview"]
     for key, title in POSTURE_SECTION_TITLES:
         value = posture_profile.get(key, {})
         if not isinstance(value, dict) or bool(value.get("enabled", True)):
             titles.append(title)
+    if any(isinstance(value, dict) and bool(value.get("enabled", False)) for value in capability_profile.values()):
+        titles.append("Capabilities Assessments")
     return titles
 
 
@@ -195,6 +197,8 @@ def validate_cluster_posture_sections(markdown: str) -> None:
     for idx, (start, title) in enumerate(sections):
         if title == "Appendix" or title.startswith("Appendix:"):
             continue
+        if title == "Capabilities Assessments":
+            continue
         end = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines) + 1
         block = "\n".join(lines[start - 1 : end - 1])
         missing = [heading for heading in REQUIRED_CLUSTER_SUBSECTIONS if heading not in block]
@@ -222,18 +226,18 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
     start_idx = None
     end_idx = None
     for idx, line in enumerate(lines):
-        if line.strip() == "## Day 2 Production Readiness":
+        if line.strip() == "## Capabilities Assessments":
             start_idx = idx + 1
             continue
         if start_idx is not None and line.startswith("## "):
             end_idx = idx
             break
     if start_idx is None:
-        fail("missing Day 2 Production Readiness section")
+        fail("missing Capabilities Assessments section")
+    if end_idx is None:
+        end_idx = len(lines)
     block = lines[start_idx:end_idx]
-    if "### Capability Assessment" not in block:
-        fail("missing Day 2 Capability Assessment subsection")
-    rendered_titles = [line[5:].strip() for line in block if line.startswith("#### ") and not line.startswith("##### ")]
+    rendered_titles = [line[4:].strip() for line in block if line.startswith("### ") and not line.startswith("#### ")]
     expected_titles = expected_enabled_capability_titles()
     missing = sorted(set(expected_titles) - set(rendered_titles))
     extra = sorted(set(rendered_titles) - set(expected_titles))
@@ -249,12 +253,12 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
             )
         )
     for idx, line in enumerate(block):
-        if not line.startswith("#### ") or line.startswith("##### "):
+        if not line.startswith("### ") or line.startswith("#### "):
             continue
-        title = line[5:].strip()
+        title = line[4:].strip()
         next_idx = len(block)
         for probe_idx in range(idx + 1, len(block)):
-            if block[probe_idx].startswith("#### ") and not block[probe_idx].startswith("##### "):
+            if block[probe_idx].startswith("### ") and not block[probe_idx].startswith("#### "):
                 next_idx = probe_idx
                 break
         capability_block = block[idx:next_idx]
@@ -264,9 +268,9 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
         if missing_subsections:
             fail(f"capability {title!r} missing {', '.join(missing_subsections)}")
         direct_subsections = [
-            item[6:].strip()
+            item[5:].strip()
             for item in capability_block
-            if item.startswith("##### ") and not item.startswith("###### ")
+            if item.startswith("#### ") and not item.startswith("##### ")
         ]
         if direct_subsections != ALLOWED_SECTION_LABELS:
             fail(
@@ -401,7 +405,7 @@ def validate_capability_summary_accuracy(markdown: str) -> None:
     start_idx = None
     end_idx = None
     for idx, line in enumerate(lines):
-        if line.strip() == "## Day 2 Production Readiness":
+        if line.strip() == "## Capabilities Assessments":
             start_idx = idx + 1
             continue
         if start_idx is not None and line.startswith("## "):
@@ -409,17 +413,19 @@ def validate_capability_summary_accuracy(markdown: str) -> None:
             break
     if start_idx is None:
         return
+    if end_idx is None:
+        end_idx = len(lines)
     block = lines[start_idx:end_idx]
     capability_indexes = [
-        (idx, line[5:].strip())
+        (idx, line[4:].strip())
         for idx, line in enumerate(block)
-        if line.startswith("#### ") and not line.startswith("##### ")
+        if line.startswith("### ") and not line.startswith("#### ")
     ]
     for pos, (idx, title) in enumerate(capability_indexes):
         next_idx = capability_indexes[pos + 1][0] if pos + 1 < len(capability_indexes) else len(block)
         capability_block = block[idx:next_idx]
-        summary = extract_summary_text(capability_block, "##### Findings Summary", "##### Findings")
-        findings = extract_finding_rows(capability_block, "##### Findings")
+        summary = extract_summary_text(capability_block, "#### Findings Summary", "#### Findings")
+        findings = extract_finding_rows(capability_block, "#### Findings")
         validate_summary_matches_findings(f"capability {title}", summary, findings)
 
 

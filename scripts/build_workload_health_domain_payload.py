@@ -136,6 +136,8 @@ def build_payload(data):
         "stale_dockerconfigjson_secrets": (
             "top_stale_dockerconfigjson_secrets" if mode == "live" else "top_stale_dockerconfigjson_secrets"
         ),
+        "likely_unused_configmaps": "top_likely_unused_configmaps" if mode == "live" else "top_likely_unused_configmaps",
+        "likely_unused_secrets": "top_likely_unused_secrets" if mode == "live" else "top_likely_unused_secrets",
     }
     for payload_key, fallback_key in fallback_names.items():
         payload[payload_key] = first_defined(

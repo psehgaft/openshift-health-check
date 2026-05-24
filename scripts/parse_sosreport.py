@@ -71,6 +71,7 @@ def main() -> int:
           continue
       members = inspect_members(path)
       member_sample = members[:100]
+      member_names = [member.lower() for member in members]
       fips_enabled_text = read_small_text(path, ["proc/sys/crypto/fips_enabled"])
       crypto_policy_text = read_small_text(path, ["etc/crypto-policies/config"])
       fips_status = (
@@ -87,10 +88,10 @@ def main() -> int:
           "size_bytes": path.stat().st_size,
           "suffixes": list(path.suffixes),
           "member_count": len(members),
-          "has_journal": any("journal" in member.lower() for member in member_sample),
-          "has_crio_logs": any("crio" in member.lower() for member in member_sample),
-          "has_kubelet_logs": any("kubelet" in member.lower() for member in member_sample),
-          "has_network_data": any(("ip_addr" in member.lower()) or ("routes" in member.lower()) or ("network" in member.lower()) for member in member_sample),
+          "has_journal": any("journal" in member for member in member_names),
+          "has_crio_logs": any("crio" in member for member in member_names),
+          "has_kubelet_logs": any("kubelet" in member for member in member_names),
+          "has_network_data": any(("ip_addr" in member) or ("routes" in member) or ("network" in member) for member in member_names),
           "fips_enabled_status": fips_status,
           "crypto_policy": crypto_policy,
       })

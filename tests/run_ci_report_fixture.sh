@@ -111,6 +111,48 @@ assert len(payload["findings"]["assessment_health"]) > 0
 print(path)
 PY
 
+"${VENV_PYTHON_BIN}" - "${ROOT_DIR}" <<'PY'
+import io
+import json
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+root = Path(sys.argv[1])
+with tempfile.TemporaryDirectory() as tmp:
+    sos_path = Path(tmp) / "sosreport-worker-9.tar"
+    with tarfile.open(sos_path, "w") as handle:
+        for index in range(150):
+            data = b"placeholder\n"
+            info = tarfile.TarInfo(f"sosreport-worker-9/var/tmp/filler-{index:03d}.txt")
+            info.size = len(data)
+            handle.addfile(info, io.BytesIO(data))
+        for member_name in [
+            "sosreport-worker-9/journal/kubelet.log",
+            "sosreport-worker-9/var/log/crio/crio.log",
+            "sosreport-worker-9/sos_commands/networking/ip_addr",
+        ]:
+            data = b"diagnostic evidence\n"
+            info = tarfile.TarInfo(member_name)
+            info.size = len(data)
+            handle.addfile(info, io.BytesIO(data))
+
+    result = subprocess.check_output(
+        [sys.executable, str(root / "scripts/parse_sosreport.py"), str(sos_path)],
+        text=True,
+    )
+
+payload = json.loads(result)
+summary = payload["summary"]
+assert summary["reports_with_journal"] == 1
+assert summary["reports_with_crio_logs"] == 1
+assert summary["reports_with_kubelet_logs"] == 1
+assert summary["reports_with_network_data"] == 1
+print("large sosreport parser fixture ok")
+PY
+
 "${VENV_PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_openshift_report_output.py" \
   "${CI_MD}" \
   "${CI_JSON}"
@@ -122,13 +164,14 @@ rg -q '^## Platform Architecture And Lifecycle' "${CI_MD}"
 rg -q '^## Appendix' "${CI_MD}"
 rg -q '^### Evidence And Supportability' "${CI_MD}"
 rg -q '^## Day 2 Production Readiness' "${CI_MD}"
+rg -q '^## Capabilities Assessments' "${CI_MD}"
 if rg -q '^### Capability Assessments' "${CI_MD}"; then
   echo "legacy Capability Assessments heading must not render" >&2
   exit 1
 fi
-rg -q '^#### .*' "${CI_MD}"
-rg -q '^##### Health Score' "${CI_MD}"
-rg -q '^##### Findings Summary' "${CI_MD}"
-rg -q '^##### Findings' "${CI_MD}"
+rg -q '^### .*' "${CI_MD}"
+rg -q '^#### Health Score' "${CI_MD}"
+rg -q '^#### Findings Summary' "${CI_MD}"
+rg -q '^#### Findings' "${CI_MD}"
 
 printf 'ci fixture report ok\nmd=%s\njson=%s\n' "${CI_MD}" "${CI_JSON}"

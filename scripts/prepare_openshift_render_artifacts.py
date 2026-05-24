@@ -556,7 +556,11 @@ def compact_machineconfigpool_items(graph):
         status = item.get("status") if isinstance(item.get("status"), dict) else {}
         updated = condition_status(item, "Updated", default=item.get("updated", "Unknown"))
         updating = condition_status(item, "Updating", default=item.get("updating", "Unknown"))
-        degraded = condition_status(item, "Degraded", default=item.get("degraded", "Unknown"))
+        degraded = condition_status(
+            item,
+            "NodeDegraded",
+            default=condition_status(item, "Degraded", default=item.get("degraded", "Unknown")),
+        )
         items.append(
             {
                 "name": metadata.get("name", "unknown"),

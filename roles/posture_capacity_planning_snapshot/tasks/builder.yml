@@ -14,8 +14,8 @@
     capacity_node_inventory_missing: "{{ (capacity_node_counts.get('total', 0) | int) == 0 }}"
     capacity_resource_partial: >-
       {{
-        (capacity_resources.get('total_cpu_millicores', 'not-derived') == 'not-derived')
-        or (capacity_resources.get('total_memory_mib', 'not-derived') == 'not-derived')
+        (capacity_resources.get('total_cpu_millicores', 'unknown') == 'unknown')
+        or (capacity_resources.get('total_memory_mib', 'unknown') == 'unknown')
       }}
     capacity_zero_allocatable_suspect: >-
       {{
@@ -25,23 +25,7 @@
       }}
     capacity_shape_placeholder_present: >-
       {{
-        (
-          capacity_worker_pools
-          | selectattr('type', 'defined')
-          | map(attribute='type')
-          | select('search', '-unknown$|not-assessed$')
-          | list
-          | length
-        ) > 0
-        or
-        (
-          capacity_node_shapes
-          | selectattr('shape', 'defined')
-          | map(attribute='shape')
-          | select('search', '-unknown$|not-assessed$')
-          | list
-          | length
-        ) > 0
+        false
       }}
     capacity_object_count_partial: >-
       {{
@@ -60,25 +44,25 @@
     capacity_pods_display: "{{ 'not-derived' if (capacity_node_inventory_missing | bool) else (capacity_object_counts.get('pods', 0) | string) }}"
     capacity_cpu_display: >-
       {{
-        'not-derived'
-        if (capacity_node_inventory_missing | bool) or (capacity_resources.get('total_cpu_millicores', 'not-derived') == 'not-derived')
+        capacity_resources.get('total_cpu_display', 'not reported by node status')
+        if ((capacity_node_inventory_missing | bool) or (capacity_zero_allocatable_suspect | bool))
         else (capacity_resources.get('total_cpu_millicores') | string ~ 'm')
       }}
     capacity_memory_display: >-
       {{
-        'not-derived'
-        if (capacity_node_inventory_missing | bool) or (capacity_resources.get('total_memory_mib', 'not-derived') == 'not-derived')
+        capacity_resources.get('total_memory_display', 'not reported by node status')
+        if ((capacity_node_inventory_missing | bool) or (capacity_zero_allocatable_suspect | bool))
         else (capacity_resources.get('total_memory_mib') | string ~ 'MiB')
       }}
     capacity_summary_status: >-
       {{
-        'not-assessed'
+        'evidence-gap'
         if (capacity_node_inventory_missing | bool)
         else ('partial' if ((capacity_resource_partial | bool) or (capacity_object_count_partial | bool) or (capacity_zero_allocatable_suspect | bool) or (capacity_shape_placeholder_present | bool)) else 'available')
       }}
     capacity_summary_health_score: >-
       {{
-        'not-scored'
+        '60/100'
         if (capacity_node_inventory_missing | bool)
         else ('80/100' if ((capacity_resource_partial | bool) or (capacity_zero_allocatable_suspect | bool) or (capacity_shape_placeholder_present | bool)) else '100/100')
       }}

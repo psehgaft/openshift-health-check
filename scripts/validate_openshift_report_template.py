@@ -20,6 +20,7 @@ EXPECTED_SECTIONS = [
     "Declarative Operations",
     "Container Platform Adoption And Release Engineering",
     "Day 2 Production Readiness",
+    "Capabilities Assessments",
 ]
 
 REQUIRED_SUBSECTIONS = [
@@ -37,7 +38,6 @@ ALLOWED_POSTURE_SUBSECTIONS = [
 ALLOWED_DAY2_SUBSECTIONS = [
     "Health Score",
     "Findings Summary",
-    "Capability Assessment",
     "Findings",
 ]
 
@@ -61,7 +61,7 @@ FORBIDDEN_PATTERNS = [
     (r"^#### Execution Context$", "execution context must not render in the report"),
     (r"^### Recommendations$", "legacy Recommendations subsections must not render"),
     (r"^### Operating Questions$", "legacy Operating Questions subsections must not render"),
-    (r"^### Capability Assessments$", "legacy Capability Assessments heading must not render"),
+    (r"^### Capability Assessment$", "legacy Capability Assessment heading must not render"),
     (r"^##### Assessment Summary$", "capability sections must use Findings Summary instead of Assessment Summary"),
     (r"^\*\*Leadership view\*\*", "capability sections must not render separate Leadership view labels"),
     (r"^\*\*Technical focus\*\*", "capability sections must not render separate Technical focus labels"),

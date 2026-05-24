@@ -349,6 +349,7 @@ For OpenShift, the report is ordered from immediate operational risk to longer-t
 - Declarative Operations
 - Container Platform Adoption And Release Engineering
 - Day 2 Production Readiness
+- Capabilities Assessments
 
 Each section opens with a short summary and then works into findings and actions. Supportability and platform risk come first. Operating model and readiness come later.
 

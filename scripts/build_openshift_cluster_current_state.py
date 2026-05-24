@@ -78,6 +78,51 @@ def summarize_counter(counter, key_name, value_name="count", limit=10):
     ][:limit]
 
 
+def first_nonempty(*values, default="unknown"):
+    for value in values:
+        if value not in (None, ""):
+            text = str(value).strip()
+            if text and text.lower() not in {"unknown", "not-assessed", "not-derived"}:
+                return value
+    return default
+
+
+def count_from_profile(cluster_profile, *keys):
+    total = 0
+    seen = False
+    for key in keys:
+        try:
+            total += int((cluster_profile or {}).get(key, 0) or 0)
+            seen = True
+        except Exception:
+            pass
+    return total if seen else 0
+
+
+def derive_zone(provider_id, labels):
+    zone = first_nonempty(
+        labels.get("topology.kubernetes.io/zone"),
+        labels.get("failure-domain.beta.kubernetes.io/zone"),
+        default="",
+    )
+    if zone:
+        return zone
+    text = str(provider_id or "")
+    if text.startswith("aws:///"):
+        parts = text.split("/")
+        if len(parts) > 3 and parts[3]:
+            return parts[3]
+    if text.startswith("gce://"):
+        parts = text.split("/")
+        if len(parts) > 3 and parts[3]:
+            return parts[3]
+    if text.startswith("azure://") and "/zones/" in text:
+        zone_part = text.rsplit("/zones/", 1)[-1].split("/", 1)[0]
+        if zone_part:
+            return zone_part
+    return "zone-unlabeled"
+
+
 def normalize_instance_name(raw):
     if not raw:
         return ""
@@ -215,6 +260,8 @@ def classify_provider(provider_id, labels, platform):
 def build_node_shape(instance_type, cpu_cores, memory_gib, arch):
     if instance_type and instance_type != "unknown":
         return instance_type, "instance-type-label"
+    if cpu_cores <= 0 and memory_gib <= 0:
+        return "node-shape-unavailable", "node-status-missing-allocatable"
     cpu_part = int(round(cpu_cores)) if cpu_cores >= 1 else round(cpu_cores, 1)
     mem_part = int(round(memory_gib)) if memory_gib >= 1 else round(memory_gib, 1)
     return f"{cpu_part}cpu-{mem_part}gib-{arch}", "allocatable-shape"
@@ -359,6 +406,50 @@ def build_namespace_resource_summary(data, cluster_cpu_cores, cluster_memory_byt
     return rows[:50]
 
 
+def sum_pod_requests(pods):
+    totals = {"cpu_millicores": 0.0, "memory_bytes": 0.0, "ephemeral_storage_bytes": 0.0}
+    for pod in pods or []:
+        if not isinstance(pod, dict):
+            continue
+        for container in (pod.get("spec", {}) or {}).get("containers", []) or []:
+            requests = ((container.get("resources", {}) or {}).get("requests", {}) or {})
+            totals["cpu_millicores"] += parse_cpu(requests.get("cpu")) * 1000.0
+            totals["memory_bytes"] += parse_binary_bytes(requests.get("memory"))
+            totals["ephemeral_storage_bytes"] += parse_binary_bytes(requests.get("ephemeral-storage"))
+    return totals
+
+
+def capacity_display(value, unit="", zero_means_missing=False):
+    if value in (None, "", "unknown"):
+        return "not reported by node status"
+    try:
+        numeric = float(value)
+    except Exception:
+        return str(value)
+    if zero_means_missing and numeric == 0:
+        return "not reported by node status"
+    if isinstance(value, int) or numeric.is_integer():
+        text = str(int(numeric))
+    else:
+        text = str(round(numeric, 1))
+    return f"{text}{unit}" if unit else text
+
+
+def pct_display(value, kind, approximation=False, empty_detail="metric not available"):
+    if value in (None, "", "unknown"):
+        return empty_detail
+    try:
+        numeric = float(value)
+    except Exception:
+        return str(value)
+    suffix = ""
+    if kind and kind not in {"utilization", "density"}:
+        suffix = f" ({kind})"
+    elif approximation:
+        suffix = " (derived)"
+    return f"{round(numeric, 1)}%{suffix}"
+
+
 def build_node_growth_capacity(cluster_profile, node_count, node_ip_capacity, fallback_cluster_networks=None):
     cluster_networks = (cluster_profile or {}).get("cluster_networks", []) or []
     if not cluster_networks:
@@ -483,6 +574,8 @@ def main():
 
     pod_items = normalize_items(data.get("pods"))
     resourcequota_items = normalize_items(data.get("resourcequotas"))
+    node_items = normalize_items(data.get("nodes"))
+    cluster_profile = data.get("cluster_profile") or {}
     try:
         cluster_max_pods_per_node_default = int(data.get("cluster_max_pods_per_node_default", 250) or 250)
     except Exception:
@@ -584,7 +677,7 @@ def main():
     other_nodes = 0
     node_resource_rows = []
 
-    for node in data.get("nodes", []):
+    for node in node_items:
         meta = node.get("metadata", {}) or {}
         labels = meta.get("labels", {}) or {}
         status = node.get("status", {}) or {}
@@ -607,12 +700,27 @@ def main():
             other_nodes += 1
 
         node_info = status.get("nodeInfo", {}) or {}
-        arch_counts[node_info.get("architecture", "unknown")] += 1
-        os_image_counts[node_info.get("osImage", "unknown")] += 1
-        kernel_counts[node_info.get("kernelVersion", "unknown")] += 1
-        runtime_counts[node_info.get("containerRuntimeVersion", "unknown")] += 1
-        kubelet_counts[node_info.get("kubeletVersion", "unknown")] += 1
-        operating_system_counts[node_info.get("operatingSystem", "unknown")] += 1
+        arch = first_nonempty(
+            node_info.get("architecture"),
+            labels.get("kubernetes.io/arch"),
+            labels.get("beta.kubernetes.io/arch"),
+            default="architecture-unreported",
+        )
+        os_image = first_nonempty(
+            node_info.get("osImage"),
+            labels.get("node.openshift.io/os_id"),
+            default="os-image-unreported",
+        )
+        kernel_version = first_nonempty(node_info.get("kernelVersion"), default="kernel-unreported")
+        runtime_version = first_nonempty(node_info.get("containerRuntimeVersion"), default="runtime-unreported")
+        kubelet_version = first_nonempty(node_info.get("kubeletVersion"), default="kubelet-version-unreported")
+        operating_system = first_nonempty(node_info.get("operatingSystem"), labels.get("kubernetes.io/os"), default="os-unreported")
+        arch_counts[arch] += 1
+        os_image_counts[os_image] += 1
+        kernel_counts[kernel_version] += 1
+        runtime_counts[runtime_version] += 1
+        kubelet_counts[kubelet_version] += 1
+        operating_system_counts[operating_system] += 1
 
         instance_type = (
             labels.get("node.kubernetes.io/instance-type")
@@ -624,13 +732,21 @@ def main():
         provider_type = classify_provider(spec.get("providerID"), labels, (data.get("cluster_profile") or {}).get("platform", ""))
         provider_type_counts[provider_type] += 1
 
-        zone = labels.get("topology.kubernetes.io/zone") or labels.get("failure-domain.beta.kubernetes.io/zone") or "unknown"
-        arch = node_info.get("architecture", "unknown")
+        zone = derive_zone(spec.get("providerID"), labels)
         allocatable = status.get("allocatable", {}) or {}
+        capacity = status.get("capacity", {}) or {}
         cpu_cores = parse_cpu(allocatable.get("cpu", "0"))
+        if cpu_cores <= 0:
+            cpu_cores = parse_cpu(capacity.get("cpu", "0"))
         memory_gib = parse_binary_bytes(allocatable.get("memory", "0")) / (1024 ** 3)
+        if memory_gib <= 0:
+            memory_gib = parse_binary_bytes(capacity.get("memory", "0")) / (1024 ** 3)
         try:
-            pods_allocatable = int(allocatable.get("pods", cluster_max_pods_per_node_default) or cluster_max_pods_per_node_default)
+            pods_allocatable = int(
+                allocatable.get("pods")
+                or capacity.get("pods")
+                or cluster_max_pods_per_node_default
+            )
         except Exception:
             pods_allocatable = int(cluster_max_pods_per_node_default)
         node_shape, node_shape_source = build_node_shape(instance_type, cpu_cores, memory_gib, arch)
@@ -646,8 +762,13 @@ def main():
 
         total_cpu_cores += cpu_cores
         memory_bytes = parse_binary_bytes(allocatable.get("memory", "0"))
+        if memory_bytes <= 0:
+            memory_bytes = parse_binary_bytes(capacity.get("memory", "0"))
         total_memory_bytes += memory_bytes
-        total_disk_bytes += parse_binary_bytes(allocatable.get("ephemeral-storage", "0"))
+        disk_bytes = parse_binary_bytes(allocatable.get("ephemeral-storage", "0"))
+        if disk_bytes <= 0:
+            disk_bytes = parse_binary_bytes(capacity.get("ephemeral-storage", "0"))
+        total_disk_bytes += disk_bytes
         node_is_workload_hosting = (
             primary_role not in {"master", "control-plane", "infra"}
             and not bool(spec.get("unschedulable", False))
@@ -773,7 +894,7 @@ def main():
         install_candidates.append(entry.get("completionTime"))
     install_candidates.append((cv.get("metadata", {}) or {}).get("creationTimestamp"))
     install_candidates.append(((data.get("cluster_profile") or {}).get("infrastructure_creation_timestamp")))
-    for node in data.get("nodes", []):
+    for node in node_items:
         install_candidates.append(((node.get("metadata", {}) or {}).get("creationTimestamp")))
     install_dt_values = [iso_to_dt(x) for x in install_candidates if x]
     install_dt_values = [x for x in install_dt_values if x is not None]
@@ -791,8 +912,8 @@ def main():
         uptime_human = f"{days}d {hours}h"
 
     kube_versions = summarize_counter(kubelet_counts, "version", "count", limit=10)
-    primary_kube_version = kube_versions[0]["version"] if kube_versions else "unknown"
-    kubernetes_version_state = "mixed" if len(kubelet_counts) > 1 else "uniform"
+    primary_kube_version = kube_versions[0]["version"] if kube_versions else "kubelet version not reported by node inventory"
+    kubernetes_version_state = "mixed" if len(kubelet_counts) > 1 else ("uniform" if kubelet_counts else "not reported")
 
     insights_available = data.get("insights_available", "Unknown")
     insights_degraded = data.get("insights_degraded", "Unknown")
@@ -835,13 +956,48 @@ def main():
             }
         )
     mcp_summary.sort(key=lambda item: str(item.get("name", "unknown")))
+    mcp_machine_total = sum(int(item.get("machine_count", 0) or 0) for item in mcp_summary)
+    profile_node_total = count_from_profile(cluster_profile, "control_plane_node_count", "worker_node_count", "infra_node_count")
+    inferred_node_total = max(
+        len(node_items),
+        len(node_pod_count_map),
+        profile_node_total,
+        int((data.get("node_ip_capacity_summary") or {}).get("taken_ips", 0) or 0),
+        mcp_machine_total,
+    )
+    if not node_items and inferred_node_total > 0:
+        master_nodes = int(cluster_profile.get("control_plane_node_count", 0) or 0)
+        worker_nodes = int(cluster_profile.get("worker_node_count", 0) or 0)
+        infra_nodes = int(cluster_profile.get("infra_node_count", 0) or 0)
+        if worker_nodes == 0:
+            worker_nodes = max(0, inferred_node_total - master_nodes - infra_nodes)
+        other_nodes = max(0, inferred_node_total - master_nodes - worker_nodes - infra_nodes)
+    effective_node_count = inferred_node_total if inferred_node_total > 0 else len(node_items)
+    if not worker_pools and worker_nodes > 0:
+        worker_pool_zones_fallback = ["zones not reported"]
+        if mcp_summary:
+            worker_mcp = next((item for item in mcp_summary if item.get("name") == "worker"), None)
+            worker_count = int((worker_mcp or {}).get("machine_count", worker_nodes) or worker_nodes)
+        else:
+            worker_count = worker_nodes
+        worker_pools.append(
+            {
+                "role": "worker",
+                "type": "node shape not reported by node status",
+                "type_source": "profile-and-mcp-counts",
+                "architecture": "architecture not reported",
+                "provider": classify_provider("", {}, cluster_profile.get("platform", "")),
+                "nodes": worker_count,
+                "zones": worker_pool_zones_fallback,
+            }
+        )
 
     install_config_networks = extract_install_config_networks(
         [data.get("configmaps", []), data.get("secrets", [])]
     )
     node_growth_capacity = build_node_growth_capacity(
-        data.get("cluster_profile") or {},
-        len(data.get("nodes", [])),
+        cluster_profile,
+        effective_node_count,
         data.get("node_ip_capacity_summary") or {},
         install_config_networks.get("cluster_networks", []),
     )
@@ -880,6 +1036,7 @@ def main():
     average_memory_signal_source = node_memory_signal.get("source", "unavailable")
     average_memory_signal_method = node_memory_signal.get("method", "not-collected")
     average_memory_is_approximation = bool(node_memory_signal.get("is_approximation", False))
+    pod_request_totals = sum_pod_requests(pod_items)
     if average_cpu_utilization_pct is None and total_cpu_cores > 0:
         pod_cpu_signal = runtime_signal_entry(data, "pod_cpu_usage_all")
         pod_cpu_usage_cores = sum_runtime_metric(data, "pod_cpu_usage_all_results", "pod_cpu_usage_all")
@@ -890,6 +1047,13 @@ def main():
             average_cpu_signal_source = pod_cpu_signal.get("source", "pod_cpu_usage_all")
             average_cpu_signal_method = pod_cpu_signal.get("method", "pod-usage-sum")
             average_cpu_signal_kind = "workload-usage" if pod_cpu_status == "observed" else "requested-pressure"
+            average_cpu_is_approximation = True
+        elif pod_request_totals.get("cpu_millicores", 0.0) >= 0:
+            average_cpu_utilization_pct = round((pod_request_totals.get("cpu_millicores", 0.0) / (total_cpu_cores * 1000.0)) * 100.0, 1)
+            average_cpu_signal_status = "derived"
+            average_cpu_signal_source = "cluster-object"
+            average_cpu_signal_method = "request-based-node-cpu-pressure"
+            average_cpu_signal_kind = "requested-pressure"
             average_cpu_is_approximation = True
     if average_memory_utilization_pct is None and total_memory_bytes > 0:
         pod_memory_signal = runtime_signal_entry(data, "pod_memory_usage_all")
@@ -902,6 +1066,25 @@ def main():
             average_memory_signal_method = pod_memory_signal.get("method", "pod-usage-sum")
             average_memory_signal_kind = "workload-usage" if pod_memory_status == "observed" else "requested-pressure"
             average_memory_is_approximation = True
+        elif pod_request_totals.get("memory_bytes", 0.0) >= 0:
+            average_memory_utilization_pct = round((pod_request_totals.get("memory_bytes", 0.0) / total_memory_bytes) * 100.0, 1)
+            average_memory_signal_status = "derived"
+            average_memory_signal_source = "cluster-object"
+            average_memory_signal_method = "request-based-node-memory-pressure"
+            average_memory_signal_kind = "requested-pressure"
+            average_memory_is_approximation = True
+    average_disk_signal_kind = signal_kind(node_disk_signal)
+    average_disk_signal_status = node_disk_signal.get("status", "not-collected")
+    average_disk_signal_source = node_disk_signal.get("source", "unavailable")
+    average_disk_signal_method = node_disk_signal.get("method", "not-collected")
+    average_disk_is_approximation = bool(node_disk_signal.get("is_approximation", False))
+    if average_disk_utilization_pct is None and total_disk_bytes > 0:
+        average_disk_utilization_pct = round((pod_request_totals.get("ephemeral_storage_bytes", 0.0) / total_disk_bytes) * 100.0, 1)
+        average_disk_signal_status = "derived"
+        average_disk_signal_source = "cluster-object"
+        average_disk_signal_method = "request-based-node-ephemeral-storage-pressure"
+        average_disk_signal_kind = "requested-pressure"
+        average_disk_is_approximation = True
     namespace_data = dict(data)
     namespace_data["pods"] = pod_items
     namespace_data["resourcequotas"] = resourcequota_items
@@ -936,10 +1119,10 @@ def main():
         "installed_at": installed_at or "unknown",
         "uptime_days": uptime_days if uptime_days is not None else "unknown",
         "uptime_human": uptime_human,
-        "machineconfigpool_count": int(data.get("machineconfigpool_count", 0) or 0),
-        "worker_pool_count": len(worker_pools),
-        "node_counts": {
-            "total": len(data.get("nodes", [])),
+            "machineconfigpool_count": max(int(data.get("machineconfigpool_count", 0) or 0), len(mcp_summary)),
+            "worker_pool_count": len(worker_pools),
+            "node_counts": {
+            "total": effective_node_count,
             "control_plane": master_nodes,
             "worker": worker_nodes,
             "infra": infra_nodes,
@@ -964,36 +1147,46 @@ def main():
             "total_memory_gib": round(total_memory_bytes / (1024 ** 3), 1),
             "total_memory_mib": int(round(total_memory_bytes / (1024 ** 2))),
             "total_ephemeral_storage_gib": round(total_disk_bytes / (1024 ** 3), 1),
-            "average_cpu_cores_per_node": round(total_cpu_cores / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
-            "average_cpu_millicores_per_node": int(round((total_cpu_cores / len(data.get("nodes", []))) * 1000.0)) if data.get("nodes") else 0,
-            "average_memory_gib_per_node": round((total_memory_bytes / (1024 ** 3)) / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
-            "average_memory_mib_per_node": int(round((total_memory_bytes / (1024 ** 2)) / len(data.get("nodes", [])))) if data.get("nodes") else 0,
-            "average_ephemeral_storage_gib_per_node": round((total_disk_bytes / (1024 ** 3)) / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
-            "average_pods_per_node": round(total_pods_scheduled / len(data.get("nodes", [])), 1) if data.get("nodes") else 0,
+            "total_cpu_display": capacity_display(int(round(total_cpu_cores * 1000.0)), "m", zero_means_missing=effective_node_count > 0),
+            "total_memory_display": capacity_display(int(round(total_memory_bytes / (1024 ** 2))), "MiB", zero_means_missing=effective_node_count > 0),
+            "total_ephemeral_storage_display": capacity_display(round(total_disk_bytes / (1024 ** 3), 1), "GiB", zero_means_missing=effective_node_count > 0),
+            "average_cpu_cores_per_node": round(total_cpu_cores / effective_node_count, 1) if effective_node_count else 0,
+            "average_cpu_millicores_per_node": int(round((total_cpu_cores / effective_node_count) * 1000.0)) if effective_node_count else 0,
+            "average_memory_gib_per_node": round((total_memory_bytes / (1024 ** 3)) / effective_node_count, 1) if effective_node_count else 0,
+            "average_memory_mib_per_node": int(round((total_memory_bytes / (1024 ** 2)) / effective_node_count)) if effective_node_count else 0,
+            "average_ephemeral_storage_gib_per_node": round((total_disk_bytes / (1024 ** 3)) / effective_node_count, 1) if effective_node_count else 0,
+            "average_cpu_per_node_display": capacity_display(int(round((total_cpu_cores / effective_node_count) * 1000.0)) if effective_node_count else 0, "m", zero_means_missing=effective_node_count > 0),
+            "average_memory_per_node_display": capacity_display(int(round((total_memory_bytes / (1024 ** 2)) / effective_node_count)) if effective_node_count else 0, "MiB", zero_means_missing=effective_node_count > 0),
+            "average_ephemeral_storage_per_node_display": capacity_display(round((total_disk_bytes / (1024 ** 3)) / effective_node_count, 1) if effective_node_count else 0, "GiB", zero_means_missing=effective_node_count > 0),
+            "average_pods_per_node": round(total_pods_scheduled / effective_node_count, 1) if effective_node_count else 0,
             "average_pod_density_pct": average_pod_density_pct,
+            "average_pod_density_display": pct_display(average_pod_density_pct, signal_kind(pod_density_signal, observed_label="density", derived_label="density"), bool(pod_density_signal.get("is_approximation", False)), "pod density not available"),
             "average_pod_density_signal_status": pod_density_signal.get("status", "not-collected"),
             "average_pod_density_signal_source": pod_density_signal.get("source", "unavailable"),
             "average_pod_density_signal_method": pod_density_signal.get("method", "not-collected"),
             "average_pod_density_signal_kind": signal_kind(pod_density_signal, observed_label="density", derived_label="density"),
             "average_pod_density_is_approximation": bool(pod_density_signal.get("is_approximation", False)),
             "average_cpu_utilization_pct": average_cpu_utilization_pct,
+            "average_cpu_display": pct_display(average_cpu_utilization_pct, average_cpu_signal_kind, average_cpu_is_approximation, "metrics unavailable; requests not comparable without node capacity"),
             "average_cpu_signal_status": average_cpu_signal_status,
             "average_cpu_signal_source": average_cpu_signal_source,
             "average_cpu_signal_method": average_cpu_signal_method,
             "average_cpu_signal_kind": average_cpu_signal_kind,
             "average_cpu_is_approximation": average_cpu_is_approximation,
             "average_memory_utilization_pct": average_memory_utilization_pct,
+            "average_memory_display": pct_display(average_memory_utilization_pct, average_memory_signal_kind, average_memory_is_approximation, "metrics unavailable; requests not comparable without node capacity"),
             "average_memory_signal_status": average_memory_signal_status,
             "average_memory_signal_source": average_memory_signal_source,
             "average_memory_signal_method": average_memory_signal_method,
             "average_memory_signal_kind": average_memory_signal_kind,
             "average_memory_is_approximation": average_memory_is_approximation,
             "average_disk_utilization_pct": average_disk_utilization_pct,
-            "average_disk_signal_status": node_disk_signal.get("status", "not-collected"),
-            "average_disk_signal_source": node_disk_signal.get("source", "unavailable"),
-            "average_disk_signal_method": node_disk_signal.get("method", "not-collected"),
-            "average_disk_signal_kind": signal_kind(node_disk_signal),
-            "average_disk_is_approximation": bool(node_disk_signal.get("is_approximation", False)),
+            "average_disk_display": pct_display(average_disk_utilization_pct, average_disk_signal_kind, average_disk_is_approximation, "metrics unavailable; ephemeral-storage requests not reported"),
+            "average_disk_signal_status": average_disk_signal_status,
+            "average_disk_signal_source": average_disk_signal_source,
+            "average_disk_signal_method": average_disk_signal_method,
+            "average_disk_signal_kind": average_disk_signal_kind,
+            "average_disk_is_approximation": average_disk_is_approximation,
             "healthy_pod_ratio_pct": healthy_pod_ratio_pct,
             "unhealthy_pod_ratio_pct": unhealthy_pod_ratio_pct,
         },
