@@ -152,7 +152,17 @@
   vars:
     graph: "{{ analysis_graph | default({}) }}"
     fallback_cluster_networks: "{{ cluster_profile.cluster_networks | default([]) }}"
-    fallback_node_count: "{{ (graph.nodes | default({})).get('items', []) | length }}"
+    fallback_raw_node_count: "{{ (graph.nodes | default({})).get('items', []) | length }}"
+    fallback_node_name_count: >-
+      {%- set ns = namespace(names=[]) -%}
+      {%- for node in (graph.nodes | default({})).get('items', []) -%}
+      {%- set node_name = (node.metadata.name | default('') | string | trim) -%}
+      {%- if (node_name | length) > 0 and node_name not in ns.names -%}
+      {%- set ns.names = ns.names + [node_name] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.names | length }}
+    fallback_node_count: "{{ fallback_node_name_count | int if (fallback_node_name_count | int) > 0 else (fallback_raw_node_count | int) }}"
     fallback_total_node_slots: >-
       {%- set ns = namespace(total=0) -%}
       {%- for item in fallback_cluster_networks -%}
@@ -244,11 +254,11 @@
       machineconfigpool_count: "{{ (graph.machineconfigpools | default({})).get('items', []) | length }}"
       worker_pool_count: 0
       node_counts:
-        total: "{{ (graph.nodes | default({})).get('items', []) | length }}"
+        total: "{{ fallback_node_count | int }}"
         control_plane: "{{ ((cluster_profile.control_plane_node_count | default(0)) | int) }}"
         worker: "{{ ((cluster_profile.worker_node_count | default(0)) | int) }}"
         infra: "{{ ((cluster_profile.infra_node_count | default(0)) | int) }}"
-        other: "{{ [0, ((graph.nodes | default({})).get('items', []) | length) - ((cluster_profile.control_plane_node_count | default(0) | int) + (cluster_profile.worker_node_count | default(0) | int) + (cluster_profile.infra_node_count | default(0) | int))] | max }}"
+        other: "{{ [0, (fallback_node_count | int) - ((cluster_profile.control_plane_node_count | default(0) | int) + (cluster_profile.worker_node_count | default(0) | int) + (cluster_profile.infra_node_count | default(0) | int))] | max }}"
       object_counts:
         namespaces: "{{ (graph.namespaces | default({})).get('items', []) | length }}"
         pods: "{{ (graph.pods | default({})).get('items', []) | length }}"

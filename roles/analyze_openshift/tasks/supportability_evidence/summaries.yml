@@ -18,6 +18,19 @@
     support_evidence_coverage: "{{ live_evidence_coverage | default(evidence_coverage | default({})) }}"
     inspect_coverage_value: "{{ support_evidence_coverage.inspect | default('missing') }}"
     sosreport_coverage_value: "{{ support_evidence_coverage.sosreport | default(support_evidence_coverage.node_diagnostics | default('missing')) }}"
+    inspect_file_count_value: "{{ support_evidence_parsed.inspect.summary.file_count | default(0) | int }}"
+    inspect_node_marker_count_value: "{{ support_evidence_parsed.inspect.summary.resource_markers.nodes | default(0) | int }}"
+    inspect_present_value: "{{ (inspect_file_count_value | int) > 0 }}"
+    sosreport_count_value: "{{ support_evidence_parsed.sosreport.summary.count | default(0) | int }}"
+    sosreport_present_value: "{{ (sosreport_count_value | int) > 0 }}"
+    sosreport_complete_coverage: >-
+      {{
+        (sosreport_present_value | bool)
+        and ((support_evidence_parsed.sosreport.summary.reports_with_kubelet_logs | default(0) | int) >= (sosreport_count_value | int))
+        and ((support_evidence_parsed.sosreport.summary.reports_with_crio_logs | default(0) | int) >= (sosreport_count_value | int))
+        and ((support_evidence_parsed.sosreport.summary.reports_with_journal | default(0) | int) >= (sosreport_count_value | int))
+        and ((support_evidence_parsed.sosreport.summary.reports_with_network_data | default(0) | int) >= (sosreport_count_value | int))
+      }}
     inspect_expected: >-
       {{
         (
@@ -83,23 +96,39 @@
       present: "{{ support_evidence_parsed.omc.summary.present | default(false) }}"
       verdict: "{{ support_evidence_parsed.omc.summary.verdict | default('not-collected') }}"
       tool_available: "{{ support_evidence_parsed.omc.summary.tool_available | default(false) }}"
+      source: "{{ support_evidence_parsed.omc.summary.source | default('omc' if (support_evidence_parsed.omc.summary.tool_available | default(false) | bool) else 'not-collected') }}"
+      detail: "{{ support_evidence_parsed.omc.summary.detail | default('') }}"
       etcd_status_present: "{{ support_evidence_parsed.omc.summary.etcd_status_present | default(false) }}"
       endpoint_count: "{{ support_evidence_parsed.omc.summary.endpoint_count | default(0) }}"
       leader_count: "{{ support_evidence_parsed.omc.summary.leader_count | default(0) }}"
       learner_count: "{{ support_evidence_parsed.omc.summary.learner_count | default(0) }}"
       endpoint_error_count: "{{ support_evidence_parsed.omc.summary.endpoint_error_count | default(0) }}"
+      etcd_db_size_total: "{{ support_evidence_parsed.omc.summary.etcd_db_size_total | default('not-collected') }}"
+      etcd_db_in_use_total: "{{ support_evidence_parsed.omc.summary.etcd_db_in_use_total | default('not-collected') }}"
+      etcd_db_size_max: "{{ support_evidence_parsed.omc.summary.etcd_db_size_max | default('not-collected') }}"
+      etcd_db_in_use_max: "{{ support_evidence_parsed.omc.summary.etcd_db_in_use_max | default('not-collected') }}"
+      etcd_db_size_total_bytes: "{{ support_evidence_parsed.omc.summary.etcd_db_size_total_bytes | default('not-collected') }}"
+      etcd_db_in_use_total_bytes: "{{ support_evidence_parsed.omc.summary.etcd_db_in_use_total_bytes | default('not-collected') }}"
+      etcd_db_size_max_bytes: "{{ support_evidence_parsed.omc.summary.etcd_db_size_max_bytes | default('not-collected') }}"
+      etcd_db_in_use_max_bytes: "{{ support_evidence_parsed.omc.summary.etcd_db_in_use_max_bytes | default('not-collected') }}"
+      etcd_db_not_used_max_pct: "{{ support_evidence_parsed.omc.summary.etcd_db_not_used_max_pct | default('not-collected') }}"
+      etcd_db_status_rows: "{{ support_evidence_parsed.omc.summary.etcd_db_status_rows | default([]) }}"
+      etcd_operator_available: "{{ support_evidence_parsed.omc.summary.etcd_operator_available | default('unknown') }}"
+      etcd_operator_degraded: "{{ support_evidence_parsed.omc.summary.etcd_operator_degraded | default('unknown') }}"
+      etcd_operator_progressing: "{{ support_evidence_parsed.omc.summary.etcd_operator_progressing | default('unknown') }}"
       prom_rules_present: "{{ support_evidence_parsed.omc.summary.prom_rules_present | default(false) }}"
+      prometheus_rule_alert_count: "{{ support_evidence_parsed.omc.summary.prometheus_rule_alert_count | default(0) }}"
       alert_count: "{{ support_evidence_parsed.omc.summary.alert_count | default(0) }}"
       firing_alert_count: "{{ support_evidence_parsed.omc.summary.firing_alert_count | default(0) }}"
       pending_alert_count: "{{ support_evidence_parsed.omc.summary.pending_alert_count | default(0) }}"
       sample_alert_rules: "{{ support_evidence_parsed.omc.summary.sample_alert_rules | default([]) }}"
     node_diagnostics_summary:
-      inspect_present: "{{ (support_evidence_parsed.inspect | default({}) | length) > 0 }}"
-      inspect_file_count: "{{ support_evidence_parsed.inspect.summary.file_count | default(0) }}"
+      inspect_present: "{{ inspect_present_value }}"
+      inspect_file_count: "{{ inspect_file_count_value }}"
       inspect_namespace_count: "{{ support_evidence_parsed.inspect.summary.namespace_count | default(0) }}"
       inspect_resource_markers: "{{ support_evidence_parsed.inspect.summary.resource_markers | default({}) }}"
-      sosreport_present: "{{ (support_evidence_parsed.sosreport | default({}) | length) > 0 }}"
-      sosreport_count: "{{ support_evidence_parsed.sosreport.summary.count | default(0) }}"
+      sosreport_present: "{{ sosreport_present_value }}"
+      sosreport_count: "{{ sosreport_count_value }}"
       sosreport_node_names: "{{ support_evidence_parsed.sosreport.summary.node_names | default([]) }}"
       sosreport_with_journal: "{{ support_evidence_parsed.sosreport.summary.reports_with_journal | default(0) }}"
       sosreport_with_crio_logs: "{{ support_evidence_parsed.sosreport.summary.reports_with_crio_logs | default(0) }}"
@@ -110,23 +139,15 @@
       verdict: >-
         {{
           'supported'
-          if (
-            ((support_evidence_parsed.sosreport | default({}) | length) > 0)
-            and ((support_evidence_parsed.sosreport.summary.reports_with_kubelet_logs | default(0) | int) >= (support_evidence_parsed.sosreport.summary.count | default(0) | int))
-            and ((support_evidence_parsed.sosreport.summary.reports_with_crio_logs | default(0) | int) >= (support_evidence_parsed.sosreport.summary.count | default(0) | int))
-            and ((support_evidence_parsed.sosreport.summary.reports_with_journal | default(0) | int) >= (support_evidence_parsed.sosreport.summary.count | default(0) | int))
-            and ((support_evidence_parsed.sosreport.summary.reports_with_network_data | default(0) | int) >= (support_evidence_parsed.sosreport.summary.count | default(0) | int))
-          )
+          if (sosreport_complete_coverage | bool)
           else (
             'review-required'
-            if (
-              ((support_evidence_parsed.sosreport | default({}) | length) > 0)
-            )
+            if (sosreport_present_value | bool)
             else (
               'basic-supported'
               if (
-                ((support_evidence_parsed.inspect | default({}) | length) > 0)
-                and ((support_evidence_parsed.inspect.summary.resource_markers.nodes | default(0) | int) > 0)
+                (inspect_present_value | bool)
+                and ((inspect_node_marker_count_value | int) > 0)
                 and not (sosreport_expected | bool)
               )
               else (

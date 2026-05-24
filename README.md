@@ -927,7 +927,7 @@ Non-`cluster-admin` live mode:
 For `omc`, the playbook will use, in this order:
 
 - `-e omc_binary_path=/path/to/omc` if you set it
-- `scripts/omc` if you vendor the binary into the repo
+- the repo-local `scripts/omc.py` helper
 - `omc` from `PATH`
 
 If none of those are present, the playbook just runs without the extra `omc`-derived must-gather diagnostics.

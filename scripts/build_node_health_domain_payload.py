@@ -81,7 +81,7 @@ def build_payload(data):
         "quota_pressure_findings": first_defined(
             nested_get(artifact, "quota_pressure_findings"),
             nested_get(render_inputs, "quota_pressure_findings"),
-            default=data.get("top_quota_pressure_findings") or [],
+            default=data.get("quota_pressure_findings") or data.get("top_quota_pressure_findings") or [],
         ),
         "node_capacity_summary_by_density_desc": first_defined(
             nested_get(artifact, "node_capacity_summary_by_density_desc"),

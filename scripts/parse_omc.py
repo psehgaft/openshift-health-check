@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def resolve_repo_tmp_root() -> str:
@@ -30,7 +30,7 @@ def resolve_omc_binary(explicit_path: Optional[str]) -> Optional[str]:
             return str(candidate)
         return None
 
-    repo_candidate = Path(__file__).resolve().parent / "omc"
+    repo_candidate = Path(__file__).resolve().parent / "omc.py"
     if repo_candidate.exists() and os.access(repo_candidate, os.X_OK):
         return str(repo_candidate)
 
@@ -103,6 +103,23 @@ def run_omc_command_candidates(omc_bin: str, must_gather_path: Path, command_set
     }
 
 
+def parse_cluster_operator(output: str) -> Dict[str, str]:
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return {}
+    conditions = {}
+    for condition in (data.get("status") or {}).get("conditions") or []:
+        condition_type = str(condition.get("type") or "").lower()
+        if condition_type:
+            conditions[condition_type] = str(condition.get("status") or "unknown")
+    return {
+        "available": conditions.get("available", "unknown"),
+        "degraded": conditions.get("degraded", "unknown"),
+        "progressing": conditions.get("progressing", "unknown"),
+    }
+
+
 def parse_pipe_table(output: str) -> List[Dict[str, str]]:
     lines = [line.rstrip() for line in output.splitlines() if line.strip()]
     table_lines = [line for line in lines if line.lstrip().startswith("|") and line.rstrip().endswith("|")]
@@ -115,8 +132,119 @@ def parse_pipe_table(output: str) -> List[Dict[str, str]]:
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         if len(cells) != len(headers):
             continue
+        if all(cell and set(cell) <= {"-"} for cell in cells):
+            continue
         rows.append(dict(zip(headers, cells)))
     return rows
+
+
+def parse_size_to_bytes(value: str) -> Optional[int]:
+    text = (value or "").strip()
+    if not text or text.lower() in {"unknown", "not-collected", "not-derived", "not-assessed"}:
+        return None
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*([kmgtp]?i?b|bytes?)?", text, re.IGNORECASE)
+    if not match:
+        return None
+    number = float(match.group(1))
+    unit = (match.group(2) or "b").lower()
+    multipliers = {
+        "b": 1,
+        "byte": 1,
+        "bytes": 1,
+        "kb": 1000,
+        "mb": 1000 ** 2,
+        "gb": 1000 ** 3,
+        "tb": 1000 ** 4,
+        "pb": 1000 ** 5,
+        "kib": 1024,
+        "mib": 1024 ** 2,
+        "gib": 1024 ** 3,
+        "tib": 1024 ** 4,
+        "pib": 1024 ** 5,
+    }
+    return int(number * multipliers.get(unit, 1))
+
+
+def format_bytes(value: Optional[int]) -> str:
+    if value is None:
+        return "not-collected"
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    amount = float(value)
+    for unit in units:
+        if abs(amount) < 1000 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(amount)} B"
+            return f"{amount:.1f} {unit}"
+        amount /= 1000
+    return f"{value} B"
+
+
+def parse_percent(value: str) -> Optional[float]:
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%", value or "")
+    return float(match.group(1)) if match else None
+
+
+def parse_etcd_db_fields(row: Dict[str, str]) -> Tuple[Optional[int], Optional[int], str, str, str, Optional[float]]:
+    combined = row.get("db_size_in_use", "")
+    db_size_text = row.get("db_size", "")
+    db_in_use_text = row.get("db_in_use", "")
+    if combined and "/" in combined:
+        db_size_text, db_in_use_text = [part.strip() for part in combined.split("/", 1)]
+    elif combined:
+        db_size_text = combined
+    size_bytes = parse_size_to_bytes(db_size_text)
+    in_use_bytes = parse_size_to_bytes(db_in_use_text)
+    not_used_text = row.get("not_used", "")
+    return (
+        size_bytes,
+        in_use_bytes,
+        db_size_text or "not-collected",
+        db_in_use_text or "not-collected",
+        not_used_text or "not-collected",
+        parse_percent(not_used_text),
+    )
+
+
+def summarize_etcd_db_stats(etcd_rows: List[Dict[str, str]]) -> Dict[str, Any]:
+    status_rows = []
+    size_values = []
+    in_use_values = []
+    not_used_values = []
+    for row in etcd_rows:
+        size_bytes, in_use_bytes, size_text, in_use_text, not_used_text, not_used_pct = parse_etcd_db_fields(row)
+        if size_bytes is not None:
+            size_values.append(size_bytes)
+        if in_use_bytes is not None:
+            in_use_values.append(in_use_bytes)
+        if not_used_pct is not None:
+            not_used_values.append(not_used_pct)
+        status_rows.append({
+            "endpoint": row.get("endpoint", "unknown"),
+            "db_size": size_text,
+            "db_in_use": in_use_text,
+            "db_size_bytes": size_bytes,
+            "db_in_use_bytes": in_use_bytes,
+            "not_used": not_used_text,
+            "errors": row.get("errors", ""),
+        })
+
+    total_size = sum(size_values) if size_values else None
+    total_in_use = sum(in_use_values) if in_use_values else None
+    max_size = max(size_values) if size_values else None
+    max_in_use = max(in_use_values) if in_use_values else None
+    max_not_used = max(not_used_values) if not_used_values else None
+    return {
+        "etcd_db_status_rows": status_rows,
+        "etcd_db_size_total_bytes": total_size,
+        "etcd_db_in_use_total_bytes": total_in_use,
+        "etcd_db_size_max_bytes": max_size,
+        "etcd_db_in_use_max_bytes": max_in_use,
+        "etcd_db_size_total": format_bytes(total_size),
+        "etcd_db_in_use_total": format_bytes(total_in_use),
+        "etcd_db_size_max": format_bytes(max_size),
+        "etcd_db_in_use_max": format_bytes(max_in_use),
+        "etcd_db_not_used_max_pct": max_not_used if max_not_used is not None else "not-collected",
+    }
 
 
 def parse_prom_rules(output: str) -> Dict[str, Any]:
@@ -147,6 +275,14 @@ def parse_prom_rules(output: str) -> Dict[str, Any]:
     }
 
 
+def omc_source(omc_bin: str) -> str:
+    local = Path(__file__).resolve().with_name("omc.py")
+    try:
+        return "local-omc" if Path(omc_bin).resolve() == local else "omc"
+    except OSError:
+        return "omc"
+
+
 def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, Any]:
     if omc_bin is None:
         return {
@@ -155,7 +291,9 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
                 "verdict": "not-collected",
                 "tool_available": False,
                 "must_gather_path": str(must_gather_path),
-                "detail": "omc binary was not found on PATH or in scripts/omc.",
+                "source": "not-collected",
+                "detail": "omc binary was not found on PATH or in scripts/omc.py.",
+                **summarize_etcd_db_stats([]),
             },
             "findings": [],
             "commands": {},
@@ -166,15 +304,22 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
         omc_bin,
         must_gather_path,
         [
+            ["alert", "rule", "-s", "firing,pending", "-o", "wide"],
             ["prometheus", "rules", "-s", "firing,pending", "-o", "wide"],
             ["prom", "rules", "-s", "firing,pending", "-o", "wide"],
         ],
+    )
+    etcd_operator_result = run_omc_command(
+        omc_bin,
+        must_gather_path,
+        ["get", "clusteroperator", "etcd", "-o", "json"],
     )
 
     etcd_rows = parse_pipe_table(etcd_result.get("stdout", "")) if etcd_result.get("ok") else []
     endpoint_error_count = sum(1 for row in etcd_rows if row.get("errors", "").strip())
     leader_count = sum(1 for row in etcd_rows if row.get("is_leader", "").lower() == "true")
     learner_count = sum(1 for row in etcd_rows if row.get("is_learner", "").lower() == "true")
+    db_stats = summarize_etcd_db_stats(etcd_rows)
 
     prom_summary = parse_prom_rules(prom_result.get("stdout", "")) if prom_result.get("ok") else {
         "firing_count": 0,
@@ -182,6 +327,7 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
         "alert_count": 0,
         "sample_rules": [],
     }
+    etcd_operator = parse_cluster_operator(etcd_operator_result.get("stdout", "")) if etcd_operator_result.get("ok") else {}
 
     present = bool(etcd_rows or prom_summary["alert_count"] > 0 or etcd_result.get("ok") or prom_result.get("ok"))
     findings = []
@@ -217,11 +363,12 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
     else:
         verdict = "supported"
 
-    return {
+    payload = {
         "summary": {
             "present": present,
             "verdict": verdict,
             "tool_available": True,
+            "source": omc_source(omc_bin),
             "must_gather_path": str(must_gather_path),
             "omc_binary": omc_bin,
             "etcd_status_present": bool(etcd_rows),
@@ -229,11 +376,16 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
             "leader_count": leader_count,
             "learner_count": learner_count,
             "endpoint_error_count": endpoint_error_count,
+            "etcd_operator_available": etcd_operator.get("available", "unknown"),
+            "etcd_operator_degraded": etcd_operator.get("degraded", "unknown"),
+            "etcd_operator_progressing": etcd_operator.get("progressing", "unknown"),
             "prom_rules_present": prom_result.get("ok", False),
+            "prometheus_rule_alert_count": prom_summary["alert_count"],
             "alert_count": prom_summary["alert_count"],
             "firing_alert_count": prom_summary["firing_count"],
             "pending_alert_count": prom_summary["pending_count"],
             "sample_alert_rules": prom_summary["sample_rules"],
+            **db_stats,
         },
         "findings": findings,
         "commands": {
@@ -248,8 +400,14 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
                 "stderr": prom_result.get("stderr", "").strip(),
                 "attempts": prom_result.get("attempts", []),
             },
+            "etcd_clusteroperator": {
+                "ok": etcd_operator_result.get("ok", False),
+                "rc": etcd_operator_result.get("rc", 1),
+                "stderr": etcd_operator_result.get("stderr", "").strip(),
+            },
         },
     }
+    return payload
 
 
 def main() -> int:

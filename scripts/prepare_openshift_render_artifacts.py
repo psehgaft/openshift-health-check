@@ -817,7 +817,7 @@ def build_template_table_render(data, posture_artifacts, cluster_profile):
                 workload_artifact.get("top_pod_cpu_usage_summary"),
                 workload_inputs.get("top_pod_cpu_usage_summary"),
             ),
-            safe_limit(render_limits.get("pod_usage_table_limit"), 25),
+            safe_limit(render_limits.get("pod_usage_table_limit"), 50),
         ),
         "pod_memory_usage_rows": slice_rows(
             first_list(
@@ -825,7 +825,7 @@ def build_template_table_render(data, posture_artifacts, cluster_profile):
                 workload_artifact.get("top_pod_memory_usage_summary"),
                 workload_inputs.get("top_pod_memory_usage_summary"),
             ),
-            safe_limit(render_limits.get("pod_usage_table_limit"), 25),
+            safe_limit(render_limits.get("pod_usage_table_limit"), 50),
         ),
         "storageclass_rows": sorted_dict_list(
             render_table_inputs.get("storageclass_summary"), "name"

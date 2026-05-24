@@ -557,7 +557,7 @@ Platform engineering and SRE
 {% set report_execution_mode = report_run_mode | default('fresh') %}
 {% set report_metadata_present = (report_generated_at | default('') | trim | length) > 0 and (report_cluster_type | default('') | trim | length) > 0 and (report_context_value | default('unknown') | trim) not in ['', 'unknown', 'not-collected'] and (report_api_server_value | default('unknown') | trim) not in ['', 'unknown', 'not-collected'] and (report_user_value | default('unknown') | trim) not in ['', 'unknown', 'not-collected'] %}
 {% set node_density_table_limit = top_node_density_table_limit | default(8) | int %}
-{% set pod_usage_table_limit = top_pod_usage_table_limit | default(40) | int %}
+{% set pod_usage_table_limit = top_pod_usage_table_limit | default(50) | int %}
 {% set restart_pod_table_limit = top_restart_pod_table_limit | default(50) | int %}
 {% set old_pod_table_limit = top_old_pod_table_limit | default(20) | int %}
 {% set stale_pod_table_limit = top_stale_pod_table_limit | default(50) | int %}
@@ -568,6 +568,7 @@ Platform engineering and SRE
 {% set stale_generic_secret_age_threshold = stale_generic_secret_age_threshold_days | default(100) | int %}
 {% set stale_dockerconfigjson_secret_table_limit = top_stale_dockerconfigjson_secret_table_limit | default(50) | int %}
 {% set stale_dockerconfigjson_secret_age_threshold = stale_dockerconfigjson_secret_age_threshold_days | default(200) | int %}
+{% set workload_issue_limit = top_workload_issue_limit | default(50) | int %}
 
 # OpenShift Cluster Health Report
 
@@ -898,7 +899,8 @@ Platform engineering and SRE
 {% set platform_etcd_diag_verdict = platform_etcd_diag_summary.verdict | default('not-collected') %}
 {% set platform_omc_diag_verdict = platform_omc_summary.verdict | default('not-collected') %}
 {% set platform_control_plane_diagnostics_missing = platform_etcd_diag_verdict in ['not-collected', 'not-derived', 'unknown'] and platform_omc_diag_verdict in ['not-collected', 'not-derived', 'unknown'] %}
-{% set platform_control_plane_diagnostics_blockers = 1 if platform_etcd_diag_verdict in ['unsupported-risk', 'review-required'] or platform_omc_diag_verdict in ['unsupported-risk', 'review-required'] else 0 %}
+{% set platform_control_plane_diagnostics_blockers = 1 if (platform_etcd_diag_verdict in ['critical', 'unsupported-risk', 'review-required'] or platform_omc_diag_verdict in ['unsupported-risk', 'review-required']) else 0 %}
+{% set platform_control_plane_diagnostics_currently_blocking = platform_control_plane_diagnostics_blockers > 0 and platform_control_plane_blockers > 0 %}
 {% set platform_runtime_has_findings = platform_operator_blockers > 0 or platform_node_blockers > 0 or platform_access_blockers > 0 or platform_control_plane_blockers > 0 or platform_control_plane_diagnostics_blockers > 0 or (platform_health_summary.platform_pod_issues | default(0) | int) > 0 or (platform_health_summary.image_registry_findings | default(0) | int) > 0 %}
 {% set platform_evidence_state_values = ['not-collected', 'no-data', 'query-failed', 'not-configured', 'unknown', 'unavailable'] %}
 {% set platform_operator_inventory_present = platform_operator_total > 0 or platform_operator_degraded > 0 or platform_operator_unavailable > 0 or platform_operator_progressing_high_impact > 0 %}
@@ -968,7 +970,7 @@ Platform engineering and SRE
 | `Operator availability` | `{% if platform_operator_blockers > 0 %}CRITICAL{% elif platform_operator_progressing_high_impact > 0 %}WARNING{% else %}OK{% endif %}` | `degraded={{ platform_operator_degraded }}, unavailable={{ platform_operator_unavailable }}, highImpactProgressing={{ platform_operator_progressing_high_impact }}` | `ClusterOperator instability can affect control-plane and platform-service availability.` | `operatorsTotal={{ platform_operator_total }}, platformStatus={{ platform_status }}` | `{% if platform_operator_blockers > 0 %}{{ recommended_action_with_docs('Restore degraded or unavailable operators before lower-priority remediation.', 'CRITICAL', ['core']) }}{% elif platform_operator_progressing_high_impact > 0 %}{{ recommended_action_with_docs('Wait for high-impact progressing operators to settle before upgrade or workload changes.', 'WARNING', ['core']) }}{% else %}{{ recommended_action_with_docs('No operator availability remediation is required for this posture.', 'OK', ['core']) }}{% endif %}` | `{{ gap_owner('platform') }}` | `{{ gap_done_when('CRITICAL' if platform_operator_blockers > 0 else ('WARNING' if platform_operator_progressing_high_impact > 0 else 'OK')) }}` |
 | `Node and MCP runtime` | `{% if platform_nodes_not_ready > 0 or platform_mcps_degraded > 0 %}CRITICAL{% elif platform_node_pressure_count > 0 %}WARNING{% else %}OK{% endif %}` | `notReady={{ platform_nodes_not_ready }}, pressure={{ platform_node_pressure_count }}, degradedMCPs={{ platform_mcps_degraded }}` | `Node readiness or machine-config degradation reduces stable platform capacity.` | `nodesTotal={{ platform_nodes_total }}, nodePressure={{ platform_node_pressure_count }}` | `{% if platform_node_blockers > 0 %}{{ recommended_action_with_docs('Recover NotReady nodes, clear node pressure, and repair degraded MachineConfigPools before workload expansion.', 'CRITICAL' if platform_nodes_not_ready > 0 or platform_mcps_degraded > 0 else 'WARNING', ['nodes', 'core']) }}{% else %}{{ recommended_action_with_docs('No node or MCP runtime remediation is required from this posture.', 'OK', ['nodes', 'core']) }}{% endif %}` | `{{ gap_owner('platform') }}` | `{{ gap_done_when('CRITICAL' if platform_nodes_not_ready > 0 or platform_mcps_degraded > 0 else ('WARNING' if platform_node_pressure_count > 0 else 'OK')) }}` |
 | `API and etcd runtime` | `{% if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 %}CRITICAL{% elif (platform_health_summary.apiserver_runtime_degraded | default(0) | int) > 0 or (platform_health_summary.etcd_runtime_degraded | default(0) | int) > 0 %}WARNING{% elif platform_api_etcd_runtime_has_evidence_gaps %}INFO{% else %}OK{% endif %}` | `{{ platform_api_etcd_runtime_value }}` | `API or etcd instability can affect every cluster operation and workload control loop.` | `{{ platform_api_etcd_runtime_value }}` | `{% if platform_control_plane_blockers > 0 %}{{ recommended_action_with_docs('Fix API readiness failures and etcd leader or latency instability before upgrade, workload, or Day 2 changes.', 'CRITICAL' if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 else 'WARNING', ['core', 'observability']) }}{% elif platform_api_etcd_runtime_has_evidence_gaps %}{{ recommended_action_with_docs('API and etcd runtime evidence was incomplete in this run. Treat this control as partially assessed until live runtime signals or equivalent collected evidence are available.', 'INFO', ['core', 'observability']) }}{% else %}{{ recommended_action_with_docs('No API or etcd runtime remediation is required for this posture.', 'OK', ['core', 'observability']) }}{% endif %}` | `{{ gap_owner('platform') }}` | `{% if (platform_health_summary.apiserver_readyz_failed | default(0) | int) > 0 or (platform_health_summary.etcd_leader_unhealthy | default(0) | int) > 0 %}{{ gap_done_when('CRITICAL') }}{% elif (platform_health_summary.apiserver_runtime_degraded | default(0) | int) > 0 or (platform_health_summary.etcd_runtime_degraded | default(0) | int) > 0 %}{{ gap_done_when('WARNING') }}{% elif platform_api_etcd_runtime_has_evidence_gaps %}The next report run includes sufficient API and etcd runtime evidence, or the evidence gap is intentionally accepted for this report mode.{% else %}{{ gap_done_when('OK') }}{% endif %}` |
-| `Control-plane diagnostics` | `{% if platform_etcd_diag_verdict == 'unsupported-risk' or platform_omc_diag_verdict == 'unsupported-risk' %}CRITICAL{% elif platform_etcd_diag_verdict == 'review-required' or platform_omc_diag_verdict == 'review-required' %}WARNING{% elif platform_control_plane_diagnostics_missing %}INFO{% else %}OK{% endif %}` | `etcdDiagnostics={{ platform_etcd_diag_verdict }}, omcDiagnostics={{ platform_omc_diag_verdict }}` | `Unsupported or incomplete control-plane diagnostics can hide etcd instability, alerting blind spots, or escalation risk even when live runtime signals look clean.` | `etcdFindings={{ platform_etcd_diag_findings | length }}, omcFindings={{ platform_omc_findings | length }}` | `{% if platform_etcd_diag_verdict == 'unsupported-risk' or platform_omc_diag_verdict == 'unsupported-risk' %}{{ recommended_action_with_docs('Resolve unsupported control-plane diagnostic findings before treating platform health as clean, even if live API and etcd runtime signals are currently green.', 'CRITICAL', ['core', 'observability']) }}{% elif platform_etcd_diag_verdict == 'review-required' or platform_omc_diag_verdict == 'review-required' %}{{ recommended_action_with_docs('Review control-plane diagnostic findings and close the remaining etcd or OMC evidence gaps before treating platform health as steady state.', 'WARNING', ['core', 'observability']) }}{% elif platform_control_plane_diagnostics_missing %}{{ recommended_action_with_docs('Control-plane diagnostics were not collected in this run. Confirm whether that absence is intentional for this report mode or capture targeted etcd and OMC evidence before treating platform health as fully evidenced.', 'INFO', ['core', 'observability']) }}{% else %}{{ recommended_action_with_docs('No control-plane diagnostic remediation is required for this posture.', 'OK', ['core', 'observability']) }}{% endif %}` | `{{ gap_owner('platform') }}` | `{% if platform_etcd_diag_verdict == 'unsupported-risk' or platform_omc_diag_verdict == 'unsupported-risk' %}{{ gap_done_when('CRITICAL') }}{% elif platform_etcd_diag_verdict == 'review-required' or platform_omc_diag_verdict == 'review-required' %}{{ gap_done_when('WARNING') }}{% elif platform_control_plane_diagnostics_missing %}The operating expectation is confirmed and any follow-up decision is documented.{% else %}{{ gap_done_when('OK') }}{% endif %}` |
+| `Control-plane diagnostics` | `{% if platform_control_plane_diagnostics_currently_blocking %}CRITICAL{% elif platform_etcd_diag_verdict in ['critical', 'unsupported-risk', 'review-required'] or platform_omc_diag_verdict in ['unsupported-risk', 'review-required'] %}WARNING{% elif platform_control_plane_diagnostics_missing %}INFO{% else %}OK{% endif %}` | `etcdDiagnostics={{ platform_etcd_diag_verdict }}, omcDiagnostics={{ platform_omc_diag_verdict }}` | `Unsupported or incomplete control-plane diagnostics can hide etcd instability, alerting blind spots, or escalation risk even when live runtime signals look clean.` | `etcdFindings={{ platform_etcd_diag_findings | length }}, omcFindings={{ platform_omc_findings | length }}` | `{% if platform_control_plane_diagnostics_currently_blocking %}{{ recommended_action_with_docs('Resolve control-plane diagnostic findings that align with current API or etcd runtime degradation before treating platform health as clean.', 'CRITICAL', ['core', 'observability']) }}{% elif platform_etcd_diag_verdict in ['critical', 'unsupported-risk', 'review-required'] or platform_omc_diag_verdict in ['unsupported-risk', 'review-required'] %}{{ recommended_action_with_docs('Review control-plane diagnostic findings and correlate them with current API and etcd runtime signals before treating platform health as steady state.', 'WARNING', ['core', 'observability']) }}{% elif platform_control_plane_diagnostics_missing %}{{ recommended_action_with_docs('Control-plane diagnostics were not collected in this run. Confirm whether that absence is intentional for this report mode or capture targeted etcd and OMC evidence before treating platform health as fully evidenced.', 'INFO', ['core', 'observability']) }}{% else %}{{ recommended_action_with_docs('No control-plane diagnostic remediation is required for this posture.', 'OK', ['core', 'observability']) }}{% endif %}` | `{{ gap_owner('platform') }}` | `{% if platform_control_plane_diagnostics_currently_blocking %}{{ gap_done_when('CRITICAL') }}{% elif platform_etcd_diag_verdict in ['critical', 'unsupported-risk', 'review-required'] or platform_omc_diag_verdict in ['unsupported-risk', 'review-required'] %}{{ gap_done_when('WARNING') }}{% elif platform_control_plane_diagnostics_missing %}The operating expectation is confirmed and any follow-up decision is documented.{% else %}{{ gap_done_when('OK') }}{% endif %}` |
 | `Ingress and APIService access` | `{% if platform_access_blockers > 0 %}CRITICAL{% else %}OK{% endif %}` | `routes={{ platform_health_summary.route_issues | default(0) }}, ingress={{ platform_health_summary.ingress_issues | default(0) }}, ingressControllers={{ platform_health_summary.ingresscontroller_issues | default(0) }}, apiServices={{ platform_health_summary.apiservice_issues | default(0) }}` | `Broken ingress, route, or aggregated API paths can cause broad application or platform-service outages.` | `routeHostConflicts={{ platform_health_summary.route_host_conflicts | default(0) }}, ingressHostConflicts={{ platform_health_summary.ingress_host_conflicts | default(0) }}` | `{% if platform_access_blockers > 0 %}{{ recommended_action_with_docs('Repair ingress-controller conditions, route or ingress admission issues, host conflicts, and unavailable APIService backing services or CA bundles.', 'CRITICAL', ['network', 'core']) }}{% else %}{{ recommended_action_with_docs('No ingress or APIService runtime remediation is required for this posture.', 'OK', ['network', 'core']) }}{% endif %}` | `{{ gap_owner('network') }}` | `{{ gap_done_when('CRITICAL' if platform_access_blockers > 0 else 'OK') }}` |
 
 **APIService Availability**
@@ -1182,44 +1184,44 @@ Platform engineering and SRE
 {% set node_capacity_density_asc_rows = template_table_render.node_capacity_density_asc_rows | default([]) %}
 **Highest Pod Density Nodes**
 
-| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Status | Requested CPU % |
-| --- | --- | --- | --- | --- | --- | --- |
+| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Status |
+| --- | --- | --- | --- | --- | --- |
 {% if node_capacity_density_desc_rows | length > 0 %}
 {% for item in node_capacity_density_desc_rows %}
 {% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
-| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} | `{{ item.requested_cpu_pct | default('unknown') }}` |
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} |
 {% endfor %}
 {% elif node_capacity_summary_by_density_desc_section | length == 0 %}
-| no nodes available | n/a | n/a | n/a | n/a | {{ status_badge('INFO') }} | n/a |
+| no nodes available | n/a | n/a | n/a | n/a | {{ status_badge('INFO') }} |
 {% else %}
 {% set highest_density_seen = namespace(nodes=[]) %}
 {% for item in node_capacity_summary_by_density_desc_section[:node_density_table_limit] %}
 {% if (item.name | default('unknown')) not in highest_density_seen.nodes %}
 {% set highest_density_seen.nodes = highest_density_seen.nodes + [item.name | default('unknown')] %}
 {% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
-| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} | `{{ item.requested_cpu_pct | default('unknown') }}` |
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} |
 {% endif %}
 {% endfor %}
 {% endif %}
 
 **Lowest Pod Density Nodes**
 
-| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Status | Requested CPU % |
-| --- | --- | --- | --- | --- | --- | --- |
+| Node | Role | Scheduled Pods | Pod Capacity | Pod Density % | Status |
+| --- | --- | --- | --- | --- | --- |
 {% if node_capacity_density_asc_rows | length > 0 %}
 {% for item in node_capacity_density_asc_rows %}
 {% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
-| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} | `{{ item.requested_cpu_pct | default('unknown') }}` |
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} |
 {% endfor %}
 {% elif node_capacity_summary_by_density_asc_section | length == 0 %}
-| no nodes available | n/a | n/a | n/a | n/a | {{ status_badge('INFO') }} | n/a |
+| no nodes available | n/a | n/a | n/a | n/a | {{ status_badge('INFO') }} |
 {% else %}
 {% set lowest_density_seen = namespace(nodes=[]) %}
 {% for item in node_capacity_summary_by_density_asc_section[:node_density_table_limit] %}
 {% if (item.name | default('unknown')) not in lowest_density_seen.nodes %}
 {% set lowest_density_seen.nodes = lowest_density_seen.nodes + [item.name | default('unknown')] %}
 {% set item_pod_capacity = item.pods_allocatable | default(0) | int %}
-| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} | `{{ item.requested_cpu_pct | default('unknown') }}` |
+| `{{ item.name | default('unknown') }}` | `{{ item.role | default('unknown') }}` | `{{ item.scheduled_pods | default('unknown') }}` | `{{ item.pods_allocatable | default('unknown') }}` | `{{ item.pod_density_pct | default('unknown') if item_pod_capacity > 0 else 'not-assessed' }}` | {{ pod_density_status(item.pod_density_pct | default('unknown'), item_pod_capacity, pod_density_warn_pct, pod_density_critical_pct) }} |
 {% endif %}
 {% endfor %}
 {% endif %}
@@ -1228,10 +1230,10 @@ Platform engineering and SRE
 
 | Signal | Count |
 | --- | --- |
-| `high pod density nodes` | `{{ high_pod_density_nodes_section | length }}` |
-| `high CPU utilization nodes (>85%)` | `{{ high_cpu_nodes_section | length }}` |
-| `high memory utilization nodes (>85%)` | `{{ high_memory_nodes_section | length }}` |
-| `high disk utilization nodes (>85%)` | `{{ high_disk_nodes_section | length }}` |
+| `high pod density nodes` | `{% if node_metric_evidence_missing %}not-collected{% else %}{{ high_pod_density_nodes_section | length }}{% endif %}` |
+| `high CPU utilization nodes (>85%)` | `{% if node_metric_evidence_missing %}not-collected{% else %}{{ high_cpu_nodes_section | length }}{% endif %}` |
+| `high memory utilization nodes (>85%)` | `{% if node_metric_evidence_missing %}not-collected{% else %}{{ high_memory_nodes_section | length }}{% endif %}` |
+| `high disk utilization nodes (>85%)` | `{% if node_metric_evidence_missing %}not-collected{% else %}{{ high_disk_nodes_section | length }}{% endif %}` |
 
 {% endif %}
 {% if posture_profile.get('backup_and_disaster_recovery', {}).get('enabled', true) %}
@@ -1795,7 +1797,6 @@ Platform engineering and SRE
 {% set namespaces_without_limitrange_section = namespace_hygiene_domain.namespaces_without_limitrange | default(namespaces_without_limitrange | default([])) %}
 {% set user_namespace_names_section = namespace_hygiene_domain.user_namespaces | default(user_namespace_names | default([])) %}
 {% set namespace_metadata_governance_findings_section = namespace_hygiene_domain.metadata_governance_findings | default(security_governance_slice_render_inputs.get('namespace_metadata_governance_findings', top_namespace_metadata_governance_findings | default([]))) %}
-{% set node_metadata_governance_findings_section = namespace_hygiene_domain.node_metadata_governance_findings | default(security_governance_slice_render_inputs.get('node_metadata_governance_findings', top_node_metadata_governance_findings | default([]))) %}
 {% set pod_security_domain = security_domain.pod_security | default({}) %}
 {% set security_issue_type_counts_section = pod_security_domain.issue_type_counts | default(security_issue_type_counts | default({})) %}
 {% set top_security_findings_section = pod_security_domain.findings | default(top_security_findings | default([])) %}
@@ -1912,7 +1913,6 @@ Platform engineering and SRE
 {% set top_namespace_resourcequota_gaps = (namespaces_without_resourcequota_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
 {% set top_namespace_limitrange_gaps = (namespaces_without_limitrange_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
 {% set top_namespace_metadata_governance_gaps = (namespace_metadata_governance_findings_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
-{% set top_node_metadata_governance_gaps = (node_metadata_governance_findings_section | default([]))[:(top_metadata_table_limit | default(10) | int)] %}
 {% set compliance_domain = security_domain.compliance | default({}) %}
 {% set compliance_suite_summary_section = compliance_domain.summary | default(compliance_suite_summary | default([])) %}
 {% set compliance_result_counts_section = compliance_domain.result_counts | default(compliance_result_counts | default({})) %}
@@ -1952,18 +1952,6 @@ Platform engineering and SRE
 {% for item in top_namespace_metadata_governance_gaps %}
 | {{ item.namespace }} | {{ item.missing_metadata | default([]) | join(', ') }} | {{ item.present_owner_labels | default([]) | join(', ') or 'none' }} | {{ item.present_cost_labels | default([]) | join(', ') or 'none' }} | {{ item.recommended_owner_values | default([]) | join(', ') }} | {{ item.recommended_cost_values | default([]) | join(', ') }} |
 {% endfor %}
-{% endif %}
-
-**Node Ownership And Chargeback Metadata**
-
-| Node | Role | Zone | Instance Type | Missing Metadata | Present Ownership Tags | Present Cost Tags | Recommended Ownership Metadata | Recommended Chargeback Metadata |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-{% if top_node_metadata_governance_gaps | default([]) | length > 0 %}
-{% for item in top_node_metadata_governance_gaps %}
-| {{ item.node }} | {{ item.role | default((item.roles | default([])) | join(', ')) or 'unknown' }} | {{ item.zone | default('unknown') }} | {{ item.instance_type | default('unknown') }} | {{ item.missing_metadata | default([]) | join(', ') }} | {{ ((item.present_owner_labels | default([])) + (item.present_owner_annotations | default([]))) | join(', ') or 'not detected' }} | {{ item.present_cost_labels | default([]) | join(', ') or 'not detected' }} | {{ item.recommended_owner_values | default([]) | join('; ') }} | {{ item.recommended_cost_values | default([]) | join('; ') }} |
-{% endfor %}
-{% else %}
-| no gaps detected | n/a | n/a | n/a | none | metadata present or not evaluated in this run | metadata present or not evaluated in this run | none required | none required |
 {% endif %}
 
 {% if (security_issue_type_counts_section | default({}) | length) > 0 %}
@@ -2491,25 +2479,6 @@ This table includes `kubernetes.io/dockerconfigjson` Secrets only. It uses the n
 {% endfor %}
 {% endif %}
 
-{% set aged_user_pod_rows = template_table_render.aged_user_pod_rows | default([]) %}
-**Pods Older Than 30 Days**
-
-Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30 days. Cluster component and operator-managed pods are excluded.
-
-| Namespace | Owner | Pod | Phase | Age (days) | Created At |
-| --- | --- | --- | --- | --- | --- |
-{% if aged_user_pod_rows | length > 0 %}
-{% for item in aged_user_pod_rows %}
-| {{ item.namespace }} | {{ item.owner_kind }}/{{ item.owner_name }} | {{ item.name }} | {{ item.phase }} | `{{ item.age_days }}` | {{ item.created_at }} |
-{% endfor %}
-{% elif top_aged_user_pods_section | default([]) | length == 0 %}
-| no matching pods | n/a | n/a | n/a | `0` | n/a |
-{% else %}
-{% for item in top_aged_user_pods_section[:old_pod_table_limit] %}
-| {{ item.namespace }} | {{ item.owner_kind }}/{{ item.owner_name }} | {{ item.name }} | {{ item.phase }} | `{{ item.age_days }}` | {{ item.created_at }} |
-{% endfor %}
-{% endif %}
-
 **Replica Density**
 
 | Kind | Namespace | Name | Desired Replicas |
@@ -2611,7 +2580,6 @@ Showing up to the top {{ old_pod_table_limit }} user workload pods older than 30
 | no matching pods | n/a | `0` | `0` | `0` | `0` | no overprovisioning candidates detected |
 {% endif %}
 
-{% if top_pod_cpu_usage_summary_section | default([]) | length > 0 %}
 {% set top_pod_cpu_signal = (runtime_signal_resolution_map | default({})).get('top_pod_cpu_usage', {}) %}
 {% set pod_cpu_usage_rows = template_table_render.pod_cpu_usage_rows | default([]) %}
 **{% if top_pod_cpu_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested CPU Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By CPU Utilization{% endif %}**
@@ -2630,10 +2598,11 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available CPU si
 {% for item in top_pod_cpu_usage_summary_section[:pod_usage_table_limit] %}
 | {{ item.metric.namespace | default('') }} | {{ item.metric.pod | default('') }} | `{{ ((item.value[1] | float) * 1000) | round(1) }}`{% if top_pod_cpu_signal.get('status') == 'derived' %} requested{% endif %} |
 {% endfor %}
+{% if top_pod_cpu_usage_summary_section | default([]) | length == 0 %}
+| no matching pods | n/a | `0` |
 {% endif %}
 {% endif %}
 
-{% if top_pod_memory_usage_summary_section | default([]) | length > 0 %}
 {% set top_pod_memory_signal = (runtime_signal_resolution_map | default({})).get('top_pod_memory_usage', {}) %}
 {% set pod_memory_usage_rows = template_table_render.pod_memory_usage_rows | default([]) %}
 **{% if top_pod_memory_signal.get('status') == 'derived' %}Top {{ pod_usage_table_limit }} Pods By Requested Memory Pressure{% else %}Top {{ pod_usage_table_limit }} Pods By Memory Utilization{% endif %}**
@@ -2652,6 +2621,8 @@ Showing up to the top {{ pod_usage_table_limit }} pods from the available memory
 {% for item in top_pod_memory_usage_summary_section[:pod_usage_table_limit] %}
 | {{ item.metric.namespace | default('') }} | {{ item.metric.pod | default('') }} | `{{ ((item.value[1] | float) / 1048576) | round(1) }}`{% if top_pod_memory_signal.get('status') == 'derived' %} requested{% endif %} |
 {% endfor %}
+{% if top_pod_memory_usage_summary_section | default([]) | length == 0 %}
+| no matching pods | n/a | `0` |
 {% endif %}
 {% endif %}
 

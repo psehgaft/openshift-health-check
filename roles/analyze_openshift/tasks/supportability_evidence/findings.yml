@@ -5,19 +5,23 @@
     support_evidence_parsed: >-
       {{
         {
-          'etcd_ocp_diag': (live_support_parsed.etcd_ocp_diag | default(etcd_ocp_diag_data | default({}))),
-          'omc': (live_support_parsed.omc | default(omc_data | default({}))),
-          'cluster_compare': (live_support_parsed.cluster_compare | default(cluster_compare_data | default({}))),
-          'inspect': (live_support_parsed.inspect | default(inspect_data | default({}))),
-          'managed_gates': (live_support_parsed.managed_gates | default(managed_gates_data | default({}))),
-          'advisor_export': (live_support_parsed.advisor_export | default(advisor_export_data | default({}))),
-          'insights_archive': (live_support_parsed.insights_archive | default(insights_archive_data | default({}))),
-          'sosreport': (live_support_parsed.sosreport | default(sosreport_data | default({})))
+          'etcd_ocp_diag': live_support_parsed.etcd_ocp_diag if ((live_support_parsed.etcd_ocp_diag | default({})) | length) > 0 else (etcd_ocp_diag_data | default({})),
+          'omc': live_support_parsed.omc if ((live_support_parsed.omc | default({})) | length) > 0 else (omc_data | default({})),
+          'cluster_compare': live_support_parsed.cluster_compare if ((live_support_parsed.cluster_compare | default({})) | length) > 0 else (cluster_compare_data | default({})),
+          'inspect': live_support_parsed.inspect if ((live_support_parsed.inspect | default({})) | length) > 0 else (inspect_data | default({})),
+          'managed_gates': live_support_parsed.managed_gates if ((live_support_parsed.managed_gates | default({})) | length) > 0 else (managed_gates_data | default({})),
+          'advisor_export': live_support_parsed.advisor_export if ((live_support_parsed.advisor_export | default({})) | length) > 0 else (advisor_export_data | default({})),
+          'insights_archive': live_support_parsed.insights_archive if ((live_support_parsed.insights_archive | default({})) | length) > 0 else (insights_archive_data | default({})),
+          'sosreport': live_support_parsed.sosreport if ((live_support_parsed.sosreport | default({})) | length) > 0 else (sosreport_data | default({}))
         }
       }}
     support_evidence_coverage: "{{ live_evidence_coverage | default(evidence_coverage | default({})) }}"
     inspect_coverage_value: "{{ support_evidence_coverage.inspect | default('missing') }}"
     sosreport_coverage_value: "{{ support_evidence_coverage.sosreport | default(support_evidence_coverage.node_diagnostics | default('missing')) }}"
+    inspect_present_value: "{{ (support_evidence_parsed.inspect.summary.file_count | default(0) | int) > 0 }}"
+    inspect_node_marker_count_value: "{{ support_evidence_parsed.inspect.summary.resource_markers.nodes | default(0) | int }}"
+    sosreport_count_value: "{{ support_evidence_parsed.sosreport.summary.count | default(0) | int }}"
+    sosreport_present_value: "{{ (sosreport_count_value | int) > 0 }}"
     inspect_expected: >-
       {{
         (
@@ -55,13 +59,13 @@
     node_diagnostics_findings: >-
       {{
         []
-        + ([{'severity': 'warning', 'area': 'inspect', 'detail': 'No `oc adm inspect` evidence was collected.'}] if (inspect_expected and not (node_diagnostics_summary.inspect_present | default(false) | bool)) else [])
-        + ([{'severity': 'warning', 'area': 'inspect', 'detail': '`oc adm inspect` evidence does not appear to include node-related content.'}] if ((node_diagnostics_summary.inspect_present | default(false) | bool) and ((node_diagnostics_summary.inspect_resource_markers.nodes | default(0) | int) == 0)) else [])
-        + ([{'severity': 'warning', 'area': 'oc-debug-node-sosreport', 'detail': 'No `oc debug node/<node>` sosreport archive was collected for node-level diagnostics. Use `oc debug node/<node>`, `toolbox`, and `sos report` when node-specific OS, kubelet, CRI-O, journal, podman, or network evidence is required.'}] if (sosreport_expected and not (node_diagnostics_summary.sosreport_present | default(false) | bool)) else [])
-        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show kubelet log coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
-        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show CRI-O log coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_crio_logs | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
-        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show journal coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_journal | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
-        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show network-data coverage for all collected nodes.'}] if ((node_diagnostics_summary.sosreport_present | default(false) | bool) and ((node_diagnostics_summary.sosreport_with_network_data | default(0) | int) < (node_diagnostics_summary.sosreport_count | default(0) | int))) else [])
+        + ([{'severity': 'warning', 'area': 'inspect', 'detail': 'No `oc adm inspect` evidence was collected.'}] if (inspect_expected and not (inspect_present_value | bool)) else [])
+        + ([{'severity': 'warning', 'area': 'inspect', 'detail': '`oc adm inspect` evidence does not appear to include node-related content.'}] if ((inspect_present_value | bool) and ((inspect_node_marker_count_value | int) == 0)) else [])
+        + ([{'severity': 'warning', 'area': 'oc-debug-node-sosreport', 'detail': 'No `oc debug node/<node>` sosreport archive was collected for node-level diagnostics. Use `oc debug node/<node>`, `toolbox`, and `sos report` when node-specific OS, kubelet, CRI-O, journal, podman, or network evidence is required.'}] if (sosreport_expected and not (sosreport_present_value | bool)) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show kubelet log coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_kubelet_logs | default(0) | int) < (sosreport_count_value | int))) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show CRI-O log coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_crio_logs | default(0) | int) < (sosreport_count_value | int))) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show journal coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_journal | default(0) | int) < (sosreport_count_value | int))) else [])
+        + ([{'severity': 'warning', 'area': 'sosreport', 'detail': '`sosreport` evidence does not show network-data coverage for all collected nodes.'}] if ((sosreport_present_value | bool) and ((node_diagnostics_summary.sosreport_with_network_data | default(0) | int) < (sosreport_count_value | int))) else [])
       }}
     advisor_findings: >-
       {{

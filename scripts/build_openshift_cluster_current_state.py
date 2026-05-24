@@ -174,6 +174,20 @@ def normalize_items(value):
     return []
 
 
+def unique_named_items(items):
+    unique = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(((item.get("metadata") or {}).get("name")) or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        unique.append(item)
+    return unique
+
+
 def is_pod_healthy(pod):
     status = (pod.get("status", {}) or {}) if isinstance(pod, dict) else {}
     phase = str(status.get("phase") or "Unknown")
@@ -574,7 +588,8 @@ def main():
 
     pod_items = normalize_items(data.get("pods"))
     resourcequota_items = normalize_items(data.get("resourcequotas"))
-    node_items = normalize_items(data.get("nodes"))
+    node_items_raw = normalize_items(data.get("nodes"))
+    node_items = unique_named_items(node_items_raw)
     cluster_profile = data.get("cluster_profile") or {}
     try:
         cluster_max_pods_per_node_default = int(data.get("cluster_max_pods_per_node_default", 250) or 250)
@@ -958,13 +973,13 @@ def main():
     mcp_summary.sort(key=lambda item: str(item.get("name", "unknown")))
     mcp_machine_total = sum(int(item.get("machine_count", 0) or 0) for item in mcp_summary)
     profile_node_total = count_from_profile(cluster_profile, "control_plane_node_count", "worker_node_count", "infra_node_count")
-    inferred_node_total = max(
-        len(node_items),
+    fallback_inferred_node_total = max(
         len(node_pod_count_map),
         profile_node_total,
         int((data.get("node_ip_capacity_summary") or {}).get("taken_ips", 0) or 0),
         mcp_machine_total,
     )
+    inferred_node_total = len(node_items) if node_items else fallback_inferred_node_total
     if not node_items and inferred_node_total > 0:
         master_nodes = int(cluster_profile.get("control_plane_node_count", 0) or 0)
         worker_nodes = int(cluster_profile.get("worker_node_count", 0) or 0)

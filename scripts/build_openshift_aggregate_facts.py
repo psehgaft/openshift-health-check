@@ -25,6 +25,13 @@ def int_value(value, default: int = 0) -> int:
         return default
 
 
+def float_value(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def parse_timestamp(value: str):
     text = str(value or "").strip()
     if not text:
@@ -293,7 +300,7 @@ def normalize_probe_findings(items: list[dict]) -> list:
 def build(data: dict) -> dict:
     limits = as_dict(data.get("limits"))
     restart_limit = int_value(limits.get("restart_limit"), 10)
-    restart_table_limit = int_value(limits.get("restart_table_limit"), 100)
+    restart_table_limit = int_value(limits.get("restart_table_limit"), 50)
     restart_table_threshold = int_value(limits.get("restart_table_threshold"), 3)
     old_pod_table_limit = int_value(limits.get("old_pod_table_limit"), 20)
     stale_pod_table_limit = int_value(limits.get("stale_pod_table_limit"), 50)
@@ -308,7 +315,7 @@ def build(data: dict) -> dict:
     event_reason_limit = int_value(limits.get("event_reason_limit"), 10)
     alert_group_limit = int_value(limits.get("alert_group_limit"), 10)
     namespace_issue_limit = int_value(limits.get("namespace_issue_limit"), 10)
-    workload_issue_limit = int_value(limits.get("workload_issue_limit"), 10)
+    workload_issue_limit = int_value(limits.get("workload_issue_limit"), 50)
     security_issue_limit = int_value(limits.get("security_issue_limit"), 10)
     deprecated_api_limit = int_value(limits.get("deprecated_api_limit"), 10)
 
@@ -321,8 +328,11 @@ def build(data: dict) -> dict:
         reverse=True,
     )
     stale_user_pods = [
-        item for item in as_list(data.get("aged_user_pods")) if int_value(attr_value(item, "age_days"), 0) > stale_pod_age_days
+        item
+        for item in as_list(data.get("aged_user_pods"))
+        if float_value(attr_value(item, "age_days"), 0.0) > float(stale_pod_age_days)
     ]
+    orphan_pods = sort_by_attr(sort_by_attr(data.get("orphan_pods"), "name"), "namespace")
 
     privileged_serviceaccounts = sort_by_attr(
         sort_by_attr(data.get("privileged_serviceaccount_access"), "namespace"),
@@ -386,7 +396,7 @@ def build(data: dict) -> dict:
             ),
             stale_dockerconfigjson_secret_table_limit,
         ),
-        "top_orphan_pods": top(data.get("orphan_pods"), workload_issue_limit),
+        "top_orphan_pods": top(orphan_pods, workload_issue_limit),
         "top_workload_label_governance_findings": top(data.get("workload_label_governance_findings"), workload_issue_limit),
         "top_node_label_governance_findings": top(data.get("node_label_governance_findings"), workload_issue_limit),
         "top_workload_resource_findings": top(data.get("workload_resource_findings"), workload_issue_limit),

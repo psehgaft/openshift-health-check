@@ -235,7 +235,7 @@ def main() -> int:
 
     verdict = "supported"
     if any(item["severity"] == "critical" for item in findings):
-        verdict = "unsupported-risk"
+        verdict = "critical"
     elif findings:
         verdict = "review-required"
 
