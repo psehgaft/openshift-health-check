@@ -191,6 +191,13 @@ def normalize_unknown(value: str, default: str = "not-collected") -> str:
     return text
 
 
+def format_unused_percent(size_bytes: Optional[int], in_use_bytes: Optional[int]) -> Tuple[str, Optional[float]]:
+    if size_bytes is None or in_use_bytes is None or size_bytes <= 0:
+        return "not-collected", None
+    unused_pct = round((max(size_bytes - in_use_bytes, 0) / size_bytes) * 100.0, 1)
+    return f"{unused_pct}%", unused_pct
+
+
 def parse_etcd_db_fields(row: Dict[str, str]) -> Tuple[Optional[int], Optional[int], str, str, str, Optional[float]]:
     combined = row.get("db_size_in_use", "")
     db_size_text = row.get("db_size", "")
@@ -202,13 +209,16 @@ def parse_etcd_db_fields(row: Dict[str, str]) -> Tuple[Optional[int], Optional[i
     size_bytes = parse_size_to_bytes(db_size_text)
     in_use_bytes = parse_size_to_bytes(db_in_use_text)
     not_used_text = row.get("not_used", "")
+    not_used_pct = parse_percent(not_used_text)
+    if not_used_pct is None and normalize_unknown(not_used_text) == "not-collected":
+        not_used_text, not_used_pct = format_unused_percent(size_bytes, in_use_bytes)
     return (
         size_bytes,
         in_use_bytes,
         normalize_unknown(db_size_text),
         normalize_unknown(db_in_use_text),
         normalize_unknown(not_used_text),
-        parse_percent(not_used_text),
+        not_used_pct,
     )
 
 
@@ -232,7 +242,7 @@ def summarize_etcd_db_stats(etcd_rows: List[Dict[str, str]]) -> Dict[str, Any]:
             "db_size_bytes": size_bytes,
             "db_in_use_bytes": in_use_bytes,
             "not_used": not_used_text,
-            "errors": row.get("errors", ""),
+            "errors": normalize_unknown(row.get("errors", ""), default="none"),
         })
 
     total_size = sum(size_values) if size_values else None

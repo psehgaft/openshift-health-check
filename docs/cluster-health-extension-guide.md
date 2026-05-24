@@ -37,7 +37,7 @@ Default approach:
 
 Primary entrypoint:
 
-- [playbooks/openshift_cluster_health_report.yml](/Users/luqman/workspace/guides/openshift-health-check/playbooks/openshift_cluster_health_report.yml:1)
+- [playbooks/openshift_cluster_health_report.yml](../playbooks/openshift_cluster_health_report.yml)
 
 It supports:
 
@@ -61,13 +61,13 @@ OpenShift live runs use `report_performance_profile` to choose the default evide
 - `standard` is the lower-cost live path for routine runs. It keeps API and metric evidence plus lower-cost support evidence while avoiding `must-gather`, `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation unless explicitly requested.
 - `fast` is the narrowest live path. It keeps required API evidence and skips optional support collectors and PDF generation.
 
-The profile settings live in [group_vars/all.yml](/Users/luqman/workspace/guides/openshift-health-check/group_vars/all.yml:1). Keep this file, README usage text, and the OpenShift playbook fallback default aligned whenever changing profile names or defaults.
+The profile settings live in [group_vars/all.yml](../group_vars/all.yml). Keep this file, README usage text, and the OpenShift playbook fallback default aligned whenever changing profile names or defaults.
 
 ### Profile Contract
 
 Canonical OpenShift catalog:
 
-- [inputs/openshift-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/openshift-cluster-health-profile.yml:1)
+- [inputs/openshift-cluster-health-profile.yml](../inputs/openshift-cluster-health-profile.yml)
 
 This file controls:
 
@@ -102,7 +102,7 @@ Pattern:
 
 Shared posture artifact wrapper:
 
-- [roles/posture_artifact_from_builder/tasks/main.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/posture_artifact_from_builder/tasks/main.yml:1)
+- [roles/posture_artifact_from_builder/tasks/main.yml](../roles/posture_artifact_from_builder/tasks/main.yml)
 
 ### Capability Ownership
 
@@ -133,7 +133,7 @@ Pattern:
 
 Shared capability artifact wrapper:
 
-- [roles/capability_artifact_from_builder/tasks/main.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/capability_artifact_from_builder/tasks/main.yml:1)
+- [roles/capability_artifact_from_builder/tasks/main.yml](../roles/capability_artifact_from_builder/tasks/main.yml)
 
 ### Shared Analysis And Evidence Layers
 
@@ -174,12 +174,12 @@ Important responsibilities there:
 
 Key files:
 
-- [roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml:1)
-- [roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml:1)
-- [roles/report_common/tasks/build_openshift_report_payload.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/build_openshift_report_payload.yml:1)
-- [roles/report_common/tasks/load_openshift_report_payload_artifact.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/load_openshift_report_payload_artifact.yml:1)
-- [roles/report_common/tasks/render_report_artifacts.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/render_report_artifacts.yml:1)
-- [roles/report_openshift/tasks/render_collected_state_report.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_openshift/tasks/render_collected_state_report.yml:1)
+- [roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml](../roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml)
+- [roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml](../roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml)
+- [roles/report_common/tasks/build_openshift_report_payload.yml](../roles/report_common/tasks/build_openshift_report_payload.yml)
+- [roles/report_common/tasks/load_openshift_report_payload_artifact.yml](../roles/report_common/tasks/load_openshift_report_payload_artifact.yml)
+- [roles/report_common/tasks/render_report_artifacts.yml](../roles/report_common/tasks/render_report_artifacts.yml)
+- [roles/report_openshift/tasks/render_collected_state_report.yml](../roles/report_openshift/tasks/render_collected_state_report.yml)
 
 ## Artifact Workspace Contract
 
@@ -252,7 +252,7 @@ Rules:
 - do not assume all capabilities require their owning posture to render
 - only add execution prerequisites where a capability truly depends on posture-owned synthesis
 - dependency resolution must stay centralized in:
-  - [roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml:1)
+  - [roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml](../roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml)
 
 If you add a posture, capability, or evidence family that changes scoped behavior, update:
 
@@ -278,13 +278,13 @@ Current resume behavior checks:
 
 Shared resume files:
 
-- [roles/report_common/tasks/save_run_checkpoint.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/save_run_checkpoint.yml:1)
-- [roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml:1)
+- [roles/report_common/tasks/save_run_checkpoint.yml](../roles/report_common/tasks/save_run_checkpoint.yml)
+- [roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml](../roles/report_common/tasks/resolve_openshift_resume_artifact_plan.yml)
 
 Payload-backed render resumes also rely on:
 
 - `report/payload.json`
-- [roles/report_common/tasks/load_openshift_report_payload_artifact.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/load_openshift_report_payload_artifact.yml:1)
+- [roles/report_common/tasks/load_openshift_report_payload_artifact.yml](../roles/report_common/tasks/load_openshift_report_payload_artifact.yml)
 
 Do not add new report-stage facts in a way that only exists in memory for fresh runs. If a resumed payload-backed render needs it, it should be restorable from `payload.json` or rebuilt directly.
 
@@ -328,9 +328,9 @@ Add a new posture only when you are introducing a real top-level operating domai
    - `includes`
    - `satisfied_by_all` when appropriate
 3. Add the section title mapping to:
-   - [scripts/validate_openshift_report_output.py](/Users/luqman/workspace/guides/openshift-health-check/scripts/validate_openshift_report_output.py:1)
+   - [scripts/validate_openshift_report_output.py](../scripts/validate_openshift_report_output.py)
 4. Add or extend the rendered section in:
-   - [templates/openshift_cluster_health_report.md.j2](/Users/luqman/workspace/guides/openshift-health-check/templates/openshift_cluster_health_report.md.j2:1)
+   - [templates/openshift_cluster_health_report.md.j2](../templates/openshift_cluster_health_report.md.j2)
 5. Create the owning role:
    - `roles/posture_<key>/tasks/main.yml`
    - `roles/posture_<key>/tasks/builder.yml`
@@ -366,7 +366,7 @@ Add a capability when you need a checkable production expectation or a supported
    - `roles/capability_<key>/tasks/main.yml`
    - `roles/capability_<key>/tasks/builder.yml`
 5. Update the Day 2 path if needed:
-   - [roles/analyze_openshift/tasks/day2.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/analyze_openshift/tasks/day2.yml:1)
+   - [roles/analyze_openshift/tasks/day2.yml](../roles/analyze_openshift/tasks/day2.yml)
    - related split tasks under `roles/analyze_openshift/tasks/day2/`
 6. Make sure the report template renders it through the profile-gated Day 2 path.
 7. Make sure the rendered output validator still passes.
@@ -431,7 +431,7 @@ Rules:
 
 - narrow selector-scoped runs should not parse optional support inputs they do not need
 - gate those inputs through:
-  - [roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml:1)
+  - [roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml](../roles/report_common/tasks/resolve_openshift_selector_scope_dependencies.yml)
   - `roles/load_evidence_common/tasks/`
 - if a new posture or capability needs an optional support source, add the dependency in the resolver instead of bypassing the loader gates
 
@@ -452,8 +452,8 @@ OpenShift live support rules to preserve:
 
 Relevant references:
 
-- [docs/ocp-health-check-sa-rbac.md](/Users/luqman/workspace/guides/openshift-health-check/docs/ocp-health-check-sa-rbac.md:1)
-- [roles/collect_live_support_evidence/tasks/main.yml](/Users/luqman/workspace/guides/openshift-health-check/roles/collect_live_support_evidence/tasks/main.yml:1)
+- [docs/ocp-health-check-sa-rbac.md](ocp-health-check-sa-rbac.md)
+- [roles/collect_live_support_evidence/tasks/main.yml](../roles/collect_live_support_evidence/tasks/main.yml)
 
 ## Scaffolding New Entries
 

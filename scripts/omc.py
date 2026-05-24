@@ -384,6 +384,13 @@ def parse_bool_value(value: Any) -> Optional[bool]:
     return None
 
 
+def format_not_used_pct(db_size: Optional[int], db_in_use: Optional[int]) -> str:
+    if not isinstance(db_size, int) or not isinstance(db_in_use, int) or db_size <= 0:
+        return ""
+    unused = max(db_size - db_in_use, 0)
+    return f"{round((unused / db_size) * 100.0, 1)}%"
+
+
 def first_present(data: Dict[str, Any], keys: Iterable[str]) -> Any:
     lowered = {str(key).lower().replace(" ", "_").replace("/", "_"): value for key, value in data.items()}
     for key in keys:
@@ -412,6 +419,7 @@ def endpoint_status_from_dict(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     db_size = parse_size_value(first_present(status, ["db_size", "dbSize", "DB SIZE"]))
     db_in_use = parse_size_value(first_present(status, ["db_in_use", "dbSizeInUse", "db_size_in_use", "DB IN USE"]))
+    not_used = first_present(status, ["not_used", "notUsed", "NOT USED"])
     errors = first_present(status, ["errors", "error", "ERRORS"]) or ""
     if is_leader is None and db_size is None and db_in_use is None and not str(errors).strip():
         return None
@@ -419,6 +427,7 @@ def endpoint_status_from_dict(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "endpoint": str(endpoint),
         "db_size": db_size,
         "db_in_use": db_in_use,
+        "not_used": str(not_used or format_not_used_pct(db_size, db_in_use)),
         "is_leader": is_leader,
         "errors": str(errors),
     }
@@ -462,6 +471,7 @@ def parse_pipe_status_table(text: str) -> List[Dict[str, Any]]:
             "endpoint": endpoint,
             "db_size": parse_size_value(db_size),
             "db_in_use": parse_size_value(db_in_use),
+            "not_used": item.get("not_used") or format_not_used_pct(parse_size_value(db_size), parse_size_value(db_in_use)),
             "is_leader": parse_bool_value(item.get("is_leader")),
             "errors": item.get("errors", ""),
         })
@@ -509,7 +519,7 @@ def collect_etcd_status_facts(root: Path) -> Dict[str, Dict[str, Any]]:
             if not key:
                 continue
             current = facts.setdefault(key, {})
-            for field in ("db_size", "db_in_use", "is_leader", "errors"):
+            for field in ("db_size", "db_in_use", "not_used", "is_leader", "errors"):
                 if current.get(field) in (None, "") and fact.get(field) not in (None, ""):
                     current[field] = fact.get(field)
     return facts
@@ -558,13 +568,14 @@ def cmd_etcd_status(root: Path) -> int:
             db_size = format_bytes(db_size_value) if isinstance(db_size_value, int) else etcd_db_size(root, endpoint_name)
             db_in_use = format_bytes(db_in_use_value) if isinstance(db_in_use_value, int) else ""
             db_combined = f"{db_size} / {db_in_use}" if db_size and db_in_use else db_size
+            not_used = str(fact.get("not_used") or format_not_used_pct(db_size_value, db_in_use_value))
             is_leader = fact.get("is_leader")
             rows.append([
                 f"https://{address}:2379",
                 "",
                 "",
                 db_combined,
-                "",
+                not_used,
                 str(is_leader).lower() if isinstance(is_leader, bool) else ("true" if len(all_addresses) == 1 and index == 0 else ""),
                 "",
                 "",
@@ -585,8 +596,9 @@ def cmd_etcd_status(root: Path) -> int:
             db_size = format_bytes(db_size_value) if isinstance(db_size_value, int) else etcd_db_size(root, pod)
             db_in_use = format_bytes(db_in_use_value) if isinstance(db_in_use_value, int) else ""
             db_combined = f"{db_size} / {db_in_use}" if db_size and db_in_use else db_size
+            not_used = str(fact.get("not_used") or format_not_used_pct(db_size_value, db_in_use_value))
             is_leader = fact.get("is_leader")
-            rows.append([pod, "", "", db_combined, "", str(is_leader).lower() if isinstance(is_leader, bool) else ("true" if len(pods) == 1 and index == 0 else ""), "", "", "", "", str(fact.get("errors") or "")])
+            rows.append([pod, "", "", db_combined, not_used, str(is_leader).lower() if isinstance(is_leader, bool) else ("true" if len(pods) == 1 and index == 0 else ""), "", "", "", "", str(fact.get("errors") or "")])
     if not rows:
         return 1
     print_pipe_table(

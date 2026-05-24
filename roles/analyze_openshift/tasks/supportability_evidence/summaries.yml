@@ -23,6 +23,8 @@
     inspect_present_value: "{{ (inspect_file_count_value | int) > 0 }}"
     sosreport_count_value: "{{ support_evidence_parsed.sosreport.summary.count | default(0) | int }}"
     sosreport_present_value: "{{ (sosreport_count_value | int) > 0 }}"
+    sosreport_target_count_value: "{{ sosreport_coverage_value.target_nodes | default([]) | length if (sosreport_coverage_value is mapping) else 0 }}"
+    sosreport_status_value: "{{ sosreport_coverage_value.status | default('unknown') if (sosreport_coverage_value is mapping) else 'unknown' }}"
     etcd_clusteroperator_status: "{{ (clusteroperator_status_map | default({})).get('etcd', {}) }}"
     omc_etcd_operator_available_raw: "{{ support_evidence_parsed.omc.summary.etcd_operator_available | default('unknown') }}"
     omc_etcd_operator_degraded_raw: "{{ support_evidence_parsed.omc.summary.etcd_operator_degraded | default('unknown') }}"
@@ -64,6 +66,14 @@
         )
         if (sosreport_coverage_value is mapping)
         else (sosreport_coverage_value not in ['missing', 'unknown', 'not-requested', 'not-applicable', 'disabled'])
+      }}
+    sosreport_required_for_targeted_diagnostics: >-
+      {{
+        (sosreport_expected | bool)
+        and (
+          (sosreport_target_count_value | int) > 0
+          or sosreport_status_value in ['failed', 'timed-out']
+        )
       }}
   ansible.builtin.set_fact:
     reference_compliance_summary:
@@ -163,19 +173,25 @@
       sosreport_with_network_data: "{{ support_evidence_parsed.sosreport.summary.reports_with_network_data | default(0) }}"
       target_nodes: "{{ sosreport_coverage_value.target_nodes | default([]) if (sosreport_coverage_value is mapping) else [] }}"
       target_reasons: "{{ sosreport_coverage_value.target_reasons | default({}) if (sosreport_coverage_value is mapping) else {} }}"
+      targeted_diagnostics_required: "{{ sosreport_required_for_targeted_diagnostics }}"
       verdict: >-
         {{
           'supported'
           if ((sosreport_complete_coverage | bool) or (sosreport_core_coverage | bool))
           else (
             'review-required'
-            if (sosreport_present_value | bool)
+            if ((sosreport_present_value | bool) and (sosreport_required_for_targeted_diagnostics | bool))
             else (
               'basic-supported'
               if (
-                (inspect_present_value | bool)
-                and ((inspect_node_marker_count_value | int) > 0)
-                and not (sosreport_expected | bool)
+                (
+                  (sosreport_present_value | bool)
+                  or (
+                    (inspect_present_value | bool)
+                    and ((inspect_node_marker_count_value | int) > 0)
+                  )
+                )
+                and not (sosreport_required_for_targeted_diagnostics | bool)
               )
               else (
                 'node-level-no-targets'

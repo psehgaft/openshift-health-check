@@ -1,7 +1,32 @@
 ---
 - name: Build node health and capacity posture summary
   vars:
-    node_diagnostics_evidence_gap: "{{ (node_diagnostics_summary.verdict | default('insufficient-evidence')) not in ['supported', 'basic-supported', 'node-level-not-requested', 'node-level-no-targets'] }}"
+    node_diagnostics_raw_verdict: "{{ node_diagnostics_summary.verdict | default('insufficient-evidence') }}"
+    node_diagnostics_target_count: "{{ node_diagnostics_summary.target_nodes | default([]) | length }}"
+    node_diagnostics_required_for_health: >-
+      {{
+        (not_ready_nodes | default([]) | length) > 0
+        or (pressure_nodes | default([]) | length) > 0
+        or (critical_pod_density_nodes | default([]) | length) > 0
+        or (high_pod_density_nodes | default([]) | length) > 0
+      }}
+    node_diagnostics_health_verdict: >-
+      {{
+        'node-level-no-targets'
+        if (
+          node_diagnostics_raw_verdict in ['review-required', 'insufficient-evidence']
+          and not (node_diagnostics_required_for_health | bool)
+          and (node_diagnostics_target_count | int) == 0
+        )
+        else node_diagnostics_raw_verdict
+      }}
+    node_diagnostics_evidence_gap: "{{ node_diagnostics_health_verdict not in ['supported', 'basic-supported', 'node-level-not-requested', 'node-level-no-targets'] }}"
+    node_cpu_signal_status: "{{ ((runtime_signal_resolution_map | default({})).get('node_cpu_utilization', {})).get('status', 'not-collected') }}"
+    node_memory_signal_status: "{{ ((runtime_signal_resolution_map | default({})).get('node_memory_utilization', {})).get('status', 'not-collected') }}"
+    node_disk_signal_status: "{{ ((runtime_signal_resolution_map | default({})).get('node_disk_utilization', {})).get('status', 'not-collected') }}"
+    node_pod_density_signal_status: "{{ ((runtime_signal_resolution_map | default({})).get('kubelet_pod_density', {})).get('status', 'not-collected') }}"
+    node_utilization_evidence_gap: "{{ node_cpu_signal_status != 'observed' or node_memory_signal_status != 'observed' or node_disk_signal_status != 'observed' }}"
+    node_density_evidence_gap: "{{ node_pod_density_signal_status != 'observed' }}"
     node_capacity_status: >-
       {{
         'CRITICAL'
@@ -19,6 +44,8 @@
             or (high_memory_nodes | default([]) | length) > 0
             or (high_disk_nodes | default([]) | length) > 0
             or node_diagnostics_evidence_gap
+            or node_utilization_evidence_gap
+            or node_density_evidence_gap
           )
           else 'HEALTHY'
         )
@@ -35,7 +62,9 @@
           + (['high CPU nodes=' ~ ((high_cpu_nodes | default([]) | length) | string)] if ((high_cpu_nodes | default([]) | length) > 0) else [])
           + (['high memory nodes=' ~ ((high_memory_nodes | default([]) | length) | string)] if ((high_memory_nodes | default([]) | length) > 0) else [])
           + (['high disk nodes=' ~ ((high_disk_nodes | default([]) | length) | string)] if ((high_disk_nodes | default([]) | length) > 0) else [])
-          + (['node diagnostics evidence=' ~ (node_diagnostics_summary.verdict | default('unknown'))] if node_diagnostics_evidence_gap else [])
+          + (['node diagnostics evidence=' ~ node_diagnostics_health_verdict] if node_diagnostics_evidence_gap else [])
+          + (['node utilization evidence incomplete (cpu=' ~ node_cpu_signal_status ~ ', memory=' ~ node_memory_signal_status ~ ', disk=' ~ node_disk_signal_status ~ ')'] if node_utilization_evidence_gap else [])
+          + (['pod density evidence=' ~ node_pod_density_signal_status] if node_density_evidence_gap else [])
         ) | join('; ')
       }}
     node_capacity_recommendation: >-
@@ -65,7 +94,14 @@
       high_disk_node_count: "{{ high_disk_nodes | default([]) | length }}"
       low_cpu_node_count: "{{ low_cpu_nodes | default([]) | length }}"
       low_memory_node_count: "{{ low_memory_nodes | default([]) | length }}"
-      diagnostics_verdict: "{{ node_diagnostics_summary.verdict | default('insufficient-evidence') }}"
+      diagnostics_verdict: "{{ node_diagnostics_health_verdict }}"
+      diagnostics_raw_verdict: "{{ node_diagnostics_raw_verdict }}"
+      diagnostics_required_for_health: "{{ node_diagnostics_required_for_health }}"
+      diagnostics_target_count: "{{ node_diagnostics_target_count }}"
+      node_cpu_signal_status: "{{ node_cpu_signal_status }}"
+      node_memory_signal_status: "{{ node_memory_signal_status }}"
+      node_disk_signal_status: "{{ node_disk_signal_status }}"
+      pod_density_signal_status: "{{ node_pod_density_signal_status }}"
       diagnostics_sosreport_count: "{{ node_diagnostics_summary.sosreport_count | default(0) }}"
       diagnostics_inspect_present: "{{ node_diagnostics_summary.inspect_present | default(false) }}"
       external_storage_provider_detected: "{{ storage_posture_summary.has_external_storage_provider | default(false) }}"

@@ -49,6 +49,12 @@ REQUIRED_CAPABILITY_SUBSECTIONS = [
     "#### Findings",
 ]
 
+REQUIRED_APPENDIX_SUPPORTABILITY_SUBSECTIONS = [
+    "#### Health Score",
+    "#### Findings Summary",
+    "#### Findings",
+]
+
 FORBIDDEN_MARKDOWN_PATTERNS = [
     (r"\b(?:UNKONWN|UNKNWON|UNKNONW|UNKNOWN|Unknown|unknown)\b", "unknown-state labels must be normalized"),
     (r"^#### Execution Context$", "execution context must not render in the report"),
@@ -281,6 +287,73 @@ def validate_day2_capability_markdown_sections(markdown: str) -> None:
             )
 
 
+def validate_appendix_heading_hierarchy(markdown: str) -> None:
+    lines = markdown.splitlines()
+    appendix_idx = None
+    for idx, line in enumerate(lines):
+        if line.strip() == "## Appendix":
+            appendix_idx = idx
+            break
+    if appendix_idx is None:
+        return
+
+    appendix_block = lines[appendix_idx + 1 :]
+    for idx, line in enumerate(appendix_block):
+        if idx > 0 and line.startswith("## "):
+            appendix_block = appendix_block[:idx]
+            break
+
+    direct_appendix_subsections = [
+        line[4:].strip()
+        for line in appendix_block
+        if line.startswith("### ") and not line.startswith("#### ")
+    ]
+    forbidden_direct = {"Health Score", "Findings Summary", "Findings"}
+    misplaced = [title for title in direct_appendix_subsections if title in forbidden_direct]
+    if misplaced:
+        fail(
+            "Appendix contains posture child headings at level 3; "
+            "Evidence And Supportability children must use level 4: "
+            + ", ".join(misplaced)
+        )
+
+    try:
+        supportability_idx = next(
+            idx
+            for idx, line in enumerate(appendix_block)
+            if line.strip() == "### Evidence And Supportability"
+        )
+    except StopIteration:
+        return
+
+    supportability_end = len(appendix_block)
+    for idx in range(supportability_idx + 1, len(appendix_block)):
+        if appendix_block[idx].startswith("### ") and not appendix_block[idx].startswith("#### "):
+            supportability_end = idx
+            break
+    supportability_block = appendix_block[supportability_idx:supportability_end]
+    missing = [
+        heading
+        for heading in REQUIRED_APPENDIX_SUPPORTABILITY_SUBSECTIONS
+        if heading not in supportability_block
+    ]
+    if missing:
+        fail("Evidence And Supportability appendix subsection missing " + ", ".join(missing))
+
+    direct_children = [
+        line[5:].strip()
+        for line in supportability_block
+        if line.startswith("#### ") and not line.startswith("##### ")
+    ]
+    if direct_children != ALLOWED_SECTION_LABELS:
+        fail(
+            "Evidence And Supportability appendix subsection must contain only "
+            + ", ".join(ALLOWED_SECTION_LABELS)
+            + "; found "
+            + ", ".join(direct_children)
+        )
+
+
 def split_markdown_table_row(line: str) -> list[str]:
     return [cell.strip() for cell in line.strip().strip("|").split("|")]
 
@@ -450,6 +523,7 @@ def validate_markdown(path: Path) -> None:
 
     validate_cluster_posture_sections(markdown)
     validate_day2_capability_markdown_sections(markdown)
+    validate_appendix_heading_hierarchy(markdown)
     validate_posture_summary_accuracy(markdown)
     validate_capability_summary_accuracy(markdown)
 

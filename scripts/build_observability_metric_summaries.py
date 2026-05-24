@@ -78,9 +78,11 @@ def build_node_threshold_summaries(items, status, low_threshold=None, high_thres
     return low, high
 
 
-def build_pod_density_summaries(items, warn_threshold, critical_threshold):
+def build_pod_density_summaries(items, status, warn_threshold, critical_threshold):
     high = []
     critical = []
+    if status != "observed":
+        return high, critical
 
     for item in as_list(items):
         value = metric_value(item)
@@ -88,10 +90,10 @@ def build_pod_density_summaries(items, warn_threshold, critical_threshold):
             "node": text(nested_get(item, ["metric", "node"], "unknown"), "unknown"),
             "value": value,
         }
-        if value > warn_threshold:
-            high.append(entry)
         if value > critical_threshold:
             critical.append(entry)
+        elif value > warn_threshold:
+            high.append(entry)
 
     return high, critical
 
@@ -118,6 +120,7 @@ def build(data):
     )
     high_density, critical_density = build_pod_density_summaries(
         data.get("kubelet_pod_density_results"),
+        nested_get(signal_map, ["kubelet_pod_density", "status"], "not-collected"),
         number(data.get("pod_density_warn_pct"), 0.0),
         number(data.get("pod_density_critical_pct"), 0.0),
     )

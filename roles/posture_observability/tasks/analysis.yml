@@ -1,10 +1,18 @@
 ---
 - name: Build observability posture summary
   vars:
+    monitoring_operator_evidence_present: >-
+      {{
+        ((clusteroperator_status_map | default({})).get('monitoring', {}) | length) > 0
+        and (((clusteroperator_status_map | default({})).get('monitoring', {})).get('available', 'Unknown')) != 'Unknown'
+        and (((clusteroperator_status_map | default({})).get('monitoring', {})).get('degraded', 'Unknown')) != 'Unknown'
+      }}
     monitoring_operator_healthy: >-
       {{
-        (clusteroperator_status_map.monitoring.available | default('Unknown')) == 'True'
-        and (clusteroperator_status_map.monitoring.degraded | default('False')) != 'True'
+        (monitoring_operator_evidence_present | bool)
+        and
+        (((clusteroperator_status_map | default({})).get('monitoring', {})).get('available', 'Unknown')) == 'True'
+        and (((clusteroperator_status_map | default({})).get('monitoring', {})).get('degraded', 'False')) != 'True'
       }}
     vendor_managed_observability_vendors: "{{ ((observability_forwarding_summary.metrics_forwarding_vendor_names | default([])) + (observability_forwarding_summary.log_forwarding_vendor_names | default([]))) | unique }}"
     vendor_managed_observability_present: >-
@@ -292,6 +300,8 @@
         'CRITICAL'
         if (
           (
+            monitoring_operator_evidence_present
+            and
             not monitoring_operator_healthy
             and (
               not vendor_managed_observability_configured
@@ -303,7 +313,9 @@
         else (
           'WARNING'
           if (
-            (not monitoring_operator_healthy and vendor_managed_observability_configured)
+            not (monitoring_operator_evidence_present | bool)
+            or
+            ((not monitoring_operator_healthy) and (monitoring_operator_evidence_present | bool) and vendor_managed_observability_configured)
             or
             (log_gap_count | int) > 0
             or (metrics_gap_count | int) > 0
@@ -320,9 +332,10 @@
       {{
         (
           []
-          + (['monitoring operator not healthy and no configured vendor-managed observability telemetry path was identified'] if (not monitoring_operator_healthy and not vendor_managed_observability_configured) else [])
-          + (['monitoring operator not healthy and the configured vendor-managed observability path is not healthy'] if (not monitoring_operator_healthy and vendor_managed_observability_configured and not (vendor_managed_observability_all_healthy | bool)) else [])
-          + (['monitoring operator not healthy but a vendor-managed observability telemetry path is configured'] if (not monitoring_operator_healthy and vendor_managed_observability_configured and (vendor_managed_observability_all_healthy | bool)) else [])
+          + (['monitoring operator evidence was not collected'] if not (monitoring_operator_evidence_present | bool) else [])
+          + (['monitoring operator not healthy and no configured vendor-managed observability telemetry path was identified'] if ((monitoring_operator_evidence_present | bool) and not monitoring_operator_healthy and not vendor_managed_observability_configured) else [])
+          + (['monitoring operator not healthy and the configured vendor-managed observability path is not healthy'] if ((monitoring_operator_evidence_present | bool) and not monitoring_operator_healthy and vendor_managed_observability_configured and not (vendor_managed_observability_all_healthy | bool)) else [])
+          + (['monitoring operator not healthy but a vendor-managed observability telemetry path is configured'] if ((monitoring_operator_evidence_present | bool) and not monitoring_operator_healthy and vendor_managed_observability_configured and (vendor_managed_observability_all_healthy | bool)) else [])
           + (['vendor-managed observability=' ~ ((vendor_managed_observability_vendors | default([])) | join(','))] if vendor_managed_observability_present else [])
           + (['vendor-managed observability unhealthy=' ~ ((vendor_managed_observability_unhealthy_vendors | default([])) | join(','))] if ((vendor_managed_observability_unhealthy_vendors | default([]) | length) > 0) else [])
           + (['critical firing alerts=' ~ ((firing_critical_alert_count | int) | string)] if (firing_critical_alert_count | int) > 0 else [])
@@ -352,6 +365,7 @@
       status: "{{ observability_status }}"
       reason_summary: "{{ observability_reason_summary }}"
       recommendation: "{{ observability_recommendation }}"
+      monitoring_operator_evidence_present: "{{ monitoring_operator_evidence_present }}"
       monitoring_operator_healthy: "{{ monitoring_operator_healthy }}"
       vendor_managed_observability_present: "{{ vendor_managed_observability_present }}"
       vendor_managed_observability_configured: "{{ vendor_managed_observability_configured }}"

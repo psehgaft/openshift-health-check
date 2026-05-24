@@ -107,7 +107,7 @@ If you are trying the repo for the first time, start with OpenShift. OpenShift i
 
 For OpenShift, use `playbooks/openshift_cluster_health_report.yml`. It defaults to the `full` performance profile. That includes API and metric evidence, `must-gather`, live `inspect`, Insights archive copy, optional `cluster-compare`, managed-service gates, Advisor export, node diagnostics, and PDF generation when prerequisites are available. Use `report_performance_profile=standard` or `report_performance_profile=fast` when you intentionally want a shorter live run.
 
-For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](/Users/luqman/workspace/guides/openshift-health-check/playbooks).
+For other supported cluster types, activate `.venv` and run the matching playbook in [`playbooks/`](playbooks).
 
 Common OpenShift command variants:
 
@@ -605,7 +605,7 @@ The unified OpenShift profile is also the single source of truth for analyzer-su
 Capability assessment is fail-closed. If the analyzer does not produce collected capability checks, the report must say the capability assessment did not complete cleanly and mark those sections as `not-assessed` placeholders instead of inflating coverage or pretending the capability was evaluated.
 
 Maintainer extension workflow:
-- follow [docs/cluster-health-extension-guide.md](/Users/luqman/workspace/guides/openshift-health-check/docs/cluster-health-extension-guide.md:1) when adding a posture, capability, or new scan scope
+- follow [docs/cluster-health-extension-guide.md](docs/cluster-health-extension-guide.md) when adding a posture, capability, or new scan scope
 - keep OpenShift profile metadata in `inputs/openshift-cluster-health-profile.yml`
 - keep evidence collection and scoring in analyzer code
 - use `scripts/scaffold_cluster_health_entry.py` to generate new posture or capability YAML snippets instead of hand-building the schema
@@ -615,14 +615,14 @@ Capability profile input files:
 
 | Cluster type | Playbook | Capability input file |
 | --- | --- | --- |
-| OpenShift, ARO, ROSA, ROSA HCP, SNO | [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml) | [inputs/openshift-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/openshift-cluster-health-profile.yml) |
-| Generic Kubernetes | [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml) | [inputs/kubernetes-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/kubernetes-cluster-health-profile.yml) |
-| Development Kubernetes | [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml) | [inputs/development-k8s-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/development-k8s-cluster-health-profile.yml) |
-| AKS | [playbooks/aks_cluster_health_report.yml](playbooks/aks_cluster_health_report.yml) | [inputs/aks-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/aks-cluster-health-profile.yml) |
-| EKS | [playbooks/eks_cluster_health_report.yml](playbooks/eks_cluster_health_report.yml) | [inputs/eks-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/eks-cluster-health-profile.yml) |
-| GKE | [playbooks/gke_cluster_health_report.yml](playbooks/gke_cluster_health_report.yml) | [inputs/gke-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/gke-cluster-health-profile.yml) |
-| Rancher-managed Kubernetes | [playbooks/rancher_cluster_health_report.yml](playbooks/rancher_cluster_health_report.yml) | [inputs/rancher-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/rancher-cluster-health-profile.yml) |
-| Minikube | [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml) | [inputs/minikube-cluster-health-profile.yml](/Users/luqman/workspace/guides/openshift-health-check/inputs/minikube-cluster-health-profile.yml) |
+| OpenShift, ARO, ROSA, ROSA HCP, SNO | [playbooks/openshift_cluster_health_report.yml](playbooks/openshift_cluster_health_report.yml) | [inputs/openshift-cluster-health-profile.yml](inputs/openshift-cluster-health-profile.yml) |
+| Generic Kubernetes | [playbooks/k8s_cluster_health_report.yml](playbooks/k8s_cluster_health_report.yml) | [inputs/kubernetes-cluster-health-profile.yml](inputs/kubernetes-cluster-health-profile.yml) |
+| Development Kubernetes | [playbooks/development_k8s_cluster_health_report.yml](playbooks/development_k8s_cluster_health_report.yml) | [inputs/development-k8s-cluster-health-profile.yml](inputs/development-k8s-cluster-health-profile.yml) |
+| AKS | [playbooks/aks_cluster_health_report.yml](playbooks/aks_cluster_health_report.yml) | [inputs/aks-cluster-health-profile.yml](inputs/aks-cluster-health-profile.yml) |
+| EKS | [playbooks/eks_cluster_health_report.yml](playbooks/eks_cluster_health_report.yml) | [inputs/eks-cluster-health-profile.yml](inputs/eks-cluster-health-profile.yml) |
+| GKE | [playbooks/gke_cluster_health_report.yml](playbooks/gke_cluster_health_report.yml) | [inputs/gke-cluster-health-profile.yml](inputs/gke-cluster-health-profile.yml) |
+| Rancher-managed Kubernetes | [playbooks/rancher_cluster_health_report.yml](playbooks/rancher_cluster_health_report.yml) | [inputs/rancher-cluster-health-profile.yml](inputs/rancher-cluster-health-profile.yml) |
+| Minikube | [playbooks/minikube_cluster_health_report.yml](playbooks/minikube_cluster_health_report.yml) | [inputs/minikube-cluster-health-profile.yml](inputs/minikube-cluster-health-profile.yml) |
 
 Capability evidence is collected from cluster-local APIs first. OpenShift runs prefer `oc adm must-gather`, `oc adm inspect`, `oc get`, Insights, Prometheus/Thanos, and node diagnostics when available. Kubernetes-family runs use portable `kubectl get` evidence plus optional metrics.
 
