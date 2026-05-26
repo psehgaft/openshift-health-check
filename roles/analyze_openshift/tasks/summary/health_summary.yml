@@ -48,42 +48,48 @@
           )
         ) | join('; ')
       }}
+    global_critical_blocker_present: >-
+      {{
+        cv_failing_resolved == 'True'
+        or (cv_available_resolved == 'False' and cv_progressing_resolved != 'True')
+        or (degraded_operators | default([]) | length > 0)
+        or (unavailable_operators | default([]) | length > 0)
+        or (not_ready_nodes | default([]) | length > 0)
+        or (degraded_mcps | default([]) | length > 0)
+        or apiserver_readyz_failed
+        or etcd_leader_unhealthy
+        or (assessment_collection.core_failed_commands | default(0) | int > 0)
+      }}
+    global_warning_signal_present: >-
+      {{
+        cv_progressing_resolved == 'True'
+        or cv_available_resolved == 'Unknown'
+        or (high_impact_progressing_operators | length > 0)
+        or (pressure_nodes | default([]) | length > 0)
+        or apiserver_runtime_degraded
+        or etcd_runtime_degraded
+        or (route_issues | default([]) | length > 0)
+        or (ingress_issues | default([]) | length > 0)
+        or (route_host_conflicts | default([]) | length > 0)
+        or (ingress_host_conflicts | default([]) | length > 0)
+        or (ingresscontroller_issues | default([]) | length > 0)
+        or (infrastructure_component_issues | default([]) | length > 0)
+        or (apiservice_issues | default([]) | length > 0)
+        or (critical_pod_density_nodes | default([]) | length > 0)
+        or (expiring_certificates_critical | default([]) | length > 0)
+        or (live_cluster_compare_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)
+        or (live_managed_gate_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)
+      }}
   ansible.builtin.set_fact:
     health_summary:
       status: >-
         {{
           'CRITICAL'
-          if (
-            cv_failing_resolved == 'True'
-            or (cv_available_resolved == 'False' and cv_progressing_resolved != 'True')
-            or (degraded_operators | default([]) | length > 0)
-            or (unavailable_operators | default([]) | length > 0)
-            or (not_ready_nodes | default([]) | length > 0)
-            or (degraded_mcps | default([]) | length > 0)
-            or (route_issues | default([]) | length > 0)
-            or (ingress_issues | default([]) | length > 0)
-            or (route_host_conflicts | default([]) | length > 0)
-            or (ingress_host_conflicts | default([]) | length > 0)
-            or (ingresscontroller_issues | default([]) | length > 0)
-            or (infrastructure_component_issues | default([]) | length > 0)
-            or (apiservice_issues | default([]) | length > 0)
-            or apiserver_readyz_failed
-            or etcd_leader_unhealthy
-            or (critical_pod_density_nodes | default([]) | length > 0)
-            or (expiring_certificates_critical | default([]) | length > 0)
-            or (live_cluster_compare_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)
-            or (live_managed_gate_findings | default([]) | selectattr('severity', 'equalto', 'critical') | list | length > 0)
-            or (assessment_collection.core_failed_commands | default(0) | int > 0)
-          )
+          if global_critical_blocker_present
           else (
             'WARNING'
             if (
-              cv_progressing_resolved == 'True'
-              or cv_available_resolved == 'Unknown'
-              or (high_impact_progressing_operators | length > 0)
-              or (pressure_nodes | default([]) | length > 0)
-              or apiserver_runtime_degraded
-              or etcd_runtime_degraded
+              global_warning_signal_present
               or (platform_pod_issues | default([]) | length > 0)
               or (namespace_issue_summary | default([]) | length > 0)
               or (pvc_issues | default([]) | length > 0)

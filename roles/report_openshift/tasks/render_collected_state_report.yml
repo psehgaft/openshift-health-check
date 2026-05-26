@@ -34,10 +34,10 @@
         25
         if collected_health_status in ['CRITICAL', 'BLOCKED', 'UNSUPPORTED-RISK']
         else (
-          60
+          75
           if collected_health_status in ['WARNING', 'WARN', 'REVIEW-REQUIRED']
           else (
-            80
+            90
             if collected_health_status in ['INFO', 'PARTIAL']
             else (
               100
@@ -140,6 +140,49 @@
   ansible.builtin.include_role:
     name: report_common
     tasks_from: build_openshift_domain_payload.yml
+  when: not (report_resume_payload_reuse_active | default(false) | bool)
+
+- name: Recompute collected-state global score after health synthesis is loaded
+  vars:
+    collected_health_status: "{{ health_summary.status | default('UNKNOWN') | string | upper }}"
+    collected_cluster_health_score: >-
+      {{
+        25
+        if collected_health_status in ['CRITICAL', 'BLOCKED', 'UNSUPPORTED-RISK']
+        else (
+          75
+          if collected_health_status in ['WARNING', 'WARN', 'REVIEW-REQUIRED']
+          else (
+            90
+            if collected_health_status in ['INFO', 'PARTIAL']
+            else (
+              100
+              if collected_health_status in ['HEALTHY', 'READY', 'SUPPORTED', 'OK']
+              else 0
+            )
+          )
+        )
+      }}
+  ansible.builtin.set_fact:
+    cluster_health_score: "{{ collected_cluster_health_score }}"
+    cluster_health_score_label: >-
+      {{
+        'Excellent'
+        if (collected_cluster_health_score | int) >= 95
+        else (
+          'Good'
+          if (collected_cluster_health_score | int) >= 85
+          else (
+            'Fair'
+            if (collected_cluster_health_score | int) >= 70
+            else (
+              'Poor'
+              if (collected_cluster_health_score | int) >= 50
+              else 'Critical'
+            )
+          )
+        )
+      }}
   when: not (report_resume_payload_reuse_active | default(false) | bool)
 
 - name: Seed final checkpoint metadata for collected report rendering
