@@ -1,4 +1,32 @@
 ---
+- name: Restore compact OpenShift shared artifact facts for fresh live run
+  ansible.builtin.set_fact:
+    openshift_shared_artifacts: >-
+      {{
+        (openshift_shared_artifacts | default({}))
+        | combine({
+            'collection': {
+              'kind': 'shared-collection',
+              'status': 'collected',
+              'collection_summary': (assessment_collection_summary | default({})),
+              'collection_failures': (assessment_collection_failures | default([])),
+              'collection_skipped_optional_commands': (assessment_collection_skipped_optional_commands | default([])),
+              'cluster_profile': (cluster_profile | default({})),
+              'evidence_summary': (evidence_summary | default({})),
+              'live_support_data': (live_support_data | default({}))
+            },
+            'analysis_graph': {
+              'kind': 'shared-analysis-graph',
+              'status': 'analyzed',
+              'analysis_graph_summary': (openshift_analysis_graph_summary | default({})),
+              'cluster_profile': (cluster_profile | default({}))
+            }
+          }, recursive=True)
+      }}
+  when:
+    - report_mode_resolved | default('live') == 'live'
+    - report_run_mode | default('fresh') != 'resume_last_failure'
+
 - name: Load OpenShift shared artifacts in bulk
   ansible.builtin.command:
     argv:
@@ -7,6 +35,11 @@
       - "{{ report_run_workspace_shared_dir }}"
   register: openshift_shared_artifacts_cmd
   changed_when: false
+  when: >-
+    not (
+      report_mode_resolved | default('live') == 'live'
+      and report_run_mode | default('fresh') != 'resume_last_failure'
+    )
 
 - name: Merge OpenShift shared artifacts and restore canonical facts
   vars:
@@ -60,4 +93,6 @@
         | default(live_support_data | default({}))
       }}
   when:
+    - openshift_shared_artifacts_cmd is defined
+    - not (openshift_shared_artifacts_cmd.skipped | default(false))
     - (openshift_shared_artifacts_cmd.rc | default(1)) == 0

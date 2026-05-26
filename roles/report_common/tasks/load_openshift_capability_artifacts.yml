@@ -5,12 +5,32 @@
       - python3
       - "{{ playbook_dir }}/../scripts/load_json_artifact_dir.py"
       - "{{ report_run_workspace_capabilities_dir }}"
+      - --output
+      - "{{ report_run_workspace_report_dir | default(report_run_workspace_capabilities_dir) }}/capability-artifacts-loaded.json"
+      - --var-name
+      - openshift_capability_artifacts_loaded
   register: openshift_capability_artifacts_cmd
   changed_when: false
+  when: >-
+    not (
+      report_mode_resolved | default('live') == 'live'
+      and report_run_mode | default('fresh') != 'resume_last_failure'
+      and (openshift_capability_artifacts | default({}) | length) > 0
+    )
 
-- name: Merge OpenShift capability artifacts
-  ansible.builtin.set_fact:
-    openshift_capability_artifacts: "{{ (openshift_capability_artifacts | default({})) | combine((openshift_capability_artifacts_cmd.stdout | from_json), recursive=True) }}"
+- name: Load OpenShift capability artifact map as facts
+  ansible.builtin.include_vars:
+    file: "{{ report_run_workspace_report_dir | default(report_run_workspace_capabilities_dir) }}/capability-artifacts-loaded.json"
   when:
+    - openshift_capability_artifacts_cmd is defined
+    - not (openshift_capability_artifacts_cmd.skipped | default(false))
     - (openshift_capability_artifacts_cmd.rc | default(1)) == 0
-    - (openshift_capability_artifacts_cmd.stdout | default('') | length) > 0
+
+- name: Merge OpenShift capability artifacts from loaded map
+  ansible.builtin.set_fact:
+    openshift_capability_artifacts: "{{ (openshift_capability_artifacts | default({})) | combine((openshift_capability_artifacts_loaded | default({})), recursive=True) }}"
+  when:
+    - openshift_capability_artifacts_cmd is defined
+    - not (openshift_capability_artifacts_cmd.skipped | default(false))
+    - (openshift_capability_artifacts_cmd.rc | default(1)) == 0
+    - (openshift_capability_artifacts_loaded | default({}) | length) > 0
