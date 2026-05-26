@@ -2,6 +2,20 @@
 - name: Resolve production Day 2 posture summary aggregate
   vars:
     day2_posture_payload: "{{ day2_posture_data | default({}) }}"
+    day2_capability_assessment_error_raw: >-
+      {{
+        day2_posture_payload.day2_posture_summary.capability_assessment_error
+        | default(day2_posture_payload.assessment_error | default('production Day 2 capability assessment did not produce mapped capability sections'))
+      }}
+    day2_capability_assessment_error_summary: >-
+      {{
+        day2_capability_assessment_error_raw
+        | string
+        | regex_replace('[\r\n\t]+', ' ')
+        | regex_replace('\s+', ' ')
+        | regex_replace('^\s+|\s+$', '')
+        | truncate(500, True, '...')
+      }}
   ansible.builtin.set_fact:
     day2_posture_summary_resolved: >-
       {{
@@ -16,10 +30,7 @@
               'capability_assessment_error': (
                 ''
                 if (day2_capability_assessment_completed | default(false) | bool)
-                else (
-                  day2_posture_payload.day2_posture_summary.capability_assessment_error
-                  | default(day2_posture_payload.assessment_error | default('production Day 2 capability assessment did not produce mapped capability sections'))
-                )
+                else day2_capability_assessment_error_summary
               ),
               'checks_total': (day2_posture_payload.day2_posture_summary.checks_total | default(0) | int)
             },

@@ -34,11 +34,23 @@ def text(value):
     return str(value or "")
 
 
-def container_names_without(containers, path):
+def missing_resource_parts(container, resource_type):
+    resources = as_dict(container.get("resources"))
+    resource_block = as_dict(resources.get(resource_type))
+    missing = []
+    for key in ("cpu", "memory"):
+        if text(resource_block.get(key)).strip() == "":
+            missing.append(key)
+    return missing
+
+
+def container_names_without_resources(containers, resource_type):
     names = []
     for container in as_list(containers):
-        if not nested_defined(container, path):
-            names.append(nested_get(container, ["name"], None))
+        missing = missing_resource_parts(container, resource_type)
+        if missing:
+            name = text(nested_get(container, ["name"], None) or "unknown")
+            names.append(f"{name} ({', '.join(missing)})")
     return names
 
 
@@ -79,8 +91,8 @@ def build(data):
         if not containers:
             continue
 
-        containers_without_requests = container_names_without(containers, ["resources", "requests"])
-        containers_without_limits = container_names_without(containers, ["resources", "limits"])
+        containers_without_requests = container_names_without_resources(containers, "requests")
+        containers_without_limits = container_names_without_resources(containers, "limits")
         common = {
             "kind": "DeploymentConfig",
             "namespace": namespace,

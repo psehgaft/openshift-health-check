@@ -1209,6 +1209,9 @@ secondary_site_dr_healthy = bool(
     and len(drpcs_with_problem_status) == 0
     and len(vrgs_with_problem_status) == 0
 )
+acm_managed = bool(klusterlets or managedclusteraddons or acm_agent_namespaces)
+acm_registration_present = acm_managed
+acm_registration_healthy = bool(klusterlets or acm_agent_namespaces)
 external_alert_delivery_present = bool(
     obs.get("external_alert_delivery_configured")
     or obs.get("alert_routing_to_external_receiver_configured")
@@ -2589,7 +2592,6 @@ if secondary_site_dr_present and (
         source="ODF DR topology and protected workload inventory",
     )
 
-acm_managed = bool(klusterlets or managedclusteraddons or acm_agent_namespaces)
 acm_dr_present = bool(secondary_site_dr_present and (acm_registration_present or acm_managed))
 acm_dr_healthy = bool(
     acm_dr_present
@@ -4442,8 +4444,6 @@ if cap_required("descheduler_operator") and descheduler_present and not deschedu
         source="Descheduler Operator inventory",
     )
 
-acm_registration_present = bool(klusterlets or managedclusteraddons or acm_agent_namespaces)
-acm_registration_healthy = bool(klusterlets or acm_agent_namespaces)
 if acm_registration_present or cap_required("advanced_cluster_management"):
     add_check(
         "ACM managed-cluster registration",

@@ -8,26 +8,34 @@
 
 - name: Normalize production Day 2 posture summary
   vars:
+    day2_posture_error_raw: >-
+      {{
+        day2_posture_cmd.stderr | default('') | trim
+        or ('production Day 2 posture analyzer returned rc=' ~ (day2_posture_cmd.rc | default(-1) | string) ~ ' without JSON output')
+      }}
+    day2_posture_error_summary: >-
+      {{
+        day2_posture_error_raw
+        | string
+        | regex_replace('[\r\n\t]+', ' ')
+        | regex_replace('\s+', ' ')
+        | regex_replace('^\s+|\s+$', '')
+        | truncate(500, True, '...')
+      }}
     day2_posture_payload: >-
       {{
         day2_posture_cmd.stdout | from_json
         if (day2_posture_cmd.rc == 0 and (day2_posture_cmd.stdout | default('') | length > 0))
         else {
           'assessment_state': 'failed',
-          'assessment_error': (
-            day2_posture_cmd.stderr | default('') | trim
-            or ('production Day 2 posture analyzer returned rc=' ~ (day2_posture_cmd.rc | default(-1) | string) ~ ' without JSON output')
-          ),
+          'assessment_error': day2_posture_error_summary,
           'day2_posture_checks': [],
           'day2_posture_findings': [],
           'scored_day2_posture_findings': [],
           'capability_sections': [],
           'day2_posture_summary': {
             'capability_assessment_state': 'failed',
-            'capability_assessment_error': (
-              day2_posture_cmd.stderr | default('') | trim
-              or ('production Day 2 posture analyzer returned rc=' ~ (day2_posture_cmd.rc | default(-1) | string) ~ ' without JSON output')
-            ),
+            'capability_assessment_error': day2_posture_error_summary,
             'checks_total': 0,
             'checks_warn': 0,
             'scored_findings_count': 0,

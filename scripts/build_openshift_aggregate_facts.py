@@ -50,10 +50,30 @@ def age_days(value: str) -> float:
     return (datetime.now(timezone.utc) - parsed).total_seconds() / 86400.0
 
 
-def latest_managed_time(metadata: dict) -> str:
+def managed_field_paths(field_tree, prefix: str = "") -> set[str]:
+    paths = set()
+    if not isinstance(field_tree, dict):
+        return paths
+    for key, value in field_tree.items():
+        if not isinstance(key, str):
+            continue
+        if key.startswith("f:"):
+            current = f"{prefix}.{key[2:]}" if prefix else key[2:]
+            paths.add(current)
+            paths.update(managed_field_paths(value, current))
+        elif key in {"fieldsV1", "."}:
+            paths.update(managed_field_paths(value, prefix))
+    return paths
+
+
+def latest_managed_time(metadata: dict, content_fields: set[str] | None = None) -> str:
     latest = None
     latest_text = ""
     for field in as_list(metadata.get("managedFields")):
+        if content_fields:
+            paths = managed_field_paths(as_dict(field).get("fieldsV1"))
+            if not any(wanted in paths or any(path.startswith(wanted + ".") for path in paths) for wanted in content_fields):
+                continue
         text = str(as_dict(field).get("time") or "").strip()
         parsed = parse_timestamp(text)
         if parsed and (latest is None or parsed > latest):
@@ -82,8 +102,8 @@ def stale_configmaps(items: list, exclude_re, threshold_days: int) -> list:
         namespace = str(metadata.get("namespace") or "")
         if exclude_re.search(namespace):
             continue
-        last_changed = latest_managed_time(metadata)
-        basis = "managedFields.lastUpdate" if last_changed else "creationTimestamp"
+        last_changed = latest_managed_time(metadata, {"data", "binaryData"})
+        basis = "managedFields.contentUpdate" if last_changed else "creationTimestamp"
         timestamp = last_changed or str(metadata.get("creationTimestamp") or "")
         if age_days(timestamp) > threshold_days:
             row = object_age_row(item, "ConfigMap", timestamp, basis)
@@ -100,8 +120,8 @@ def stale_secrets(items: list, exclude_re, secret_type: str, threshold_days: int
         item_type = str(item.get("type") or "Opaque")
         if exclude_re.search(namespace) or item_type != secret_type:
             continue
-        last_changed = latest_managed_time(metadata)
-        basis = "managedFields.lastUpdate" if last_changed else "creationTimestamp"
+        last_changed = latest_managed_time(metadata, {"data", "stringData", "type"})
+        basis = "managedFields.contentUpdate" if last_changed else "creationTimestamp"
         timestamp = last_changed or str(metadata.get("creationTimestamp") or "")
         if age_days(timestamp) > threshold_days:
             row = object_age_row(item, "Secret", timestamp, basis)

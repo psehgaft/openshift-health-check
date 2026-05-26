@@ -530,6 +530,7 @@ def etcd_db_size(root: Path, endpoint_name: str) -> str:
     if endpoint_name.startswith("etcd-"):
         suffix = endpoint_name.removeprefix("etcd-")
         endpoint_names.add(f"etcd-ip-{suffix.replace('.', '-')}")
+        endpoint_names.add(f"etcd-ip-{suffix.replace('.', '-')}.ec2.internal")
     candidates = []
     for name in endpoint_names:
         for path in root.glob(f"**/namespaces/openshift-etcd/pods/{name}/**/member/snap/db"):
@@ -538,6 +539,20 @@ def etcd_db_size(root: Path, endpoint_name: str) -> str:
         for path in root.glob(f"**/namespaces/openshift-etcd/pods/{name}/**/*.db"):
             if path.is_file():
                 candidates.append(path)
+    if not candidates:
+        wanted_keys = {normalize_endpoint_key(name) for name in endpoint_names}
+        for pod_dir in root.glob("**/namespaces/openshift-etcd/pods/*"):
+            if not pod_dir.is_dir():
+                continue
+            pod_keys = {normalize_endpoint_key(pod_dir.name), normalize_endpoint_key(pod_dir.name.split(".", 1)[0])}
+            if not (wanted_keys & pod_keys):
+                continue
+            for path in pod_dir.glob("**/member/snap/db"):
+                if path.is_file():
+                    candidates.append(path)
+            for path in pod_dir.glob("**/*.db"):
+                if path.is_file():
+                    candidates.append(path)
     try:
         return format_bytes(max(path.stat().st_size for path in candidates)) if candidates else ""
     except OSError:

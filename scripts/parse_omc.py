@@ -165,9 +165,13 @@ def parse_size_to_bytes(value: str) -> Optional[int]:
     return int(number * multipliers.get(unit, 1))
 
 
-def format_bytes(value: Optional[int]) -> str:
+LOCAL_MISSING = "not-present-in-must-gather"
+LOCAL_NOT_DERIVABLE = "not-derivable-from-must-gather"
+
+
+def format_bytes(value: Optional[int], missing: str = "not-collected") -> str:
     if value is None:
-        return "not-collected"
+        return missing
     units = ["B", "KB", "MB", "GB", "TB", "PB"]
     amount = float(value)
     for unit in units:
@@ -193,7 +197,7 @@ def normalize_unknown(value: str, default: str = "not-collected") -> str:
 
 def format_unused_percent(size_bytes: Optional[int], in_use_bytes: Optional[int]) -> Tuple[str, Optional[float]]:
     if size_bytes is None or in_use_bytes is None or size_bytes <= 0:
-        return "not-collected", None
+        return LOCAL_NOT_DERIVABLE, None
     unused_pct = round((max(size_bytes - in_use_bytes, 0) / size_bytes) * 100.0, 1)
     return f"{unused_pct}%", unused_pct
 
@@ -215,9 +219,9 @@ def parse_etcd_db_fields(row: Dict[str, str]) -> Tuple[Optional[int], Optional[i
     return (
         size_bytes,
         in_use_bytes,
-        normalize_unknown(db_size_text),
-        normalize_unknown(db_in_use_text),
-        normalize_unknown(not_used_text),
+        normalize_unknown(db_size_text, default=LOCAL_MISSING),
+        normalize_unknown(db_in_use_text, default=LOCAL_MISSING),
+        normalize_unknown(not_used_text, default=LOCAL_NOT_DERIVABLE),
         not_used_pct,
     )
 
@@ -256,11 +260,11 @@ def summarize_etcd_db_stats(etcd_rows: List[Dict[str, str]]) -> Dict[str, Any]:
         "etcd_db_in_use_total_bytes": total_in_use,
         "etcd_db_size_max_bytes": max_size,
         "etcd_db_in_use_max_bytes": max_in_use,
-        "etcd_db_size_total": format_bytes(total_size),
-        "etcd_db_in_use_total": format_bytes(total_in_use),
-        "etcd_db_size_max": format_bytes(max_size),
-        "etcd_db_in_use_max": format_bytes(max_in_use),
-        "etcd_db_not_used_max_pct": max_not_used if max_not_used is not None else "not-collected",
+        "etcd_db_size_total": format_bytes(total_size, missing=LOCAL_MISSING),
+        "etcd_db_in_use_total": format_bytes(total_in_use, missing=LOCAL_MISSING),
+        "etcd_db_size_max": format_bytes(max_size, missing=LOCAL_MISSING),
+        "etcd_db_in_use_max": format_bytes(max_in_use, missing=LOCAL_MISSING),
+        "etcd_db_not_used_max_pct": max_not_used if max_not_used is not None else LOCAL_NOT_DERIVABLE,
     }
 
 
@@ -344,7 +348,7 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
         if str(row.get("is_leader", "")).strip().lower() in {"true", "false"}
     ]
     leader_count = sum(1 for row in known_leader_rows if row.get("is_leader", "").lower() == "true")
-    leader_count_value: Any = leader_count if known_leader_rows else "not-collected"
+    leader_count_value: Any = leader_count if known_leader_rows else LOCAL_MISSING
     learner_count = sum(1 for row in etcd_rows if row.get("is_learner", "").lower() == "true")
     db_stats = summarize_etcd_db_stats(etcd_rows)
 
