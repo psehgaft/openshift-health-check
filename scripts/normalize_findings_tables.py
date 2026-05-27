@@ -138,6 +138,10 @@ def format_decimal_numbers(value: str) -> str:
     return DECIMAL_NUMBER_RE.sub(replace, value)
 
 
+def strip_markdown_code_ticks(markdown: str) -> str:
+    return markdown.replace("`", "")
+
+
 def split_markdown_row(row: str) -> list[str]:
     if not row.startswith("|"):
         return []
@@ -270,7 +274,9 @@ def normalize_textual_table_columns(markdown: str) -> str:
 
 def normalize_file(path: Path) -> None:
     markdown = path.read_text(encoding="utf-8")
-    normalized = format_decimal_numbers(normalize_textual_table_columns(normalize_findings_tables(markdown)))
+    normalized = strip_markdown_code_ticks(
+        format_decimal_numbers(normalize_textual_table_columns(normalize_findings_tables(markdown)))
+    )
     if normalized != markdown:
         path.write_text(normalized, encoding="utf-8")
 

@@ -149,10 +149,10 @@ assert all("accounting_state" in item for item in capability_sections)
 assert all(item["accounting_state"] in {"assessed", "profile-enabled-no-direct-check"} for item in capability_sections)
 
 for posture_key in enabled_postures:
-    assert f"| `{posture_key}` |" in report_md
+    assert f"| {posture_key} |" in report_md
 
 for capability_key in enabled_capabilities:
-    assert f"| `{capability_key}` |" in report_md
+    assert f"| {capability_key} |" in report_md
 
 assert "### Profile Accounting" in report_md
 assert "| Postures |" in report_md
@@ -164,7 +164,7 @@ print(report_path)
 PY
 
 rg -q '^# OpenShift Cluster Health Report' "${report_md}"
-rg -q '| Supportability verdict | `unsupported-risk` |' "${report_md}"
+rg -q '| Supportability verdict | unsupported-risk |' "${report_md}"
 rg -q '^## Day 2 Production Readiness' "${report_md}"
 rg -q '## Node Health And Capacity' "${report_md}"
 rg -q '^## Platform Architecture And Lifecycle' "${report_md}"

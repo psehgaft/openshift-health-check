@@ -540,6 +540,8 @@ def validate_decimal_precision(markdown: str) -> None:
 
 def validate_markdown(path: Path) -> None:
     markdown = path.read_text(encoding="utf-8")
+    if "`" in markdown:
+        fail(f"{path}: markdown report must not contain backtick-wrapped text")
     for pattern, message in FORBIDDEN_MARKDOWN_PATTERNS:
         if re.search(pattern, markdown, flags=re.IGNORECASE | re.MULTILINE):
             fail(f"{path}: {message}")
@@ -569,7 +571,7 @@ def validate_markdown_matches_json(markdown_path: Path, json_path: Path) -> None
     if assessment_state == "completed":
         if "Capability assessment did not complete cleanly in this run" in markdown:
             fail(f"{markdown_path}: markdown still renders fallback Day 2 assessment text even though JSON reports completed capability assessment")
-        if "| Capability assessment state | `completed` |" not in markdown:
+        if "| Capability assessment state | completed |" not in markdown:
             fail(f"{markdown_path}: markdown must show completed Day 2 capability assessment state")
 
 

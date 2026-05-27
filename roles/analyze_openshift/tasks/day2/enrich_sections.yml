@@ -1948,13 +1948,13 @@
                       if (('.' in image_first) or (':' in image_first) or (image_first == 'localhost'))
                       else 'docker.io'
                     ) -%}
-                {%- set internal_registry = false -%}
+                {%- set internal_registry = namespace(present=false) -%}
                 {%- for marker in internal_registry_markers -%}
                   {%- if marker in registry or marker in (image | lower) -%}
-                    {%- set internal_registry = true -%}
+                    {%- set internal_registry.present = true -%}
                   {%- endif -%}
                 {%- endfor -%}
-                {%- if (registry not in public_registry_names) and (not internal_registry) -%}
+                {%- if (registry not in public_registry_names) and (not internal_registry.present) -%}
                   {%- if registry not in ns.external_registries -%}
                     {%- set _ = ns.external_registries.append(registry) -%}
                   {%- endif -%}
@@ -2252,13 +2252,14 @@
         {%- elif (not capability_assessment_completed) and (section.key | default('') == 'dynatrace_observability') -%}
           {%- set dynatrace_namespace_present = ('dynatrace' in (namespace_names | default([]))) -%}
           {%- set dynatrace_operator_subscription_present = ('dynatrace-operator' in (subscription_packages | default([]))) -%}
-          {%- set dynatrace_workload_present = false -%}
+          {%- set dynatrace_workload = namespace(present=false) -%}
           {%- for blob in (all_workload_blobs | default([])) -%}
             {%- set lowered = blob | string | lower -%}
             {%- if 'dynatrace-operator' in lowered or 'dynakube' in lowered or 'oneagent' in lowered or 'activegate' in lowered or 'dynatrace-webhook' in lowered -%}
-              {%- set dynatrace_workload_present = true -%}
+              {%- set dynatrace_workload.present = true -%}
             {%- endif -%}
           {%- endfor -%}
+          {%- set dynatrace_workload_present = dynatrace_workload.present -%}
           {%- set dynatrace_dynakube_present = (((analysis_graph.dynakubes | default({})).get('items', []) | length) > 0) -%}
           {%- set dynatrace_edgeconnect_present = (((analysis_graph.edgeconnects | default({})).get('items', []) | length) > 0) -%}
           {%- set dynatrace_crd_present = (
@@ -2473,29 +2474,32 @@
                 'recommended_action': recommended_action
               }, recursive=True) -%}
         {%- elif (not capability_assessment_completed) and (section.key | default('') == 'cyberark_conjur_secrets_management') -%}
-          {%- set conjur_namespace_present = false -%}
+          {%- set conjur_namespace = namespace(present=false) -%}
           {%- for ns_name in (namespace_names | default([])) -%}
             {%- set lowered = ns_name | string | lower -%}
             {%- if lowered in ['conjur', 'conjur-server', 'cyberark-conjur'] -%}
-              {%- set conjur_namespace_present = true -%}
+              {%- set conjur_namespace.present = true -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set conjur_workload_present = false -%}
+          {%- set conjur_workload = namespace(present=false) -%}
           {%- for blob in (all_workload_blobs | default([])) -%}
             {%- set lowered = blob | string | lower -%}
             {%- if 'conjur' in lowered or 'conjur-oss' in lowered or 'conjur-follower' in lowered or 'conjur-appliance' in lowered or 'authn-k8s' in lowered or 'conjur-authn' in lowered or 'secretless' in lowered or 'secrets-provider-for-k8s' in lowered or 'conjur-csi-provider' in lowered -%}
-              {%- set conjur_workload_present = true -%}
+              {%- set conjur_workload.present = true -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set conjur_secretproviderclass_count = 0 -%}
+          {%- set conjur_secretproviderclass = namespace(count=0) -%}
           {%- for item in ((analysis_graph.secretproviderclasses | default({})).get('items', []) | default([])) -%}
             {%- set spec = item.get('spec') or {} -%}
             {%- set provider = ((spec.get('provider') or '') | string | lower | trim) -%}
             {%- set params_blob = (((spec.get('parameters') or {}) | to_json) | lower) -%}
             {%- if provider == 'conjur' or 'conjur.org' in params_blob or 'cyberark' in params_blob -%}
-              {%- set conjur_secretproviderclass_count = conjur_secretproviderclass_count + 1 -%}
+              {%- set conjur_secretproviderclass.count = conjur_secretproviderclass.count + 1 -%}
             {%- endif -%}
           {%- endfor -%}
+          {%- set conjur_namespace_present = conjur_namespace.present -%}
+          {%- set conjur_workload_present = conjur_workload.present -%}
+          {%- set conjur_secretproviderclass_count = conjur_secretproviderclass.count -%}
           {%- set conjur_secretproviderclass_present = conjur_secretproviderclass_count > 0 -%}
           {%- set cyberark_conjur_present = conjur_workload_present or conjur_secretproviderclass_present or conjur_namespace_present -%}
           {%- set cyberark_conjur_healthy = conjur_workload_present or conjur_secretproviderclass_present -%}
@@ -2753,34 +2757,38 @@
                 'recommended_action': recommended_action
               }, recursive=True) -%}
         {%- elif (not capability_assessment_completed) and (section.key | default('') == 'workload_vulnerability_scanning') -%}
-          {%- set scanner_subscription_present = false -%}
+          {%- set scanner_subscription = namespace(present=false) -%}
           {%- for pkg in (subscription_packages | default([])) -%}
             {%- set lowered = pkg | string | lower -%}
             {%- if lowered in ['trivy-operator', 'container-security-operator', 'aqua', 'aqua-operator', 'qualys-cloud-agent-operator', 'prisma-cloud-compute'] -%}
-              {%- set scanner_subscription_present = true -%}
+              {%- set scanner_subscription.present = true -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set scanner_crd_present = false -%}
+          {%- set scanner_crd = namespace(present=false) -%}
           {%- for crd in ((analysis_graph.crds | default({})).get('items', []) | default([])) -%}
             {%- set crd_name = (((crd.get('metadata') or {}).get('name')) or '') | string | lower -%}
             {%- if 'aquasecurity.github.io' in crd_name or 'vulnerabilityreports' in crd_name -%}
-              {%- set scanner_crd_present = true -%}
+              {%- set scanner_crd.present = true -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set scanner_namespace_present = false -%}
+          {%- set scanner_namespace = namespace(present=false) -%}
           {%- for ns_name in (namespace_names | default([])) -%}
             {%- set lowered = ns_name | string | lower -%}
             {%- if lowered in ['trivy-system', 'stackrox', 'rhacs-operator', 'aqua', 'qualys', 'qualys-agent', 'twistlock', 'prisma-cloud'] -%}
-              {%- set scanner_namespace_present = true -%}
+              {%- set scanner_namespace.present = true -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set scanner_workload_present = false -%}
+          {%- set scanner_workload = namespace(present=false) -%}
           {%- for blob in (all_workload_blobs | default([])) -%}
             {%- set lowered = blob | string | lower -%}
             {%- if 'trivy-operator' in lowered or 'starboard' in lowered or 'trivy-scanner' in lowered or 'aqua' in lowered or 'qualys' in lowered or 'qualys-cloud-agent' in lowered or 'twistlock' in lowered or 'prisma-cloud' in lowered or 'vulnerability-scanner' in lowered or 'stackrox-scanner' in lowered -%}
-              {%- set scanner_workload_present = true -%}
+              {%- set scanner_workload.present = true -%}
             {%- endif -%}
           {%- endfor -%}
+          {%- set scanner_subscription_present = scanner_subscription.present -%}
+          {%- set scanner_crd_present = scanner_crd.present -%}
+          {%- set scanner_namespace_present = scanner_namespace.present -%}
+          {%- set scanner_workload_present = scanner_workload.present -%}
           {%- set scanner_context_present = scanner_subscription_present or scanner_crd_present or scanner_namespace_present or scanner_workload_present -%}
           {%- set scanner_present = scanner_workload_present -%}
           {%- set capability_status = (
@@ -2838,22 +2846,24 @@
         {%- elif (not capability_assessment_completed) and (section.key | default('') == 'advanced_cluster_security') -%}
           {%- set acs_operator_subscription_present = ('container-security-operator' in (subscription_packages | default([]))) -%}
           {%- set acs_namespace_present = ('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([]))) -%}
-          {%- set acs_crd_present = false -%}
+          {%- set acs_crd = namespace(present=false) -%}
           {%- for crd in ((analysis_graph.crds | default({})).get('items', []) | default([])) -%}
             {%- set crd_name = (((crd.get('metadata') or {}).get('name')) or '') | string | lower -%}
             {%- if 'platform.stackrox.io' in crd_name or 'central.stackrox.io' in crd_name or 'securedcluster.stackrox.io' in crd_name or 'stackrox.io' in crd_name -%}
-              {%- set acs_crd_present = true -%}
+              {%- set acs_crd.present = true -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set acs_workload_present = false -%}
+          {%- set acs_workload = namespace(present=false) -%}
           {%- for blob in (all_workload_blobs | default([])) -%}
             {%- set lowered = blob | string | lower -%}
             {%- if 'stackrox-central' in lowered or 'central-db' in lowered or 'stackrox-scanner' in lowered or 'stackrox-scanner-db' in lowered or 'secured-cluster-services' in lowered or 'admission-control' in lowered or 'stackrox-sensor' in lowered -%}
-              {%- set acs_workload_present = true -%}
+              {%- set acs_workload.present = true -%}
             {%- endif -%}
           {%- endfor -%}
+          {%- set acs_crd_present = acs_crd.present -%}
+          {%- set acs_workload_present = acs_workload.present -%}
           {%- set advanced_cluster_security_present = acs_operator_subscription_present or acs_namespace_present or acs_crd_present or acs_workload_present -%}
-          {%- set capability_status = ('OK' if advanced_cluster_security_present else 'INFO') -%}
+          {%- set capability_status = ('OK' if advanced_cluster_security_present else ('WARNING' if (section.required | default(false)) else 'INFO')) -%}
           {%- set top_detail = (
                 'subscriptionPresent=' ~ (acs_operator_subscription_present | string)
                 ~ ' acsNamespacePresent=' ~ (acs_namespace_present | string)
@@ -2867,9 +2877,9 @@
               ) -%}
           {%- set findings = (
                 []
-                if advanced_cluster_security_present
+                if capability_status == 'OK'
                 else [{
-                  'severity': 'info',
+                  'severity': ('warning' if capability_status == 'WARNING' else 'info'),
                   'issue': 'Advanced Cluster Security footprint missing',
                   'source': 'RHACS operator and secured-cluster inventory',
                   'recommended_action': recommended_action
@@ -2882,7 +2892,7 @@
                 'finding_count': (findings | length),
                 'checks': [{
                   'capability': 'advanced_cluster_security',
-                  'status': ('OK' if advanced_cluster_security_present else 'INFO'),
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
                   'level': ('required' if (section.required | default(false)) else 'informational'),
                   'source': 'RHACS operator and secured-cluster inventory',
                   'detail': top_detail

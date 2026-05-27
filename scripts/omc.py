@@ -301,6 +301,23 @@ def endpoint_addresses(endpoint: Dict[str, Any], ready: bool) -> List[str]:
     return values
 
 
+def endpoint_address_records(endpoint: Dict[str, Any], ready: bool) -> List[Dict[str, str]]:
+    key = "addresses" if ready else "notReadyAddresses"
+    records = []
+    for subset in endpoint.get("subsets") or []:
+        for address in subset.get(key) or []:
+            value = address.get("ip") or address.get("hostname") or address.get("targetRef", {}).get("name")
+            if not value:
+                continue
+            target_ref = address.get("targetRef") if isinstance(address.get("targetRef"), dict) else {}
+            records.append({
+                "address": str(value),
+                "target_name": str(target_ref.get("name") or ""),
+                "target_kind": str(target_ref.get("kind") or ""),
+            })
+    return records
+
+
 def find_etcd_pod_names(root: Path) -> List[str]:
     names = []
     for path in sorted(root.glob("**/namespaces/openshift-etcd/pods/etcd-*")):
@@ -393,7 +410,7 @@ def metric_endpoint_keys(labels: Dict[str, str]) -> List[str]:
 def collect_etcd_metric_facts(root: Path) -> Dict[str, Dict[str, Any]]:
     facts = {}  # type: Dict[str, Dict[str, Any]]
     metric_pattern = re.compile(
-        r"^(etcd_(?:debugging_)?mvcc_db_total_size(?:_in_use)?_in_bytes)"
+        r"^(etcd_(?:debugging_)?mvcc_db_total_size(?:_in_use)?_in_bytes|etcd_server_is_leader)"
         r"(?:\{([^}]*)\})?\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\b"
     )
     size_metrics = {
@@ -414,8 +431,18 @@ def collect_etcd_metric_facts(root: Path) -> Dict[str, Dict[str, Any]]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if "etcd_mvcc_db_total_size" not in text and "etcd_debugging_mvcc_db_total_size" not in text:
+        if (
+            "etcd_mvcc_db_total_size" not in text
+            and "etcd_debugging_mvcc_db_total_size" not in text
+            and "etcd_server_is_leader" not in text
+        ):
             continue
+        path_pod_names = []
+        path_parts = path.parts
+        if "pods" in path_parts:
+            pod_index = len(path_parts) - 1 - list(reversed(path_parts)).index("pods")
+            if pod_index + 1 < len(path_parts):
+                path_pod_names.append(path_parts[pod_index + 1])
         for line in text.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
@@ -424,15 +451,14 @@ def collect_etcd_metric_facts(root: Path) -> Dict[str, Dict[str, Any]]:
             if not match:
                 continue
             metric_name, label_text, raw_value = match.groups()
-            field = size_metrics.get(metric_name)
-            if not field:
-                continue
             try:
                 metric_value = int(float(raw_value))
             except ValueError:
                 continue
             labels = parse_prometheus_labels(label_text or "")
             keys = metric_endpoint_keys(labels)
+            for pod_name in path_pod_names:
+                keys.extend(endpoint_keys(pod_name))
             if not keys and labels:
                 keys = [str(next(iter(labels.values())))]
             for key_value in keys:
@@ -440,7 +466,11 @@ def collect_etcd_metric_facts(root: Path) -> Dict[str, Dict[str, Any]]:
                 if not normalized:
                     continue
                 current = facts.setdefault(normalized, {})
-                current[field] = max(int(current.get(field) or 0), metric_value)
+                field = size_metrics.get(metric_name)
+                if field:
+                    current[field] = max(int(current.get(field) or 0), metric_value)
+                elif metric_name == "etcd_server_is_leader":
+                    current["is_leader"] = metric_value == 1
     for fact in facts.values():
         if "db_size" in fact and "db_in_use" in fact and not fact.get("not_used"):
             fact["not_used"] = format_not_used_pct(fact.get("db_size"), fact.get("db_in_use"))
@@ -599,10 +629,22 @@ def collect_etcd_status_facts(root: Path) -> Dict[str, Dict[str, Any]]:
     metric_facts = collect_etcd_metric_facts(root)
     for key, fact in metric_facts.items():
         current = facts.setdefault(key, {})
-        for field in ("db_size", "db_in_use", "not_used"):
+        for field in ("db_size", "db_in_use", "not_used", "is_leader"):
             if current.get(field) in (None, "") and fact.get(field) not in (None, ""):
                 current[field] = fact.get(field)
     return facts
+
+
+def merged_status_fact(status_facts: Dict[str, Dict[str, Any]], candidates: Iterable[str]) -> Dict[str, Any]:
+    merged = {}
+    for candidate in candidates:
+        for key in endpoint_keys(str(candidate)):
+            fact = status_facts.get(normalize_endpoint_key(key), {})
+            if fact:
+                for field, value in fact.items():
+                    if merged.get(field) in (None, "") and value not in (None, ""):
+                        merged[field] = value
+    return merged
 
 
 def etcd_db_size(root: Path, endpoint_name: str) -> str:
@@ -652,12 +694,22 @@ def cmd_etcd_status(root: Path) -> int:
     if not endpoints:
         endpoints = [obj for obj in iter_documents(root) if obj.get("kind") == "Endpoints" and meta(obj).get("namespace") == "openshift-etcd"]
     for endpoint in endpoints:
-        ready_addresses = endpoint_addresses(endpoint, ready=True)
-        not_ready_addresses = endpoint_addresses(endpoint, ready=False)
-        all_addresses = ready_addresses + not_ready_addresses
-        for index, address in enumerate(all_addresses):
+        ready_records = endpoint_address_records(endpoint, ready=True)
+        not_ready_records = endpoint_address_records(endpoint, ready=False)
+        all_records = ready_records + not_ready_records
+        not_ready_addresses = {record["address"] for record in not_ready_records}
+        for index, record in enumerate(all_records):
+            address = record["address"]
             endpoint_name = f"etcd-{address}"
-            fact = status_facts.get(normalize_endpoint_key(address), {})
+            fact = merged_status_fact(
+                status_facts,
+                [
+                    address,
+                    record.get("target_name", ""),
+                    endpoint_name,
+                    f"etcd-ip-{address.replace('.', '-')}" if re.fullmatch(r"\d+(?:\.\d+){3}", address) else "",
+                ],
+            )
             db_size_value = fact.get("db_size")
             db_in_use_value = fact.get("db_in_use")
             db_size = format_bytes(db_size_value) if isinstance(db_size_value, int) else etcd_db_size(root, endpoint_name)
@@ -671,7 +723,7 @@ def cmd_etcd_status(root: Path) -> int:
                 "",
                 db_combined,
                 not_used,
-                str(is_leader).lower() if isinstance(is_leader, bool) else ("true" if len(all_addresses) == 1 and index == 0 else ""),
+                str(is_leader).lower() if isinstance(is_leader, bool) else "",
                 "",
                 "",
                 "",
@@ -693,7 +745,7 @@ def cmd_etcd_status(root: Path) -> int:
             db_combined = f"{db_size} / {db_in_use}" if db_size and db_in_use else db_size
             not_used = str(fact.get("not_used") or format_not_used_pct(db_size_value, db_in_use_value))
             is_leader = fact.get("is_leader")
-            rows.append([pod, "", "", db_combined, not_used, str(is_leader).lower() if isinstance(is_leader, bool) else ("true" if len(pods) == 1 and index == 0 else ""), "", "", "", "", str(fact.get("errors") or "")])
+            rows.append([pod, "", "", db_combined, not_used, str(is_leader).lower() if isinstance(is_leader, bool) else "", "", "", "", "", str(fact.get("errors") or "")])
     if not rows:
         return 1
     print_pipe_table(

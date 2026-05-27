@@ -51,7 +51,7 @@ print(report_path)
 PY
 
 rg -q '^# OpenShift Cluster Health Report' "${report_md}"
-rg -q 'Evidence mode: `inspect`' "${report_md}"
-! rg -q 'No `sosreport` archive was collected for node diagnostics\.' "${report_md}"
+rg -q 'Evidence mode: inspect' "${report_md}"
+! rg -q 'No sosreport archive was collected for node diagnostics\.' "${report_md}"
 
 printf 'inspect fixture report ok\njson=%s\nmd=%s\nlog=%s\n' "${report_json}" "${report_md}" "${LOG_PATH}"

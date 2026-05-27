@@ -1822,7 +1822,7 @@ def finding_capability_key(issue, source):
     }
     return issue_map.get(issue, "")
 
-def add_finding(issue, detail, severity="warning", source="general", capability_key=None):
+def add_finding(issue, detail, severity="warning", source="general", capability_key=None, recommended_action=None):
     capability_key = capability_key if capability_key is not None else finding_capability_key(issue, source)
     if capability_key and not cap_enabled(capability_key):
         return
@@ -1833,7 +1833,7 @@ def add_finding(issue, detail, severity="warning", source="general", capability_
         "source": source,
         "capability": capability_key,
         "docs": docs_for_capability(capability_key) if capability_key else "",
-        "recommended_action": detail,
+        "recommended_action": recommended_action or detail,
     })
 
 gitops_present = bool(argocds or gitops_apps or gitops_projects)
@@ -2011,6 +2011,10 @@ if cap_required("cyberark_conjur_secrets_management") and not cyberark_conjur_se
         "no CyberArk Conjur namespace, workload, or Conjur-backed SecretProviderClass footprint was detected",
         severity=cap_failure_severity("cyberark_conjur_secrets_management"),
         source="CyberArk Conjur workload and Secrets Provider inventory",
+        recommended_action=(
+            "If CyberArk Conjur is the intended secrets-management path, collect or deploy Conjur server, "
+            "follower, authenticator, Secretless, Secrets Provider, or Conjur-backed SecretProviderClass evidence."
+        ),
     )
 elif cap_required("cyberark_conjur_secrets_management") and not cyberark_conjur_secrets_management_healthy:
     add_finding(
@@ -2018,6 +2022,10 @@ elif cap_required("cyberark_conjur_secrets_management") and not cyberark_conjur_
         "partial CyberArk Conjur signals were found, but no Conjur workload footprint or Conjur-backed SecretProviderClass was detected to demonstrate an active secrets-management path",
         severity=cap_failure_severity("cyberark_conjur_secrets_management"),
         source="CyberArk Conjur workload and Secrets Provider inventory",
+        recommended_action=(
+            "Review the Conjur server, follower, authenticator, Secretless, Secrets Provider, or CSI provider rollout "
+            "and confirm an application-facing secret delivery path is active."
+        ),
     )
 
 add_check(
@@ -4604,6 +4612,11 @@ print(json.dumps({
         "external_secret_ready_count": len(ready_external_secrets),
         "external_secrets_namespace_present": ext_secrets_namespace_present,
         "external_secrets_healthy": ext_secrets_healthy,
+        "cyberark_conjur_namespace_present": conjur_namespace_present,
+        "cyberark_conjur_workload_present": conjur_workload_present,
+        "cyberark_conjur_secretproviderclass_count": len(conjur_secretproviderclass_resources),
+        "cyberark_conjur_present": cyberark_conjur_secrets_management_present,
+        "cyberark_conjur_healthy": cyberark_conjur_secrets_management_healthy,
         "clusterautoscaler_count": len(clusterautoscalers),
         "clusterautoscaler_expected": autoscaler_expected,
         "hostedcluster_count": len(hostedclusters),

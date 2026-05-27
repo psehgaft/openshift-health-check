@@ -226,6 +226,23 @@ def parse_etcd_db_fields(row: Dict[str, str]) -> Tuple[Optional[int], Optional[i
     )
 
 
+def row_has_status_evidence(row: Dict[str, str]) -> bool:
+    size_bytes, in_use_bytes, _, _, _, not_used_pct = parse_etcd_db_fields(row)
+    leader_value = str(row.get("is_leader", "")).strip().lower()
+    learner_value = str(row.get("is_learner", "")).strip().lower()
+    errors_value = normalize_unknown(row.get("errors", ""), default="").strip()
+    return any(
+        [
+            size_bytes is not None,
+            in_use_bytes is not None,
+            not_used_pct is not None,
+            leader_value in {"true", "false"},
+            learner_value in {"true", "false"},
+            bool(errors_value),
+        ]
+    )
+
+
 def summarize_etcd_db_stats(etcd_rows: List[Dict[str, str]]) -> Dict[str, Any]:
     status_rows = []
     size_values = []
@@ -342,9 +359,15 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
         for row in etcd_rows
         if normalize_unknown(row.get("errors", ""), default="").strip()
     )
-    known_leader_rows = [
+    status_evidence_rows = [row for row in etcd_rows if row_has_status_evidence(row)]
+    rows_with_db_evidence = [
         row
         for row in etcd_rows
+        if parse_etcd_db_fields(row)[0] is not None and parse_etcd_db_fields(row)[1] is not None
+    ]
+    known_leader_rows = [
+        row
+        for row in status_evidence_rows
         if str(row.get("is_leader", "")).strip().lower() in {"true", "false"}
     ]
     leader_count = sum(1 for row in known_leader_rows if row.get("is_leader", "").lower() == "true")
@@ -365,6 +388,48 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
     etcd_operator_progressing = etcd_operator.get("progressing", "unknown")
     present = bool(etcd_rows or etcd_operator or etcd_result.get("ok") or etcd_operator_result.get("ok"))
     findings = []
+    if not etcd_result.get("ok"):
+        findings.append({
+            "severity": "warning",
+            "area": "omc-etcd-status",
+            "detail": f"local omc could not parse etcd status from the must-gather (rc={etcd_result.get('rc', 1)}).",
+        })
+    if not etcd_operator_result.get("ok"):
+        findings.append({
+            "severity": "info",
+            "area": "omc-etcd-operator",
+            "detail": f"local omc could not parse the etcd ClusterOperator object from the must-gather (rc={etcd_operator_result.get('rc', 1)}).",
+        })
+    if not prom_result.get("ok"):
+        findings.append({
+            "severity": "info",
+            "area": "omc-prom-rules",
+            "detail": f"local omc could not parse firing or pending Prometheus alert rules from the must-gather (rc={prom_result.get('rc', 1)}).",
+        })
+    if etcd_rows and not status_evidence_rows:
+        findings.append({
+            "severity": "info",
+            "area": "omc-etcd-status",
+            "detail": "local omc found etcd endpoint inventory, but no endpoint status, leader, or DB size evidence was present in the must-gather.",
+        })
+    elif etcd_rows and len(status_evidence_rows) < len(etcd_rows):
+        findings.append({
+            "severity": "info",
+            "area": "omc-etcd-status",
+            "detail": f"local omc found status evidence for {len(status_evidence_rows)} of {len(etcd_rows)} etcd endpoint(s).",
+        })
+    if etcd_rows and not known_leader_rows:
+        findings.append({
+            "severity": "info",
+            "area": "omc-etcd-status",
+            "detail": "local omc did not find etcd leader evidence in the must-gather.",
+        })
+    if etcd_rows and len(rows_with_db_evidence) < len(etcd_rows):
+        findings.append({
+            "severity": "info",
+            "area": "omc-etcd-status",
+            "detail": f"local omc found DB size and in-use evidence for {len(rows_with_db_evidence)} of {len(etcd_rows)} etcd endpoint(s).",
+        })
     if endpoint_error_count > 0:
         findings.append({
             "severity": "warning",
@@ -412,6 +477,12 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
         verdict = "not-collected"
     elif any(item["severity"] == "warning" for item in findings):
         verdict = "review-required"
+    elif etcd_rows and (
+        len(status_evidence_rows) < len(etcd_rows)
+        or len(rows_with_db_evidence) < len(etcd_rows)
+        or not known_leader_rows
+    ):
+        verdict = "partial-evidence"
     else:
         verdict = "supported"
 
@@ -423,7 +494,7 @@ def build_payload(must_gather_path: Path, omc_bin: Optional[str]) -> Dict[str, A
             "source": omc_source(omc_bin),
             "must_gather_path": str(must_gather_path),
             "omc_binary": omc_bin,
-            "etcd_status_present": bool(etcd_rows),
+            "etcd_status_present": bool(status_evidence_rows),
             "endpoint_count": len(etcd_rows),
             "leader_count": leader_count_value,
             "leader_status_collected": bool(known_leader_rows),
