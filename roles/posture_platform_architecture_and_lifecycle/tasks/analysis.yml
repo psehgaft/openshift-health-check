@@ -271,10 +271,6 @@
             'detail': 'ClusterVersion reports failing=true'
           }] if (cv_failing | default('Unknown')) == 'True' else [])
           + ([{
-            'issue': 'clusteroperators-unavailable',
-            'detail': (unavailable_operators | default([]) | length | string) ~ ' operators unavailable'
-          }] if (unavailable_operators | default([]) | length) > 0 else [])
-          + ([{
             'issue': 'clusteroperators-degraded',
             'detail': (degraded_operators | default([]) | length | string) ~ ' operators degraded'
           }] if (degraded_operators | default([]) | length) > 0 else [])
@@ -307,6 +303,10 @@
             'issue': 'clusterversion-progressing',
             'detail': 'ClusterVersion reports progressing=true'
           }] if (cv_progressing | default('Unknown')) == 'True' else [])
+          + ([{
+            'issue': 'clusteroperators-unavailable',
+            'detail': (unavailable_operators | default([]) | length | string) ~ ' operators unavailable'
+          }] if (unavailable_operators | default([]) | length) > 0 else [])
           + ([{
             'issue': 'high-impact-operators-progressing',
             'detail': (high_impact_progressing_operators | default([]) | join(', ')) ~ ' progressing'
@@ -357,10 +357,10 @@
     upgrade_readiness_recommendation: >-
       {{
         (
-          'Do not proceed with a cluster upgrade yet. Clear blocking conditions first: restore degraded or unavailable operators, recover not-ready nodes or MCP degradation, remove deprecated APIs that show explicit removal language, and resolve critical certificate expiry before planning the next minor.'
+          'Do not proceed with a cluster upgrade yet. Clear blocking conditions first: restore degraded operators, recover not-ready nodes or MCP degradation, remove deprecated APIs that show explicit removal language, and resolve critical certificate expiry before planning the next minor.'
           if (upgrade_blockers | length) > 0
           else (
-            'Upgrade readiness is not blocked, but it still needs cleanup. Review conditional update risks, progressing high-impact operators, node pressure, and evidence-confidence gaps before treating the cluster as ready for the next upgrade step.'
+            'Upgrade readiness is not blocked, but it still needs cleanup. Review conditional update risks, unavailable or progressing operators, node pressure, and evidence-confidence gaps before treating the cluster as ready for the next upgrade step.'
             if (upgrade_warnings | length) > 0
             else (
               'Current evidence does not show obvious upgrade blockers. Keep normal pre-upgrade review in place, confirm backup and rollback readiness, and proceed through the standard upgrade process for the target minor.'

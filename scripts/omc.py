@@ -373,6 +373,80 @@ def parse_size_value(value: Any) -> Optional[int]:
     return int(number * multipliers.get(unit, 1))
 
 
+def parse_prometheus_labels(value: str) -> Dict[str, str]:
+    labels = {}
+    for match in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"', value or ""):
+        labels[match.group(1)] = match.group(2).replace(r"\"", '"').replace(r"\\", "\\")
+    return labels
+
+
+def metric_endpoint_keys(labels: Dict[str, str]) -> List[str]:
+    values = []
+    for key in ("endpoint", "instance", "pod", "exported_pod", "node"):
+        value = labels.get(key)
+        if not value:
+            continue
+        values.extend(endpoint_keys(value))
+    return values
+
+
+def collect_etcd_metric_facts(root: Path) -> Dict[str, Dict[str, Any]]:
+    facts = {}  # type: Dict[str, Dict[str, Any]]
+    metric_pattern = re.compile(
+        r"^(etcd_(?:debugging_)?mvcc_db_total_size(?:_in_use)?_in_bytes)"
+        r"(?:\{([^}]*)\})?\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\b"
+    )
+    size_metrics = {
+        "etcd_mvcc_db_total_size_in_bytes": "db_size",
+        "etcd_debugging_mvcc_db_total_size_in_bytes": "db_size",
+        "etcd_mvcc_db_total_size_in_use_in_bytes": "db_in_use",
+        "etcd_debugging_mvcc_db_total_size_in_use_in_bytes": "db_in_use",
+    }
+    for path in sorted(root.glob("**/*")):
+        if not path.is_file():
+            continue
+        path_key = str(path).lower()
+        if not any(token in path_key for token in ("metric", "prometheus", "etcd")):
+            continue
+        try:
+            if path.stat().st_size > 10_000_000:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "etcd_mvcc_db_total_size" not in text and "etcd_debugging_mvcc_db_total_size" not in text:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = metric_pattern.match(line)
+            if not match:
+                continue
+            metric_name, label_text, raw_value = match.groups()
+            field = size_metrics.get(metric_name)
+            if not field:
+                continue
+            try:
+                metric_value = int(float(raw_value))
+            except ValueError:
+                continue
+            labels = parse_prometheus_labels(label_text or "")
+            keys = metric_endpoint_keys(labels)
+            if not keys and labels:
+                keys = [str(next(iter(labels.values())))]
+            for key_value in keys:
+                normalized = normalize_endpoint_key(key_value)
+                if not normalized:
+                    continue
+                current = facts.setdefault(normalized, {})
+                current[field] = max(int(current.get(field) or 0), metric_value)
+    for fact in facts.values():
+        if "db_size" in fact and "db_in_use" in fact and not fact.get("not_used"):
+            fact["not_used"] = format_not_used_pct(fact.get("db_size"), fact.get("db_in_use"))
+    return facts
+
+
 def parse_bool_value(value: Any) -> Optional[bool]:
     if isinstance(value, bool):
         return value
@@ -522,6 +596,12 @@ def collect_etcd_status_facts(root: Path) -> Dict[str, Dict[str, Any]]:
             for field in ("db_size", "db_in_use", "not_used", "is_leader", "errors"):
                 if current.get(field) in (None, "") and fact.get(field) not in (None, ""):
                     current[field] = fact.get(field)
+    metric_facts = collect_etcd_metric_facts(root)
+    for key, fact in metric_facts.items():
+        current = facts.setdefault(key, {})
+        for field in ("db_size", "db_in_use", "not_used"):
+            if current.get(field) in (None, "") and fact.get(field) not in (None, ""):
+                current[field] = fact.get(field)
     return facts
 
 

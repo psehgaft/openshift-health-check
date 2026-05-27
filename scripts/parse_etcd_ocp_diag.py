@@ -182,17 +182,27 @@ def main() -> int:
     if pattern_counts["lost_leader_count"] > 0:
         findings.append(
             {
-                "severity": "critical",
+                "severity": "warning",
                 "area": "etcd",
-                "detail": f"etcd logs recorded lost leader events: {pattern_counts['lost_leader_count']}",
+                "detail": (
+                    "etcd logs recorded historical lost leader events: "
+                    f"{pattern_counts['lost_leader_count']}. Correlate timestamps "
+                    "with current etcd runtime metrics before treating this as an "
+                    "active outage."
+                ),
             }
         )
     if pattern_counts["request_timeout_count"] > 0:
         findings.append(
             {
-                "severity": "critical",
+                "severity": "warning",
                 "area": "etcd",
-                "detail": f"etcd request timeout messages observed: {pattern_counts['request_timeout_count']}",
+                "detail": (
+                    "etcd request timeout messages were observed in logs: "
+                    f"{pattern_counts['request_timeout_count']}. This is historical "
+                    "diagnostic evidence unless live API or etcd runtime metrics are "
+                    "also degraded."
+                ),
             }
         )
     if pattern_counts["apply_took_too_long_count"] > 0:
