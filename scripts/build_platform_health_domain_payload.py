@@ -29,6 +29,16 @@ def first_defined(*values, default=None):
     return default
 
 
+def first_non_empty(*values, default=None):
+    for value in values:
+        if value is MISSING:
+            continue
+        if value in (None, "", [], {}, ()):  # preserve explicit scalars, skip empty containers
+            continue
+        return value
+    return default
+
+
 def build_payload(data):
     mode = data.get("mode") or "live"
     artifact = data.get("platform_health_posture_artifact") or {}
@@ -86,26 +96,26 @@ def build_payload(data):
     }
 
     payload = {
-        "summary": first_defined(
+        "summary": first_non_empty(
             nested_get(artifact, "summary"),
             nested_get(render_inputs, "summary"),
             default=summary_default,
         ),
-        "recommendations": first_defined(
+        "recommendations": first_non_empty(
             nested_get(artifact, "recommendations"),
             default=RECOMMENDATION,
         ),
-        "findings": first_defined(
+        "findings": first_non_empty(
             nested_get(artifact, "findings"),
             nested_get(render_inputs, "findings"),
             default=findings_default,
         ),
-        "operators": first_defined(
+        "operators": first_non_empty(
             nested_get(artifact, "operators"),
-            nested_get(render_inputs, "operators"),
+            first_non_empty(nested_get(render_inputs, "operators")),
             default=operators_default,
         ),
-        "infrastructure_components": first_defined(
+        "infrastructure_components": first_non_empty(
             nested_get(artifact, "infrastructure_components"),
             default={
                 "summary": first_defined(
@@ -118,32 +128,32 @@ def build_payload(data):
                 ),
             },
         ),
-        "etcd_ocp_diag_summary": first_defined(
+        "etcd_ocp_diag_summary": first_non_empty(
             nested_get(artifact, "etcd_ocp_diag_summary"),
-            nested_get(render_inputs, "etcd_ocp_diag_summary"),
+            first_non_empty(nested_get(render_inputs, "etcd_ocp_diag_summary")),
             default=data.get("etcd_ocp_diag_summary") or {},
         ),
-        "etcd_ocp_diag_findings": first_defined(
+        "etcd_ocp_diag_findings": first_non_empty(
             nested_get(artifact, "etcd_ocp_diag_findings"),
-            nested_get(render_inputs, "etcd_ocp_diag_findings"),
+            first_non_empty(nested_get(render_inputs, "etcd_ocp_diag_findings")),
             default=data.get("etcd_ocp_diag_findings") or [],
         ),
-        "omc_summary": first_defined(
+        "omc_summary": first_non_empty(
             nested_get(artifact, "omc_summary"),
-            nested_get(render_inputs, "omc_summary"),
+            first_non_empty(nested_get(render_inputs, "omc_summary")),
             default=data.get("omc_summary") or {},
         ),
-        "omc_findings": first_defined(
+        "omc_findings": first_non_empty(
             nested_get(artifact, "omc_findings"),
-            nested_get(render_inputs, "omc_findings"),
+            first_non_empty(nested_get(render_inputs, "omc_findings")),
             default=omc_findings_default,
         ),
-        "apiservice_issues": first_defined(
+        "apiservice_issues": first_non_empty(
             nested_get(artifact, "apiservice_issues"),
-            nested_get(render_inputs, "apiservice_issues"),
+            first_non_empty(nested_get(render_inputs, "apiservice_issues")),
             default=apiservice_issues_default,
         ),
-        "image_registry": first_defined(
+        "image_registry": first_non_empty(
             nested_get(artifact, "image_registry"),
             default=image_registry_default,
         ),

@@ -111,6 +111,31 @@ SEVERITY_RANK = {
     "healthy": 4,
     "supported": 4,
 }
+DECIMAL_NUMBER_RE = re.compile(r"[-+]?\d+\.\d+")
+
+
+def decimal_context_is_identifier(text: str, start: int, end: int) -> bool:
+    before = text[start - 1] if start > 0 else ""
+    after = text[end] if end < len(text) else ""
+    return (
+        before.isalnum()
+        or after.isalnum()
+        or (bool(before) and before in "._/-:")
+        or (bool(after) and after in "._/-:")
+    )
+
+
+def format_decimal_numbers(value: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        start, end = match.span()
+        if decimal_context_is_identifier(value, start, end):
+            return match.group(0)
+        try:
+            return f"{float(match.group(0)):.2f}"
+        except ValueError:
+            return match.group(0)
+
+    return DECIMAL_NUMBER_RE.sub(replace, value)
 
 
 def split_markdown_row(row: str) -> list[str]:
@@ -245,7 +270,7 @@ def normalize_textual_table_columns(markdown: str) -> str:
 
 def normalize_file(path: Path) -> None:
     markdown = path.read_text(encoding="utf-8")
-    normalized = normalize_textual_table_columns(normalize_findings_tables(markdown))
+    normalized = format_decimal_numbers(normalize_textual_table_columns(normalize_findings_tables(markdown)))
     if normalized != markdown:
         path.write_text(normalized, encoding="utf-8")
 

@@ -88,6 +88,7 @@ FORBIDDEN_JSON_PATTERNS = [
     (r"\baro-gitops\b", "JSON payload must not mention aro-gitops"),
     (r"\baro-classic-terraform/", "JSON payload must not mention aro-classic-terraform"),
 ]
+DECIMAL_NUMBER_RE = re.compile(r"[-+]?\d+\.\d+")
 
 BAD_SUMMARY_CLEAN_PHRASES = [
     "no remediation is currently required",
@@ -513,6 +514,30 @@ def validate_markdown_tables(markdown: str) -> None:
             fail(f"collapsed markdown table row at line {idx + 1}: {line}")
 
 
+def decimal_context_is_identifier(text: str, start: int, end: int) -> bool:
+    before = text[start - 1] if start > 0 else ""
+    after = text[end] if end < len(text) else ""
+    return (
+        before.isalnum()
+        or after.isalnum()
+        or (bool(before) and before in "._/-:")
+        or (bool(after) and after in "._/-:")
+    )
+
+
+def validate_decimal_precision(markdown: str) -> None:
+    for line_number, line in enumerate(markdown.splitlines(), start=1):
+        for match in DECIMAL_NUMBER_RE.finditer(line):
+            if decimal_context_is_identifier(line, *match.span()):
+                continue
+            decimal_part = match.group(0).split(".", 1)[1]
+            if len(decimal_part) > 2:
+                fail(
+                    "rendered decimal value has more than two places at "
+                    f"line {line_number}: {match.group(0)}"
+                )
+
+
 def validate_markdown(path: Path) -> None:
     markdown = path.read_text(encoding="utf-8")
     for pattern, message in FORBIDDEN_MARKDOWN_PATTERNS:
@@ -520,6 +545,7 @@ def validate_markdown(path: Path) -> None:
             fail(f"{path}: {message}")
 
     validate_markdown_tables(markdown)
+    validate_decimal_precision(markdown)
 
     validate_cluster_posture_sections(markdown)
     validate_day2_capability_markdown_sections(markdown)
