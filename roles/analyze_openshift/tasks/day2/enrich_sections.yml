@@ -1864,7 +1864,8 @@
           {%- set network_type = (((network_config.get('status') or {}).get('networkType') or default_network.get('type') or 'unknown') | string) -%}
           {%- set ovn_network = (network_type | lower) == 'ovnkubernetes' -%}
           {%- set ipsec_mode = (((ipsec_config or {}).get('mode') or ('Full' if (ipsec_config is mapping) else 'Disabled')) | string | trim) -%}
-          {%- set ovn_ipsec_encryption = (ovn_network and (ipsec_config is mapping) and ((ipsec_mode | lower) != 'disabled')) -%}
+          {%- set ovn_ipsec_external_only = (ovn_network and (ipsec_config is mapping) and ((ipsec_mode | lower) == 'external')) -%}
+          {%- set ovn_ipsec_encryption = (ovn_network and (ipsec_config is mapping) and ((ipsec_mode | lower) == 'full')) -%}
           {%- set capability_status = ('OK' if ovn_ipsec_encryption else 'WARNING') -%}
           {%- set top_detail = (
                 'networkType=' ~ (network_type | string)
@@ -1878,7 +1879,11 @@
                 else (
                   'This cluster is not using OVN-Kubernetes, so this capability is not currently demonstrated from collected network evidence.'
                   if not ovn_network
-                  else 'Enable OVN-Kubernetes IPsec through spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig when this capability is expected.'
+                  else (
+                    'OVN-Kubernetes IPsec is configured for external traffic only. Set spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required.'
+                    if ovn_ipsec_external_only
+                    else 'Enable OVN-Kubernetes IPsec with spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required.'
+                  )
                 )
               ) -%}
           {%- set findings = (

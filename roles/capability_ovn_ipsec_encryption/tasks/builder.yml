@@ -9,8 +9,9 @@
     ovn_ipsec_network_type_current: "{{ (((ovn_ipsec_network_config_current.get('status') or {}).get('networkType') or ovn_ipsec_default_network_current.get('type') or 'unknown') | string) }}"
     ovn_ipsec_is_ovn_current: "{{ (ovn_ipsec_network_type_current | lower) == 'ovnkubernetes' }}"
     ovn_ipsec_mode_current: "{{ (((ovn_ipsec_ipsec_config_current or {}).get('mode') or ('Full' if (ovn_ipsec_ipsec_config_current is mapping) else 'Disabled')) | string | trim) }}"
-    ovn_ipsec_enabled_current: "{{ (ovn_ipsec_is_ovn_current and (ovn_ipsec_ipsec_config_current is mapping) and ((ovn_ipsec_mode_current | lower) != 'disabled')) | bool }}"
-    ovn_ipsec_status_current: "{{ 'OK' if ovn_ipsec_enabled_current else 'WARNING' }}"
+    ovn_ipsec_external_only_current: "{{ (ovn_ipsec_is_ovn_current and (ovn_ipsec_ipsec_config_current is mapping) and ((ovn_ipsec_mode_current | lower) == 'external')) | bool }}"
+    ovn_ipsec_enabled_current: "{{ (ovn_ipsec_is_ovn_current and (ovn_ipsec_ipsec_config_current is mapping) and ((ovn_ipsec_mode_current | lower) == 'full')) | bool }}"
+    ovn_ipsec_status_current: "{{ (ovn_ipsec_day2_section_current.status | default('') | string | trim) or ('OK' if ovn_ipsec_enabled_current else 'WARNING') }}"
     ovn_ipsec_reason_current: >-
       {{
         (
@@ -40,4 +41,5 @@
       ovn_network: "{{ ovn_ipsec_is_ovn_current | bool }}"
       ipsec_config_present: "{{ (ovn_ipsec_ipsec_config_current is mapping) | bool }}"
       ipsec_mode: "{{ ovn_ipsec_mode_current }}"
+      ovn_ipsec_external_only: "{{ ovn_ipsec_external_only_current | bool }}"
       ovn_ipsec_encryption: "{{ ovn_ipsec_enabled_current | bool }}"

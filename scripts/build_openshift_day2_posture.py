@@ -64,10 +64,17 @@ ipsec_config = ovn_config.get("ipsecConfig")
 network_type = str(((network_config.get("status") or {}).get("networkType") or default_network.get("type") or "unknown"))
 ovn_network = network_type.lower() == "ovnkubernetes"
 ipsec_mode = str((ipsec_config or {}).get("mode") or ("Full" if isinstance(ipsec_config, dict) else "Disabled")).strip()
+ipsec_mode_normalized = ipsec_mode.lower()
+ipsec_config_present = isinstance(ipsec_config, dict)
+ovn_ipsec_external_only = bool(
+    ovn_network
+    and ipsec_config_present
+    and ipsec_mode_normalized == "external"
+)
 ovn_ipsec_encryption = bool(
     ovn_network
-    and isinstance(ipsec_config, dict)
-    and ipsec_mode.lower() != "disabled"
+    and ipsec_config_present
+    and ipsec_mode_normalized == "full"
 )
 etcd_encryption_type = str((((apiserver_config.get("spec") or {}).get("encryption") or {}).get("type") or "identity")).strip().lower()
 etcd_encryption = etcd_encryption_type in {"aescbc", "aesgcm"}
@@ -1695,7 +1702,7 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "Trusted image admission policy": "image_signature_and_admission_policy",
         "Cluster image mirror configuration": "cluster_image_mirror_configuration",
         "Disconnected installation image sources": "disconnected_cluster_image_sources",
-        "IPsec encryption enabled": "ovn_ipsec_encryption",
+        "OVN IPsec pod-to-pod encryption configured": "ovn_ipsec_encryption",
         "etcd encryption enabled": "etcd_encryption",
         "Cluster proxy configuration": "cluster_proxy_configuration",
         "Custom trust bundle configuration": "custom_ca_trust_bundle",
@@ -3295,26 +3302,31 @@ if deprecated_icsp_only:
     )
 
 add_check(
-    "IPsec encryption enabled",
+    "OVN IPsec pod-to-pod encryption configured",
     cap_status_for_presence("ovn_ipsec_encryption", ovn_ipsec_encryption),
-    f"networkType={network_type} ovnNetwork={ovn_network} ipsecConfigPresent={isinstance(ipsec_config, dict)} mode={ipsec_mode}",
+    f"networkType={network_type} ovnNetwork={ovn_network} ipsecConfigPresent={ipsec_config_present} mode={ipsec_mode}",
     "OVN-Kubernetes IPsec configuration",
     level=cap_level("ovn_ipsec_encryption", "informational"),
     scored=False,
 )
 if not ovn_ipsec_encryption and cap_required("ovn_ipsec_encryption"):
+    ipsec_missing_detail = (
+        f"networkType={network_type} does not use OVNKubernetes"
+        if not ovn_network
+        else (
+            f"OVN-Kubernetes IPsec is configured for external traffic only (mode={ipsec_mode}); pod-to-pod IPsec requires mode=Full."
+            if ovn_ipsec_external_only
+            else f"spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig is missing or disabled (mode={ipsec_mode})"
+        )
+    )
     add_finding(
         "prod-day2-ipsec-not-enabled",
-        (
-            "OVN-Kubernetes IPsec is not enabled: "
-            + (
-                f"networkType={network_type} does not use OVNKubernetes"
-                if not ovn_network
-                else f"spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig is missing or disabled (mode={ipsec_mode})"
-            )
-        ),
+        "OVN-Kubernetes pod-to-pod IPsec is not fully configured: " + ipsec_missing_detail,
         severity=cap_failure_severity("ovn_ipsec_encryption"),
         source="OVN-Kubernetes IPsec configuration",
+        recommended_action=(
+            "Use OVN-Kubernetes and configure spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required."
+        ),
     )
 
 add_check(
@@ -4654,6 +4666,7 @@ print(json.dumps({
         "disconnected_cluster_image_sources_present": disconnected_cluster_image_sources_present,
         "disconnected_catalogsource_count": disconnected_catalog_count,
         "ovn_ipsec_encryption": ovn_ipsec_encryption,
+        "ovn_ipsec_external_only": ovn_ipsec_external_only,
         "ipsec_mode": ipsec_mode,
         "etcd_encryption": etcd_encryption,
         "etcd_encryption_type": etcd_encryption_type,
