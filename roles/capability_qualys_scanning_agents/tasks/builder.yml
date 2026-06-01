@@ -6,19 +6,24 @@
     qualys_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_namespace_present', false)) | bool }}"
     qualys_crd_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_crd_present', false)) | bool }}"
     qualys_workload_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_workload_present', false)) | bool }}"
-    qualys_present_current: "{{ (qualys_subscription_present_current or qualys_namespace_present_current or qualys_crd_present_current or qualys_workload_present_current) | bool }}"
+    qualys_context_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_scanning_agents_context_present', false) or qualys_subscription_present_current or qualys_namespace_present_current or qualys_crd_present_current) | bool }}"
+    qualys_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_scanning_agents_present', false) or qualys_workload_present_current) | bool }}"
+    qualys_required_current: "{{ (day2_qualys_scanning_agents_section_current.required | default(false)) | bool }}"
+    qualys_gap_check_status_current: "{{ 'WARN' if (qualys_required_current | bool) else 'INFO' }}"
+    qualys_gap_severity_current: "{{ 'warning' if (qualys_required_current | bool) else 'info' }}"
     qualys_reason_summary_current: >-
       {{
         'subscription_present=' ~ (qualys_subscription_present_current | string)
         ~ ' namespace_present=' ~ (qualys_namespace_present_current | string)
         ~ ' crd_present=' ~ (qualys_crd_present_current | string)
+        ~ ' context_present=' ~ (qualys_context_present_current | string)
         ~ ' workload_present=' ~ (qualys_workload_present_current | string)
       }}
     qualys_recommended_action_current: >-
       {{
         'Confirm the Qualys agent footprint is healthy and that the intended collection and reporting path remains in service.'
         if qualys_present_current
-        else 'If Qualys scanning is intended, deploy or confirm the Qualys operator, namespace, CRD, and sensor workload footprint.'
+        else 'If Qualys scanning is intended, deploy or confirm the Qualys container sensor or cloud-agent workload footprint. Operator, namespace, or CRD context alone is not treated as active scanning coverage.'
       }}
     qualys_findings_current: >-
       {{
@@ -28,9 +33,9 @@
           {
             'capability': 'qualys_scanning_agents',
             'issue': 'prod-day2-qualys-scanning-agents-missing',
-            'severity': 'info',
+            'severity': qualys_gap_severity_current,
             'source': 'Qualys agent inventory',
-            'detail': 'no Qualys container sensor, cloud-agent, namespace, CRD, or workload footprint was detected',
+            'detail': 'no Qualys container sensor or cloud-agent workload footprint was detected; operator, namespace, or CRD context alone is not treated as active scanning coverage',
             'recommended_action': qualys_recommended_action_current,
             'docs': ((day2_qualys_scanning_agents_section_current.docs | default([])) | string)
           }
@@ -52,7 +57,7 @@
                   'level': ((day2_qualys_scanning_agents_section_current.criticality | default('medium')) | string),
                   'scored': false,
                   'source': 'Qualys agent inventory',
-                  'status': ('OK' if qualys_present_current else 'WARN')
+                  'status': ('OK' if qualys_present_current else qualys_gap_check_status_current)
                 }
               ],
               'findings': qualys_findings_current,
@@ -60,7 +65,7 @@
               'top_detail': (
                 qualys_reason_summary_current
                 if qualys_present_current
-                else 'no Qualys container sensor, cloud-agent, namespace, CRD, or workload footprint was detected'
+                else 'no Qualys container sensor or cloud-agent workload footprint was detected'
               ),
               'recommended_action': qualys_recommended_action_current
             },
@@ -78,6 +83,7 @@
       subscription_present: "{{ qualys_subscription_present_current | bool }}"
       namespace_present: "{{ qualys_namespace_present_current | bool }}"
       crd_present: "{{ qualys_crd_present_current | bool }}"
+      context_present: "{{ qualys_context_present_current | bool }}"
       workload_present: "{{ qualys_workload_present_current | bool }}"
       status: "{{ 'OK' if qualys_present_current else 'INFO' }}"
       status_summary: "{{ 'OK' if qualys_present_current else 'INFO' }}"
@@ -89,4 +95,5 @@
       subscription_present: "{{ qualys_subscription_present_current | bool }}"
       namespace_present: "{{ qualys_namespace_present_current | bool }}"
       crd_present: "{{ qualys_crd_present_current | bool }}"
+      context_present: "{{ qualys_context_present_current | bool }}"
       workload_present: "{{ qualys_workload_present_current | bool }}"

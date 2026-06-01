@@ -3,6 +3,8 @@
   vars:
     day2_openshift_aap_section_current: "{{ (day2_capability_sections_by_key | default({})).get('openshift_aap', {}) }}"
     openshift_aap_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_aap_present', false)) | bool }}"
+    openshift_aap_missing_status_current: "{{ 'WARNING' if (day2_openshift_aap_section_current.required | default(false) | bool) else 'INFO' }}"
+    openshift_aap_missing_severity_current: "{{ 'warning' if (day2_openshift_aap_section_current.required | default(false) | bool) else 'info' }}"
     openshift_aap_recommended_action_current: >-
       {{
         'Confirm the Ansible Automation Platform footprint remains healthy and aligned with the intended automation control-plane design.'
@@ -17,7 +19,7 @@
           {
             'capability': 'openshift_aap',
             'issue': 'prod-day2-openshift-aap-missing',
-            'severity': 'info',
+            'severity': openshift_aap_missing_severity_current,
             'source': 'Ansible Automation Platform operator and custom resource inventory',
             'detail': 'no Ansible Automation Platform custom resource or AAP-managed workload footprint was detected',
             'recommended_action': openshift_aap_recommended_action_current,
@@ -34,7 +36,7 @@
               'check_count': 1,
               'finding_count': (0 if openshift_aap_present_current else 1),
               'findings': openshift_aap_findings_current,
-              'status': ('OK' if openshift_aap_present_current else 'INFO'),
+              'status': ('OK' if openshift_aap_present_current else openshift_aap_missing_status_current),
               'top_detail': (
                 (day2_openshift_aap_section_current.top_detail | default('') | string | trim)
                 if openshift_aap_present_current

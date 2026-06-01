@@ -6,6 +6,8 @@
     image_signature_and_admission_policy_healthy_current: "{{ ((day2_posture_summary | default({})).get('image_signature_and_admission_policy_healthy', false)) | bool }}"
     admission_policy_engine_present_current: "{{ ((day2_posture_summary | default({})).get('admission_policy_engine_present', false)) | bool }}"
     image_registry_filter_policy_present_current: "{{ ((day2_posture_summary | default({})).get('image_registry_filter_policy_present', false)) | bool }}"
+    image_admission_policy_resource_count_current: "{{ ((day2_posture_summary | default({})).get('image_admission_policy_resource_count', 0)) | int }}"
+    active_trusted_image_policy_present_current: "{{ ((day2_posture_summary | default({})).get('active_trusted_image_policy_present', false)) | bool }}"
     insecure_registry_count_current: "{{ ((day2_posture_summary | default({})).get('insecure_registry_count', 0)) | int }}"
     image_signature_and_admission_policy_reason_summary_current: >-
       {{
@@ -18,6 +20,8 @@
         or (
           'admissionPolicyEnginePresent=' ~ (admission_policy_engine_present_current | string)
           ~ ' registryFilterPolicyPresent=' ~ (image_registry_filter_policy_present_current | string)
+          ~ ' imageAdmissionPolicyResources=' ~ ((image_admission_policy_resource_count_current | int) | string)
+          ~ ' activeTrustedImagePolicy=' ~ (active_trusted_image_policy_present_current | string)
           ~ ' insecureRegistries=' ~ (insecure_registry_count_current | string)
         )
       }}
@@ -31,6 +35,7 @@
       {{
         (admission_policy_engine_present_current | bool)
         or (image_registry_filter_policy_present_current | bool)
+        or ((image_admission_policy_resource_count_current | int) > 0)
         or ((insecure_registry_count_current | int) > 0)
       }}
     image_signature_and_admission_policy_checks_current:
@@ -60,6 +65,19 @@
             if (image_registry_filter_policy_present_current | bool)
             else 'no image registry restriction policy footprint was detected'
           }}
+      - name: Active trusted-image admission policy present
+        status: >-
+          {{
+            'OK'
+            if (active_trusted_image_policy_present_current | bool)
+            else ('WARN' if (image_signature_and_admission_policy_partial_signal_current | bool) else 'INFO')
+          }}
+        detail: >-
+          {{
+            'active trusted-image policy evidence was detected'
+            if (active_trusted_image_policy_present_current | bool)
+            else 'policy engine context was not backed by trusted-image policy evidence'
+          }}
       - name: Insecure registries absent from the effective path
         status: "{{ 'OK' if (insecure_registry_count_current | int) == 0 else 'WARN' }}"
         detail: "insecureRegistries={{ insecure_registry_count_current | int }}"
@@ -84,6 +102,15 @@
           'recommended_action': image_signature_and_admission_policy_recommended_action_current,
           'docs': ((day2_image_signature_and_admission_policy_section_current.docs | default([])) | string)
         }] if not (image_registry_filter_policy_present_current | bool) else []) +
+        ([{
+          'capability': 'image_signature_and_admission_policy',
+          'issue': 'prod-day2-image-signature-and-admission-policy-active-policy-missing',
+          'severity': ('warning' if (image_signature_and_admission_policy_partial_signal_current | bool) else 'info'),
+          'source': 'trusted image policy and admission guardrail inventory',
+          'detail': 'Policy engine context was detected without active trusted-image policy evidence.',
+          'recommended_action': image_signature_and_admission_policy_recommended_action_current,
+          'docs': ((day2_image_signature_and_admission_policy_section_current.docs | default([])) | string)
+        }] if not (active_trusted_image_policy_present_current | bool) else []) +
         ([{
           'capability': 'image_signature_and_admission_policy',
           'issue': 'prod-day2-image-signature-and-admission-policy-insecure-registries',
@@ -131,6 +158,8 @@
       image_signature_and_admission_policy_healthy: "{{ image_signature_and_admission_policy_healthy_current | bool }}"
       admission_policy_engine_present: "{{ admission_policy_engine_present_current | bool }}"
       image_registry_filter_policy_present: "{{ image_registry_filter_policy_present_current | bool }}"
+      image_admission_policy_resource_count: "{{ ((image_admission_policy_resource_count_current | int) | string) | from_yaml }}"
+      active_trusted_image_policy_present: "{{ active_trusted_image_policy_present_current | bool }}"
       insecure_registry_count: "{{ ((insecure_registry_count_current | int) | string) | from_yaml }}"
       status_summary: "{{ image_signature_and_admission_policy_section_override_current.status }}"
       reason_summary: "{{ image_signature_and_admission_policy_section_override_current.top_detail }}"
@@ -141,4 +170,6 @@
       image_signature_and_admission_policy_healthy: "{{ image_signature_and_admission_policy_healthy_current | bool }}"
       admission_policy_engine_present: "{{ admission_policy_engine_present_current | bool }}"
       image_registry_filter_policy_present: "{{ image_registry_filter_policy_present_current | bool }}"
+      image_admission_policy_resource_count: "{{ ((image_admission_policy_resource_count_current | int) | string) | from_yaml }}"
+      active_trusted_image_policy_present: "{{ active_trusted_image_policy_present_current | bool }}"
       insecure_registry_count: "{{ ((insecure_registry_count_current | int) | string) | from_yaml }}"

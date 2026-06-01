@@ -55,11 +55,20 @@
               | map(attribute='metadata.name')
               | map('string')
               | map('lower')
-              | select('in', ['dynakube.dynatrace.com', 'edgeconnects.dynatrace.com'])
+              | select('in', ['dynakubes.dynatrace.com', 'dynakube.dynatrace.com', 'edgeconnects.dynatrace.com', 'edgeconnect.dynatrace.com'])
               | list
               | length
             ) > 0
           )
+          or (((analysis_graph.edgeconnects | default({})).get('items', []) | length) > 0)
+          or (
+            (all_workload_blobs | default([]))
+            | map('string')
+            | map('lower')
+            | select('search', 'dynatrace-operator|dynatrace-webhook')
+            | list
+            | length
+          ) > 0
         ) | bool
       }}
     dynatrace_vendor_healthy: >-
@@ -73,7 +82,7 @@
             (all_workload_blobs | default([]))
             | map('string')
             | map('lower')
-            | select('search', 'dynatrace-operator|dynakube|oneagent|activegate|dynatrace-webhook')
+            | select('search', 'dynakube|oneagent|activegate|dynatrace-otel-collector|dynatrace-logmonitoring|dynatrace-extension-controller|dynatrace-extensions-collector|dynatrace-node-config-collector|dynatrace-oneagent-csi-driver')
             | list
             | length
           ) > 0

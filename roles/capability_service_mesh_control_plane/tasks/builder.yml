@@ -4,6 +4,18 @@
     day2_service_mesh_control_plane_section_current: "{{ (day2_capability_sections_by_key | default({})).get('service_mesh_control_plane', {}) }}"
     service_mesh_present_current: "{{ ((day2_posture_summary | default({})).get('service_mesh_control_plane_present', false)) | bool }}"
     service_mesh_healthy_current: "{{ ((day2_posture_summary | default({})).get('service_mesh_control_plane_healthy', false)) | bool }}"
+    service_mesh_context_present_current: "{{ ((day2_posture_summary | default({})).get('service_mesh_control_plane_context_present', service_mesh_present_current)) | bool }}"
+    service_mesh_required_current: "{{ (day2_service_mesh_control_plane_section_current.required | default(false)) | bool }}"
+    service_mesh_status_current: >-
+      {{
+        'OK'
+        if (service_mesh_present_current and service_mesh_healthy_current)
+        else (
+          'WARNING'
+          if (service_mesh_required_current and (service_mesh_present_current or service_mesh_context_present_current))
+          else 'INFO'
+        )
+      }}
     service_mesh_reason_summary_current: >-
       {{
         (
@@ -14,6 +26,7 @@
         )
         or (
           'service mesh footprint detected=' ~ (service_mesh_present_current | string)
+          ~ ' context=' ~ (service_mesh_context_present_current | string)
           ~ ' healthy=' ~ (service_mesh_healthy_current | string)
         )
       }}
@@ -26,14 +39,14 @@
     service_mesh_findings_current: >-
       {{
         []
-        if service_mesh_present_current
+        if (service_mesh_present_current or not service_mesh_required_current)
         else [
           {
             'capability': 'service_mesh_control_plane',
             'issue': 'prod-day2-service-mesh-missing',
-            'severity': 'info',
+            'severity': 'warning',
             'source': 'service mesh control plane inventory',
-            'detail': 'no service mesh operator, CRD, control plane, or membership footprint was detected',
+            'detail': 'no active ServiceMeshControlPlane or service mesh membership footprint was detected',
             'recommended_action': service_mesh_recommended_action_current,
             'docs': ((day2_service_mesh_control_plane_section_current.docs | default([])) | string)
           }
@@ -46,17 +59,13 @@
             {
               'accounting_state': 'assessed',
               'check_count': 1,
-              'finding_count': (0 if service_mesh_present_current else 1),
+              'finding_count': (service_mesh_findings_current | length),
               'findings': service_mesh_findings_current,
-              'status': (
-                'OK'
-                if (service_mesh_present_current and service_mesh_healthy_current)
-                else ('WARNING' if service_mesh_present_current else 'INFO')
-              ),
+              'status': service_mesh_status_current,
               'top_detail': (
                 service_mesh_reason_summary_current
-                if service_mesh_present_current
-                else 'no service mesh operator, CRD, control plane, or membership footprint was detected'
+                if (service_mesh_present_current or service_mesh_context_present_current)
+                else 'no active ServiceMeshControlPlane or service mesh membership footprint was detected'
               ),
               'recommended_action': service_mesh_recommended_action_current
             },
@@ -71,6 +80,7 @@
       accounting_state: assessed
       service_mesh_control_plane_present: "{{ service_mesh_present_current | bool }}"
       service_mesh_control_plane_healthy: "{{ service_mesh_healthy_current | bool }}"
+      service_mesh_control_plane_context_present: "{{ service_mesh_context_present_current | bool }}"
       status_summary: "{{ service_mesh_section_override_current.status }}"
       reason_summary: "{{ service_mesh_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
@@ -78,3 +88,4 @@
     capability_artifact_collection_inputs:
       service_mesh_control_plane_present: "{{ service_mesh_present_current | bool }}"
       service_mesh_control_plane_healthy: "{{ service_mesh_healthy_current | bool }}"
+      service_mesh_control_plane_context_present: "{{ service_mesh_context_present_current | bool }}"

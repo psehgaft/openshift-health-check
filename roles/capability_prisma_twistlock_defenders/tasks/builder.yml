@@ -6,7 +6,11 @@
     prisma_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('prisma_namespace_present', false)) | bool }}"
     prisma_crd_present_current: "{{ ((day2_posture_summary | default({})).get('prisma_crd_present', false)) | bool }}"
     prisma_workload_present_current: "{{ ((day2_posture_summary | default({})).get('prisma_workload_present', false)) | bool }}"
-    prisma_present_current: "{{ (prisma_subscription_present_current or prisma_namespace_present_current or prisma_crd_present_current or prisma_workload_present_current) | bool }}"
+    prisma_context_present_current: "{{ (prisma_subscription_present_current or prisma_namespace_present_current or prisma_crd_present_current) | bool }}"
+    prisma_present_current: "{{ prisma_workload_present_current | bool }}"
+    prisma_missing_status_current: "{{ 'WARNING' if (day2_prisma_twistlock_defenders_section_current.required | default(false) | bool) else 'INFO' }}"
+    prisma_missing_check_status_current: "{{ 'WARN' if (day2_prisma_twistlock_defenders_section_current.required | default(false) | bool) else 'INFO' }}"
+    prisma_missing_severity_current: "{{ 'warning' if (day2_prisma_twistlock_defenders_section_current.required | default(false) | bool) else 'info' }}"
     prisma_reason_summary_current: >-
       {{
         'subscription_present=' ~ (prisma_subscription_present_current | string)
@@ -18,7 +22,11 @@
       {{
         'Confirm the Prisma Cloud Compute or Twistlock footprint is healthy and that the intended enforcement path remains in service.'
         if prisma_present_current
-        else 'If Prisma Cloud Compute or Twistlock is intended, deploy or confirm the operator, namespace, CRD, and defender workload footprint.'
+        else (
+          'Prisma Cloud Compute or Twistlock context was detected, but no Console or Defender workload footprint was found. Review operator rollout and Defender deployment state.'
+          if prisma_context_present_current
+          else 'If Prisma Cloud Compute or Twistlock is intended, deploy or confirm the Console and Defender workload footprint.'
+        )
       }}
     prisma_findings_current: >-
       {{
@@ -28,9 +36,9 @@
           {
             'capability': 'prisma_twistlock_defenders',
             'issue': 'prod-day2-prisma-twistlock-defenders-missing',
-            'severity': 'info',
+            'severity': prisma_missing_severity_current,
             'source': 'Prisma Cloud Compute inventory',
-            'detail': 'no Prisma Cloud Compute or Twistlock namespace, CRD, Console, or Defender workload footprint was detected',
+            'detail': 'no Prisma Cloud Compute or Twistlock Console or Defender workload footprint was detected',
             'recommended_action': prisma_recommended_action_current,
             'docs': ((day2_prisma_twistlock_defenders_section_current.docs | default([])) | string)
           }
@@ -52,15 +60,15 @@
                   'level': ((day2_prisma_twistlock_defenders_section_current.criticality | default('medium')) | string),
                   'scored': false,
                   'source': 'Prisma Cloud Compute inventory',
-                  'status': ('OK' if prisma_present_current else 'WARN')
+                  'status': ('OK' if prisma_present_current else prisma_missing_check_status_current)
                 }
               ],
               'findings': prisma_findings_current,
-              'status': ('OK' if prisma_present_current else 'INFO'),
+              'status': ('OK' if prisma_present_current else prisma_missing_status_current),
               'top_detail': (
                 prisma_reason_summary_current
                 if prisma_present_current
-                else 'no Prisma Cloud Compute or Twistlock namespace, CRD, Console, or Defender workload footprint was detected'
+                else 'no Prisma Cloud Compute or Twistlock Console or Defender workload footprint was detected'
               ),
               'recommended_action': prisma_recommended_action_current
             },
@@ -79,8 +87,8 @@
       namespace_present: "{{ prisma_namespace_present_current | bool }}"
       crd_present: "{{ prisma_crd_present_current | bool }}"
       workload_present: "{{ prisma_workload_present_current | bool }}"
-      status: "{{ 'OK' if prisma_present_current else 'INFO' }}"
-      status_summary: "{{ 'OK' if prisma_present_current else 'INFO' }}"
+      status: "{{ 'OK' if prisma_present_current else prisma_missing_status_current }}"
+      status_summary: "{{ 'OK' if prisma_present_current else prisma_missing_status_current }}"
       top_detail: "{{ prisma_section_override_current.top_detail }}"
       reason_summary: "{{ prisma_section_override_current.top_detail }}"
     capability_artifact_render_inputs:

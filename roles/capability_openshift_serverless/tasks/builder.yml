@@ -4,6 +4,18 @@
     day2_openshift_serverless_section_current: "{{ (day2_capability_sections_by_key | default({})).get('openshift_serverless', {}) }}"
     openshift_serverless_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_serverless_present', false)) | bool }}"
     openshift_serverless_healthy_current: "{{ ((day2_posture_summary | default({})).get('openshift_serverless_healthy', false)) | bool }}"
+    openshift_serverless_context_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_serverless_context_present', openshift_serverless_present_current)) | bool }}"
+    openshift_serverless_required_current: "{{ (day2_openshift_serverless_section_current.required | default(false)) | bool }}"
+    openshift_serverless_status_current: >-
+      {{
+        'OK'
+        if (openshift_serverless_present_current and openshift_serverless_healthy_current)
+        else (
+          'WARNING'
+          if (openshift_serverless_required_current and (openshift_serverless_present_current or openshift_serverless_context_present_current))
+          else 'INFO'
+        )
+      }}
     openshift_serverless_reason_summary_current: >-
       {{
         (
@@ -14,6 +26,7 @@
         )
         or (
           'serverless footprint detected=' ~ (openshift_serverless_present_current | string)
+          ~ ' context=' ~ (openshift_serverless_context_present_current | string)
           ~ ' healthy=' ~ (openshift_serverless_healthy_current | string)
         )
       }}
@@ -26,14 +39,14 @@
     openshift_serverless_findings_current: >-
       {{
         []
-        if openshift_serverless_present_current
+        if (openshift_serverless_present_current or not openshift_serverless_required_current)
         else [
           {
             'capability': 'openshift_serverless',
             'issue': 'prod-day2-serverless-missing',
-            'severity': 'info',
+            'severity': 'warning',
             'source': 'serverless control plane inventory',
-            'detail': 'no OpenShift Serverless operator, CRD, control plane, or workload footprint was detected',
+            'detail': 'no active KnativeServing, KnativeEventing, or Knative Service footprint was detected',
             'recommended_action': openshift_serverless_recommended_action_current,
             'docs': ((day2_openshift_serverless_section_current.docs | default([])) | string)
           }
@@ -46,17 +59,13 @@
             {
               'accounting_state': 'assessed',
               'check_count': 1,
-              'finding_count': (0 if openshift_serverless_present_current else 1),
+              'finding_count': (openshift_serverless_findings_current | length),
               'findings': openshift_serverless_findings_current,
-              'status': (
-                'OK'
-                if (openshift_serverless_present_current and openshift_serverless_healthy_current)
-                else ('WARNING' if openshift_serverless_present_current else 'INFO')
-              ),
+              'status': openshift_serverless_status_current,
               'top_detail': (
                 openshift_serverless_reason_summary_current
-                if openshift_serverless_present_current
-                else 'no OpenShift Serverless operator, CRD, control plane, or workload footprint was detected'
+                if (openshift_serverless_present_current or openshift_serverless_context_present_current)
+                else 'no active KnativeServing, KnativeEventing, or Knative Service footprint was detected'
               ),
               'recommended_action': openshift_serverless_recommended_action_current
             },
@@ -71,6 +80,7 @@
       accounting_state: assessed
       openshift_serverless_present: "{{ openshift_serverless_present_current | bool }}"
       openshift_serverless_healthy: "{{ openshift_serverless_healthy_current | bool }}"
+      openshift_serverless_context_present: "{{ openshift_serverless_context_present_current | bool }}"
       status_summary: "{{ openshift_serverless_section_override_current.status }}"
       reason_summary: "{{ openshift_serverless_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
@@ -78,3 +88,4 @@
     capability_artifact_collection_inputs:
       openshift_serverless_present: "{{ openshift_serverless_present_current | bool }}"
       openshift_serverless_healthy: "{{ openshift_serverless_healthy_current | bool }}"
+      openshift_serverless_context_present: "{{ openshift_serverless_context_present_current | bool }}"

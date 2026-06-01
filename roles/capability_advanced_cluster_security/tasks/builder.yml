@@ -1,41 +1,49 @@
 ---
 - name: Build advanced cluster security capability artifact facts
+  vars:
+    acs_workload_present_current: >-
+      {{
+        (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'stackrox-central|central-db|stackrox-scanner|stackrox-scanner-db|secured-cluster-services|admission-control|stackrox-sensor')
+          | list
+          | length
+        ) > 0
+      }}
+    acs_context_present_current: >-
+      {{
+        (
+          ('container-security-operator' in (subscription_packages | default([])))
+          or ('stackrox' in (namespace_names | default([])))
+          or ('rhacs-operator' in (namespace_names | default([])))
+          or (
+            (
+              ((analysis_graph.crds | default({})).get('items', []) | default([]))
+              | map(attribute='metadata')
+              | map('default', {})
+              | map(attribute='name')
+              | map('default', '')
+              | map('string')
+              | map('lower')
+              | select('search', 'platform\\.stackrox\\.io|central\\.stackrox\\.io|securedcluster\\.stackrox\\.io|stackrox\\.io')
+              | list
+              | length
+            ) > 0
+          )
+        ) | bool
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: advanced_cluster_security
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      advanced_cluster_security_present: >-
-        {{
-          (
-            ('container-security-operator' in (subscription_packages | default([])))
-            or ('stackrox' in (namespace_names | default([])))
-            or ('rhacs-operator' in (namespace_names | default([])))
-            or (
-              (
-                ((analysis_graph.crds | default({})).get('items', []) | default([]))
-                | map(attribute='metadata')
-                | map('default', {})
-                | map(attribute='name')
-                | map('default', '')
-                | map('string')
-                | map('lower')
-                | select('search', 'platform\\.stackrox\\.io|central\\.stackrox\\.io|securedcluster\\.stackrox\\.io|stackrox\\.io')
-                | list
-                | length
-              ) > 0
-            )
-            or (
-              (all_workload_blobs | default([]))
-              | map('string')
-              | map('lower')
-              | select('search', 'stackrox-central|central-db|stackrox-scanner|stackrox-scanner-db|secured-cluster-services|admission-control|stackrox-sensor')
-              | list
-              | length
-            ) > 0
-          ) | bool
-        }}
+      acs_workload_present: "{{ acs_workload_present_current | bool }}"
+      advanced_cluster_security_present: "{{ acs_workload_present_current | bool }}"
+      advanced_cluster_security_context_present: "{{ acs_context_present_current | bool }}"
       acs_operator_subscription_present: "{{ ('container-security-operator' in (subscription_packages | default([]))) | bool }}"
       acs_namespace_present: "{{ (('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([])))) | bool }}"
+      acs_context_present: "{{ acs_context_present_current | bool }}"
     capability_artifact_render_inputs:
       acs_operator_subscription_present: "{{ ('container-security-operator' in (subscription_packages | default([]))) | bool }}"
       acs_namespace_present: "{{ (('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([])))) | bool }}"

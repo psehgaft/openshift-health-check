@@ -11,7 +11,7 @@
           | map(attribute='metadata.name')
           | map('string')
           | map('lower')
-          | select('in', ['splunk.com', 'otelcollectors.opentelemetry.io', 'opentelemetrycollectors.opentelemetry.io'])
+          | select('search', 'enterprise\\.splunk\\.com|monitoring\\.splunk\\.com|collectors\\.splunk\\.com|opentelemetrycollectors\\.opentelemetry\\.io|otelcollectors\\.opentelemetry\\.io')
           | list
           | length
         ) > 0
@@ -23,12 +23,15 @@
           (all_workload_blobs | default([]))
           | map('string')
           | map('lower')
-          | select('search', 'splunk|otel-collector|opentelemetry-collector')
+          | select('search', 'splunk-otel-collector|splunk-connect-for-kubernetes|splunk-cluster-receiver|splunk-kubernetes-objects|splunk-enterprise|splunk-indexer|splunk-search-head|signalfx-agent|splunk-otel-agent|splunk-otel-k8s-cluster-receiver|splunk-otel-operator')
           | list
           | length
         ) > 0
       }}
-    splunk_observability_present_current: "{{ (splunk_crd_present_current | bool) or (splunk_workload_present_current | bool) }}"
+    splunk_observability_present_current: "{{ splunk_workload_present_current | bool }}"
+    splunk_missing_status_current: "{{ 'WARNING' if (day2_splunk_observability_section_current.required | default(false) | bool) else 'INFO' }}"
+    splunk_missing_check_status_current: "{{ 'WARN' if (day2_splunk_observability_section_current.required | default(false) | bool) else 'INFO' }}"
+    splunk_missing_severity_current: "{{ 'warning' if (day2_splunk_observability_section_current.required | default(false) | bool) else 'info' }}"
     splunk_reason_summary_current: >-
       {{
         (
@@ -58,7 +61,7 @@
           {
             'capability': 'splunk_observability',
             'issue': 'prod-day2-splunk-observability-missing',
-            'severity': 'info',
+            'severity': splunk_missing_severity_current,
             'source': 'Splunk OpenTelemetry and logging inventory',
             'detail': 'no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was detected',
             'recommended_action': splunk_recommended_action_current,
@@ -82,11 +85,11 @@
                   'level': ((day2_splunk_observability_section_current.criticality | default('medium')) | string),
                   'scored': false,
                   'source': 'Splunk OpenTelemetry and logging inventory',
-                  'status': ('OK' if (splunk_observability_present_current | bool) else 'WARN')
+                  'status': ('OK' if (splunk_observability_present_current | bool) else splunk_missing_check_status_current)
                 }
               ],
               'findings': splunk_findings_current,
-              'status': ('OK' if (splunk_observability_present_current | bool) else 'INFO'),
+              'status': ('OK' if (splunk_observability_present_current | bool) else splunk_missing_status_current),
               'top_detail': (
                 splunk_reason_summary_current
                 if (splunk_observability_present_current | bool)
@@ -105,8 +108,8 @@
       accounting_state: assessed
       check_count: 1
       finding_count: "{{ (0 if (splunk_observability_present_current | bool) else 1) | int }}"
-      status: "{{ 'OK' if (splunk_observability_present_current | bool) else 'INFO' }}"
-      status_summary: "{{ 'OK' if (splunk_observability_present_current | bool) else 'INFO' }}"
+      status: "{{ 'OK' if (splunk_observability_present_current | bool) else splunk_missing_status_current }}"
+      status_summary: "{{ 'OK' if (splunk_observability_present_current | bool) else splunk_missing_status_current }}"
       top_detail: "{{ splunk_section_override_current.top_detail }}"
       reason_summary: "{{ splunk_section_override_current.top_detail }}"
     capability_artifact_render_inputs:

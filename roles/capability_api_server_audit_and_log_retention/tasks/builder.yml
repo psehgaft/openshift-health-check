@@ -8,6 +8,10 @@
     audit_logs_delivery_state_current: "{{ (observability_summary | default({})).get('audit_logs_delivery_state', 'not-configured') }}"
     vendor_managed_log_forwarding_present_current: "{{ ((observability_summary | default({})).get('vendor_managed_log_forwarding_present', false)) | bool }}"
     log_forwarding_vendor_names_current: "{{ (observability_summary | default({})).get('log_forwarding_vendor_names', []) }}"
+    api_server_audit_required_current: "{{ (day2_api_server_audit_and_log_retention_section_current.required | default(false)) | bool }}"
+    api_server_audit_gap_status_current: "{{ 'WARNING' if (api_server_audit_required_current | bool) else 'INFO' }}"
+    api_server_audit_gap_check_status_current: "{{ 'WARN' if (api_server_audit_required_current | bool) else 'INFO' }}"
+    api_server_audit_gap_severity_current: "{{ 'warning' if (api_server_audit_required_current | bool) else 'info' }}"
     api_server_audit_healthy_current: >-
       {{
         (api_server_audit_logging_present_current | bool)
@@ -28,7 +32,7 @@
       {{
         'OK'
         if (api_server_audit_healthy_current | bool)
-        else ('WARNING' if (api_server_audit_signal_present_current | bool) else 'INFO')
+        else api_server_audit_gap_status_current
       }}
     api_server_audit_reason_current: >-
       {{
@@ -51,7 +55,7 @@
           {{
             'OK'
             if ((api_server_audit_profile_current | string) not in ['not-configured', 'unknown', ''])
-            else ('WARN' if (api_server_audit_signal_present_current | bool) else 'INFO')
+            else api_server_audit_gap_check_status_current
           }}
         detail: "auditProfile={{ api_server_audit_profile_current | string }}"
       - name: API audit logging enabled
@@ -59,7 +63,7 @@
           {{
             'OK'
             if (api_server_audit_logging_present_current | bool)
-            else ('WARN' if (api_server_audit_signal_present_current | bool) else 'INFO')
+            else api_server_audit_gap_check_status_current
           }}
         detail: "loggingPresent={{ (api_server_audit_logging_present_current | bool) | string }}"
       - name: API audit retention configured
@@ -67,7 +71,7 @@
           {{
             'OK'
             if (api_server_audit_retention_present_current | bool)
-            else ('WARN' if (api_server_audit_signal_present_current | bool) else 'INFO')
+            else api_server_audit_gap_check_status_current
           }}
         detail: "retentionPresent={{ (api_server_audit_retention_present_current | bool) | string }}"
       - name: Audit log delivery path available
@@ -78,7 +82,7 @@
               (audit_logs_delivery_state_current in ['configured', 'delivering', 'verified'])
               or (vendor_managed_log_forwarding_present_current | bool)
             )
-            else ('WARN' if (api_server_audit_signal_present_current | bool) else 'INFO')
+            else api_server_audit_gap_check_status_current
           }}
         detail: >-
           {{
@@ -107,7 +111,7 @@
         ([{
           'capability': 'api_server_audit_and_log_retention',
           'issue': 'prod-day2-api-server-audit-and-log-retention-profile-missing',
-          'severity': ('warning' if (api_server_audit_signal_present_current | bool) else 'info'),
+          'severity': api_server_audit_gap_severity_current,
           'source': 'API audit configuration and observability delivery inventory',
           'detail': 'The API server audit profile is not configured.',
           'recommended_action': api_server_audit_recommended_action_current,
@@ -116,7 +120,7 @@
         ([{
           'capability': 'api_server_audit_and_log_retention',
           'issue': 'prod-day2-api-server-audit-and-log-retention-logging-missing',
-          'severity': ('warning' if (api_server_audit_signal_present_current | bool) else 'info'),
+          'severity': api_server_audit_gap_severity_current,
           'source': 'API audit configuration and observability delivery inventory',
           'detail': 'API audit logging was not detected.',
           'recommended_action': api_server_audit_recommended_action_current,
@@ -125,7 +129,7 @@
         ([{
           'capability': 'api_server_audit_and_log_retention',
           'issue': 'prod-day2-api-server-audit-and-log-retention-retention-missing',
-          'severity': ('warning' if (api_server_audit_signal_present_current | bool) else 'info'),
+          'severity': api_server_audit_gap_severity_current,
           'source': 'API audit configuration and observability delivery inventory',
           'detail': 'API audit retention was not detected.',
           'recommended_action': api_server_audit_recommended_action_current,
@@ -134,7 +138,7 @@
         ([{
           'capability': 'api_server_audit_and_log_retention',
           'issue': 'prod-day2-api-server-audit-and-log-retention-delivery-gap',
-          'severity': ('warning' if (api_server_audit_signal_present_current | bool) else 'info'),
+          'severity': api_server_audit_gap_severity_current,
           'source': 'API audit configuration and observability delivery inventory',
           'detail': 'No healthy audit log delivery path was detected through the platform or vendor-managed forwarding path.',
           'recommended_action': api_server_audit_recommended_action_current,

@@ -7,6 +7,8 @@
     cluster_network_observability_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_subscription_present', false)) | bool }}"
     cluster_network_observability_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_namespace_present', false)) | bool }}"
     cluster_network_observability_crd_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_crd_present', false)) | bool }}"
+    cluster_network_observability_flowcollector_count_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_flowcollector_count', 0)) | int }}"
+    cluster_network_observability_flowcollector_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_flowcollector_present', false)) | bool }}"
     cluster_network_observability_workload_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_network_observability_workload_present', false)) | bool }}"
     cluster_network_observability_reason_summary_current: >-
       {{
@@ -20,6 +22,7 @@
           'subscriptionPresent=' ~ (cluster_network_observability_subscription_present_current | string)
           ~ ' namespacePresent=' ~ (cluster_network_observability_namespace_present_current | string)
           ~ ' crdPresent=' ~ (cluster_network_observability_crd_present_current | string)
+          ~ ' flowCollectors=' ~ (cluster_network_observability_flowcollector_count_current | string)
           ~ ' workloadPresent=' ~ (cluster_network_observability_workload_present_current | string)
         )
       }}
@@ -54,14 +57,14 @@
             else ('WARN' if (cluster_network_observability_present_current | bool) else 'INFO')
           }}
         detail: "crdPresent={{ (cluster_network_observability_crd_present_current | bool) | string }}"
-      - name: Workload footprint present
+      - name: FlowCollector or workload footprint present
         status: >-
           {{
             'OK'
-            if (cluster_network_observability_workload_present_current | bool)
+            if (cluster_network_observability_flowcollector_present_current | bool) or (cluster_network_observability_workload_present_current | bool)
             else ('WARN' if (cluster_network_observability_present_current | bool) else 'INFO')
           }}
-        detail: "workloadPresent={{ (cluster_network_observability_workload_present_current | bool) | string }}"
+        detail: "flowCollectors={{ cluster_network_observability_flowcollector_count_current | int }} workloadPresent={{ (cluster_network_observability_workload_present_current | bool) | string }}"
     cluster_network_observability_findings_current: >-
       {{
         ([] +
@@ -97,10 +100,10 @@
           'issue': 'prod-day2-cluster-network-observability-workload-missing',
           'severity': ('warning' if (cluster_network_observability_present_current | bool) else 'info'),
           'source': 'OpenShift network observability operator and workload inventory',
-          'detail': 'No network observability workload footprint was detected.',
+          'detail': 'No FlowCollector resource or network observability workload footprint was detected.',
           'recommended_action': cluster_network_observability_recommended_action_current,
           'docs': ((day2_cluster_network_observability_section_current.docs | default([])) | string)
-        }] if not (cluster_network_observability_workload_present_current | bool) else []))
+        }] if not ((cluster_network_observability_flowcollector_present_current | bool) or (cluster_network_observability_workload_present_current | bool)) else []))
       }}
     cluster_network_observability_section_override_current: >-
       {{
@@ -120,7 +123,7 @@
               'top_detail': (
                 cluster_network_observability_reason_summary_current
                 if cluster_network_observability_present_current
-                else 'no network observability operator, CRD, namespace, or workload footprint was detected'
+                else 'no network observability operator, CRD, FlowCollector, namespace, or workload footprint was detected'
               ),
               'recommended_action': cluster_network_observability_recommended_action_current
             },
@@ -140,6 +143,8 @@
       cluster_network_observability_subscription_present: "{{ cluster_network_observability_subscription_present_current | bool }}"
       cluster_network_observability_namespace_present: "{{ cluster_network_observability_namespace_present_current | bool }}"
       cluster_network_observability_crd_present: "{{ cluster_network_observability_crd_present_current | bool }}"
+      cluster_network_observability_flowcollector_count: "{{ cluster_network_observability_flowcollector_count_current | int }}"
+      cluster_network_observability_flowcollector_present: "{{ cluster_network_observability_flowcollector_present_current | bool }}"
       cluster_network_observability_workload_present: "{{ cluster_network_observability_workload_present_current | bool }}"
       status_summary: "{{ cluster_network_observability_section_override_current.status }}"
       reason_summary: "{{ cluster_network_observability_section_override_current.top_detail }}"
@@ -151,4 +156,6 @@
       cluster_network_observability_subscription_present: "{{ cluster_network_observability_subscription_present_current | bool }}"
       cluster_network_observability_namespace_present: "{{ cluster_network_observability_namespace_present_current | bool }}"
       cluster_network_observability_crd_present: "{{ cluster_network_observability_crd_present_current | bool }}"
+      cluster_network_observability_flowcollector_count: "{{ cluster_network_observability_flowcollector_count_current | int }}"
+      cluster_network_observability_flowcollector_present: "{{ cluster_network_observability_flowcollector_present_current | bool }}"
       cluster_network_observability_workload_present: "{{ cluster_network_observability_workload_present_current | bool }}"

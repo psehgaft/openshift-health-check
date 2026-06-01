@@ -7,7 +7,15 @@
     openshift_developer_hub_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_subscription_present', false)) | bool }}"
     openshift_developer_hub_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_namespace_present', false)) | bool }}"
     openshift_developer_hub_crd_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_crd_present', false)) | bool }}"
+    openshift_developer_hub_context_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_context_present', false) or openshift_developer_hub_subscription_present_current or openshift_developer_hub_namespace_present_current or openshift_developer_hub_crd_present_current) | bool }}"
+    openshift_developer_hub_backstage_count_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_backstage_count', 0)) | int }}"
+    openshift_developer_hub_ready_backstage_count_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_ready_backstage_count', 0)) | int }}"
+    openshift_developer_hub_backstage_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_backstage_present', false) or ((openshift_developer_hub_backstage_count_current | int) > 0)) | bool }}"
     openshift_developer_hub_workload_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_workload_present', false)) | bool }}"
+    openshift_developer_hub_required_current: "{{ (day2_openshift_developer_hub_section_current.required | default(false)) | bool }}"
+    openshift_developer_hub_gap_status_current: "{{ 'WARNING' if (openshift_developer_hub_required_current | bool) else 'INFO' }}"
+    openshift_developer_hub_gap_check_status_current: "{{ 'WARN' if (openshift_developer_hub_required_current | bool) else 'INFO' }}"
+    openshift_developer_hub_gap_severity_current: "{{ 'warning' if (openshift_developer_hub_required_current | bool) else 'info' }}"
     openshift_developer_hub_reason_summary_current: >-
       {{
         (
@@ -20,6 +28,9 @@
           'subscriptionPresent=' ~ (openshift_developer_hub_subscription_present_current | string)
           ~ ' namespacePresent=' ~ (openshift_developer_hub_namespace_present_current | string)
           ~ ' crdPresent=' ~ (openshift_developer_hub_crd_present_current | string)
+          ~ ' contextPresent=' ~ (openshift_developer_hub_context_present_current | string)
+          ~ ' backstages=' ~ (openshift_developer_hub_backstage_count_current | string)
+          ~ ' readyBackstages=' ~ (openshift_developer_hub_ready_backstage_count_current | string)
           ~ ' workloadPresent=' ~ (openshift_developer_hub_workload_present_current | string)
         )
       }}
@@ -27,7 +38,7 @@
       {{
         'Confirm the intended Red Hat Developer Hub operator, Backstage resources, and portal workload remain healthy for the teams that depend on them.'
         if openshift_developer_hub_present_current
-        else 'If Red Hat Developer Hub is intended, deploy or confirm the RHDH operator, Backstage CRD, namespace, and portal workload footprint.'
+        else 'If Red Hat Developer Hub is intended, deploy or confirm a Backstage resource or portal workload footprint. Operator, namespace, or CRD context alone is not treated as an active Developer Hub deployment.'
       }}
     openshift_developer_hub_checks_current:
       - name: Subscription footprint present
@@ -35,7 +46,7 @@
           {{
             'OK'
             if (openshift_developer_hub_subscription_present_current | bool)
-            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+            else openshift_developer_hub_gap_check_status_current
           }}
         detail: "subscriptionPresent={{ (openshift_developer_hub_subscription_present_current | bool) | string }}"
       - name: Operator namespace footprint present
@@ -43,7 +54,7 @@
           {{
             'OK'
             if (openshift_developer_hub_namespace_present_current | bool)
-            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+            else openshift_developer_hub_gap_check_status_current
           }}
         detail: "namespacePresent={{ (openshift_developer_hub_namespace_present_current | bool) | string }}"
       - name: Backstage CRD footprint present
@@ -51,15 +62,27 @@
           {{
             'OK'
             if (openshift_developer_hub_crd_present_current | bool)
-            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+            else openshift_developer_hub_gap_check_status_current
           }}
         detail: "crdPresent={{ (openshift_developer_hub_crd_present_current | bool) | string }}"
+      - name: Backstage resource footprint present
+        status: >-
+          {{
+            'OK'
+            if (openshift_developer_hub_backstage_present_current | bool)
+            else openshift_developer_hub_gap_check_status_current
+          }}
+        detail: >-
+          {{
+            'backstages=' ~ (openshift_developer_hub_backstage_count_current | string)
+            ~ ' readyBackstages=' ~ (openshift_developer_hub_ready_backstage_count_current | string)
+          }}
       - name: Developer portal workload footprint present
         status: >-
           {{
             'OK'
             if (openshift_developer_hub_workload_present_current | bool)
-            else ('WARN' if (openshift_developer_hub_present_current | bool) else 'INFO')
+            else openshift_developer_hub_gap_check_status_current
           }}
         detail: "workloadPresent={{ (openshift_developer_hub_workload_present_current | bool) | string }}"
     openshift_developer_hub_findings_current: >-
@@ -68,7 +91,7 @@
         ([{
           'capability': 'openshift_developer_hub',
           'issue': 'prod-day2-openshift-developer-hub-subscription-missing',
-          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'severity': openshift_developer_hub_gap_severity_current,
           'source': 'Red Hat Developer Hub operator and workload inventory',
           'detail': 'No Red Hat Developer Hub operator subscription footprint was detected.',
           'recommended_action': openshift_developer_hub_recommended_action_current,
@@ -77,7 +100,7 @@
         ([{
           'capability': 'openshift_developer_hub',
           'issue': 'prod-day2-openshift-developer-hub-namespace-missing',
-          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'severity': openshift_developer_hub_gap_severity_current,
           'source': 'Red Hat Developer Hub operator and workload inventory',
           'detail': 'No Red Hat Developer Hub operator namespace footprint was detected.',
           'recommended_action': openshift_developer_hub_recommended_action_current,
@@ -86,7 +109,7 @@
         ([{
           'capability': 'openshift_developer_hub',
           'issue': 'prod-day2-openshift-developer-hub-crd-missing',
-          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'severity': openshift_developer_hub_gap_severity_current,
           'source': 'Red Hat Developer Hub operator and workload inventory',
           'detail': 'No Backstage custom resource definition footprint was detected.',
           'recommended_action': openshift_developer_hub_recommended_action_current,
@@ -94,8 +117,17 @@
         }] if not (openshift_developer_hub_crd_present_current | bool) else []) +
         ([{
           'capability': 'openshift_developer_hub',
+          'issue': 'prod-day2-openshift-developer-hub-backstage-missing',
+          'severity': openshift_developer_hub_gap_severity_current,
+          'source': 'Red Hat Developer Hub operator and workload inventory',
+          'detail': 'No Red Hat Developer Hub Backstage custom resource footprint was detected.',
+          'recommended_action': openshift_developer_hub_recommended_action_current,
+          'docs': ((day2_openshift_developer_hub_section_current.docs | default([])) | string)
+        }] if not (openshift_developer_hub_backstage_present_current | bool) else []) +
+        ([{
+          'capability': 'openshift_developer_hub',
           'issue': 'prod-day2-openshift-developer-hub-workload-missing',
-          'severity': ('warning' if (openshift_developer_hub_present_current | bool) else 'info'),
+          'severity': openshift_developer_hub_gap_severity_current,
           'source': 'Red Hat Developer Hub operator and workload inventory',
           'detail': 'No Red Hat Developer Hub or Backstage workload footprint was detected.',
           'recommended_action': openshift_developer_hub_recommended_action_current,
@@ -115,12 +147,12 @@
               'status': (
                 'OK'
                 if openshift_developer_hub_healthy_current
-                else ('WARNING' if openshift_developer_hub_present_current else 'INFO')
+                else openshift_developer_hub_gap_status_current
               ),
               'top_detail': (
                 openshift_developer_hub_reason_summary_current
-                if openshift_developer_hub_present_current
-                else 'no Red Hat Developer Hub operator, Backstage CRD, namespace, or workload footprint was detected'
+                if (openshift_developer_hub_present_current or openshift_developer_hub_context_present_current)
+                else 'no Red Hat Developer Hub Backstage resource or portal workload footprint was detected'
               ),
               'recommended_action': openshift_developer_hub_recommended_action_current
             },
@@ -140,6 +172,10 @@
       openshift_developer_hub_subscription_present: "{{ openshift_developer_hub_subscription_present_current | bool }}"
       openshift_developer_hub_namespace_present: "{{ openshift_developer_hub_namespace_present_current | bool }}"
       openshift_developer_hub_crd_present: "{{ openshift_developer_hub_crd_present_current | bool }}"
+      openshift_developer_hub_context_present: "{{ openshift_developer_hub_context_present_current | bool }}"
+      openshift_developer_hub_backstage_count: "{{ openshift_developer_hub_backstage_count_current | int }}"
+      openshift_developer_hub_ready_backstage_count: "{{ openshift_developer_hub_ready_backstage_count_current | int }}"
+      openshift_developer_hub_backstage_present: "{{ openshift_developer_hub_backstage_present_current | bool }}"
       openshift_developer_hub_workload_present: "{{ openshift_developer_hub_workload_present_current | bool }}"
       status_summary: "{{ openshift_developer_hub_section_override_current.status }}"
       reason_summary: "{{ openshift_developer_hub_section_override_current.top_detail }}"
@@ -151,4 +187,8 @@
       openshift_developer_hub_subscription_present: "{{ openshift_developer_hub_subscription_present_current | bool }}"
       openshift_developer_hub_namespace_present: "{{ openshift_developer_hub_namespace_present_current | bool }}"
       openshift_developer_hub_crd_present: "{{ openshift_developer_hub_crd_present_current | bool }}"
+      openshift_developer_hub_context_present: "{{ openshift_developer_hub_context_present_current | bool }}"
+      openshift_developer_hub_backstage_count: "{{ openshift_developer_hub_backstage_count_current | int }}"
+      openshift_developer_hub_ready_backstage_count: "{{ openshift_developer_hub_ready_backstage_count_current | int }}"
+      openshift_developer_hub_backstage_present: "{{ openshift_developer_hub_backstage_present_current | bool }}"
       openshift_developer_hub_workload_present: "{{ openshift_developer_hub_workload_present_current | bool }}"

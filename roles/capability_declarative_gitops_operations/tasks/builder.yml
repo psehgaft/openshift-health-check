@@ -2,6 +2,7 @@
 - name: Build declarative GitOps operations capability artifact facts
   vars:
     declarative_gitops_day2_section_current: "{{ (day2_capability_sections_by_key | default({})).get('declarative_gitops_operations', {}) }}"
+    declarative_gitops_required_current: "{{ (((cluster_health_profile | default({})).get('capabilities', {})).get('declarative_gitops_operations', {})).get('required', false) | bool }}"
     declarative_gitops_present_current: "{{ ((day2_posture_summary | default({})).get('gitops_present', false)) | bool }}"
     declarative_gitops_operational_current: "{{ ((day2_posture_summary | default({})).get('gitops_operational', false)) | bool }}"
     declarative_gitops_automated_sync_present_current: "{{ ((day2_posture_summary | default({})).get('gitops_automated_sync_present', false)) | bool }}"
@@ -12,7 +13,7 @@
     declarative_gitops_appproject_count_current: "{{ ((day2_posture_summary | default({})).get('gitops_appproject_count', 0)) | int }}"
     declarative_gitops_status_current: >-
       {{
-        'INFO'
+        ('WARN' if declarative_gitops_required_current else 'INFO')
         if (not declarative_gitops_present_current)
         else (
           'WARNING'

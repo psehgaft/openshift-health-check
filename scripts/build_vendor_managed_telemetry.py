@@ -13,6 +13,14 @@ def build(data):
                 return True
         return False
 
+    def crd_name_has(*names):
+        expected = {str(item).lower() for item in names}
+        for item in data.get("crds", []) or []:
+            name = str(((item.get("metadata") or {}).get("name")) or "").lower()
+            if name in expected:
+                return True
+        return False
+
     def namespace_has(fragment):
         target = str(fragment).lower()
         return any(target in str((item.get("metadata", {}) or {}).get("name") or "").lower() for item in data.get("namespaces", []) or [] if isinstance(item, dict))
@@ -27,29 +35,43 @@ def build(data):
                     return True
         return False
 
+    dynatrace_observability_workload_present = workload_has_any(
+        [
+            "dynakube",
+            "oneagent",
+            "activegate",
+            "dynatrace-otel-collector",
+            "dynatrace-logmonitoring",
+            "dynatrace-extension-controller",
+            "dynatrace-extensions-collector",
+            "dynatrace-node-config-collector",
+            "dynatrace-oneagent-csi-driver",
+        ]
+    )
     dynatrace_present = bool(
         (data.get("dynakubes") or [])
-        or (data.get("edgeconnects") or [])
-        or crd_has("dynatrace.com")
-        or namespace_has("dynatrace")
-        or workload_has_any(
-            [
-                "dynatrace-operator",
-                "dynakube",
-                "oneagent",
-                "activegate",
-                "dynatrace-webhook",
-                "dynatrace-otel-collector",
-                "dynatrace-logmonitoring",
-                "dynatrace-extension-controller",
-                "dynatrace-extensions-collector",
-                "dynatrace-node-config-collector",
-            ]
-        )
+        or crd_name_has("dynakubes.dynatrace.com", "dynakube.dynatrace.com")
+        or dynatrace_observability_workload_present
     )
     datadog_present = bool((data.get("datadogagents") or []) or crd_has("datadoghq.com") or namespace_has("datadog") or workload_has_any(["datadog"]))
     appdynamics_present = bool((data.get("clusteragents") or []) or (data.get("infravizs") or []) or crd_has("appdynamics.com") or namespace_has("appdynamics"))
-    splunk_present = bool(crd_has("enterprise.splunk.com") or crd_has("monitoring.splunk.com") or namespace_has("splunk") or workload_has_any(["splunk-otel-collector", "splunk-connect-for-kubernetes", "splunk-cluster-receiver", "splunk-kubernetes-objects", "splunk-enterprise", "splunk-indexer", "splunk-search-head"]))
+    splunk_present = bool(
+        workload_has_any(
+            [
+                "splunk-otel-collector",
+                "splunk-connect-for-kubernetes",
+                "splunk-cluster-receiver",
+                "splunk-kubernetes-objects",
+                "splunk-enterprise",
+                "splunk-indexer",
+                "splunk-search-head",
+                "signalfx-agent",
+                "splunk-otel-agent",
+                "splunk-otel-k8s-cluster-receiver",
+                "splunk-otel-operator",
+            ]
+        )
+    )
     loki_present = bool((data.get("lokistacks") or []) or crd_has("loki.grafana.com") or namespace_has("openshift-logging") or namespace_has("logging-loki"))
     metrics_vendors = []
     log_vendors = []

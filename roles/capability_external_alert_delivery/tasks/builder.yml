@@ -1,6 +1,8 @@
 ---
 - name: Build external alert delivery capability artifact facts
   vars:
+    external_alert_delivery_day2_section_current: "{{ (day2_capability_sections_by_key | default({})).get('external_alert_delivery', {}) }}"
+    external_alert_delivery_required_current: "{{ (((cluster_health_profile | default({})).get('capabilities', {})).get('external_alert_delivery', {})).get('required', false) | bool }}"
     external_alert_delivery_forwarding_summary: "{{ observability_forwarding_summary | default({}) }}"
     external_alert_delivery_gap_count: >-
       {{
@@ -15,7 +17,7 @@
         'WARNING'
         if (external_alert_delivery_gap_count | int) > 0
         else (
-          'INFO'
+          ('WARNING' if external_alert_delivery_required_current else 'INFO')
           if (
             external_alert_delivery_state_current in ['not-configured', 'missing']
             or external_alert_delivery_verification_current in ['not-configured', 'not-verified', 'missing', 'failed']
@@ -38,9 +40,10 @@
     capability_artifact_key: external_alert_delivery
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      observability_status: "{{ external_alert_delivery_status_current }}"
-      observability_reason_summary: "{{ external_alert_delivery_reason_current | default('unknown') }}"
+      observability_status: "{{ external_alert_delivery_day2_section_current.status | default(external_alert_delivery_status_current) }}"
+      observability_reason_summary: "{{ external_alert_delivery_day2_section_current.top_detail | default(external_alert_delivery_reason_current | default('unknown')) }}"
     capability_artifact_render_inputs:
+      day2_external_alert_delivery_section: "{{ external_alert_delivery_day2_section_current }}"
       observability_forwarding_summary: "{{ external_alert_delivery_forwarding_summary }}"
     capability_artifact_collection_inputs:
       external_alert_receiver_count: "{{ (external_alert_delivery_forwarding_summary.external_alert_receiver_count | default(0)) | int }}"

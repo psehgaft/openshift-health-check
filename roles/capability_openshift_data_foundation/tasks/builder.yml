@@ -1,23 +1,47 @@
 ---
 - name: Build OpenShift Data Foundation capability artifact facts
+  vars:
+    odf_storageclass_names_current: >-
+      {%- set matches = [] -%}
+      {%- for sc in ((analysis_graph.storageclasses | default({})).get('items', []) | default([])) -%}
+        {%- set meta = sc.get('metadata') or {} -%}
+        {%- set sc_name = (meta.get('name') or '') | string | trim -%}
+        {%- set provisioner = (sc.get('provisioner') or '') | string | trim -%}
+        {%- set blob = (sc_name ~ ' ' ~ provisioner) | lower -%}
+        {%- if 'ocs-storagecluster' in blob or 'openshift-storage.noobaa.io' in blob or 'cephfs.csi.ceph.com' in blob or 'rbd.csi.ceph.com' in blob or 'ceph.rook.io/bucket' in blob -%}
+          {%- set _ = matches.append(sc_name if sc_name else provisioner) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ matches | unique | list }}
+    odf_storageclass_count_current: "{{ (odf_storageclass_names_current | from_yaml | length) | int }}"
   ansible.builtin.set_fact:
     capability_artifact_key: openshift_data_foundation
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      openshift_data_foundation_present: "{{ ((day2_posture_summary | default({})).get('openshift_data_foundation_present', false)) | bool }}"
+      openshift_data_foundation_present: >-
+        {{
+          (
+            ((day2_posture_summary | default({})).get('openshift_data_foundation_present', false) | bool)
+            or (odf_storageclass_count_current | int) > 0
+          ) | bool
+        }}
       openshift_data_foundation_healthy: >-
         {{
           (
-            ((((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) > 0)
-            and (
-              ((((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) > 0)
-              or ((((analysis_graph.noobaas | default({})).get('items', []) | length) | int) > 0)
+            (
+              ((((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) > 0)
+              and (
+                ((((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) > 0)
+                or ((((analysis_graph.noobaas | default({})).get('items', []) | length) | int) > 0)
+              )
             )
+            or ((odf_storageclass_count_current | int) > 0)
           ) | bool
         }}
       storagecluster_count: "{{ (((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) }}"
       cephcluster_count: "{{ (((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) }}"
       noobaa_count: "{{ (((analysis_graph.noobaas | default({})).get('items', []) | length) | int) }}"
+      odf_storageclass_count: "{{ odf_storageclass_count_current | int }}"
     capability_artifact_render_inputs:
       odf_operator_subscription_present: "{{ (('odf-operator' in (subscription_packages | default([]))) or ('ocs-operator' in (subscription_packages | default([])))) | bool }}"
       openshift_storage_namespace_present: "{{ ('openshift-storage' in (namespace_names | default([]))) | bool }}"
@@ -27,3 +51,4 @@
       storagecluster_count: "{{ (((analysis_graph.storageclusters | default({})).get('items', []) | length) | int) }}"
       cephcluster_count: "{{ (((analysis_graph.cephclusters | default({})).get('items', []) | length) | int) }}"
       noobaa_count: "{{ (((analysis_graph.noobaas | default({})).get('items', []) | length) | int) }}"
+      odf_storageclass_count: "{{ odf_storageclass_count_current | int }}"

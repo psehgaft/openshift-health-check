@@ -2,6 +2,7 @@
 - name: Build kubelet configuration governance capability artifact facts
   vars:
     day2_kubelet_configuration_governance_section_current: "{{ (day2_capability_sections_by_key | default({})).get('kubelet_configuration_governance', {}) }}"
+    kubelet_configuration_governance_required_current: "{{ (day2_kubelet_configuration_governance_section_current.required | default(false)) | bool }}"
     kubelet_configuration_governance_present_current: "{{ ((day2_posture_summary | default({})).get('kubelet_configuration_governance_present', false)) | bool }}"
     kubelet_configuration_governance_healthy_current: "{{ ((day2_posture_summary | default({})).get('kubelet_configuration_governance_healthy', false)) | bool }}"
     kubeletconfig_count_current: "{{ ((day2_posture_summary | default({})).get('kubeletconfig_count', 0)) | int }}"
@@ -43,7 +44,7 @@
       }}
     kubelet_configuration_governance_checks_current:
       - name: KubeletConfig resources present
-        status: "{{ 'OK' if (kubelet_configuration_governance_present_current | bool) else 'INFO' }}"
+        status: "{{ 'OK' if (kubelet_configuration_governance_present_current | bool) else ('WARN' if (kubelet_configuration_governance_required_current | bool) else 'INFO') }}"
         detail: "kubeletConfigs={{ kubeletconfig_count_current | int }}"
       - name: MachineConfigPool targeting present
         status: >-
@@ -84,6 +85,15 @@
     kubelet_configuration_governance_findings_current: >-
       {{
         ([] +
+        ([{
+          'capability': 'kubelet_configuration_governance',
+          'issue': 'prod-day2-kubelet-configuration-governance-missing',
+          'severity': 'warning',
+          'source': 'KubeletConfig resource inventory',
+          'detail': 'No KubeletConfig resource footprint was detected for explicit kubelet tuning governance.',
+          'recommended_action': kubelet_configuration_governance_recommended_action_current,
+          'docs': ((day2_kubelet_configuration_governance_section_current.docs | default([])) | string)
+        }] if (kubelet_configuration_governance_required_current | bool) and not (kubelet_configuration_governance_present_current | bool) else []) +
         ([{
           'capability': 'kubelet_configuration_governance',
           'issue': 'prod-day2-kubelet-configuration-governance-targeting-missing',
@@ -134,7 +144,7 @@
               'status': (
                 'OK'
                 if kubelet_configuration_governance_healthy_current
-                else ('WARNING' if kubelet_configuration_governance_present_current else 'INFO')
+                else ('WARNING' if ((kubelet_configuration_governance_present_current | bool) or (kubelet_configuration_governance_required_current | bool)) else 'INFO')
               ),
               'top_detail': (
                 kubelet_configuration_governance_reason_summary_current

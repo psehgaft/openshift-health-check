@@ -6,11 +6,16 @@
     openshift_dev_spaces_healthy_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_healthy', false)) | bool }}"
     openshift_dev_spaces_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_subscription_present', false)) | bool }}"
     openshift_dev_spaces_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_namespace_present', false)) | bool }}"
+    openshift_dev_spaces_context_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_context_present', false) or openshift_dev_spaces_subscription_present_current or openshift_dev_spaces_namespace_present_current) | bool }}"
     openshift_dev_spaces_checluster_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_checluster_present', false)) | bool }}"
     openshift_dev_spaces_devworkspace_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_devworkspace_present', false)) | bool }}"
     openshift_dev_spaces_workspace_operator_config_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_workspace_operator_config_present', false)) | bool }}"
     openshift_dev_spaces_routing_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_dev_spaces_routing_present', false)) | bool }}"
     openshift_developer_hub_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_developer_hub_present', false)) | bool }}"
+    openshift_dev_spaces_required_current: "{{ (day2_openshift_dev_spaces_section_current.required | default(false)) | bool }}"
+    openshift_dev_spaces_gap_status_current: "{{ 'WARNING' if (openshift_dev_spaces_required_current | bool) else 'INFO' }}"
+    openshift_dev_spaces_gap_check_status_current: "{{ 'WARN' if (openshift_dev_spaces_required_current | bool) else 'INFO' }}"
+    openshift_dev_spaces_gap_severity_current: "{{ 'warning' if (openshift_dev_spaces_required_current | bool) else 'info' }}"
     openshift_dev_spaces_reason_summary_current: >-
       {{
         (
@@ -22,6 +27,7 @@
         or (
           'subscriptionPresent=' ~ (openshift_dev_spaces_subscription_present_current | string)
           ~ ' namespacePresent=' ~ (openshift_dev_spaces_namespace_present_current | string)
+          ~ ' contextPresent=' ~ (openshift_dev_spaces_context_present_current | string)
           ~ ' cheClusterPresent=' ~ (openshift_dev_spaces_checluster_present_current | string)
           ~ ' devWorkspacePresent=' ~ (openshift_dev_spaces_devworkspace_present_current | string)
           ~ ' workspaceOperatorConfigPresent=' ~ (openshift_dev_spaces_workspace_operator_config_present_current | string)
@@ -47,41 +53,41 @@
       - name: Operator subscription footprint present
         status: >-
           {{
-            'OK'
-            if (openshift_dev_spaces_subscription_present_current | bool)
-            else ('WARN' if (openshift_dev_spaces_present_current | bool) else 'INFO')
+          'OK'
+          if (openshift_dev_spaces_subscription_present_current | bool)
+            else openshift_dev_spaces_gap_check_status_current
           }}
         detail: "subscriptionPresent={{ (openshift_dev_spaces_subscription_present_current | bool) | string }}"
       - name: Operator namespace footprint present
         status: >-
           {{
-            'OK'
-            if (openshift_dev_spaces_namespace_present_current | bool)
-            else ('WARN' if (openshift_dev_spaces_present_current | bool) else 'INFO')
+          'OK'
+          if (openshift_dev_spaces_namespace_present_current | bool)
+            else openshift_dev_spaces_gap_check_status_current
           }}
         detail: "namespacePresent={{ (openshift_dev_spaces_namespace_present_current | bool) | string }}"
       - name: CheCluster control plane footprint present
         status: >-
           {{
-            'OK'
-            if (openshift_dev_spaces_checluster_present_current | bool)
-            else ('WARN' if (openshift_dev_spaces_present_current | bool) else 'INFO')
+          'OK'
+          if (openshift_dev_spaces_checluster_present_current | bool)
+            else openshift_dev_spaces_gap_check_status_current
           }}
         detail: "cheClusterPresent={{ (openshift_dev_spaces_checluster_present_current | bool) | string }}"
       - name: Dev Workspace footprint present
         status: >-
           {{
-            'OK'
-            if (openshift_dev_spaces_devworkspace_present_current | bool)
-            else ('WARN' if (openshift_dev_spaces_present_current | bool) else 'INFO')
+          'OK'
+          if (openshift_dev_spaces_devworkspace_present_current | bool)
+            else openshift_dev_spaces_gap_check_status_current
           }}
         detail: "devWorkspacePresent={{ (openshift_dev_spaces_devworkspace_present_current | bool) | string }}"
       - name: Workspace routing or operator config footprint present
         status: >-
           {{
-            'OK'
-            if ((openshift_dev_spaces_workspace_operator_config_present_current | bool) or (openshift_dev_spaces_routing_present_current | bool))
-            else ('WARN' if (openshift_dev_spaces_present_current | bool) else 'INFO')
+          'OK'
+          if ((openshift_dev_spaces_workspace_operator_config_present_current | bool) or (openshift_dev_spaces_routing_present_current | bool))
+            else openshift_dev_spaces_gap_check_status_current
           }}
         detail: >-
           {{
@@ -94,7 +100,7 @@
         ([{
           'capability': 'openshift_dev_spaces',
           'issue': 'prod-day2-openshift-dev-spaces-subscription-missing',
-          'severity': ('warning' if (openshift_dev_spaces_present_current | bool) else 'info'),
+          'severity': openshift_dev_spaces_gap_severity_current,
           'source': 'OpenShift Dev Spaces operator and workspace inventory',
           'detail': 'No OpenShift Dev Spaces or Dev Workspace operator subscription footprint was detected.',
           'recommended_action': openshift_dev_spaces_recommended_action_current,
@@ -103,7 +109,7 @@
         ([{
           'capability': 'openshift_dev_spaces',
           'issue': 'prod-day2-openshift-dev-spaces-namespace-missing',
-          'severity': ('warning' if (openshift_dev_spaces_present_current | bool) else 'info'),
+          'severity': openshift_dev_spaces_gap_severity_current,
           'source': 'OpenShift Dev Spaces operator and workspace inventory',
           'detail': 'No openshift-devspaces namespace footprint was detected.',
           'recommended_action': openshift_dev_spaces_recommended_action_current,
@@ -112,7 +118,7 @@
         ([{
           'capability': 'openshift_dev_spaces',
           'issue': 'prod-day2-openshift-dev-spaces-checluster-missing',
-          'severity': ('warning' if (openshift_dev_spaces_present_current | bool) else 'info'),
+          'severity': openshift_dev_spaces_gap_severity_current,
           'source': 'OpenShift Dev Spaces operator and workspace inventory',
           'detail': 'No CheCluster control-plane footprint was detected.',
           'recommended_action': openshift_dev_spaces_recommended_action_current,
@@ -121,7 +127,7 @@
         ([{
           'capability': 'openshift_dev_spaces',
           'issue': 'prod-day2-openshift-dev-spaces-devworkspace-missing',
-          'severity': ('warning' if (openshift_dev_spaces_present_current | bool) else 'info'),
+          'severity': openshift_dev_spaces_gap_severity_current,
           'source': 'OpenShift Dev Spaces operator and workspace inventory',
           'detail': 'No Dev Workspace footprint was detected.',
           'recommended_action': openshift_dev_spaces_recommended_action_current,
@@ -130,7 +136,7 @@
         ([{
           'capability': 'openshift_dev_spaces',
           'issue': 'prod-day2-openshift-dev-spaces-routing-config-missing',
-          'severity': ('warning' if (openshift_dev_spaces_present_current | bool) else 'info'),
+          'severity': openshift_dev_spaces_gap_severity_current,
           'source': 'OpenShift Dev Spaces operator and workspace inventory',
           'detail': 'No Dev Workspace routing or operator configuration footprint was detected.',
           'recommended_action': openshift_dev_spaces_recommended_action_current,
@@ -150,12 +156,12 @@
               'status': (
                 'OK'
                 if openshift_dev_spaces_healthy_current
-                else ('WARNING' if openshift_dev_spaces_present_current else 'INFO')
+                else openshift_dev_spaces_gap_status_current
               ),
               'top_detail': (
                 openshift_dev_spaces_reason_summary_current
-                if openshift_dev_spaces_present_current
-                else 'no OpenShift Dev Spaces operator, CheCluster, DevWorkspace, namespace, or routing footprint was detected'
+                if (openshift_dev_spaces_present_current or openshift_dev_spaces_context_present_current)
+                else 'no OpenShift Dev Spaces CheCluster, DevWorkspace, routing, or operator configuration footprint was detected'
               ),
               'recommended_action': openshift_dev_spaces_recommended_action_current
             },
@@ -174,6 +180,7 @@
       openshift_dev_spaces_healthy: "{{ openshift_dev_spaces_healthy_current | bool }}"
       openshift_dev_spaces_subscription_present: "{{ openshift_dev_spaces_subscription_present_current | bool }}"
       openshift_dev_spaces_namespace_present: "{{ openshift_dev_spaces_namespace_present_current | bool }}"
+      openshift_dev_spaces_context_present: "{{ openshift_dev_spaces_context_present_current | bool }}"
       openshift_dev_spaces_checluster_present: "{{ openshift_dev_spaces_checluster_present_current | bool }}"
       openshift_dev_spaces_devworkspace_present: "{{ openshift_dev_spaces_devworkspace_present_current | bool }}"
       openshift_dev_spaces_workspace_operator_config_present: "{{ openshift_dev_spaces_workspace_operator_config_present_current | bool }}"
@@ -187,6 +194,7 @@
       openshift_dev_spaces_healthy: "{{ openshift_dev_spaces_healthy_current | bool }}"
       openshift_dev_spaces_subscription_present: "{{ openshift_dev_spaces_subscription_present_current | bool }}"
       openshift_dev_spaces_namespace_present: "{{ openshift_dev_spaces_namespace_present_current | bool }}"
+      openshift_dev_spaces_context_present: "{{ openshift_dev_spaces_context_present_current | bool }}"
       openshift_dev_spaces_checluster_present: "{{ openshift_dev_spaces_checluster_present_current | bool }}"
       openshift_dev_spaces_devworkspace_present: "{{ openshift_dev_spaces_devworkspace_present_current | bool }}"
       openshift_dev_spaces_workspace_operator_config_present: "{{ openshift_dev_spaces_workspace_operator_config_present_current | bool }}"

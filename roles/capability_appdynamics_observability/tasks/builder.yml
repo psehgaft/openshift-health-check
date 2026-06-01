@@ -26,12 +26,15 @@
           (all_workload_blobs | default([]))
           | map('string')
           | map('lower')
-          | select('search', 'appdynamics|cluster-agent|infraviz')
+          | select('search', 'appdynamics|appdynamics-cluster-agent|appdynamics-operator|appdynamics-infraviz|infraviz|machine-agent|netviz')
           | list
           | length
         ) > 0
       }}
     appdynamics_observability_present_current: "{{ (clusteragent_count_current | int) > 0 or (infraviz_count_current | int) > 0 or (appdynamics_workload_present_current | bool) }}"
+    appdynamics_missing_status_current: "{{ 'WARNING' if (day2_appdynamics_observability_section_current.required | default(false) | bool) else 'INFO' }}"
+    appdynamics_missing_check_status_current: "{{ 'WARN' if (day2_appdynamics_observability_section_current.required | default(false) | bool) else 'INFO' }}"
+    appdynamics_missing_severity_current: "{{ 'warning' if (day2_appdynamics_observability_section_current.required | default(false) | bool) else 'info' }}"
     appdynamics_reason_summary_current: >-
       {{
         (
@@ -64,7 +67,7 @@
           {
             'capability': 'appdynamics_observability',
             'issue': 'prod-day2-appdynamics-observability-missing',
-            'severity': 'info',
+            'severity': appdynamics_missing_severity_current,
             'source': 'AppDynamics cluster agent inventory',
             'detail': 'no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected',
             'recommended_action': appdynamics_recommended_action_current,
@@ -88,11 +91,11 @@
                   'level': ((day2_appdynamics_observability_section_current.criticality | default('low')) | string),
                   'scored': false,
                   'source': 'AppDynamics cluster agent inventory',
-                  'status': ('OK' if (appdynamics_observability_present_current | bool) else 'WARN')
+                  'status': ('OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_check_status_current)
                 }
               ],
               'findings': appdynamics_findings_current,
-              'status': ('OK' if (appdynamics_observability_present_current | bool) else 'INFO'),
+              'status': ('OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_status_current),
               'top_detail': (
                 appdynamics_reason_summary_current
                 if (appdynamics_observability_present_current | bool)
@@ -111,8 +114,8 @@
       accounting_state: assessed
       check_count: 1
       finding_count: "{{ (0 if (appdynamics_observability_present_current | bool) else 1) | int }}"
-      status: "{{ 'OK' if (appdynamics_observability_present_current | bool) else 'INFO' }}"
-      status_summary: "{{ 'OK' if (appdynamics_observability_present_current | bool) else 'INFO' }}"
+      status: "{{ 'OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_status_current }}"
+      status_summary: "{{ 'OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_status_current }}"
       top_detail: "{{ appdynamics_section_override_current.top_detail }}"
       reason_summary: "{{ appdynamics_section_override_current.top_detail }}"
     capability_artifact_render_inputs:

@@ -32,6 +32,7 @@ catalogsources = data.get("catalogsources") or []
 clustercatalogs = data.get("clustercatalogs") or []
 updateservices = data.get("updateservices") or []
 subscriptions = data.get("subscriptions") or []
+flowcollectors = data.get("flowcollectors") or []
 control_plane_backup_evidence = data.get("control_plane_backup_evidence") or {}
 nodes = data.get("nodes") or []
 ingresscontrollers = data.get("ingresscontrollers") or []
@@ -181,24 +182,49 @@ public_registry_hints = ["registry.redhat.io", "quay.io", "registry.connect.redh
 
 def is_public_image_ref(value):
     text = str(value or "").strip().lower()
-    return bool(text) and any(public in text for public in public_registry_hints)
+    registry = text.split("/", 1)[0]
+    return bool(registry) and registry in public_registry_hints
 
-def collect_mirror_targets(items, key):
-    targets = []
+def collect_mirror_pairs(items, key):
+    pairs = []
     for item in items:
         spec = item.get("spec") or {}
         for entry in spec.get(key) or []:
+            source = str(entry.get("source") or "").strip()
             for mirror in entry.get("mirrors") or []:
                 mirror_text = str(mirror or "").strip()
                 if mirror_text:
-                    targets.append(mirror_text)
+                    pairs.append({"source": source, "mirror": mirror_text})
+    return pairs
+
+def collect_mirror_targets(items, key):
+    targets = []
+    for pair in collect_mirror_pairs(items, key):
+        mirror_text = pair.get("mirror")
+        if mirror_text:
+            targets.append(mirror_text)
     return targets
 
+digest_mirror_pairs = collect_mirror_pairs(imagedigestmirrorsets, "imageDigestMirrors")
+tag_mirror_pairs = collect_mirror_pairs(imagetagmirrorsets, "imageTagMirrors")
+icsp_mirror_pairs = collect_mirror_pairs(imagecontentsourcepolicies, "repositoryDigestMirrors")
+all_mirror_pairs = digest_mirror_pairs + tag_mirror_pairs + icsp_mirror_pairs
 digest_mirror_targets = collect_mirror_targets(imagedigestmirrorsets, "imageDigestMirrors")
 tag_mirror_targets = collect_mirror_targets(imagetagmirrorsets, "imageTagMirrors")
 icsp_mirror_targets = collect_mirror_targets(imagecontentsourcepolicies, "repositoryDigestMirrors")
 all_mirror_targets = sorted({item for item in (digest_mirror_targets + tag_mirror_targets + icsp_mirror_targets) if item})
 local_mirror_targets = [item for item in all_mirror_targets if not is_public_image_ref(item)]
+release_payload_source_hints = [
+    "quay.io/openshift-release-dev",
+    "quay.io/okd",
+    "registry.ci.openshift.org",
+    "registry.redhat.io/openshift4",
+]
+release_image_mirror_configured = any(
+    any(hint in str(pair.get("source") or "").lower() for hint in release_payload_source_hints)
+    and not is_public_image_ref(pair.get("mirror"))
+    for pair in all_mirror_pairs
+)
 disconnected_catalog_count = len([
     item for item in catalogsources
     if str((((item.get("spec") or {}).get("image")) or "")).strip()
@@ -217,7 +243,7 @@ public_clustercatalog_count = len([
     if is_public_image_ref((((item.get("spec") or {}).get("source") or {}).get("image") or {}).get("ref"))
 ])
 release_image = str((((clusterversion.get("status") or {}).get("desired") or {}).get("image") or "")).strip()
-release_image_mirrored = bool(release_image) and not is_public_image_ref(release_image)
+release_image_mirrored = bool(release_image) and (not is_public_image_ref(release_image) or release_image_mirror_configured)
 updateservice_present = len(updateservices) > 0
 deprecated_icsp_only = len(imagecontentsourcepolicies) > 0 and len(imagedigestmirrorsets) == 0 and len(imagetagmirrorsets) == 0
 cluster_image_mirror_configuration_present = mirror_resource_count > 0
@@ -243,6 +269,7 @@ kubeletconfigs = data.get("kubeletconfigs") or []
 hostedclusters = data.get("hostedclusters") or []
 nodepools = data.get("nodepools") or []
 checlusters = data.get("checlusters") or []
+backstages = data.get("backstages") or []
 devworkspaces = data.get("devworkspaces") or []
 devworkspaceoperatorconfigs = data.get("devworkspaceoperatorconfigs") or []
 devworkspaceroutings = data.get("devworkspaceroutings") or []
@@ -283,6 +310,7 @@ ingresscontroller_summary = data.get("ingresscontroller_summary") or []
 ingresscontroller_issues = data.get("ingresscontroller_issues") or []
 clusterlogforwarders = data.get("clusterlogforwarders") or []
 lokistacks = data.get("lokistacks") or []
+grafanadashboards = data.get("grafanadashboards") or []
 backupstoragelocations = data.get("backupstoragelocations") or []
 schedules = data.get("schedules") or []
 dataprotectionapplications = data.get("dataprotectionapplications") or []
@@ -292,6 +320,7 @@ drplacementcontrols = data.get("drplacementcontrols") or []
 volumereplicationgroups = data.get("volumereplicationgroups") or []
 volumereplications = data.get("volumereplications") or []
 volumereplicationclasses = data.get("volumereplicationclasses") or []
+volumegroupreplications = data.get("volumegroupreplications") or []
 compliancesuites = data.get("compliancesuites") or []
 compliance_operator_summary = data.get("compliance_operator_summary") or {}
 compliance_standards_summary = data.get("compliance_standards_summary") or []
@@ -299,6 +328,10 @@ compliance_standards_findings = data.get("compliance_standards_findings") or []
 machinehealthchecks = data.get("machinehealthchecks") or []
 machineautoscalers = data.get("machineautoscalers") or []
 egressfirewalls = data.get("egressfirewalls") or []
+validatingadmissionpolicies = data.get("validatingadmissionpolicies") or []
+validatingadmissionpolicybindings = data.get("validatingadmissionpolicybindings") or []
+kyverno_policies = data.get("kyverno_policies") or []
+kyverno_clusterpolicies = data.get("kyverno_clusterpolicies") or []
 machinesets = data.get("machinesets") or []
 backup_posture_findings = data.get("backup_posture_findings") or []
 pipelines = data.get("pipelines") or []
@@ -306,6 +339,7 @@ pipelineruns = data.get("pipelineruns") or []
 storageclusters = data.get("storageclusters") or []
 cephclusters = data.get("cephclusters") or []
 noobaas = data.get("noobaas") or []
+storageclasses = data.get("storageclasses") or data.get("storage_classes") or []
 kubevirts = data.get("kubevirts") or []
 hyperconvergeds = data.get("hyperconvergeds") or []
 ssps = data.get("ssps") or []
@@ -331,6 +365,7 @@ nvidiaclusterpolicies = data.get("nvidiaclusterpolicies") or []
 kataconfigs = data.get("kataconfigs") or []
 tuneds = data.get("tuneds") or []
 tunedprofiles = data.get("tunedprofiles") or []
+performanceprofiles = data.get("performanceprofiles") or []
 nmstates = data.get("nmstates") or []
 nodenetworkconfigurationpolicies = data.get("nodenetworkconfigurationpolicies") or []
 nodenetworkstates = data.get("nodenetworkstates") or []
@@ -528,22 +563,45 @@ public_registry_names = {"docker.io", "index.docker.io", "quay.io", "ghcr.io", "
 external_image_registries = set()
 credentialed_public_image_registries = set()
 workloads_with_pull_secret = 0
+external_private_registry_workload_count = 0
+external_private_registry_workloads_with_pull_secret = 0
+external_private_registry_workloads_with_serviceaccount_pull_secret = 0
+serviceaccount_pull_secret_refs = {
+    (
+        str(((item.get("metadata") or {}).get("namespace")) or "").strip(),
+        str(((item.get("metadata") or {}).get("name")) or "").strip(),
+    ): item.get("imagePullSecrets") or []
+    for item in serviceaccounts
+}
 for obj in all_workloads:
     spec = pod_spec_from(obj)
+    metadata = obj.get("metadata") or {}
+    namespace = str(metadata.get("namespace") or "").strip()
+    service_account_name = str(spec.get("serviceAccountName") or "default").strip() or "default"
     pull_secrets = spec.get("imagePullSecrets") or []
     if pull_secrets:
         workloads_with_pull_secret += 1
+    serviceaccount_pull_secrets = serviceaccount_pull_secret_refs.get((namespace, service_account_name), [])
+    workload_uses_external_private_registry = False
     for container in (spec.get("containers") or []) + (spec.get("initContainers") or []):
         registry = image_registry(container.get("image"))
         if registry and registry not in public_registry_names and not any(marker in registry for marker in internal_registry_markers):
             external_image_registries.add(registry)
+            workload_uses_external_private_registry = True
         elif registry in public_registry_names and pull_secrets:
             credentialed_public_image_registries.add(registry)
+    if workload_uses_external_private_registry:
+        external_private_registry_workload_count += 1
+        if pull_secrets:
+            external_private_registry_workloads_with_pull_secret += 1
+        elif serviceaccount_pull_secrets:
+            external_private_registry_workloads_with_serviceaccount_pull_secret += 1
 dockerconfig_secret_count = len([item for item in secrets if item.get("type") in ["kubernetes.io/dockerconfigjson", "kubernetes.io/dockercfg"]])
 serviceaccount_pull_secret_count = sum(len((item.get("imagePullSecrets") or [])) for item in serviceaccounts)
 external_private_registry_workloads_present = len(external_image_registries) > 0
 workloads_using_external_private_registries_present = (external_private_registry_workloads_present and (
-    workloads_with_pull_secret > 0 or dockerconfig_secret_count > 0 or serviceaccount_pull_secret_count > 0
+    external_private_registry_workloads_with_pull_secret > 0
+    or external_private_registry_workloads_with_serviceaccount_pull_secret > 0
 )) or len(credentialed_public_image_registries) > 0
 windows_nodes = [
     node for node in nodes
@@ -573,17 +631,42 @@ dashboard_configmaps = [
 ]
 grafana_present = any_keyword(["grafana"], all_workload_blobs) or "grafana" in namespace_names
 grafana_dashboard_crd_present = crd_has("grafanadashboards", "grafana.integreatly.org", "grafana.com")
-grafana_dashboard_present = bool(len(dashboard_configmaps) > 0)
+grafana_dashboard_present = bool(len(dashboard_configmaps) > 0 or len(grafanadashboards) > 0)
 workload_vulnerability_report_crd_present = crd_has("aquasecurity.github.io", "vulnerabilityreports")
 admission_policy_engine_present = bool(
     "gatekeeper-system" in namespace_names
     or "kyverno" in namespace_names
     or crd_has("gatekeeper.sh", "kyverno.io", "validatingadmissionpolicy")
 )
-image_signature_and_admission_policy_present = bool(
-    admission_policy_engine_present
-    or len(allowed_imports) > 0
+trusted_image_policy_keywords = [
+    "image",
+    "registry",
+    "repository",
+    "digest",
+    "signature",
+    "signed",
+    "cosign",
+    "notary",
+    "allowedregistries",
+    "blockedregistries",
+]
+image_admission_policy_resources = [
+    item
+    for item in (
+        validatingadmissionpolicies
+        + validatingadmissionpolicybindings
+        + kyverno_policies
+        + kyverno_clusterpolicies
+    )
+    if any(keyword in text_blob(item) for keyword in trusted_image_policy_keywords)
+]
+active_trusted_image_policy_present = bool(
+    len(allowed_imports) > 0
     or restricted_registry_sources
+    or len(image_admission_policy_resources) > 0
+)
+image_signature_and_admission_policy_present = bool(
+    active_trusted_image_policy_present
 )
 image_signature_and_admission_policy_healthy = bool(
     image_signature_and_admission_policy_present
@@ -642,9 +725,28 @@ workload_scanner_context_present = bool(
 workload_scanner_present = bool(workload_scanner_workload_present)
 dynatrace_operator_subscription_present = "dynatrace-operator" in subscription_packages
 dynatrace_namespace_present = "dynatrace" in namespace_names
-dynatrace_crd_present = crd_has("dynakube.dynatrace.com", "edgeconnects.dynatrace.com")
-dynatrace_workload_present = any_keyword(
-    ["dynatrace-operator", "dynakube", "oneagent", "activegate", "dynatrace-webhook"],
+dynatrace_crd_present = crd_has(
+    "dynakubes.dynatrace.com",
+    "dynakube.dynatrace.com",
+    "edgeconnects.dynatrace.com",
+    "edgeconnect.dynatrace.com",
+)
+dynatrace_operator_workload_present = any_keyword(
+    ["dynatrace-operator", "dynatrace-webhook"],
+    all_workload_blobs,
+)
+dynatrace_observability_workload_present = any_keyword(
+    [
+        "dynakube",
+        "oneagent",
+        "activegate",
+        "dynatrace-otel-collector",
+        "dynatrace-logmonitoring",
+        "dynatrace-extension-controller",
+        "dynatrace-extensions-collector",
+        "dynatrace-node-config-collector",
+        "dynatrace-oneagent-csi-driver",
+    ],
     all_workload_blobs,
 )
 dynatrace_dynakube_present = len(dynakubes) > 0
@@ -653,11 +755,12 @@ dynatrace_context_present = bool(
     dynatrace_operator_subscription_present
     or dynatrace_namespace_present
     or dynatrace_crd_present
+    or dynatrace_operator_workload_present
+    or dynatrace_edgeconnect_present
 )
 dynatrace_observability_present = bool(
     dynatrace_dynakube_present
-    or dynatrace_edgeconnect_present
-    or dynatrace_workload_present
+    or dynatrace_observability_workload_present
 )
 qualys_subscription_present = "qualys-cloud-agent-operator" in subscription_packages
 qualys_namespace_present = "qualys" in namespace_names or "qualys-agent" in namespace_names
@@ -674,10 +777,12 @@ qualys_workload_present = any_keyword(
     all_workload_blobs,
 )
 qualys_scanning_agents_present = bool(
+    qualys_workload_present
+)
+qualys_scanning_agents_context_present = bool(
     qualys_subscription_present
     or qualys_namespace_present
     or qualys_crd_present
-    or qualys_workload_present
 )
 prisma_subscription_present = "prisma-cloud-compute" in subscription_packages or "prisma-cloud-operator" in subscription_packages
 prisma_namespace_present = "twistlock" in namespace_names or "prisma-cloud" in namespace_names
@@ -694,12 +799,12 @@ prisma_workload_present = any_keyword(
     ],
     all_workload_blobs,
 )
-prisma_twistlock_defenders_present = bool(
+prisma_twistlock_context_present = bool(
     prisma_subscription_present
     or prisma_namespace_present
     or prisma_crd_present
-    or prisma_workload_present
 )
+prisma_twistlock_defenders_present = bool(prisma_workload_present)
 aqua_subscription_present = "aqua" in subscription_packages or "aqua-operator" in subscription_packages
 aqua_namespace_present = "aqua" in namespace_names
 aqua_crd_present = crd_has("aqua.security", "aquasecurity.github.io/v1alpha1")
@@ -719,12 +824,15 @@ aqua_platform_context_present = bool(
     or aqua_namespace_present
     or aqua_crd_present
 )
-aqua_security_platform_present = bool(
-    aqua_crd_present
-    or aqua_workload_present
-)
+aqua_security_platform_present = bool(aqua_workload_present)
 splunk_namespace_present = "splunk" in namespace_names
-splunk_crd_present = crd_has("enterprise.splunk.com", "monitoring.splunk.com")
+splunk_crd_present = crd_has(
+    "enterprise.splunk.com",
+    "monitoring.splunk.com",
+    "collectors.splunk.com",
+    "opentelemetrycollectors.opentelemetry.io",
+    "otelcollectors.opentelemetry.io",
+)
 splunk_workload_present = any_keyword(
     [
         "splunk-otel-collector",
@@ -735,6 +843,9 @@ splunk_workload_present = any_keyword(
         "splunk-indexer",
         "splunk-search-head",
         "signalfx-agent",
+        "splunk-otel-agent",
+        "splunk-otel-k8s-cluster-receiver",
+        "splunk-otel-operator",
     ],
     all_workload_blobs,
 )
@@ -742,14 +853,27 @@ splunk_context_present = bool(
     splunk_namespace_present
     or splunk_crd_present
 )
-splunk_observability_present = bool(
-    splunk_crd_present
-    or splunk_workload_present
-)
+splunk_observability_present = bool(splunk_workload_present)
 loki_namespace_present = "openshift-logging" in namespace_names or "loki" in namespace_names or "logging-loki" in namespace_names
 loki_crd_present = crd_has("lokistacks.loki.grafana.com", "rulerconfigs.loki.grafana.com")
 loki_workload_present = any_keyword(
-    ["loki", "promtail", "logcli", "loki-distributor", "loki-gateway", "loki-querier", "loki-compactor"],
+    [
+        "lokistack",
+        "/loki",
+        "loki:",
+        "loki@",
+        "loki-",
+        "-loki",
+        "promtail",
+        "logcli",
+        "loki-distributor",
+        "loki-gateway",
+        "loki-querier",
+        "loki-compactor",
+        "loki-ingester",
+        "loki-ruler",
+        "loki-canary",
+    ],
     all_workload_blobs,
 )
 loki_stack_context_present = bool(
@@ -797,6 +921,8 @@ cluster_network_observability_crd_present = crd_has(
     "consoleplugins.observability.openshift.io",
     "flowmetrics.flows.netobserv.io",
 )
+cluster_network_observability_flowcollector_count = len(flowcollectors)
+cluster_network_observability_flowcollector_present = cluster_network_observability_flowcollector_count > 0
 cluster_network_observability_workload_present = any_keyword(
     [
         "netobserv",
@@ -811,12 +937,13 @@ cluster_network_observability_present = bool(
     cluster_network_observability_subscription_present
     or cluster_network_observability_namespace_present
     or cluster_network_observability_crd_present
+    or cluster_network_observability_flowcollector_present
     or cluster_network_observability_workload_present
 )
 cluster_network_observability_healthy = bool(
     cluster_network_observability_present
     and (
-        cluster_network_observability_crd_present
+        cluster_network_observability_flowcollector_present
         or cluster_network_observability_workload_present
     )
 )
@@ -826,6 +953,20 @@ openshift_developer_hub_crd_present = crd_has(
     "backstages.rhdh.redhat.com",
     "rhdh.redhat.com",
 )
+openshift_developer_hub_backstage_count = len(backstages)
+openshift_developer_hub_ready_backstage_count = len(
+    [
+        item
+        for item in backstages
+        if (
+            has_true_condition(item, "Ready", "Available", "Deployed")
+            or status_text(item, "phase").lower() in {"ready", "available", "deployed", "running"}
+        )
+        and not has_problem_condition(item)
+        and not has_problem_status(item)
+    ]
+)
+openshift_developer_hub_backstage_present = openshift_developer_hub_backstage_count > 0
 openshift_developer_hub_workload_present = any_keyword(
     [
         "developer-hub",
@@ -835,16 +976,19 @@ openshift_developer_hub_workload_present = any_keyword(
     ],
     all_workload_blobs,
 )
-openshift_developer_hub_present = bool(
+openshift_developer_hub_context_present = bool(
     openshift_developer_hub_subscription_present
     or openshift_developer_hub_namespace_present
     or openshift_developer_hub_crd_present
+)
+openshift_developer_hub_present = bool(
+    openshift_developer_hub_backstage_present
     or openshift_developer_hub_workload_present
 )
 openshift_developer_hub_healthy = bool(
     openshift_developer_hub_present
     and (
-        openshift_developer_hub_crd_present
+        openshift_developer_hub_ready_backstage_count > 0
         or openshift_developer_hub_workload_present
     )
 )
@@ -870,10 +1014,12 @@ openshift_dev_spaces_routing_present = bool(len(devworkspaceroutings) > 0) or an
     ],
     all_workload_blobs,
 )
-openshift_dev_spaces_present = bool(
+openshift_dev_spaces_context_present = bool(
     openshift_dev_spaces_subscription_present
     or openshift_dev_spaces_namespace_present
-    or openshift_dev_spaces_checluster_present
+)
+openshift_dev_spaces_present = bool(
+    openshift_dev_spaces_checluster_present
     or openshift_dev_spaces_devworkspace_present
     or openshift_dev_spaces_workspace_operator_config_present
     or openshift_dev_spaces_routing_present
@@ -893,7 +1039,15 @@ appdynamics_subscription_present = "appdynamics-operator" in subscription_packag
 appdynamics_namespace_present = "appdynamics" in namespace_names
 appdynamics_crd_present = crd_has("clusteragents.appdynamics.com", "infravizs.appdynamics.com", "appdynamics.com")
 appdynamics_workload_present = any_keyword(
-    ["appdynamics-cluster-agent", "cluster-agent-operator", "machine-agent", "netviz", "infraviz"],
+    [
+        "appdynamics",
+        "appdynamics-cluster-agent",
+        "appdynamics-operator",
+        "appdynamics-infraviz",
+        "infraviz",
+        "machine-agent",
+        "netviz",
+    ],
     all_workload_blobs,
 )
 appdynamics_context_present = bool(
@@ -1006,10 +1160,12 @@ acs_workload_present = any_keyword(
     all_workload_blobs,
 )
 advanced_cluster_security_present = bool(
+    acs_workload_present
+)
+advanced_cluster_security_context_present = bool(
     acs_operator_subscription_present
     or acs_namespace_present
     or acs_crd_present
-    or acs_workload_present
 )
 gitops_application_names = {
     str((((item.get("metadata") or {}).get("name")) or "")).strip()
@@ -1194,10 +1350,12 @@ secondary_site_dr_replication_ready = (
     len(volumereplicationclasses) > 0
     or len(volumereplications) > 0
     or len(volumereplicationgroups) > 0
+    or len(volumegroupreplications) > 0
 )
 secondary_site_dr_protected_workloads_ready = (
     len(drplacementcontrols) > 0
     or len(volumereplicationgroups) > 0
+    or len(volumegroupreplications) > 0
 )
 secondary_site_dr_present = bool(
     len(drpolicies) > 0
@@ -1206,7 +1364,7 @@ secondary_site_dr_present = bool(
     or len(volumereplicationgroups) > 0
     or len(volumereplications) > 0
     or len(volumereplicationclasses) > 0
-    or crd_has("drpolicies.ramendr", "drclusters.ramendr", "drplacementcontrols.ramendr", "volumereplicationgroups.ramendr", "volumereplications.replication.storage")
+    or len(volumegroupreplications) > 0
 )
 secondary_site_dr_healthy = bool(
     secondary_site_dr_topology_ready
@@ -1259,9 +1417,33 @@ openshift_data_foundation_present = bool(
     or len(cephclusters) > 0
     or len(noobaas) > 0
 )
+odf_storageclass_names = []
+for sc in storageclasses:
+    if not isinstance(sc, dict):
+        continue
+    meta = sc.get("metadata") or {}
+    sc_name = str(meta.get("name") or "").strip()
+    provisioner = str(sc.get("provisioner") or "").strip()
+    blob = f"{sc_name} {provisioner}".lower()
+    if (
+        "ocs-storagecluster" in blob
+        or "openshift-storage.noobaa.io" in blob
+        or "cephfs.csi.ceph.com" in blob
+        or "rbd.csi.ceph.com" in blob
+        or "ceph.rook.io/bucket" in blob
+    ):
+        odf_storageclass_names.append(sc_name or provisioner)
+odf_storageclass_count = len(set(odf_storageclass_names))
+openshift_data_foundation_present = bool(
+    openshift_data_foundation_present
+    or odf_storageclass_count > 0
+)
 openshift_data_foundation_healthy = bool(
-    len(storageclusters) > 0
-    and (len(cephclusters) > 0 or len(noobaas) > 0)
+    (
+        len(storageclusters) > 0
+        and (len(cephclusters) > 0 or len(noobaas) > 0)
+    )
+    or odf_storageclass_count > 0
 )
 cp4ba_operator_subscription_present = "ibm-cp4a-operator" in subscription_packages
 cp4ba_namespace_present = bool(
@@ -1304,7 +1486,7 @@ ready_kubevirts = [
 ready_hyperconvergeds = [
     item for item in hyperconvergeds
     if (
-        has_true_condition(item, "Available", "Progressing")
+        has_true_condition(item, "Available", "Ready")
         or status_text(item, "phase").lower() in {"deployed", "available", "ready"}
     ) and not has_problem_condition(item) and not has_problem_status(item)
 ]
@@ -1312,6 +1494,11 @@ openshift_virtualization_present = bool(
     virtualization_platform_present
     or virtualization_workload_present
     or virtualization_supporting_stack_present
+)
+openshift_virtualization_context_present = bool(
+    openshift_virtualization_present
+    or virtualization_operator_subscription_present
+    or virtualization_namespace_present
 )
 openshift_virtualization_healthy = bool(
     len(ready_kubevirts) > 0
@@ -1327,6 +1514,11 @@ openshift_ai_present = bool(
     or len(inferenceservices) > 0
     or len(modelmeshservings) > 0
     or len(acceleratorprofiles) > 0
+)
+openshift_ai_context_present = bool(
+    openshift_ai_present
+    or openshift_ai_subscription_present
+    or openshift_ai_namespace_present
 )
 ready_datascienceclusters = [
     item for item in datascienceclusters
@@ -1361,11 +1553,14 @@ ready_service_mesh_control_planes = [
     if (
         has_true_condition(item, "Ready", "Installed", "Reconciled")
         or status_text(item, "phase").lower() in {"ready", "installed", "reconciled"}
-    )
+    ) and not has_problem_condition(item) and not has_problem_status(item)
 ]
 service_mesh_present = bool(
     service_mesh_control_plane_present
     or service_mesh_membership_present
+)
+service_mesh_context_present = bool(
+    service_mesh_present
     or service_mesh_subscription_present
     or service_mesh_crd_present
 )
@@ -1388,18 +1583,21 @@ ready_knativeservings = [
     if (
         has_true_condition(item, "Ready", "InstallSucceeded")
         or status_text(item, "phase").lower() in {"ready", "installed", "running"}
-    )
+    ) and not has_problem_condition(item) and not has_problem_status(item)
 ]
 ready_knativeeventings = [
     item for item in knativeeventings
     if (
         has_true_condition(item, "Ready", "InstallSucceeded")
         or status_text(item, "phase").lower() in {"ready", "installed", "running"}
-    )
+    ) and not has_problem_condition(item) and not has_problem_status(item)
 ]
 serverless_present = bool(
     serverless_control_plane_present
     or serverless_workload_present
+)
+serverless_context_present = bool(
+    serverless_present
     or serverless_subscription_present
     or serverless_namespace_present
     or serverless_crd_present
@@ -1425,6 +1623,9 @@ windows_workload_present = len(windows_workload_objects) > 0
 windows_workloads_present = bool(
     windows_nodes_present
     or windows_workload_present
+)
+windows_workloads_context_present = bool(
+    windows_workloads_present
     or windows_operator_namespace_present
     or windows_operator_subscription_present
 )
@@ -1452,6 +1653,9 @@ gpu_workload_present = len(gpu_workload_objects) > 0
 gpu_workloads_present = bool(
     gpu_capacity_present
     or gpu_workload_present
+)
+gpu_workloads_context_present = bool(
+    gpu_workloads_present
     or len(nvidiaclusterpolicies) > 0
     or gpu_operator_subscription_present
     or gpu_operator_workload_present
@@ -1460,6 +1664,19 @@ gpu_workloads_healthy = bool(gpu_capacity_present or gpu_workload_present)
 sandboxed_operator_subscription_present = "sandboxed-containers-operator" in subscription_packages
 sandboxed_operator_namespace_present = "openshift-sandboxed-containers-operator" in namespace_names
 kata_config_present = len(kataconfigs) > 0
+ready_kataconfigs = [
+    item for item in kataconfigs
+    if (
+        has_true_condition(item, "Available", "Ready", "Completed", "Installed")
+        or status_text(item, "phase", "state", "installationStatus").lower() in {
+            "completed",
+            "complete",
+            "installed",
+            "ready",
+            "available",
+        }
+    ) and not has_problem_condition(item) and not has_problem_status(item)
+]
 kata_workload_objects = []
 for obj in all_workloads:
     spec = pod_spec_from(obj)
@@ -1469,32 +1686,60 @@ for obj in all_workloads:
 sandboxed_containers_present = bool(
     kata_config_present
     or len(kata_workload_objects) > 0
+)
+sandboxed_containers_context_present = bool(
+    sandboxed_containers_present
     or sandboxed_operator_namespace_present
     or sandboxed_operator_subscription_present
 )
-sandboxed_containers_healthy = bool(kata_config_present or len(kata_workload_objects) > 0)
+sandboxed_containers_healthy = bool(len(ready_kataconfigs) > 0 or len(kata_workload_objects) > 0)
 node_tuning_namespace_present = "openshift-cluster-node-tuning-operator" in namespace_names
 node_tuning_crd_present = crd_has("tuneds.tuned.openshift.io", "profiles.tuned.openshift.io")
+node_tuning_default_names = {
+    "default",
+    "openshift",
+    "openshift-node",
+    "openshift-control-plane",
+    "openshift-realtime",
+    "openshift-node-es",
+    "openshift-control-plane-es",
+}
+custom_tuned_config_resources = [
+    item for item in tuneds
+    if str(((item.get("metadata") or {}).get("name")) or "").strip().lower() not in node_tuning_default_names
+]
+ready_performanceprofiles = [
+    item for item in performanceprofiles
+    if not has_problem_condition(item) and not has_problem_status(item)
+]
 node_tuning_present = bool(
-    len(tuneds) > 0
+    len(custom_tuned_config_resources) > 0
+    or len(performanceprofiles) > 0
+)
+node_tuning_context_present = bool(
+    node_tuning_present
+    or len(tuneds) > 0
     or len(tunedprofiles) > 0
     or node_tuning_namespace_present
     or node_tuning_crd_present
 )
 tuned_config_resources = [
-    item for item in tuneds
+    item for item in custom_tuned_config_resources
     if (
         len((((item.get("spec") or {}).get("recommend")) or [])) > 0
         or len((((item.get("spec") or {}).get("profile")) or [])) > 0
     ) and not has_problem_condition(item) and not has_problem_status(item)
 ]
-node_tuning_healthy = bool(len(tuned_config_resources) > 0 or len(tunedprofiles) > 0)
+node_tuning_healthy = bool(len(tuned_config_resources) > 0 or len(ready_performanceprofiles) > 0)
 nmstate_namespace_present = "openshift-nmstate" in namespace_names
 nmstate_operator_subscription_present = "kubernetes-nmstate-operator" in subscription_packages
 nmstate_present = bool(
     len(nmstates) > 0
     or len(nodenetworkconfigurationpolicies) > 0
     or len(nodenetworkstates) > 0
+)
+nmstate_context_present = bool(
+    nmstate_present
     or nmstate_namespace_present
     or nmstate_operator_subscription_present
 )
@@ -1517,17 +1762,27 @@ cost_management_subscription_present = "costmanagement-metrics-operator" in subs
 cost_management_namespace_present = "costmanagement-metrics-operator" in namespace_names
 cost_management_crd_present = crd_has("costmanagementmetricsconfigs.costmanagement-metrics-cfg.openshift.io")
 cost_management_config_present = len(costmanagementmetricsconfigs) > 0
+ready_cost_management_configs = [
+    item for item in costmanagementmetricsconfigs
+    if not has_problem_condition(item) and not has_problem_status(item)
+]
 cost_management_present = bool(
     cost_management_config_present
+)
+cost_management_context_present = bool(
+    cost_management_present
     or cost_management_subscription_present
     or cost_management_namespace_present
     or cost_management_crd_present
 )
-cost_management_healthy = bool(cost_management_config_present)
+cost_management_healthy = bool(len(ready_cost_management_configs) > 0)
 descheduler_namespace_present = "openshift-kube-descheduler-operator" in namespace_names
 descheduler_subscription_present = "cluster-kube-descheduler-operator" in subscription_packages
 descheduler_present = bool(
     len(deschedulers) > 0
+)
+descheduler_context_present = bool(
+    descheduler_present
     or descheduler_namespace_present
     or descheduler_subscription_present
 )
@@ -1605,7 +1860,7 @@ def cap_status_for_presence(key, present, healthy=True):
         return "OK" if present and healthy else ("WARN" if cap_required(key) else "INFO")
     if expected == "healthy":
         return "OK" if present and healthy else ("WARN" if cap_required(key) else "INFO")
-    return "OK" if present else ("WARN" if cap_required(key) else "INFO")
+    return "OK" if present and healthy else ("WARN" if cap_required(key) else "INFO")
 
 cluster_shape = "single-node" if is_sno else ("hosted-control-plane" if is_hosted_control_plane else "multi-node")
 provider_baseline = cluster_classification_label if cloud_managed else ("public-cloud" if public_cloud else "self-managed")
@@ -2037,15 +2292,19 @@ elif cap_required("cyberark_conjur_secrets_management") and not cyberark_conjur_
 
 add_check(
     "User workload monitoring enabled",
-    cap_status_for_presence("user_workload_metrics_monitoring", enable_user_workload, len(servicemonitors) > 0 or len(podmonitors) > 0 or bool(uwm)),
-    f"enableUserWorkload={enable_user_workload} servicemonitors={len(servicemonitors)} podmonitors={len(podmonitors)} user_workload_config_present={bool(uwm)}",
+    cap_status_for_presence(
+        "user_workload_metrics_monitoring",
+        enable_user_workload or bool(obs.get("vendor_managed_metrics_forwarding_present")),
+        len(servicemonitors) > 0 or len(podmonitors) > 0 or bool(uwm) or bool(obs.get("vendor_managed_metrics_forwarding_present")),
+    ),
+    f"enableUserWorkload={enable_user_workload} servicemonitors={len(servicemonitors)} podmonitors={len(podmonitors)} user_workload_config_present={bool(uwm)} vendor_managed={bool(obs.get('vendor_managed_metrics_forwarding_present'))} vendors={','.join(obs.get('metrics_forwarding_vendor_names') or []) or 'none'}",
     "user workload monitoring and platform monitoring guidance",
     level=cap_level("user_workload_metrics_monitoring", base_required_level),
 )
-if not enable_user_workload:
+if not enable_user_workload and not bool(obs.get("vendor_managed_metrics_forwarding_present")):
     add_finding(
         "prod-day2-user-workload-monitoring-disabled",
-        "cluster-monitoring-config does not enable user workload monitoring",
+        "cluster-monitoring-config does not enable user workload monitoring, and no approved vendor-managed workload metrics path was detected",
         severity=cap_failure_severity("user_workload_metrics_monitoring"),
         source="user workload monitoring and platform monitoring guidance",
     )
@@ -2139,6 +2398,7 @@ add_check(
     (
         f"grafana_present={grafana_present} "
         f"dashboard_configmaps={len(dashboard_configmaps)} "
+        f"grafanadashboards={len(grafanadashboards)} "
         f"grafana_dashboard_crds={grafana_dashboard_crd_present}"
     ),
     "Grafana dashboard configuration inventory",
@@ -2149,7 +2409,7 @@ if not grafana_dashboard_present and cap_required("grafana_metrics_dashboards"):
     add_finding(
         "prod-day2-grafana-dashboards-missing",
         (
-            "no in-cluster Grafana dashboard inventory was detected from dashboard ConfigMaps"
+            "no in-cluster Grafana dashboard inventory was detected from dashboard ConfigMaps or GrafanaDashboard resources"
             + (", and no Grafana workload footprint was found" if not grafana_present else "")
         ),
         severity=cap_failure_severity("grafana_metrics_dashboards"),
@@ -2321,6 +2581,7 @@ add_check(
         f"subscriptionPresent={cluster_network_observability_subscription_present} "
         f"namespacePresent={cluster_network_observability_namespace_present} "
         f"crdPresent={cluster_network_observability_crd_present} "
+        f"flowCollectors={cluster_network_observability_flowcollector_count} "
         f"workloadPresent={cluster_network_observability_workload_present}"
     ),
     "OpenShift network observability operator and workload inventory",
@@ -2330,7 +2591,17 @@ add_check(
 if cap_required("cluster_network_observability") and not cluster_network_observability_present:
     add_finding(
         "prod-day2-cluster-network-observability-missing",
-        "no network observability operator, CRD, namespace, or workload footprint was detected",
+        "no network observability operator, CRD, FlowCollector, namespace, or workload footprint was detected",
+        severity=cap_failure_severity("cluster_network_observability"),
+        source="OpenShift network observability operator and workload inventory",
+    )
+elif cap_required("cluster_network_observability") and not cluster_network_observability_healthy:
+    add_finding(
+        "prod-day2-cluster-network-observability-incomplete",
+        (
+            "network observability context was detected, but no FlowCollector resource or "
+            "network observability workload footprint was found"
+        ),
         severity=cap_failure_severity("cluster_network_observability"),
         source="OpenShift network observability operator and workload inventory",
     )
@@ -2346,6 +2617,9 @@ add_check(
         f"subscriptionPresent={openshift_developer_hub_subscription_present} "
         f"namespacePresent={openshift_developer_hub_namespace_present} "
         f"crdPresent={openshift_developer_hub_crd_present} "
+        f"contextPresent={openshift_developer_hub_context_present} "
+        f"backstages={openshift_developer_hub_backstage_count} "
+        f"readyBackstages={openshift_developer_hub_ready_backstage_count} "
         f"workloadPresent={openshift_developer_hub_workload_present}"
     ),
     "Red Hat Developer Hub operator and workload inventory",
@@ -2355,7 +2629,7 @@ add_check(
 if cap_required("openshift_developer_hub") and not openshift_developer_hub_present:
     add_finding(
         "prod-day2-openshift-developer-hub-missing",
-        "no Red Hat Developer Hub operator, Backstage CRD, namespace, or workload footprint was detected",
+        "no Red Hat Developer Hub Backstage resource or portal workload footprint was detected; operator, namespace, or CRD context alone is not treated as an active Developer Hub deployment",
         severity=cap_failure_severity("openshift_developer_hub"),
         source="Red Hat Developer Hub operator and workload inventory",
     )
@@ -2370,6 +2644,7 @@ add_check(
     (
         f"subscriptionPresent={openshift_dev_spaces_subscription_present} "
         f"namespacePresent={openshift_dev_spaces_namespace_present} "
+        f"contextPresent={openshift_dev_spaces_context_present} "
         f"cheClusterPresent={openshift_dev_spaces_checluster_present} "
         f"devWorkspacePresent={openshift_dev_spaces_devworkspace_present} "
         f"workspaceOperatorConfigPresent={openshift_dev_spaces_workspace_operator_config_present} "
@@ -2382,7 +2657,7 @@ add_check(
 if cap_required("openshift_dev_spaces") and not openshift_dev_spaces_present:
     add_finding(
         "prod-day2-openshift-dev-spaces-missing",
-        "no OpenShift Dev Spaces operator, CheCluster, DevWorkspace, namespace, or routing footprint was detected",
+        "no OpenShift Dev Spaces CheCluster, DevWorkspace, routing, or operator configuration footprint was detected; operator subscription or namespace context alone is not treated as an active Dev Spaces deployment",
         severity=cap_failure_severity("openshift_dev_spaces"),
         source="OpenShift Dev Spaces operator and workspace inventory",
     )
@@ -2556,7 +2831,7 @@ add_check(
         f"drpolicies={len(drpolicies)} validPolicies={len(valid_drpolicy_names)} "
         f"drclusters={len(drclusters)} drplacementcontrols={len(drplacementcontrols)} "
         f"volumereplicationgroups={len(volumereplicationgroups)} volumereplications={len(volumereplications)} "
-        f"volumereplicationclasses={len(volumereplicationclasses)} protectedPolicies={len(protected_drpolicy_names)}"
+        f"volumereplicationclasses={len(volumereplicationclasses)} volumegroupreplications={len(volumegroupreplications)} protectedPolicies={len(protected_drpolicy_names)}"
     ),
     "ODF DR topology and protected workload inventory",
     level=cap_level("secondary_site_disaster_recovery", "informational"),
@@ -2565,7 +2840,7 @@ add_check(
 if not secondary_site_dr_present and cap_required("secondary_site_disaster_recovery"):
     add_finding(
         "prod-day2-secondary-site-dr-missing",
-        "secondary-site disaster recovery was required but no DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, or VolumeReplicationClass resources were found",
+        "secondary-site disaster recovery was required but no DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, VolumeReplicationClass, or VolumeGroupReplication resources were found",
         severity=cap_failure_severity("secondary_site_disaster_recovery"),
         source="ODF DR topology and protected workload inventory",
     )
@@ -2579,14 +2854,14 @@ if secondary_site_dr_present and cap_required("secondary_site_disaster_recovery"
 if secondary_site_dr_present and cap_required("secondary_site_disaster_recovery") and not secondary_site_dr_replication_ready:
     add_finding(
         "prod-day2-secondary-site-dr-replication-config-missing",
-        "secondary-site disaster recovery inventory was detected but no VolumeReplicationClass, VolumeReplication, or VolumeReplicationGroup evidence was found for storage replication",
+        "secondary-site disaster recovery inventory was detected but no VolumeReplicationClass, VolumeReplication, VolumeReplicationGroup, or VolumeGroupReplication evidence was found for storage replication",
         severity=cap_failure_severity("secondary_site_disaster_recovery"),
         source="ODF DR topology and protected workload inventory",
     )
 if secondary_site_dr_present and cap_required("secondary_site_disaster_recovery") and not secondary_site_dr_protected_workloads_ready:
     add_finding(
         "prod-day2-secondary-site-dr-protected-workloads-missing",
-        "secondary-site disaster recovery inventory was detected but no DRPlacementControl or VolumeReplicationGroup evidence was found for protected workloads",
+        "secondary-site disaster recovery inventory was detected but no DRPlacementControl, VolumeReplicationGroup, or VolumeGroupReplication evidence was found for protected workloads",
         severity=cap_failure_severity("secondary_site_disaster_recovery"),
         source="ODF DR topology and protected workload inventory",
     )
@@ -2629,7 +2904,8 @@ add_check(
         f"drpolicies={len(drpolicies)} validPolicies={len(valid_drpolicy_names)} "
         f"drclusters={len(drclusters)} drplacementcontrols={len(drplacementcontrols)} "
         f"volumereplicationgroups={len(volumereplicationgroups)} "
-        f"volumereplicationclasses={len(volumereplicationclasses)}"
+        f"volumereplicationclasses={len(volumereplicationclasses)} "
+        f"volumegroupreplications={len(volumegroupreplications)}"
     ),
     "ACM registration plus multicluster DR topology inventory",
     level=cap_level("acm_multicluster_disaster_recovery", "informational"),
@@ -2638,7 +2914,7 @@ add_check(
 if cap_required("acm_multicluster_disaster_recovery") and not secondary_site_dr_present:
     add_finding(
         "prod-day2-acm-dr-missing",
-        "ACM multicluster disaster recovery was required but no DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, or VolumeReplicationClass resources were found",
+        "ACM multicluster disaster recovery was required but no DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, VolumeReplicationClass, or VolumeGroupReplication resources were found",
         severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
         source="ACM registration plus multicluster DR topology inventory",
     )
@@ -2666,14 +2942,14 @@ if acm_dr_present and cap_required("acm_multicluster_disaster_recovery") and not
 if acm_dr_present and cap_required("acm_multicluster_disaster_recovery") and not secondary_site_dr_replication_ready:
     add_finding(
         "prod-day2-acm-dr-replication-config-missing",
-        "ACM multicluster disaster recovery inventory was detected but no VolumeReplicationClass, VolumeReplication, or VolumeReplicationGroup evidence was found for storage replication",
+        "ACM multicluster disaster recovery inventory was detected but no VolumeReplicationClass, VolumeReplication, VolumeReplicationGroup, or VolumeGroupReplication evidence was found for storage replication",
         severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
         source="ACM registration plus multicluster DR topology inventory",
     )
 if acm_dr_present and cap_required("acm_multicluster_disaster_recovery") and not secondary_site_dr_protected_workloads_ready:
     add_finding(
         "prod-day2-acm-dr-protected-workloads-missing",
-        "ACM multicluster disaster recovery inventory was detected but no DRPlacementControl or VolumeReplicationGroup evidence was found for protected workloads",
+        "ACM multicluster disaster recovery inventory was detected but no DRPlacementControl, VolumeReplicationGroup, or VolumeGroupReplication evidence was found for protected workloads",
         severity=cap_failure_severity("acm_multicluster_disaster_recovery"),
         source="ACM registration plus multicluster DR topology inventory",
     )
@@ -3150,7 +3426,14 @@ elif (autoscaler_expected or cap_required("cluster_autoscaler_configuration")) a
         severity=cap_failure_severity("cluster_autoscaler_configuration"),
         source="cluster autoscaler guidance for Machine API worker pools",
     )
-if cap_required("kubelet_configuration_governance") and kubelet_configuration_governance_present and not kubelet_configuration_governance_healthy:
+if cap_required("kubelet_configuration_governance") and not kubelet_configuration_governance_present:
+    add_finding(
+        "prod-day2-kubelet-configuration-governance-missing",
+        "no KubeletConfig resource footprint was detected for explicit kubelet tuning governance",
+        severity=cap_failure_severity("kubelet_configuration_governance"),
+        source="KubeletConfig resource inventory",
+    )
+elif cap_required("kubelet_configuration_governance") and not kubelet_configuration_governance_healthy:
     add_finding(
         "prod-day2-kubelet-configuration-governance-missing",
         "KubeletConfig resources were detected, but no targeted pod-density, reservation, eviction, or runtime-policy tuning signal was found",
@@ -3199,6 +3482,8 @@ add_check(
         f"admissionPolicyEnginePresent={admission_policy_engine_present} "
         f"allowedRegistriesForImport={len(allowed_imports)} "
         f"registryFilterPolicyPresent={restricted_registry_sources} "
+        f"imageAdmissionPolicyResources={len(image_admission_policy_resources)} "
+        f"activeTrustedImagePolicy={active_trusted_image_policy_present} "
         f"insecureRegistries={len(insecure_registries)}"
     ),
     "trusted image policy and admission guardrail inventory",
@@ -3208,7 +3493,7 @@ add_check(
 if cap_required("image_signature_and_admission_policy") and not image_signature_and_admission_policy_present:
     add_finding(
         "prod-day2-image-signature-and-admission-policy-missing",
-        "no admission policy engine or image registry restriction policy signal was detected for trusted-image enforcement",
+        "no active trusted-image policy signal was detected; policy engine namespaces or CRDs alone are not treated as admission enforcement",
         severity=cap_failure_severity("image_signature_and_admission_policy"),
         source="trusted image policy and admission guardrail inventory",
     )
@@ -3267,7 +3552,7 @@ elif cap_required("cluster_image_mirror_configuration") and deprecated_icsp_only
 add_check(
     "Disconnected installation image sources",
     cap_status_for_presence("disconnected_cluster_image_sources", disconnected_cluster_image_sources_present, disconnected_cluster_image_sources_healthy),
-    f"mirror_resources={mirror_resource_count} local_mirror_targets={len(local_mirror_targets)} desired_release_image_mirrored={release_image_mirrored} non_public_catalogsources={disconnected_catalog_count} non_public_clustercatalogs={disconnected_clustercatalog_count} updateservices={len(updateservices)} deprecated_icsp_only={deprecated_icsp_only}",
+    f"mirror_resources={mirror_resource_count} local_mirror_targets={len(local_mirror_targets)} release_image_mirror_configured={release_image_mirror_configured} desired_release_image_mirrored={release_image_mirrored} non_public_catalogsources={disconnected_catalog_count} non_public_clustercatalogs={disconnected_clustercatalog_count} updateservices={len(updateservices)} deprecated_icsp_only={deprecated_icsp_only}",
     "OpenShift disconnected installation mirror inventory",
     level=cap_level("disconnected_cluster_image_sources", "informational"),
     scored=False,
@@ -3282,7 +3567,7 @@ if cap_required("disconnected_cluster_image_sources") and mirror_resource_count 
 if cap_required("disconnected_cluster_image_sources") and not release_image_mirrored:
     add_finding(
         "prod-day2-disconnected-release-image-not-mirrored",
-        "ClusterVersion desired release image still points to a public registry, so release payload updates are not shown as mirrored for disconnected operation",
+        "ClusterVersion desired release image still points to a public registry and no release-payload mirror mapping was found for disconnected operation",
         severity=cap_failure_severity("disconnected_cluster_image_sources"),
         source="OpenShift disconnected installation mirror inventory",
     )
@@ -3467,11 +3752,14 @@ add_check(
     "Application external private registry usage",
     cap_status_for_presence(
         "workloads_using_external_private_registries",
-        external_private_registry_workloads_present or len(credentialed_public_image_registries) > 0,
+        workloads_using_external_private_registries_present,
         workloads_using_external_private_registries_present,
     ),
     (
         f"external_registries={len(external_image_registries)} "
+        f"external_registry_workloads={external_private_registry_workload_count} "
+        f"external_registry_workloads_with_imagePullSecrets={external_private_registry_workloads_with_pull_secret} "
+        f"external_registry_workloads_with_serviceAccountPullSecrets={external_private_registry_workloads_with_serviceaccount_pull_secret} "
         f"credentialed_public_registries={len(credentialed_public_image_registries)} "
         f"workloads_with_imagePullSecrets={workloads_with_pull_secret} "
         f"docker_registry_secrets={dockerconfig_secret_count} "
@@ -3496,9 +3784,9 @@ elif cap_required("workloads_using_external_private_registries") and not workloa
         (
             "external registry workloads were detected but pull-credential evidence is incomplete: "
             f"external_registries={len(external_image_registries)}, "
-            f"workloads_with_imagePullSecrets={workloads_with_pull_secret}, "
-            f"docker_registry_secrets={dockerconfig_secret_count}, "
-            f"serviceaccount_pull_secrets={serviceaccount_pull_secret_count}"
+            f"external_registry_workloads={external_private_registry_workload_count}, "
+            f"external_registry_workloads_with_imagePullSecrets={external_private_registry_workloads_with_pull_secret}, "
+            f"external_registry_workloads_with_serviceAccountPullSecrets={external_private_registry_workloads_with_serviceaccount_pull_secret}"
         ),
         severity=cap_failure_severity("workloads_using_external_private_registries"),
         source="Kubernetes imagePullSecrets and workload image inventory",
@@ -3700,13 +3988,14 @@ platform_app_catalog = [
         "detail": (
             f"subscriptionPresent={openshift_dev_spaces_subscription_present} "
             f"namespacePresent={openshift_dev_spaces_namespace_present} "
+            f"contextPresent={openshift_dev_spaces_context_present} "
             f"cheClusterPresent={openshift_dev_spaces_checluster_present} "
             f"devWorkspacePresent={openshift_dev_spaces_devworkspace_present} "
             f"workspaceOperatorConfigPresent={openshift_dev_spaces_workspace_operator_config_present} "
             f"routingPresent={openshift_dev_spaces_routing_present}"
         ),
         "issue": "prod-day2-openshift-dev-spaces-missing",
-        "finding": "no OpenShift Dev Spaces operator, CheCluster, DevWorkspace, namespace, or routing footprint was detected",
+        "finding": "no OpenShift Dev Spaces CheCluster, DevWorkspace, routing, or operator configuration footprint was detected; operator subscription or namespace context alone is not treated as an active Dev Spaces deployment",
     },
     {
         "key": "cert_manager_operator",
@@ -3731,7 +4020,7 @@ platform_app_catalog = [
             f"acs_workload_present={acs_workload_present}"
         ),
         "issue": "prod-day2-platform-acs-missing",
-        "finding": "no RHACS operator, CRD, namespace, or secured-cluster workload footprint was detected",
+        "finding": "no RHACS Central, Scanner, Sensor, admission-control, or secured-cluster workload footprint was detected; operator, namespace, or CRD context alone is not treated as active ACS coverage",
     },
     {
         "key": "dynatrace_observability",
@@ -3744,7 +4033,8 @@ platform_app_catalog = [
                 "cluster meets criteria for Dynatrace-managed observability: "
                 f"dynakubes={len(dynakubes)} "
                 f"edgeconnects={len(edgeconnects)} "
-                f"workload_present={dynatrace_workload_present}"
+                f"operator_workload_present={dynatrace_operator_workload_present} "
+                f"observability_workload_present={dynatrace_observability_workload_present}"
             )
             if dynatrace_observability_present
             else (
@@ -3753,11 +4043,12 @@ platform_app_catalog = [
                 f"crd_present={dynatrace_crd_present} "
                 f"dynakubes={len(dynakubes)} "
                 f"edgeconnects={len(edgeconnects)} "
-                f"workload_present={dynatrace_workload_present}"
+                f"operator_workload_present={dynatrace_operator_workload_present} "
+                f"observability_workload_present={dynatrace_observability_workload_present}"
             )
         ),
         "issue": "prod-day2-dynatrace-observability-missing",
-        "finding": "no Dynatrace DynaKube, EdgeConnect, OneAgent, ActiveGate, or other managed workload footprint was detected",
+        "finding": "no Dynatrace DynaKube, OneAgent, ActiveGate, CSI driver, OpenTelemetry collector, log-monitoring, or other managed observability workload footprint was detected",
     },
     {
         "key": "qualys_scanning_agents",
@@ -3772,7 +4063,7 @@ platform_app_catalog = [
             f"workload_present={qualys_workload_present}"
         ),
         "issue": "prod-day2-qualys-scanning-agents-missing",
-        "finding": "no Qualys container sensor, cloud-agent, namespace, CRD, or workload footprint was detected",
+        "finding": "no Qualys container sensor, cloud-agent, or Qualys-managed workload footprint was detected; operator, namespace, or CRD context alone is not treated as active scanner coverage",
     },
     {
         "key": "prisma_twistlock_defenders",
@@ -3787,7 +4078,7 @@ platform_app_catalog = [
             f"workload_present={prisma_workload_present}"
         ),
         "issue": "prod-day2-prisma-twistlock-defenders-missing",
-        "finding": "no Prisma Cloud Compute or Twistlock namespace, CRD, Console, or Defender workload footprint was detected",
+        "finding": "no Prisma Cloud Compute or Twistlock Console or Defender workload footprint was detected",
     },
     {
         "key": "aqua_security_platform",
@@ -3802,7 +4093,7 @@ platform_app_catalog = [
             f"workload_present={aqua_workload_present}"
         ),
         "issue": "prod-day2-aqua-security-platform-missing",
-        "finding": "no Aqua platform CRD, Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected",
+        "finding": "no Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected",
     },
     {
         "key": "splunk_observability",
@@ -3917,6 +4208,8 @@ platform_app_catalog = [
         "level": cap_level("openshift_custom_metrics_autoscaler", "informational"),
         "source": "KEDA controller and custom autoscaling resource inventory",
         "present": openshift_custom_metrics_autoscaler_present,
+        "context_present": openshift_custom_metrics_autoscaler_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"subscription_present={keda_subscription_present} "
             f"namespace_present={keda_namespace_present} "
@@ -3937,15 +4230,18 @@ platform_app_catalog = [
         "level": cap_level("openshift_data_foundation", "informational"),
         "source": "ODF and storage resource inventory",
         "present": openshift_data_foundation_present,
+        "healthy": openshift_data_foundation_healthy,
         "detail": (
             f"storageclusters={len(storageclusters)} "
             f"cephclusters={len(cephclusters)} "
             f"noobaas={len(noobaas)} "
+            f"odf_storageclasses={odf_storageclass_count} "
             f"odf_subscription_present={odf_operator_subscription_present} "
             f"openshift_storage_namespace={odf_namespace_present}"
         ),
         "issue": "prod-day2-openshift-data-foundation-missing",
-        "finding": "no OpenShift Data Foundation StorageCluster, CephCluster, or NooBaa resource was detected",
+        "finding": "no OpenShift Data Foundation StorageCluster, CephCluster, NooBaa, or ODF storage-class resource was detected",
+        "finding_when_unhealthy": "OpenShift Data Foundation context was detected, but no healthy ODF storage-service footprint was derived from StorageCluster with Ceph/NooBaa backing resources or ODF storage classes",
     },
     {
         "key": "ibm_cloud_pak_business_automation",
@@ -4018,16 +4314,19 @@ platform_app_catalog = [
         "source": "OpenShift Service Mesh control plane and membership inventory",
         "present": service_mesh_present,
         "healthy": service_mesh_healthy,
+        "context_present": service_mesh_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"servicemeshcontrolplanes={len(servicemeshcontrolplanes)} "
             f"ready_control_planes={len(ready_service_mesh_control_planes)} "
             f"servicemeshmemberrolls={len(servicemeshmemberrolls)} "
             f"servicemeshmembers={len(servicemeshmembers)} "
+            f"context_present={service_mesh_context_present} "
             f"subscription_present={service_mesh_subscription_present} "
             f"crd_present={service_mesh_crd_present}"
         ),
         "issue": "prod-day2-service-mesh-missing",
-        "finding": "no ServiceMeshControlPlane, ServiceMeshMemberRoll, service mesh subscription, or service mesh CRD footprint was detected",
+        "finding": "no active ServiceMeshControlPlane or service mesh membership footprint was detected",
     },
     {
         "key": "openshift_serverless",
@@ -4036,18 +4335,21 @@ platform_app_catalog = [
         "source": "OpenShift Serverless control plane and Knative workload inventory",
         "present": serverless_present,
         "healthy": serverless_healthy,
+        "context_present": serverless_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"knativeservings={len(knativeservings)} "
             f"ready_knativeservings={len(ready_knativeservings)} "
             f"knativeeventings={len(knativeeventings)} "
             f"ready_knativeeventings={len(ready_knativeeventings)} "
             f"knativeservices={len(knativeservices)} "
+            f"context_present={serverless_context_present} "
             f"subscription_present={serverless_subscription_present} "
             f"namespace_present={serverless_namespace_present} "
             f"crd_present={serverless_crd_present}"
         ),
         "issue": "prod-day2-serverless-missing",
-        "finding": "no KnativeServing, KnativeEventing, Knative Service, serverless subscription, or openshift-serverless namespace was detected",
+        "finding": "no active KnativeServing, KnativeEventing, or Knative Service footprint was detected",
     },
     {
         "key": "windows_container_workloads",
@@ -4056,14 +4358,17 @@ platform_app_catalog = [
         "source": "node, workload, and Windows Machine Config Operator inventory",
         "present": windows_workloads_present,
         "healthy": windows_workloads_healthy,
+        "context_present": windows_workloads_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"windows_nodes={len(windows_nodes)} "
             f"windows_workloads={len(windows_workload_objects)} "
+            f"context_present={windows_workloads_context_present} "
             f"wmco_namespace={windows_operator_namespace_present} "
             f"wmco_subscription={windows_operator_subscription_present}"
         ),
         "issue": "prod-day2-windows-container-workloads-missing",
-        "finding": "no Windows node, workload, or Windows Machine Config Operator footprint was detected",
+        "finding": "no Windows node or Windows-targeted workload footprint was detected",
     },
     {
         "key": "gpu_accelerated_workloads",
@@ -4072,15 +4377,18 @@ platform_app_catalog = [
         "source": "GPU node, operator, and workload inventory",
         "present": gpu_workloads_present,
         "healthy": gpu_workloads_healthy,
+        "context_present": gpu_workloads_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"gpu_nodes={len(gpu_nodes)} "
             f"gpu_workloads={len(gpu_workload_objects)} "
+            f"context_present={gpu_workloads_context_present} "
             f"clusterpolicies={len(nvidiaclusterpolicies)} "
             f"gpu_operator_subscription={gpu_operator_subscription_present} "
             f"gpu_operator_workloads={gpu_operator_workload_present}"
         ),
         "issue": "prod-day2-gpu-accelerated-workloads-missing",
-        "finding": "no GPU node, GPU-requesting workload, or GPU operator footprint was detected",
+        "finding": "no node with allocatable GPU capacity or GPU-requesting workload was detected",
     },
     {
         "key": "sandboxed_container_workloads",
@@ -4089,14 +4397,18 @@ platform_app_catalog = [
         "source": "OpenShift sandboxed containers inventory",
         "present": sandboxed_containers_present,
         "healthy": sandboxed_containers_healthy,
+        "context_present": sandboxed_containers_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"kataconfigs={len(kataconfigs)} "
+            f"ready_kataconfigs={len(ready_kataconfigs)} "
             f"kata_workloads={len(kata_workload_objects)} "
+            f"context_present={sandboxed_containers_context_present} "
             f"sandboxed_namespace={sandboxed_operator_namespace_present} "
             f"sandboxed_subscription={sandboxed_operator_subscription_present}"
         ),
         "issue": "prod-day2-sandboxed-container-workloads-missing",
-        "finding": "no KataConfig, kata runtime workload, or sandboxed containers operator footprint was detected",
+        "finding": "no KataConfig or kata/sandbox runtime workload footprint was detected",
     },
     {
         "key": "kubelet_configuration_governance",
@@ -4127,10 +4439,13 @@ platform_app_catalog = [
             f"subscriptionPresent={openshift_developer_hub_subscription_present} "
             f"namespacePresent={openshift_developer_hub_namespace_present} "
             f"crdPresent={openshift_developer_hub_crd_present} "
+            f"contextPresent={openshift_developer_hub_context_present} "
+            f"backstages={openshift_developer_hub_backstage_count} "
+            f"readyBackstages={openshift_developer_hub_ready_backstage_count} "
             f"workloadPresent={openshift_developer_hub_workload_present}"
         ),
         "issue": "prod-day2-openshift-developer-hub-missing",
-        "finding": "no Red Hat Developer Hub operator, Backstage CRD, namespace, or workload footprint was detected",
+        "finding": "no Red Hat Developer Hub Backstage resource or portal workload footprint was detected; operator, namespace, or CRD context alone is not treated as an active Developer Hub deployment",
     },
     {
         "key": "openshift_dev_spaces",
@@ -4157,14 +4472,20 @@ platform_app_catalog = [
         "source": "Node Tuning Operator inventory",
         "present": node_tuning_present,
         "healthy": node_tuning_healthy,
+        "context_present": node_tuning_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"tuneds={len(tuneds)} "
+            f"custom_tuneds={len(custom_tuned_config_resources)} "
             f"tunedprofiles={len(tunedprofiles)} "
+            f"performanceprofiles={len(performanceprofiles)} "
+            f"ready_performanceprofiles={len(ready_performanceprofiles)} "
+            f"context_present={node_tuning_context_present} "
             f"namespace_present={node_tuning_namespace_present} "
             f"crd_present={node_tuning_crd_present}"
         ),
         "issue": "prod-day2-node-tuning-operator-missing",
-        "finding": "no Tuned/Profile custom resources, Node Tuning Operator namespace, or CRD footprint was detected",
+        "finding": "no custom Tuned or PerformanceProfile resource footprint was detected",
     },
     {
         "key": "kubernetes_nmstate_networking",
@@ -4173,11 +4494,13 @@ platform_app_catalog = [
         "source": "Kubernetes NMState inventory",
         "present": nmstate_present,
         "healthy": nmstate_healthy,
+        "context_present": nmstate_context_present,
         "detail": (
             f"nmstates={len(nmstates)} "
             f"nodenetworkconfigurationpolicies={len(nodenetworkconfigurationpolicies)} "
             f"ready_nodenetworkconfigurationpolicies={len(ready_nodenetworkconfigurationpolicies)} "
             f"nodenetworkstates={len(nodenetworkstates)} "
+            f"context_present={nmstate_context_present} "
             f"openshift_nmstate_namespace={nmstate_namespace_present} "
             f"subscription_present={nmstate_operator_subscription_present}"
         ),
@@ -4191,13 +4514,17 @@ platform_app_catalog = [
         "source": "Descheduler Operator inventory",
         "present": descheduler_present,
         "healthy": descheduler_healthy,
+        "context_present": descheduler_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"deschedulers={len(deschedulers)} "
+            f"configured_deschedulers={len(configured_deschedulers)} "
+            f"context_present={descheduler_context_present} "
             f"namespace_present={descheduler_namespace_present} "
             f"subscription_present={descheduler_subscription_present}"
         ),
         "issue": "prod-day2-descheduler-operator-missing",
-        "finding": "no Descheduler custom resource or descheduler operator footprint was detected",
+        "finding": "no KubeDescheduler custom resource footprint was detected",
     },
     {
         "key": "multi_tenant_namespace_governance",
@@ -4247,14 +4574,18 @@ platform_app_catalog = [
         "source": "cost management inventory",
         "present": cost_management_present,
         "healthy": cost_management_healthy,
+        "context_present": cost_management_context_present,
+        "defer_missing_finding_to_context": True,
         "detail": (
             f"costmanagementmetricsconfigs={len(costmanagementmetricsconfigs)} "
+            f"ready_costmanagementmetricsconfigs={len(ready_cost_management_configs)} "
+            f"context_present={cost_management_context_present} "
             f"subscription_present={cost_management_subscription_present} "
             f"namespace_present={cost_management_namespace_present} "
             f"crd_present={cost_management_crd_present}"
         ),
         "issue": "prod-day2-platform-cost-management-missing",
-        "finding": "no cost management metrics operator or CostManagementMetricsConfig footprint was detected",
+        "finding": "no CostManagementMetricsConfig resource footprint was detected",
     },
 ]
 
@@ -4277,7 +4608,8 @@ for item in platform_app_catalog:
         level=item["level"],
         scored=False,
     )
-    if not present and required_or_present:
+    missing_finding_deferred = bool(item.get("defer_missing_finding_to_context")) and bool(item.get("context_present"))
+    if not present and required_or_present and not missing_finding_deferred:
         add_finding(
             item["issue"],
             item["finding"],
@@ -4292,7 +4624,7 @@ for item in platform_app_catalog:
             source=item["source"],
         )
 
-if cap_required("service_mesh_control_plane") and service_mesh_present and not service_mesh_control_plane_present:
+if cap_required("service_mesh_control_plane") and service_mesh_context_present and not service_mesh_control_plane_present:
     add_finding(
         "prod-day2-service-mesh-missing",
         "service mesh operator or CRD footprint was detected, but no ServiceMeshControlPlane resource was found",
@@ -4307,7 +4639,7 @@ elif cap_required("service_mesh_control_plane") and service_mesh_control_plane_p
         source="OpenShift Service Mesh control plane and membership inventory",
     )
 
-if cap_required("openshift_serverless") and serverless_present and not serverless_control_plane_present:
+if cap_required("openshift_serverless") and serverless_context_present and not serverless_control_plane_present:
     add_finding(
         "prod-day2-serverless-missing",
         "serverless operator, namespace, CRD, or workload footprint was detected, but no KnativeServing or KnativeEventing control plane resource was found",
@@ -4322,33 +4654,12 @@ elif cap_required("openshift_serverless") and serverless_control_plane_present a
         source="OpenShift Serverless control plane and Knative workload inventory",
     )
 
-if cap_required("windows_container_workloads") and windows_workloads_present and not windows_workloads_healthy:
+if cap_required("windows_container_workloads") and windows_workloads_context_present and not windows_workloads_present:
     add_finding(
         "prod-day2-windows-container-workloads-missing",
         "Windows Machine Config Operator footprint was detected, but no Windows node or Windows-targeted workload was found",
         severity=cap_failure_severity("windows_container_workloads"),
         source="node, workload, and Windows Machine Config Operator inventory",
-    )
-if cap_required("dynatrace_observability") and dynatrace_context_present and not dynatrace_observability_present:
-    add_finding(
-        "prod-day2-dynatrace-observability-missing",
-        "Dynatrace operator, namespace, or CRD footprint was detected, but no DynaKube, EdgeConnect, OneAgent, ActiveGate, or other managed workload footprint was found",
-        severity=cap_failure_severity("dynatrace_observability"),
-        source="Dynatrace operator and workload inventory",
-    )
-if cap_required("aqua_security_platform") and aqua_platform_context_present and not aqua_security_platform_present:
-    add_finding(
-        "prod-day2-aqua-security-platform-missing",
-        "Aqua operator, namespace, or CRD footprint was detected, but no Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was found",
-        severity=cap_failure_severity("aqua_security_platform"),
-        source="Aqua operator and enforcer inventory",
-    )
-if cap_required("splunk_observability") and splunk_context_present and not splunk_observability_present:
-    add_finding(
-        "prod-day2-splunk-observability-missing",
-        "Splunk namespace or CRD footprint was detected, but no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was found",
-        severity=cap_failure_severity("splunk_observability"),
-        source="Splunk OpenTelemetry and logging inventory",
     )
 if cap_required("loki_stack_logging") and loki_stack_context_present and not loki_stack_logging_present:
     add_finding(
@@ -4371,13 +4682,6 @@ if cap_required("appdynamics_observability") and appdynamics_context_present and
         severity=cap_failure_severity("appdynamics_observability"),
         source="AppDynamics cluster agent inventory",
     )
-if cap_required("openshift_aap") and openshift_aap_context_present and not openshift_aap_present:
-    add_finding(
-        "prod-day2-openshift-aap-missing",
-        "AAP operator, namespace, or CRD footprint was detected, but no AnsibleAutomationPlatform, AutomationController, AutomationHub, EDA, or AAP-managed workload footprint was found",
-        severity=cap_failure_severity("openshift_aap"),
-        source="Ansible Automation Platform operator and custom resource inventory",
-    )
 if cap_required("openshift_custom_metrics_autoscaler") and openshift_custom_metrics_autoscaler_context_present and not openshift_custom_metrics_autoscaler_present:
     add_finding(
         "prod-day2-openshift-custom-metrics-autoscaler-missing",
@@ -4385,17 +4689,24 @@ if cap_required("openshift_custom_metrics_autoscaler") and openshift_custom_metr
         severity=cap_failure_severity("openshift_custom_metrics_autoscaler"),
         source="KEDA controller and custom autoscaling resource inventory",
     )
-if cap_required("gpu_accelerated_workloads") and gpu_workloads_present and not gpu_workloads_healthy:
+if cap_required("gpu_accelerated_workloads") and gpu_workloads_context_present and not gpu_workloads_present:
     add_finding(
         "prod-day2-gpu-accelerated-workloads-missing",
         "GPU operator or ClusterPolicy footprint was detected, but no node with allocatable GPU capacity or GPU-requesting workload was found",
         severity=cap_failure_severity("gpu_accelerated_workloads"),
         source="GPU node, operator, and workload inventory",
     )
-if cap_required("sandboxed_container_workloads") and sandboxed_containers_present and not sandboxed_containers_healthy:
+if cap_required("sandboxed_container_workloads") and sandboxed_containers_context_present and not sandboxed_containers_present:
     add_finding(
         "prod-day2-sandboxed-container-workloads-missing",
         "sandboxed containers operator footprint was detected, but no KataConfig resource or kata runtime workload was found",
+        severity=cap_failure_severity("sandboxed_container_workloads"),
+        source="OpenShift sandboxed containers inventory",
+    )
+elif cap_required("sandboxed_container_workloads") and sandboxed_containers_present and not sandboxed_containers_healthy:
+    add_finding(
+        "prod-day2-sandboxed-container-workloads-missing",
+        "sandboxed container resources were detected, but no KataConfig reported a completed/installed state and no kata runtime workload was found",
         severity=cap_failure_severity("sandboxed_container_workloads"),
         source="OpenShift sandboxed containers inventory",
     )
@@ -4413,17 +4724,24 @@ if cap_required("openshift_ai") and openshift_ai_present and not openshift_ai_he
         severity=cap_failure_severity("openshift_ai"),
         source="OpenShift AI resource inventory",
     )
-if cap_required("node_tuning_operator") and node_tuning_present and not node_tuning_healthy:
+if cap_required("node_tuning_operator") and node_tuning_context_present and not node_tuning_present:
     add_finding(
         "prod-day2-node-tuning-operator-missing",
-        "Node Tuning Operator footprint was detected, but no usable Tuned recommendation/profile or tuned Profile custom resource was found",
+        "Node Tuning Operator context was detected, but no custom Tuned or PerformanceProfile resource was found",
+        severity=cap_failure_severity("node_tuning_operator"),
+        source="Node Tuning Operator inventory",
+    )
+elif cap_required("node_tuning_operator") and node_tuning_present and not node_tuning_healthy:
+    add_finding(
+        "prod-day2-node-tuning-operator-missing",
+        "Node Tuning Operator tuning resources were detected, but no usable custom Tuned recommendation/profile or healthy PerformanceProfile was found",
         severity=cap_failure_severity("node_tuning_operator"),
         source="Node Tuning Operator inventory",
     )
 if cap_required("openshift_developer_hub") and openshift_developer_hub_present and not openshift_developer_hub_healthy:
     add_finding(
         "prod-day2-openshift-developer-hub-missing",
-        "Red Hat Developer Hub footprint was detected, but no Backstage CRD or portal workload was found",
+        "Red Hat Developer Hub footprint was detected, but no ready Backstage resource or portal workload was found",
         severity=cap_failure_severity("openshift_developer_hub"),
         source="Red Hat Developer Hub operator and workload inventory",
     )
@@ -4449,22 +4767,36 @@ if cap_required("kubernetes_nmstate_networking") and nmstate_present and not nms
         severity=cap_failure_severity("kubernetes_nmstate_networking"),
         source="Kubernetes NMState inventory",
     )
-if cap_required("cost_management_operator") and cost_management_present and not cost_management_healthy:
+if cap_required("cost_management_operator") and cost_management_context_present and not cost_management_present:
     add_finding(
         "prod-day2-platform-cost-management-missing",
         "cost management metrics operator footprint was detected, but no CostManagementMetricsConfig resource was found",
         severity=cap_failure_severity("cost_management_operator"),
         source="cost management inventory",
     )
-if cap_required("descheduler_operator") and descheduler_present and not descheduler_healthy:
+elif cap_required("cost_management_operator") and cost_management_present and not cost_management_healthy:
+    add_finding(
+        "prod-day2-platform-cost-management-missing",
+        "CostManagementMetricsConfig resources were detected, but their status includes a problem condition or status",
+        severity=cap_failure_severity("cost_management_operator"),
+        source="cost management inventory",
+    )
+if cap_required("descheduler_operator") and descheduler_context_present and not descheduler_present:
     add_finding(
         "prod-day2-descheduler-operator-missing",
-        "descheduler operator footprint was detected, but no configured Descheduler custom resource in a ready or non-problem state was found",
+        "descheduler operator footprint was detected, but no KubeDescheduler custom resource was found",
+        severity=cap_failure_severity("descheduler_operator"),
+        source="Descheduler Operator inventory",
+    )
+elif cap_required("descheduler_operator") and descheduler_present and not descheduler_healthy:
+    add_finding(
+        "prod-day2-descheduler-operator-missing",
+        "KubeDescheduler resources were detected, but no configured resource in a ready or non-problem state was found",
         severity=cap_failure_severity("descheduler_operator"),
         source="Descheduler Operator inventory",
     )
 
-if acm_registration_present or cap_required("advanced_cluster_management"):
+if cap_enabled("advanced_cluster_management"):
     add_check(
         "ACM managed-cluster registration",
         cap_status_for_presence("advanced_cluster_management", acm_registration_present, acm_registration_healthy),
@@ -4644,6 +4976,7 @@ print(json.dumps({
         "enable_user_workload_monitoring": enable_user_workload,
         "servicemonitor_count": len(servicemonitors),
         "podmonitor_count": len(podmonitors),
+        "user_workload_metrics_vendor_managed": bool(obs.get("vendor_managed_metrics_forwarding_present")),
         "user_workload_alertmanager_additional_config_count": len(user_workload_alertmanager_additional_configs),
         "user_workload_alerting_signal_present": user_workload_alerting_present,
         "user_workload_vendor_managed_observability_present": user_workload_vendor_managed_observability_present,
@@ -4651,9 +4984,13 @@ print(json.dumps({
         "user_workload_alerting_delivery_model": user_workload_alerting_delivery_model,
         "grafana_present": grafana_present,
         "grafana_dashboard_configmap_count": len(dashboard_configmaps),
+        "grafana_dashboard_resource_count": len(grafanadashboards),
         "grafana_dashboard_present": grafana_dashboard_present,
         "workloads_using_external_private_registries_present": workloads_using_external_private_registries_present,
         "external_private_registry_count": len(external_image_registries),
+        "external_private_registry_workload_count": external_private_registry_workload_count,
+        "external_private_registry_workloads_with_pull_secret": external_private_registry_workloads_with_pull_secret,
+        "external_private_registry_workloads_with_serviceaccount_pull_secret": external_private_registry_workloads_with_serviceaccount_pull_secret,
         "credentialed_public_registry_count": len(credentialed_public_image_registries),
         "workloads_with_image_pull_secret": workloads_with_pull_secret,
         "cluster_image_mirror_configuration_present": cluster_image_mirror_configuration_present,
@@ -4662,8 +4999,12 @@ print(json.dumps({
         "image_signature_and_admission_policy_healthy": image_signature_and_admission_policy_healthy,
         "admission_policy_engine_present": admission_policy_engine_present,
         "image_registry_filter_policy_present": bool(len(allowed_imports) > 0 or restricted_registry_sources),
+        "image_admission_policy_resource_count": len(image_admission_policy_resources),
+        "active_trusted_image_policy_present": active_trusted_image_policy_present,
         "insecure_registry_count": len(insecure_registries),
         "disconnected_cluster_image_sources_present": disconnected_cluster_image_sources_present,
+        "release_image_mirror_configured": release_image_mirror_configured,
+        "release_image_mirrored": release_image_mirrored,
         "disconnected_catalogsource_count": disconnected_catalog_count,
         "ovn_ipsec_encryption": ovn_ipsec_encryption,
         "ovn_ipsec_external_only": ovn_ipsec_external_only,
@@ -4677,6 +5018,7 @@ print(json.dumps({
         "custom_ca_trust_configured": custom_ca_configured,
         "workload_vulnerability_scanning_present": workload_scanner_present,
         "monitoring_persistent_storage_configured": monitoring_persistent,
+        "control_plane_runtime_healthy": control_plane_runtime_healthy,
         "external_log_forwarding_output_count": len(obs.get("external_log_forwarding_outputs") or []),
         "external_alert_delivery_configured": external_alert_delivery_present,
         "external_alert_receiver_count": int(obs.get("external_alert_receiver_count") or 0),
@@ -4685,6 +5027,8 @@ print(json.dumps({
         "cluster_network_observability_subscription_present": cluster_network_observability_subscription_present,
         "cluster_network_observability_namespace_present": cluster_network_observability_namespace_present,
         "cluster_network_observability_crd_present": cluster_network_observability_crd_present,
+        "cluster_network_observability_flowcollector_count": cluster_network_observability_flowcollector_count,
+        "cluster_network_observability_flowcollector_present": cluster_network_observability_flowcollector_present,
         "cluster_network_observability_workload_present": cluster_network_observability_workload_present,
         "external_cluster_metrics_remote_write_count": cluster_remote_write,
         "external_user_workload_metrics_remote_write_count": user_remote_write,
@@ -4706,6 +5050,7 @@ print(json.dumps({
         "drplacementcontrol_count": len(drplacementcontrols),
         "volumereplicationgroup_count": len(volumereplicationgroups),
         "volumereplicationclass_count": len(volumereplicationclasses),
+        "volumegroupreplication_count": len(volumegroupreplications),
         "secondary_site_dr_problem_drcluster_count": len(drclusters_with_problem_status),
         "secondary_site_dr_problem_drpc_count": len(drpcs_with_problem_status),
         "secondary_site_dr_problem_vrg_count": len(vrgs_with_problem_status),
@@ -4719,11 +5064,16 @@ print(json.dumps({
         "openshift_developer_hub_subscription_present": openshift_developer_hub_subscription_present,
         "openshift_developer_hub_namespace_present": openshift_developer_hub_namespace_present,
         "openshift_developer_hub_crd_present": openshift_developer_hub_crd_present,
+        "openshift_developer_hub_context_present": openshift_developer_hub_context_present,
+        "openshift_developer_hub_backstage_count": openshift_developer_hub_backstage_count,
+        "openshift_developer_hub_ready_backstage_count": openshift_developer_hub_ready_backstage_count,
+        "openshift_developer_hub_backstage_present": openshift_developer_hub_backstage_present,
         "openshift_developer_hub_workload_present": openshift_developer_hub_workload_present,
         "openshift_dev_spaces_present": openshift_dev_spaces_present,
         "openshift_dev_spaces_healthy": openshift_dev_spaces_healthy,
         "openshift_dev_spaces_subscription_present": openshift_dev_spaces_subscription_present,
         "openshift_dev_spaces_namespace_present": openshift_dev_spaces_namespace_present,
+        "openshift_dev_spaces_context_present": openshift_dev_spaces_context_present,
         "openshift_dev_spaces_checluster_present": openshift_dev_spaces_checluster_present,
         "openshift_dev_spaces_devworkspace_present": openshift_dev_spaces_devworkspace_present,
         "openshift_dev_spaces_workspace_operator_config_present": openshift_dev_spaces_workspace_operator_config_present,
@@ -4735,23 +5085,60 @@ print(json.dumps({
         "openshift_data_foundation_present": openshift_data_foundation_present,
         "openshift_virtualization_present": openshift_virtualization_present,
         "openshift_virtualization_healthy": openshift_virtualization_healthy,
+        "openshift_virtualization_context_present": openshift_virtualization_context_present,
+        "openshift_virtualization_subscription_present": virtualization_operator_subscription_present,
+        "openshift_virtualization_namespace_present": virtualization_namespace_present,
+        "openshift_virtualization_platform_present": virtualization_platform_present,
+        "openshift_virtualization_workload_present": virtualization_workload_present,
+        "openshift_virtualization_supporting_stack_present": virtualization_supporting_stack_present,
+        "openshift_virtualization_ready_kubevirt_count": len(ready_kubevirts),
+        "openshift_virtualization_ready_hyperconverged_count": len(ready_hyperconvergeds),
         "ingresscontroller_count": len(ingresscontroller_summary),
         "nondefault_ingresscontroller_count": nondefault_ingresscontroller_count,
         "ingress_topology_signal_count": len(ingress_topology_signals),
         "ingress_topology_healthy": ingress_topology_healthy,
         "openshift_ai_present": openshift_ai_present,
+        "openshift_ai_healthy": openshift_ai_healthy,
+        "openshift_ai_context_present": openshift_ai_context_present,
+        "openshift_ai_subscription_present": openshift_ai_subscription_present,
+        "openshift_ai_namespace_present": openshift_ai_namespace_present,
+        "openshift_ai_ready_datasciencecluster_count": len(ready_datascienceclusters),
+        "openshift_ai_ready_dscinitialization_count": len(ready_dscinitializations),
         "openshift_aap_present": openshift_aap_present,
         "openshift_custom_metrics_autoscaler_present": openshift_custom_metrics_autoscaler_present,
+        "openshift_custom_metrics_autoscaler_context_present": openshift_custom_metrics_autoscaler_context_present,
+        "openshift_custom_metrics_autoscaler_subscription_present": keda_subscription_present,
+        "openshift_custom_metrics_autoscaler_namespace_present": keda_namespace_present,
+        "openshift_custom_metrics_autoscaler_crd_present": keda_crd_present,
+        "openshift_custom_metrics_autoscaler_workload_present": keda_workload_present,
         "ibm_cloud_pak_business_automation_present": ibm_cloud_pak_business_automation_present,
         "ibm_cloud_pak_business_automation_healthy": ibm_cloud_pak_business_automation_healthy,
         "service_mesh_control_plane_present": service_mesh_present,
         "service_mesh_control_plane_healthy": service_mesh_healthy,
+        "service_mesh_control_plane_context_present": service_mesh_context_present,
+        "service_mesh_control_plane_resource_present": service_mesh_control_plane_present,
+        "service_mesh_membership_present": service_mesh_membership_present,
+        "service_mesh_subscription_present": service_mesh_subscription_present,
+        "service_mesh_crd_present": service_mesh_crd_present,
+        "service_mesh_ready_control_plane_count": len(ready_service_mesh_control_planes),
         "openshift_serverless_present": serverless_present,
         "openshift_serverless_healthy": serverless_healthy,
+        "openshift_serverless_context_present": serverless_context_present,
+        "openshift_serverless_control_plane_present": serverless_control_plane_present,
+        "openshift_serverless_workload_present": serverless_workload_present,
+        "openshift_serverless_subscription_present": serverless_subscription_present,
+        "openshift_serverless_namespace_present": serverless_namespace_present,
+        "openshift_serverless_crd_present": serverless_crd_present,
+        "openshift_serverless_ready_knativeserving_count": len(ready_knativeservings),
+        "openshift_serverless_ready_knativeeventing_count": len(ready_knativeeventings),
+        "advanced_cluster_security_present": advanced_cluster_security_present,
+        "advanced_cluster_security_context_present": advanced_cluster_security_context_present,
         "qualys_subscription_present": qualys_subscription_present,
         "qualys_namespace_present": qualys_namespace_present,
         "qualys_crd_present": qualys_crd_present,
         "qualys_workload_present": qualys_workload_present,
+        "qualys_scanning_agents_present": qualys_scanning_agents_present,
+        "qualys_scanning_agents_context_present": qualys_scanning_agents_context_present,
         "prisma_subscription_present": prisma_subscription_present,
         "prisma_namespace_present": prisma_namespace_present,
         "prisma_crd_present": prisma_crd_present,
@@ -4762,10 +5149,27 @@ print(json.dumps({
         "aqua_workload_present": aqua_workload_present,
         "windows_container_workloads_present": windows_workloads_present,
         "windows_container_workloads_healthy": windows_workloads_healthy,
+        "windows_container_workloads_context_present": windows_workloads_context_present,
+        "windows_nodes_present": windows_nodes_present,
+        "windows_workload_present": windows_workload_present,
+        "windows_operator_namespace_present": windows_operator_namespace_present,
+        "windows_operator_subscription_present": windows_operator_subscription_present,
         "gpu_accelerated_workloads_present": gpu_workloads_present,
         "gpu_accelerated_workloads_healthy": gpu_workloads_healthy,
+        "gpu_accelerated_workloads_context_present": gpu_workloads_context_present,
+        "gpu_capacity_present": gpu_capacity_present,
+        "gpu_workload_present": gpu_workload_present,
+        "gpu_operator_subscription_present": gpu_operator_subscription_present,
+        "gpu_operator_workload_present": gpu_operator_workload_present,
+        "gpu_nvidia_clusterpolicy_count": len(nvidiaclusterpolicies),
         "sandboxed_container_workloads_present": sandboxed_containers_present,
         "sandboxed_container_workloads_healthy": sandboxed_containers_healthy,
+        "sandboxed_container_workloads_context_present": sandboxed_containers_context_present,
+        "sandboxed_container_workloads_kataconfig_count": len(kataconfigs),
+        "sandboxed_container_workloads_ready_kataconfig_count": len(ready_kataconfigs),
+        "sandboxed_container_workload_count": len(kata_workload_objects),
+        "sandboxed_container_operator_namespace_present": sandboxed_operator_namespace_present,
+        "sandboxed_container_operator_subscription_present": sandboxed_operator_subscription_present,
         "kubelet_configuration_governance_present": kubelet_configuration_governance_present,
         "kubelet_configuration_governance_healthy": kubelet_configuration_governance_healthy,
         "kubeletconfig_count": len(kubeletconfigs),
@@ -4776,12 +5180,38 @@ print(json.dumps({
         "kubeletconfig_runtime_policy_tuned_count": len(kubeletconfig_runtime_policy_tuned),
         "node_tuning_operator_present": node_tuning_present,
         "node_tuning_operator_healthy": node_tuning_healthy,
+        "node_tuning_operator_context_present": node_tuning_context_present,
+        "node_tuning_tuned_count": len(tuneds),
+        "node_tuning_custom_tuned_count": len(custom_tuned_config_resources),
+        "node_tuning_tunedprofile_count": len(tunedprofiles),
+        "node_tuning_performanceprofile_count": len(performanceprofiles),
+        "node_tuning_ready_performanceprofile_count": len(ready_performanceprofiles),
+        "node_tuning_namespace_present": node_tuning_namespace_present,
+        "node_tuning_crd_present": node_tuning_crd_present,
         "kubernetes_nmstate_networking_present": nmstate_present,
         "kubernetes_nmstate_networking_healthy": nmstate_healthy,
+        "kubernetes_nmstate_networking_context_present": nmstate_context_present,
+        "kubernetes_nmstate_nmstate_count": len(nmstates),
+        "kubernetes_nmstate_nodenetworkconfigurationpolicy_count": len(nodenetworkconfigurationpolicies),
+        "kubernetes_nmstate_ready_nodenetworkconfigurationpolicy_count": len(ready_nodenetworkconfigurationpolicies),
+        "kubernetes_nmstate_nodenetworkstate_count": len(nodenetworkstates),
+        "kubernetes_nmstate_namespace_present": nmstate_namespace_present,
+        "kubernetes_nmstate_subscription_present": nmstate_operator_subscription_present,
         "cost_management_operator_present": cost_management_present,
         "cost_management_operator_healthy": cost_management_healthy,
+        "cost_management_operator_context_present": cost_management_context_present,
+        "cost_managementmetricsconfig_count": len(costmanagementmetricsconfigs),
+        "ready_cost_managementmetricsconfig_count": len(ready_cost_management_configs),
+        "cost_management_subscription_present": cost_management_subscription_present,
+        "cost_management_namespace_present": cost_management_namespace_present,
+        "cost_management_crd_present": cost_management_crd_present,
         "descheduler_operator_present": descheduler_present,
         "descheduler_operator_healthy": descheduler_healthy,
+        "descheduler_operator_context_present": descheduler_context_present,
+        "descheduler_count": len(deschedulers),
+        "configured_descheduler_count": len(configured_deschedulers),
+        "descheduler_namespace_present": descheduler_namespace_present,
+        "descheduler_subscription_present": descheduler_subscription_present,
         "namespace_network_policy_baseline_present": network_policy_baseline_present,
         "namespace_egress_controls_present": egress_control_present,
         "namespace_egress_controls_healthy": egress_control_healthy,

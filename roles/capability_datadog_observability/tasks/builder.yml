@@ -25,12 +25,15 @@
           (all_workload_blobs | default([]))
           | map('string')
           | map('lower')
-          | select('search', 'datadog-agent|cluster-agent|datadog-cluster-agent|datadog-operator')
+          | select('search', 'datadog-agent|datadog-cluster-agent|datadog-operator|dogstatsd|trace-agent|process-agent')
           | list
           | length
         ) > 0
       }}
     datadog_observability_present_current: "{{ ((datadogagent_count_current | int) > 0) or (datadog_workload_present_current | bool) }}"
+    datadog_missing_status_current: "{{ 'WARNING' if (day2_datadog_observability_section_current.required | default(false) | bool) else 'INFO' }}"
+    datadog_missing_check_status_current: "{{ 'WARN' if (day2_datadog_observability_section_current.required | default(false) | bool) else 'INFO' }}"
+    datadog_missing_severity_current: "{{ 'warning' if (day2_datadog_observability_section_current.required | default(false) | bool) else 'info' }}"
     datadog_reason_summary_current: >-
       {{
         (
@@ -61,7 +64,7 @@
           {
             'capability': 'datadog_observability',
             'issue': 'prod-day2-datadog-observability-missing',
-            'severity': 'info',
+            'severity': datadog_missing_severity_current,
             'source': 'Datadog operator and agent inventory',
             'detail': 'no DatadogAgent custom resource or Datadog-managed agent workload footprint was detected',
             'recommended_action': datadog_recommended_action_current,
@@ -85,11 +88,11 @@
                   'level': ((day2_datadog_observability_section_current.criticality | default('medium')) | string),
                   'scored': false,
                   'source': 'Datadog operator and agent inventory',
-                  'status': ('OK' if (datadog_observability_present_current | bool) else 'WARN')
+                  'status': ('OK' if (datadog_observability_present_current | bool) else datadog_missing_check_status_current)
                 }
               ],
               'findings': datadog_findings_current,
-              'status': ('OK' if (datadog_observability_present_current | bool) else 'INFO'),
+              'status': ('OK' if (datadog_observability_present_current | bool) else datadog_missing_status_current),
               'top_detail': (
                 datadog_reason_summary_current
                 if (datadog_observability_present_current | bool)
@@ -108,8 +111,8 @@
       accounting_state: assessed
       check_count: 1
       finding_count: "{{ (0 if (datadog_observability_present_current | bool) else 1) | int }}"
-      status: "{{ 'OK' if (datadog_observability_present_current | bool) else 'INFO' }}"
-      status_summary: "{{ 'OK' if (datadog_observability_present_current | bool) else 'INFO' }}"
+      status: "{{ 'OK' if (datadog_observability_present_current | bool) else datadog_missing_status_current }}"
+      status_summary: "{{ 'OK' if (datadog_observability_present_current | bool) else datadog_missing_status_current }}"
       top_detail: "{{ datadog_section_override_current.top_detail }}"
       reason_summary: "{{ datadog_section_override_current.top_detail }}"
     capability_artifact_render_inputs:

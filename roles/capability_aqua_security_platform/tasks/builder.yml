@@ -6,7 +6,11 @@
     aqua_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_namespace_present', false)) | bool }}"
     aqua_crd_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_crd_present', false)) | bool }}"
     aqua_workload_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_workload_present', false)) | bool }}"
-    aqua_present_current: "{{ (aqua_subscription_present_current or aqua_namespace_present_current or aqua_crd_present_current or aqua_workload_present_current) | bool }}"
+    aqua_context_present_current: "{{ (aqua_subscription_present_current or aqua_namespace_present_current or aqua_crd_present_current) | bool }}"
+    aqua_present_current: "{{ aqua_workload_present_current | bool }}"
+    aqua_missing_status_current: "{{ 'WARNING' if (day2_aqua_security_platform_section_current.required | default(false) | bool) else 'INFO' }}"
+    aqua_missing_check_status_current: "{{ 'WARN' if (day2_aqua_security_platform_section_current.required | default(false) | bool) else 'INFO' }}"
+    aqua_missing_severity_current: "{{ 'warning' if (day2_aqua_security_platform_section_current.required | default(false) | bool) else 'info' }}"
     aqua_reason_summary_current: >-
       {{
         'subscription_present=' ~ (aqua_subscription_present_current | string)
@@ -18,7 +22,11 @@
       {{
         'Confirm the Aqua platform footprint is healthy and that the intended enforcement path remains in service.'
         if aqua_present_current
-        else 'If Aqua security is intended, deploy or confirm the Aqua operator, namespace, CRD, and managed workload footprint.'
+        else (
+          'Aqua operator, namespace, or CRD context was detected, but no Aqua Console, Gateway, Enforcer, kube-enforcer, or other managed workload footprint was found. Review Aqua rollout state.'
+          if aqua_context_present_current
+          else 'If Aqua security is intended, deploy or confirm the Aqua Console, Gateway, Enforcer, kube-enforcer, or other managed workload footprint.'
+        )
       }}
     aqua_findings_current: >-
       {{
@@ -28,9 +36,9 @@
           {
             'capability': 'aqua_security_platform',
             'issue': 'prod-day2-aqua-security-platform-missing',
-            'severity': 'info',
+            'severity': aqua_missing_severity_current,
             'source': 'Aqua operator and enforcer inventory',
-            'detail': 'no Aqua platform CRD, Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected',
+            'detail': 'no Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected',
             'recommended_action': aqua_recommended_action_current,
             'docs': ((day2_aqua_security_platform_section_current.docs | default([])) | string)
           }
@@ -52,15 +60,15 @@
                   'level': ((day2_aqua_security_platform_section_current.criticality | default('medium')) | string),
                   'scored': false,
                   'source': 'Aqua operator and enforcer inventory',
-                  'status': ('OK' if aqua_present_current else 'WARN')
+                  'status': ('OK' if aqua_present_current else aqua_missing_check_status_current)
                 }
               ],
               'findings': aqua_findings_current,
-              'status': ('OK' if aqua_present_current else 'INFO'),
+              'status': ('OK' if aqua_present_current else aqua_missing_status_current),
               'top_detail': (
                 aqua_reason_summary_current
                 if aqua_present_current
-                else 'no Aqua platform CRD, Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected'
+                else 'no Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected'
               ),
               'recommended_action': aqua_recommended_action_current
             },
@@ -79,8 +87,8 @@
       namespace_present: "{{ aqua_namespace_present_current | bool }}"
       crd_present: "{{ aqua_crd_present_current | bool }}"
       workload_present: "{{ aqua_workload_present_current | bool }}"
-      status: "{{ 'OK' if aqua_present_current else 'INFO' }}"
-      status_summary: "{{ 'OK' if aqua_present_current else 'INFO' }}"
+      status: "{{ 'OK' if aqua_present_current else aqua_missing_status_current }}"
+      status_summary: "{{ 'OK' if aqua_present_current else aqua_missing_status_current }}"
       top_detail: "{{ aqua_section_override_current.top_detail }}"
       reason_summary: "{{ aqua_section_override_current.top_detail }}"
     capability_artifact_render_inputs:

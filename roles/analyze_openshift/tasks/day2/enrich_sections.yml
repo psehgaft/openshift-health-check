@@ -176,6 +176,7 @@
           {%- set volumereplicationgroup_count = ((analysis_graph.volumereplicationgroups | default({})).get('items', []) | length) -%}
           {%- set volumereplication_count = ((analysis_graph.volumereplications | default({})).get('items', []) | length) -%}
           {%- set volumereplicationclass_count = ((analysis_graph.volumereplicationclasses | default({})).get('items', []) | length) -%}
+          {%- set volumegroupreplication_count = ((analysis_graph.volumegroupreplications | default({})).get('items', []) | length) -%}
           {%- set secondary_site_dr_present = (
                 drpolicy_count > 0
                 or drcluster_count > 0
@@ -183,6 +184,7 @@
                 or volumereplicationgroup_count > 0
                 or volumereplication_count > 0
                 or volumereplicationclass_count > 0
+                or volumegroupreplication_count > 0
               ) -%}
           {%- if not secondary_site_dr_present -%}
             {%- set top_detail = (
@@ -193,8 +195,9 @@
                   ~ ', volumereplicationgroups=' ~ (volumereplicationgroup_count | string)
                   ~ ', volumereplications=' ~ (volumereplication_count | string)
                   ~ ', volumereplicationclasses=' ~ (volumereplicationclass_count | string)
+                  ~ ', volumegroupreplications=' ~ (volumegroupreplication_count | string)
                 ) -%}
-            {%- set recommended_action = 'No DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, or VolumeReplicationClass resources were found. If secondary-site disaster recovery is expected for this cluster, review ODF/ACM DR configuration and provide the intended multicluster replication and protected-workload evidence.' -%}
+            {%- set recommended_action = 'No DRPolicy, DRCluster, DRPlacementControl, VolumeReplicationGroup, VolumeReplication, VolumeReplicationClass, or VolumeGroupReplication resources were found. If secondary-site disaster recovery is expected for this cluster, review ODF/ACM DR configuration and provide the intended multicluster replication and protected-workload evidence.' -%}
             {%- set updated = section | combine({
                   'status': ('WARNING' if (section.required | default(false)) else 'INFO'),
                   'accounting_state': 'assessed',
@@ -225,6 +228,7 @@
           {%- set volumereplicationgroup_count = ((analysis_graph.volumereplicationgroups | default({})).get('items', []) | length) -%}
           {%- set volumereplication_count = ((analysis_graph.volumereplications | default({})).get('items', []) | length) -%}
           {%- set volumereplicationclass_count = ((analysis_graph.volumereplicationclasses | default({})).get('items', []) | length) -%}
+          {%- set volumegroupreplication_count = ((analysis_graph.volumegroupreplications | default({})).get('items', []) | length) -%}
           {%- set acm_klusterlet_count = declarative_operations_summary.acm_klusterlet_count | default(day2_posture_summary.acm_klusterlet_count | default(0)) | int -%}
           {%- set acm_managedclusteraddon_count = declarative_operations_summary.acm_managedclusteraddon_count | default(day2_posture_summary.acm_managedclusteraddon_count | default(0)) | int -%}
           {%- set acm_agent_namespace_count = declarative_operations_summary.acm_agent_namespace_count | default(day2_posture_summary.acm_agent_namespace_count | default(0)) | int -%}
@@ -237,11 +241,12 @@
                 or volumereplicationgroup_count > 0
                 or volumereplication_count > 0
                 or volumereplicationclass_count > 0
+                or volumegroupreplication_count > 0
               ) -%}
           {%- set acm_dr_present = secondary_site_dr_present and acm_registration_present -%}
           {%- set topology_ready = (valid_drpolicy_count > 0) and (drcluster_count >= 2) -%}
-          {%- set replication_ready = (volumereplicationclass_count > 0) and ((volumereplication_count > 0) or (volumereplicationgroup_count > 0)) -%}
-          {%- set protected_workloads_ready = (drplacementcontrol_count > 0) or (volumereplicationgroup_count > 0) -%}
+          {%- set replication_ready = (volumereplicationclass_count > 0) and ((volumereplication_count > 0) or (volumereplicationgroup_count > 0) or (volumegroupreplication_count > 0)) -%}
+          {%- set protected_workloads_ready = (drplacementcontrol_count > 0) or (volumereplicationgroup_count > 0) or (volumegroupreplication_count > 0) -%}
           {%- set problem_drcluster_count = day2_posture_summary.secondary_site_dr_problem_drcluster_count | default(0) | int -%}
           {%- set problem_drpc_count = day2_posture_summary.secondary_site_dr_problem_drpc_count | default(0) | int -%}
           {%- set problem_vrg_count = day2_posture_summary.secondary_site_dr_problem_vrg_count | default(0) | int -%}
@@ -267,6 +272,7 @@
                 ~ ' volumereplications=' ~ (volumereplication_count | string)
                 ~ ' volumereplicationgroups=' ~ (volumereplicationgroup_count | string)
                 ~ ' volumereplicationclasses=' ~ (volumereplicationclass_count | string)
+                ~ ' volumegroupreplications=' ~ (volumegroupreplication_count | string)
                 ~ ' problemDrClusters=' ~ (problem_drcluster_count | string)
                 ~ ' problemDrpcs=' ~ (problem_drpc_count | string)
                 ~ ' problemVrgs=' ~ (problem_vrg_count | string)
@@ -328,7 +334,7 @@
           {%- set gitops_appproject_count = day2_posture_summary.gitops_appproject_count | default(0) | int -%}
           {%- set argocd_count = day2_posture_summary.argocd_count | default(0) | int -%}
           {%- set gitops_status = (
-                'INFO'
+                ('WARNING' if (section.required | default(false)) else 'INFO')
                 if not gitops_present
                 else (
                   'WARNING'
@@ -474,11 +480,14 @@
           {%- set servicemonitor_count = day2_posture_summary.servicemonitor_count | default((((analysis_graph.servicemonitors | default({})).get('items', [])) | length)) | int -%}
           {%- set podmonitor_count = day2_posture_summary.podmonitor_count | default((((analysis_graph.podmonitors | default({})).get('items', [])) | length)) | int -%}
           {%- set enable_user_workload_monitoring = day2_posture_summary.enable_user_workload_monitoring | default((((analysis_graph.cluster_monitoring_config | default({})).get('config', {}) | default({})).get('enableUserWorkload', false))) -%}
+          {%- set vendor_managed_metrics = day2_posture_summary.user_workload_metrics_vendor_managed | default(false) | bool -%}
+          {%- set metric_vendor_names = day2_posture_summary.user_workload_observability_vendor_names | default([]) -%}
           {%- set capability_status = (
                 'OK'
                 if (
-                  enable_user_workload_monitoring
+                  (enable_user_workload_monitoring or vendor_managed_metrics)
                   and (servicemonitor_count > 0 or podmonitor_count > 0 or (user_workload_monitoring_config | length) > 0)
+                  or vendor_managed_metrics
                 )
                 else 'WARNING'
               ) -%}
@@ -487,12 +496,14 @@
                 ~ ' servicemonitors=' ~ (servicemonitor_count | string)
                 ~ ' podmonitors=' ~ (podmonitor_count | string)
                 ~ ' userWorkloadConfigPresent=' ~ (((user_workload_monitoring_config | length) > 0) | string)
+                ~ ' vendorManaged=' ~ (vendor_managed_metrics | string)
+                ~ ' vendors=' ~ ((metric_vendor_names | join(',')) if (metric_vendor_names | length) > 0 else 'none')
               ) -%}
           {%- set recommended_action = (
                 'No user-workload-monitoring remediation is required for this capability.'
                 if capability_status == 'OK'
                 else (
-                  'Enable user workload monitoring in cluster-monitoring-config, then confirm the user-workload monitoring configuration and the ServiceMonitor or PodMonitor inventory needed by the intended operating model.'
+                  'Enable user workload monitoring in cluster-monitoring-config or provide approved vendor-managed workload metrics evidence, then confirm the ServiceMonitor or PodMonitor inventory needed by the intended operating model.'
                   if not enable_user_workload_monitoring
                   else 'User workload monitoring is enabled, but no ServiceMonitor, PodMonitor, or user-workload monitoring configuration evidence was found. Confirm that the expected user-workload monitoring objects are present for the workloads that depend on them.'
                 )
@@ -554,7 +565,7 @@
           {%- set capability_status = (
                 'OK'
                 if (user_workload_native_alerting_healthy or user_workload_vendor_managed_observability_present)
-                else 'WARNING'
+                else ('WARNING' if (section.required | default(false)) else 'INFO')
               ) -%}
           {%- set top_detail = (
                 (
@@ -607,7 +618,7 @@
                 'finding_count': (findings | length),
                 'checks': [{
                   'capability': 'user_workload_alerting_and_slos',
-                  'status': ('OK' if capability_status == 'OK' else 'WARN'),
+                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
                   'level': ('required' if (section.required | default(false)) else 'informational'),
                   'source': 'user workload monitoring alerting and SLO guidance',
                   'detail': top_detail
@@ -619,18 +630,20 @@
         {%- elif (not capability_assessment_completed) and (section.key | default('') == 'grafana_metrics_dashboards') -%}
           {%- set grafana_present = day2_posture_summary.grafana_present | default(false) -%}
           {%- set grafana_dashboard_configmap_count = day2_posture_summary.grafana_dashboard_configmap_count | default(0) | int -%}
+          {%- set grafana_dashboard_resource_count = day2_posture_summary.grafana_dashboard_resource_count | default((((analysis_graph.grafanadashboards | default({})).get('items', [])) | length)) | int -%}
           {%- set grafana_dashboard_present = day2_posture_summary.grafana_dashboard_present | default(false) -%}
           {%- set grafana_dashboard_crd_present = (((analysis_graph.crds | default({})).get('items', []) | selectattr('metadata.name', 'defined') | selectattr('metadata.name', 'search', 'grafanadashboards') | list | length) > 0) -%}
           {%- set capability_status = ('OK' if grafana_dashboard_present else ('WARNING' if (section.required | default(false)) else 'INFO')) -%}
           {%- set top_detail = (
                 'grafana_present=' ~ (grafana_present | string)
                 ~ ' dashboardConfigMaps=' ~ (grafana_dashboard_configmap_count | string)
+                ~ ' grafanaDashboards=' ~ (grafana_dashboard_resource_count | string)
                 ~ ' grafanaDashboardCrds=' ~ (grafana_dashboard_crd_present | string)
               ) -%}
           {%- set recommended_action = (
                 'No Grafana-dashboard remediation is required for this capability.'
                 if capability_status == 'OK'
-                else 'No in-cluster Grafana dashboard inventory was detected from dashboard ConfigMaps. If Grafana dashboards are part of the intended operating model, provide dashboard ConfigMap evidence for the teams that depend on Grafana-based metric visualization.'
+                else 'No in-cluster Grafana dashboard inventory was detected from dashboard ConfigMaps or GrafanaDashboard resources. If Grafana dashboards are part of the intended operating model, provide dashboard evidence for the teams that depend on Grafana-based metric visualization.'
               ) -%}
           {%- set findings = (
                 []
@@ -916,7 +929,41 @@
           {%- set disconnected_catalog_count = day2_posture_summary.disconnected_catalogsource_count | default(0) | int -%}
           {%- set disconnected_clustercatalog_count = (((analysis_graph.clustercatalogs | default({})).get('items', []) | selectattr('spec.image', 'defined') | map(attribute='spec.image') | reject('equalto', '') | reject('search', '(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)') | list | length)) -%}
           {%- set updateservice_count = ((analysis_graph.updateservices | default({})).get('items', []) | length) -%}
-          {%- set release_image_mirrored = (cluster_profile.desired_release_image | default('') | length > 0) and not ((cluster_profile.desired_release_image | default('')) is search('(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)')) -%}
+          {%- set release_mirror = namespace(configured=(day2_posture_summary.release_image_mirror_configured | default(false))) -%}
+          {%- for item in (analysis_graph.imagedigestmirrorsets | default({})).get('items', []) -%}
+            {%- for entry in ((item.get('spec') or {}).get('imageDigestMirrors') or []) -%}
+              {%- set source = (entry.get('source') or '') | string | lower -%}
+              {%- for mirror in (entry.get('mirrors') or []) -%}
+                {%- set mirror_text = (mirror or '') | string | lower -%}
+                {%- if (source is search('(quay\\.io/openshift-release-dev|quay\\.io/okd|registry\\.ci\\.openshift\\.org|registry\\.redhat\\.io/openshift4)')) and not (mirror_text is search('(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)')) -%}
+                  {%- set release_mirror.configured = true -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for item in (analysis_graph.imagetagmirrorsets | default({})).get('items', []) -%}
+            {%- for entry in ((item.get('spec') or {}).get('imageTagMirrors') or []) -%}
+              {%- set source = (entry.get('source') or '') | string | lower -%}
+              {%- for mirror in (entry.get('mirrors') or []) -%}
+                {%- set mirror_text = (mirror or '') | string | lower -%}
+                {%- if (source is search('(quay\\.io/openshift-release-dev|quay\\.io/okd|registry\\.ci\\.openshift\\.org|registry\\.redhat\\.io/openshift4)')) and not (mirror_text is search('(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)')) -%}
+                  {%- set release_mirror.configured = true -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for item in (analysis_graph.imagecontentsourcepolicies | default({})).get('items', []) -%}
+            {%- for entry in ((item.get('spec') or {}).get('repositoryDigestMirrors') or []) -%}
+              {%- set source = (entry.get('source') or '') | string | lower -%}
+              {%- for mirror in (entry.get('mirrors') or []) -%}
+                {%- set mirror_text = (mirror or '') | string | lower -%}
+                {%- if (source is search('(quay\\.io/openshift-release-dev|quay\\.io/okd|registry\\.ci\\.openshift\\.org|registry\\.redhat\\.io/openshift4)')) and not (mirror_text is search('(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)')) -%}
+                  {%- set release_mirror.configured = true -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- set release_image_mirrored = (cluster_profile.desired_release_image | default('') | length > 0) and ((not ((cluster_profile.desired_release_image | default('')) is search('(^|[/:@])(quay\\.io|registry\\.redhat\\.io|registry\\.connect\\.redhat\\.com|docker\\.io|ghcr\\.io|mcr\\.microsoft\\.com|gcr\\.io|k8s\\.gcr\\.io)'))) or release_mirror.configured) -%}
           {%- set local_mirror_targets = local_mirror_targets | default(day2_posture_summary.local_mirror_targets | default([])) -%}
           {%- set local_mirror_target_count = local_mirror_targets | length -%}
           {%- set subscription_count = ((analysis_graph.subscriptions | default({})).get('items', []) | length) -%}
@@ -943,6 +990,7 @@
           {%- set top_detail = (
                 'mirrorResources=' ~ (mirror_resource_count | string)
                 ~ ' localMirrorTargets=' ~ (local_mirror_target_count | string)
+                ~ ' releaseImageMirrorConfigured=' ~ (release_mirror.configured | string)
                 ~ ' desiredReleaseImageMirrored=' ~ (release_image_mirrored | string)
                 ~ ' nonPublicCatalogSources=' ~ (disconnected_catalog_count | string)
                 ~ ' nonPublicClusterCatalogs=' ~ (disconnected_clustercatalog_count | string)
@@ -956,7 +1004,7 @@
                   'Disconnected image-mirroring evidence is missing. If this cluster is expected to operate in a disconnected or mirrored-image model, provide ImageDigestMirrorSet or ImageTagMirrorSet resources and the intended non-public mirror targets.'
                   if mirror_resource_count == 0
                   else (
-                    'The desired release image still points to a public registry. Mirror the release payload and update the cluster to use the intended non-public release image source.'
+                    'The desired release image still points to a public registry and no release-payload mirror mapping was found. Mirror the release payload or configure IDMS/ITMS/ICSP mapping for the intended non-public release source.'
                     if not release_image_mirrored
                     else (
                       'Subscriptions are present, but no non-public CatalogSource or ClusterCatalog image source was found for operator delivery. Configure the operator catalog mirror path for the disconnected model.'
@@ -1016,25 +1064,23 @@
           {%- set cost_managementmetricsconfig_count = (((analysis_graph.costmanagementmetricsconfigs | default({})).get('items', [])) | length) -%}
           {%- set cost_management_namespace_present = (((analysis_graph.namespaces | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('equalto', 'costmanagement-metrics-operator') | list | length) > 0) -%}
           {%- set cost_management_crd_present = (((analysis_graph.crds | default({})).get('items', []) | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') | select('equalto', 'costmanagementmetricsconfigs.costmanagement-metrics-cfg.openshift.io') | list | length) > 0) -%}
-          {%- set cost_management_present = (
+          {%- set cost_management_config_present = (cost_managementmetricsconfig_count > 0) -%}
+          {%- set cost_management_context_present = (
                 day2_posture_summary.cost_management_operator_present
                 | default(false)
-              ) or cost_management_namespace_present or cost_management_crd_present or (cost_managementmetricsconfig_count > 0) -%}
+              ) or cost_management_namespace_present or cost_management_crd_present or cost_management_config_present -%}
           {%- set cost_management_healthy = (
                 day2_posture_summary.cost_management_operator_healthy
                 | default(false)
-              ) or (cost_managementmetricsconfig_count > 0) -%}
+              ) or cost_management_config_present -%}
           {%- set capability_status = (
                 'OK'
                 if cost_management_healthy
-                else (
-                  'WARNING'
-                  if (cost_management_present or (section.required | default(false)))
-                  else 'INFO'
-                )
+                else ('WARNING' if (section.required | default(false)) else 'INFO')
               ) -%}
           {%- set top_detail = (
                 'costmanagementmetricsconfigs=' ~ (cost_managementmetricsconfig_count | string)
+                ~ ' contextPresent=' ~ (cost_management_context_present | string)
                 ~ ' namespacePresent=' ~ (cost_management_namespace_present | string)
                 ~ ' crdPresent=' ~ (cost_management_crd_present | string)
               ) -%}
@@ -1043,7 +1089,7 @@
                 if capability_status == 'OK'
                 else (
                   'No cost management metrics operator or CostManagementMetricsConfig footprint was detected. If cost visibility is expected, install the cost management metrics operator and configure a CostManagementMetricsConfig resource.'
-                  if not cost_management_present
+                  if not cost_management_context_present
                   else 'Cost management operator footprint was detected, but no CostManagementMetricsConfig resource was found. Configure the expected cost-management metrics export path before treating FinOps or chargeback telemetry as available.'
                 )
               ) -%}
@@ -1054,7 +1100,7 @@
                   'severity': ('warning' if capability_status == 'WARNING' else 'info'),
                   'issue': (
                     'Cost management operator footprint missing'
-                    if not cost_management_present
+                    if not cost_management_context_present
                     else 'Cost management operator configuration incomplete'
                   ),
                   'source': 'cost management inventory',
@@ -1104,11 +1150,7 @@
           {%- set capability_status = (
                 'OK'
                 if autoscaler_present
-                else (
-                  'WARNING'
-                  if (autoscaler_context_present or (section.required | default(false)))
-                  else 'INFO'
-                )
+                else ('WARNING' if (section.required | default(false)) else 'INFO')
               ) -%}
           {%- set top_detail = (
                 'namespacePresent=' ~ (keda_namespace_present | string)
@@ -1925,8 +1967,12 @@
                 external_registries=[],
                 credentialed_public_registries=[],
                 workloads_with_pull_secret=0,
+                external_registry_workloads=0,
+                external_registry_workloads_with_pull_secret=0,
+                external_registry_workloads_with_serviceaccount_pull_secret=0,
                 dockerconfig_secret_count=0,
-                serviceaccount_pull_secret_count=0
+                serviceaccount_pull_secret_count=0,
+                serviceaccount_pull_secret_keys=[]
               ) -%}
           {%- for item in secrets -%}
             {%- set secret_type = (item.get('type') or '') | string | trim -%}
@@ -1935,15 +1981,25 @@
             {%- endif -%}
           {%- endfor -%}
           {%- for item in serviceaccounts -%}
-            {%- set ns.serviceaccount_pull_secret_count = ns.serviceaccount_pull_secret_count + (((item.get('imagePullSecrets') or []) | length) | int) -%}
+            {%- set sa_pull_secret_count = ((item.get('imagePullSecrets') or []) | length) | int -%}
+            {%- set ns.serviceaccount_pull_secret_count = ns.serviceaccount_pull_secret_count + sa_pull_secret_count -%}
+            {%- if sa_pull_secret_count > 0 -%}
+              {%- set sa_namespace = ((item.get('metadata') or {}).get('namespace') or '') | string | trim -%}
+              {%- set sa_name = ((item.get('metadata') or {}).get('name') or '') | string | trim -%}
+              {%- set _ = ns.serviceaccount_pull_secret_keys.append(sa_namespace ~ '/' ~ sa_name) -%}
+            {%- endif -%}
           {%- endfor -%}
           {%- for obj in (pods + deployments + statefulsets + daemonsets) -%}
             {%- set obj_spec = obj.get('spec') or {} -%}
             {%- set spec = (((obj_spec.get('template') or {}).get('spec')) if (((obj_spec.get('template') or {}).get('spec')) is mapping) else obj_spec) -%}
+            {%- set obj_namespace = ((obj.get('metadata') or {}).get('namespace') or '') | string | trim -%}
+            {%- set service_account_name = (spec.get('serviceAccountName') or 'default') | string | trim -%}
+            {%- set service_account_key = obj_namespace ~ '/' ~ (service_account_name if service_account_name else 'default') -%}
             {%- set pull_secrets = spec.get('imagePullSecrets') or [] -%}
             {%- if (pull_secrets | length) > 0 -%}
               {%- set ns.workloads_with_pull_secret = ns.workloads_with_pull_secret + 1 -%}
             {%- endif -%}
+            {%- set workload_state = namespace(external_private=false) -%}
             {%- for container in ((spec.get('containers') or []) + (spec.get('initContainers') or [])) -%}
               {%- set image = (container.get('image') or '') | string | trim -%}
               {%- if image -%}
@@ -1960,6 +2016,7 @@
                   {%- endif -%}
                 {%- endfor -%}
                 {%- if (registry not in public_registry_names) and (not internal_registry.present) -%}
+                  {%- set workload_state.external_private = true -%}
                   {%- if registry not in ns.external_registries -%}
                     {%- set _ = ns.external_registries.append(registry) -%}
                   {%- endif -%}
@@ -1970,15 +2027,22 @@
                 {%- endif -%}
               {%- endif -%}
             {%- endfor -%}
+            {%- if workload_state.external_private -%}
+              {%- set ns.external_registry_workloads = ns.external_registry_workloads + 1 -%}
+              {%- if (pull_secrets | length) > 0 -%}
+                {%- set ns.external_registry_workloads_with_pull_secret = ns.external_registry_workloads_with_pull_secret + 1 -%}
+              {%- elif service_account_key in ns.serviceaccount_pull_secret_keys -%}
+                {%- set ns.external_registry_workloads_with_serviceaccount_pull_secret = ns.external_registry_workloads_with_serviceaccount_pull_secret + 1 -%}
+              {%- endif -%}
+            {%- endif -%}
           {%- endfor -%}
           {%- set external_private_registry_workloads_present = (ns.external_registries | length) > 0 -%}
           {%- set workloads_using_external_private_registries_present = (
                 (
                   external_private_registry_workloads_present
                   and (
-                    (ns.workloads_with_pull_secret | int) > 0
-                    or (ns.dockerconfig_secret_count | int) > 0
-                    or (ns.serviceaccount_pull_secret_count | int) > 0
+                    (ns.external_registry_workloads_with_pull_secret | int) > 0
+                    or (ns.external_registry_workloads_with_serviceaccount_pull_secret | int) > 0
                   )
                 )
                 or ((ns.credentialed_public_registries | length) > 0)
@@ -1991,6 +2055,9 @@
           {%- set top_detail = (
                 'externalRegistries=' ~ ((ns.external_registries | join(',')) or 'none')
                 ~ ', externalPrivateRegistryCount=' ~ ((ns.external_registries | length) | string)
+                ~ ', externalPrivateRegistryWorkloads=' ~ (ns.external_registry_workloads | string)
+                ~ ', externalPrivateRegistryWorkloadsWithImagePullSecrets=' ~ (ns.external_registry_workloads_with_pull_secret | string)
+                ~ ', externalPrivateRegistryWorkloadsWithServiceAccountPullSecrets=' ~ (ns.external_registry_workloads_with_serviceaccount_pull_secret | string)
                 ~ ', credentialedPublicRegistries=' ~ ((ns.credentialed_public_registries | join(',')) or 'none')
                 ~ ', credentialedPublicRegistryCount=' ~ ((ns.credentialed_public_registries | length) | string)
                 ~ ', workloadsWithImagePullSecrets=' ~ (ns.workloads_with_pull_secret | string)
@@ -2258,13 +2325,18 @@
           {%- set dynatrace_namespace_present = ('dynatrace' in (namespace_names | default([]))) -%}
           {%- set dynatrace_operator_subscription_present = ('dynatrace-operator' in (subscription_packages | default([]))) -%}
           {%- set dynatrace_workload = namespace(present=false) -%}
+          {%- set dynatrace_operator_workload = namespace(present=false) -%}
           {%- for blob in (all_workload_blobs | default([])) -%}
             {%- set lowered = blob | string | lower -%}
-            {%- if 'dynatrace-operator' in lowered or 'dynakube' in lowered or 'oneagent' in lowered or 'activegate' in lowered or 'dynatrace-webhook' in lowered -%}
+            {%- if 'dynatrace-operator' in lowered or 'dynatrace-webhook' in lowered -%}
+              {%- set dynatrace_operator_workload.present = true -%}
+            {%- endif -%}
+            {%- if 'dynakube' in lowered or 'oneagent' in lowered or 'activegate' in lowered or 'dynatrace-otel-collector' in lowered or 'dynatrace-logmonitoring' in lowered or 'dynatrace-extension-controller' in lowered or 'dynatrace-extensions-collector' in lowered or 'dynatrace-node-config-collector' in lowered or 'dynatrace-oneagent-csi-driver' in lowered -%}
               {%- set dynatrace_workload.present = true -%}
             {%- endif -%}
           {%- endfor -%}
           {%- set dynatrace_workload_present = dynatrace_workload.present -%}
+          {%- set dynatrace_operator_workload_present = dynatrace_operator_workload.present -%}
           {%- set dynatrace_dynakube_present = (((analysis_graph.dynakubes | default({})).get('items', []) | length) > 0) -%}
           {%- set dynatrace_edgeconnect_present = (((analysis_graph.edgeconnects | default({})).get('items', []) | length) > 0) -%}
           {%- set dynatrace_crd_present = (
@@ -2274,7 +2346,7 @@
                 | map(attribute='metadata.name')
                 | map('string')
                 | map('lower')
-                | select('in', ['dynakube.dynatrace.com', 'edgeconnects.dynatrace.com'])
+                | select('in', ['dynakubes.dynatrace.com', 'dynakube.dynatrace.com', 'edgeconnects.dynatrace.com', 'edgeconnect.dynatrace.com'])
                 | list
                 | length
               ) > 0 -%}
@@ -2282,10 +2354,11 @@
                 dynatrace_operator_subscription_present
                 or dynatrace_namespace_present
                 or dynatrace_crd_present
+                or dynatrace_operator_workload_present
+                or dynatrace_edgeconnect_present
               ) -%}
           {%- set dynatrace_observability_present = (
                 dynatrace_dynakube_present
-                or dynatrace_edgeconnect_present
                 or dynatrace_workload_present
               ) -%}
           {%- set capability_status = (
@@ -2299,15 +2372,16 @@
                 ~ ' crdPresent=' ~ (dynatrace_crd_present | string)
                 ~ ' dynakubes=' ~ ((((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) | string)
                 ~ ' edgeconnects=' ~ ((((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) | string)
-                ~ ' workloadPresent=' ~ (dynatrace_workload_present | string)
+                ~ ' operatorWorkloadPresent=' ~ (dynatrace_operator_workload_present | string)
+                ~ ' observabilityWorkloadPresent=' ~ (dynatrace_workload_present | string)
               ) -%}
           {%- set recommended_action = (
                 'No Dynatrace observability remediation is required for this capability.'
                 if capability_status == 'OK'
                 else (
-                  'Dynatrace context was detected, but no DynaKube, EdgeConnect, OneAgent, ActiveGate, or other managed workload footprint was found. Review operator rollout and workload deployment state.'
+                  'Dynatrace context was detected, but no DynaKube, OneAgent, ActiveGate, CSI driver, OpenTelemetry collector, log-monitoring, or other managed observability workload footprint was found. Review operator rollout and workload deployment state.'
                   if dynatrace_context_present
-                  else 'No Dynatrace footprint was detected. If Dynatrace is the intended primary observability path, review operator installation, namespace footprint, CRDs, and managed workload rollout.'
+                  else 'No Dynatrace footprint was detected. If Dynatrace is the intended primary observability path, review operator installation, namespace footprint, DynaKube resources, and managed observability workload rollout.'
                 )
               ) -%}
           {%- set findings = (
@@ -2794,12 +2868,12 @@
           {%- set scanner_crd_present = scanner_crd.present -%}
           {%- set scanner_namespace_present = scanner_namespace.present -%}
           {%- set scanner_workload_present = scanner_workload.present -%}
-          {%- set scanner_context_present = scanner_subscription_present or scanner_crd_present or scanner_namespace_present or scanner_workload_present -%}
+          {%- set scanner_context_present = scanner_subscription_present or scanner_crd_present or scanner_namespace_present -%}
           {%- set scanner_present = scanner_workload_present -%}
           {%- set capability_status = (
                 'OK'
                 if scanner_present
-                else ('WARNING' if (scanner_context_present or (section.required | default(false))) else 'INFO')
+                else ('WARNING' if (section.required | default(false)) else 'INFO')
               ) -%}
           {%- set top_detail = (
                 'scannerPresent=' ~ (scanner_present | string)
@@ -2867,25 +2941,31 @@
           {%- endfor -%}
           {%- set acs_crd_present = acs_crd.present -%}
           {%- set acs_workload_present = acs_workload.present -%}
-          {%- set advanced_cluster_security_present = acs_operator_subscription_present or acs_namespace_present or acs_crd_present or acs_workload_present -%}
+          {%- set advanced_cluster_security_context_present = acs_operator_subscription_present or acs_namespace_present or acs_crd_present -%}
+          {%- set advanced_cluster_security_present = acs_workload_present -%}
           {%- set capability_status = ('OK' if advanced_cluster_security_present else ('WARNING' if (section.required | default(false)) else 'INFO')) -%}
           {%- set top_detail = (
                 'subscriptionPresent=' ~ (acs_operator_subscription_present | string)
                 ~ ' acsNamespacePresent=' ~ (acs_namespace_present | string)
                 ~ ' acsCrdPresent=' ~ (acs_crd_present | string)
+                ~ ' acsContextPresent=' ~ (advanced_cluster_security_context_present | string)
                 ~ ' acsWorkloadPresent=' ~ (acs_workload_present | string)
               ) -%}
           {%- set recommended_action = (
                 'No RHACS footprint remediation is required for this capability.'
                 if advanced_cluster_security_present
-                else 'No RHACS operator, CRD, namespace, or secured-cluster workload footprint was detected. If RHACS is the intended workload-security platform, review operator installation and secured-cluster rollout evidence.'
+                else 'No RHACS Central, Scanner, Sensor, admission-control, or secured-cluster workload footprint was detected. If RHACS is the intended workload-security platform, review operator installation and secured-cluster rollout evidence. Operator, namespace, or CRD context alone is not treated as active ACS coverage.'
               ) -%}
           {%- set findings = (
                 []
                 if capability_status == 'OK'
                 else [{
                   'severity': ('warning' if capability_status == 'WARNING' else 'info'),
-                  'issue': 'Advanced Cluster Security footprint missing',
+                  'issue': (
+                    'Advanced Cluster Security context present but no active workload footprint detected'
+                    if advanced_cluster_security_context_present
+                    else 'Advanced Cluster Security footprint missing'
+                  ),
                   'source': 'RHACS operator and secured-cluster inventory',
                   'recommended_action': recommended_action
                 }]
