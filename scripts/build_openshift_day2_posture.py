@@ -793,6 +793,7 @@ dynatrace_context_present = bool(
 )
 dynatrace_observability_present = bool(
     dynatrace_dynakube_present
+    or dynatrace_edgeconnect_present
     or dynatrace_observability_workload_present
 )
 qualys_subscription_present = "qualys-cloud-agent-operator" in subscription_packages
