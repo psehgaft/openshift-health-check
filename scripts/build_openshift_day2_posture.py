@@ -541,6 +541,23 @@ def image_registry(image):
 
 all_workloads = pods + deployments + statefulsets + daemonsets
 all_workload_blobs = [text_blob(item) for item in all_workloads]
+commvault_inventory_blobs = all_workload_blobs + [
+    json.dumps(item, sort_keys=True, default=str).lower()
+    for item in namespaces + subscriptions + crds + serviceaccounts + rolebindings + clusterrolebindings
+]
+oadp_backup_provider_present = bool(
+    dataprotectionapplications
+    or backupstoragelocations
+    or schedules
+    or "openshift-adp" in namespace_names
+)
+commvault_backup_provider_present = bool(
+    any("commvault" in package.lower() for package in subscription_packages)
+    or any("commvault" in name.lower() for name in namespace_names)
+    or crd_has("commvault")
+    or any_keyword(["commvault"], commvault_inventory_blobs)
+)
+workload_backup_provider_present = bool(oadp_backup_provider_present or commvault_backup_provider_present)
 worker_machinesets = []
 for item in machinesets:
     combined_labels = {}
@@ -1902,7 +1919,7 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "GitOps controller and application inventory": "declarative_gitops_operations",
         "Cluster logging app footprint": "cluster_log_forwarding",
         "External Secrets Operator app footprint": "external_secrets_operator",
-        "OADP operator app footprint": "application_backup_and_restore_readiness",
+        "Workload backup and restore provider footprint": "application_backup_and_restore_readiness",
         "Compliance validation footprint": "compliance_requirements_validation",
         "OpenShift pipeline workflow footprint": "openshift_pipeline_workflows",
         "OpenShift Developer Hub footprint": "openshift_developer_hub",
@@ -2040,7 +2057,7 @@ def finding_capability_key(issue, source):
         "prod-day2-openshift-custom-metrics-autoscaler-missing": "openshift_custom_metrics_autoscaler",
         "prod-day2-platform-cluster-logging-missing": "cluster_log_forwarding",
         "prod-day2-platform-external-secrets-operator-missing": "external_secrets_operator",
-        "prod-day2-platform-oadp-operator-missing": "application_backup_and_restore_readiness",
+        "prod-day2-workload-backup-provider-missing": "application_backup_and_restore_readiness",
         "prod-day2-platform-compliance-validation-missing": "compliance_requirements_validation",
         "prod-day2-platform-pipelines-operator-missing": "openshift_pipeline_workflows",
         "prod-day2-openshift-developer-hub-missing": "openshift_developer_hub",
@@ -2735,10 +2752,16 @@ control_plane_runtime_healthy = (
 )
 control_plane_backup_evidence_scanned = bool(((control_plane_backup_evidence.get("summary") or {}).get("present")) or False)
 control_plane_snapshot_evidence_collected = bool(((control_plane_backup_evidence.get("summary") or {}).get("healthy")) or False)
-backup_tooling_present = bool(dataprotectionapplications or backupstoragelocations or schedules or backup_posture.get("successful_backup_count") or backup_posture.get("completed_restore_count"))
+backup_tooling_present = bool(
+    workload_backup_provider_present
+    or backup_posture.get("successful_backup_count")
+    or backup_posture.get("completed_restore_count")
+)
 successful_backups = int(backup_posture.get("successful_backup_count") or 0)
 clean_successful_backups = int(backup_posture.get("clean_successful_backup_count") or 0)
 clean_completed_restores = int(backup_posture.get("clean_completed_restore_count") or 0)
+application_backup_evidence_present = bool(successful_backups > 0 or clean_successful_backups > 0)
+application_restore_evidence_present = bool(clean_completed_restores > 0)
 backup_critical_issues = {
     "backup-tooling-not-detected",
     "backup-storage-location-missing",
@@ -2756,24 +2779,25 @@ backup_warning_issues = {
 backup_findings_by_issue = {str(item.get("issue") or "") for item in backup_posture_findings if str(item.get("issue") or "")}
 backup_ready = bool(
     backup_tooling_present
-    and clean_successful_backups > 0
-    and clean_completed_restores > 0
+    and workload_backup_provider_present
+    and application_backup_evidence_present
+    and application_restore_evidence_present
     and not (backup_findings_by_issue & backup_critical_issues)
     and not (backup_findings_by_issue & backup_warning_issues)
 )
 add_check(
     "Application backup and restore baseline",
     cap_status_for_presence("application_backup_and_restore_readiness", backup_tooling_present, backup_ready),
-    f"dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} successful_backups={successful_backups} clean_successful_backups={clean_successful_backups} clean_restores={clean_completed_restores} findings={','.join(sorted(backup_findings_by_issue)) or 'none'}",
-    "OADP application backup posture guidance",
+    f"provider_present={workload_backup_provider_present} oadp_present={oadp_backup_provider_present} commvault_present={commvault_backup_provider_present} backup_evidence_present={application_backup_evidence_present} restore_evidence_present={application_restore_evidence_present} dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} successful_backups={successful_backups} clean_successful_backups={clean_successful_backups} clean_restores={clean_completed_restores} findings={','.join(sorted(backup_findings_by_issue)) or 'none'}",
+    "workload backup and restore provider inventory",
     level=cap_level("application_backup_and_restore_readiness", base_required_level),
 )
 if not backup_ready:
     add_finding(
         "prod-day2-application-backup-baseline-incomplete",
-        "workload backup posture is not healthy: verify an available BackupStorageLocation, active schedules, at least one clean successful backup, and at least one clean completed restore",
+        "workload backup posture is not healthy: verify Commvault or OADP is present for workload backup and restore, and provide backup plus restore evidence for the expected recovery path",
         severity=cap_failure_severity("application_backup_and_restore_readiness"),
-        source="OADP application backup posture guidance",
+        source="workload backup and restore provider inventory",
     )
 
 if is_hosted_control_plane:
@@ -3946,13 +3970,13 @@ platform_app_catalog = [
     },
     {
         "key": "application_backup_and_restore_readiness",
-        "capability": "OADP operator app footprint",
+        "capability": "Workload backup and restore provider footprint",
         "level": cap_level("application_backup_and_restore_readiness", base_required_level),
         "source": "backup and recovery inventory",
-        "present": bool(dataprotectionapplications or backupstoragelocations or schedules or "openshift-adp" in namespace_names),
-        "detail": f"dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} openshift_adp_namespace={'openshift-adp' in namespace_names}",
-        "issue": "prod-day2-platform-oadp-operator-missing",
-        "finding": "no OADP operator or backup app footprint was detected",
+        "present": workload_backup_provider_present,
+        "detail": f"oadp_present={oadp_backup_provider_present} commvault_present={commvault_backup_provider_present} dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} openshift_adp_namespace={'openshift-adp' in namespace_names}",
+        "issue": "prod-day2-workload-backup-provider-missing",
+        "finding": "no Commvault or OADP workload backup and restore footprint was detected",
     },
     {
         "key": "compliance_requirements_validation",
@@ -5042,6 +5066,11 @@ print(json.dumps({
         "clean_successful_backup_count": clean_successful_backups,
         "clean_completed_restore_count": clean_completed_restores,
         "application_backup_ready": backup_ready,
+        "workload_backup_provider_present": workload_backup_provider_present,
+        "oadp_backup_provider_present": oadp_backup_provider_present,
+        "commvault_backup_provider_present": commvault_backup_provider_present,
+        "application_backup_evidence_present": application_backup_evidence_present,
+        "application_restore_evidence_present": application_restore_evidence_present,
         "secondary_site_disaster_recovery_present": secondary_site_dr_present,
         "secondary_site_disaster_recovery_healthy": secondary_site_dr_healthy,
         "drpolicy_count": len(drpolicies),
