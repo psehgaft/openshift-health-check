@@ -541,23 +541,39 @@ def image_registry(image):
 
 all_workloads = pods + deployments + statefulsets + daemonsets
 all_workload_blobs = [text_blob(item) for item in all_workloads]
-commvault_inventory_blobs = all_workload_blobs + [
+backup_provider_inventory_blobs = all_workload_blobs + [
     json.dumps(item, sort_keys=True, default=str).lower()
     for item in namespaces + subscriptions + crds + serviceaccounts + rolebindings + clusterrolebindings
 ]
+velero_component_blobs = backup_provider_inventory_blobs + [
+    json.dumps(item, sort_keys=True, default=str).lower()
+    for item in backupstoragelocations + schedules
+]
 oadp_backup_provider_present = bool(
     dataprotectionapplications
-    or backupstoragelocations
-    or schedules
+    or any("oadp" in package.lower() for package in subscription_packages)
     or "openshift-adp" in namespace_names
+    or crd_has("dataprotectionapplications.oadp.openshift.io")
+)
+velero_backup_provider_present = bool(
+    backupstoragelocations
+    or schedules
+    or any("velero" in package.lower() for package in subscription_packages)
+    or any("velero" in name.lower() for name in namespace_names)
+    or crd_has("velero.io")
+    or any_keyword(["velero"], velero_component_blobs)
 )
 commvault_backup_provider_present = bool(
     any("commvault" in package.lower() for package in subscription_packages)
     or any("commvault" in name.lower() for name in namespace_names)
     or crd_has("commvault")
-    or any_keyword(["commvault"], commvault_inventory_blobs)
+    or any_keyword(["commvault"], backup_provider_inventory_blobs)
 )
-workload_backup_provider_present = bool(oadp_backup_provider_present or commvault_backup_provider_present)
+workload_backup_provider_present = bool(
+    oadp_backup_provider_present
+    or velero_backup_provider_present
+    or commvault_backup_provider_present
+)
 worker_machinesets = []
 for item in machinesets:
     combined_labels = {}
@@ -2788,14 +2804,14 @@ backup_ready = bool(
 add_check(
     "Application backup and restore baseline",
     cap_status_for_presence("application_backup_and_restore_readiness", backup_tooling_present, backup_ready),
-    f"provider_present={workload_backup_provider_present} oadp_present={oadp_backup_provider_present} commvault_present={commvault_backup_provider_present} backup_evidence_present={application_backup_evidence_present} restore_evidence_present={application_restore_evidence_present} dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} successful_backups={successful_backups} clean_successful_backups={clean_successful_backups} clean_restores={clean_completed_restores} findings={','.join(sorted(backup_findings_by_issue)) or 'none'}",
+    f"provider_present={workload_backup_provider_present} oadp_present={oadp_backup_provider_present} velero_present={velero_backup_provider_present} commvault_present={commvault_backup_provider_present} backup_evidence_present={application_backup_evidence_present} restore_evidence_present={application_restore_evidence_present} dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} successful_backups={successful_backups} clean_successful_backups={clean_successful_backups} clean_restores={clean_completed_restores} findings={','.join(sorted(backup_findings_by_issue)) or 'none'}",
     "workload backup and restore provider inventory",
     level=cap_level("application_backup_and_restore_readiness", base_required_level),
 )
 if not backup_ready:
     add_finding(
         "prod-day2-application-backup-baseline-incomplete",
-        "workload backup posture is not healthy: verify Commvault or OADP is present for workload backup and restore, and provide backup plus restore evidence for the expected recovery path",
+        "workload backup posture is not healthy: verify Commvault, OADP, or upstream Velero is present for workload backup and restore, and provide backup plus restore evidence for the expected recovery path",
         severity=cap_failure_severity("application_backup_and_restore_readiness"),
         source="workload backup and restore provider inventory",
     )
@@ -3974,9 +3990,9 @@ platform_app_catalog = [
         "level": cap_level("application_backup_and_restore_readiness", base_required_level),
         "source": "backup and recovery inventory",
         "present": workload_backup_provider_present,
-        "detail": f"oadp_present={oadp_backup_provider_present} commvault_present={commvault_backup_provider_present} dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} openshift_adp_namespace={'openshift-adp' in namespace_names}",
+        "detail": f"oadp_present={oadp_backup_provider_present} velero_present={velero_backup_provider_present} commvault_present={commvault_backup_provider_present} dpas={len(dataprotectionapplications)} backupstoragelocations={len(backupstoragelocations)} schedules={len(schedules)} openshift_adp_namespace={'openshift-adp' in namespace_names}",
         "issue": "prod-day2-workload-backup-provider-missing",
-        "finding": "no Commvault or OADP workload backup and restore footprint was detected",
+        "finding": "no Commvault, OADP, or upstream Velero workload backup and restore footprint was detected",
     },
     {
         "key": "compliance_requirements_validation",
@@ -5068,6 +5084,7 @@ print(json.dumps({
         "application_backup_ready": backup_ready,
         "workload_backup_provider_present": workload_backup_provider_present,
         "oadp_backup_provider_present": oadp_backup_provider_present,
+        "velero_backup_provider_present": velero_backup_provider_present,
         "commvault_backup_provider_present": commvault_backup_provider_present,
         "application_backup_evidence_present": application_backup_evidence_present,
         "application_restore_evidence_present": application_restore_evidence_present,
