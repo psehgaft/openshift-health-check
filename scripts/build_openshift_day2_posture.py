@@ -100,7 +100,6 @@ def encrypted_condition_details(obj):
     }
 
 etcd_encryption_conditions = {
-    "apiserver": encrypted_condition_details(apiserver_config),
     "openshift_apiserver": encrypted_condition_details(openshift_apiserver),
     "kube_apiserver": encrypted_condition_details(kube_apiserver),
     "authentication_operator": encrypted_condition_details(authentication_operator),
@@ -122,13 +121,16 @@ etcd_encryption_complete = bool(etcd_encryption) and etcd_encryption_evidence_co
 
 def format_etcd_encryption_details():
     component_labels = {
-        "apiserver": "apiserver.config",
         "openshift_apiserver": "openshift-apiserver",
         "kube_apiserver": "kube-apiserver",
         "authentication_operator": "authentication",
     }
     parts = [f"apiserver_encryption_type={etcd_encryption_type}"]
-    for key in ["apiserver", "openshift_apiserver", "kube_apiserver", "authentication_operator"]:
+    parts.append(
+        "rolloutEvidenceReported="
+        + f"{len(etcd_encryption_reported_components)}/{len(etcd_encryption_conditions)}"
+    )
+    for key in ["openshift_apiserver", "kube_apiserver", "authentication_operator"]:
         details = etcd_encryption_conditions.get(key) or {}
         status = details.get("status") or "not-reported"
         reason = details.get("reason") or "not-reported"
@@ -3671,12 +3673,19 @@ if not etcd_encryption and cap_required("etcd_encryption"):
         source="OpenShift APIServer etcd encryption configuration",
     )
 elif etcd_encryption and not etcd_encryption_complete and cap_required("etcd_encryption"):
+    if len(etcd_encryption_reported_components) == 0:
+        detail = (
+            "etcd encryption is configured, but no rollout status was reported by "
+            "openshift-apiserver, kube-apiserver, or authentication resources"
+        )
+    else:
+        detail = (
+            "etcd encryption is configured but rollout is not completed across the reported API server components; "
+            f"incomplete components: {', '.join(format_etcd_encryption_component_names(etcd_encryption_missing_components)) or 'none'}"
+        )
     add_finding(
         "prod-day2-etcd-encryption-rollout-incomplete",
-        (
-            "etcd encryption is configured but rollout is not completed across all reported API server components; "
-            f"incomplete components: {', '.join(format_etcd_encryption_component_names(etcd_encryption_missing_components)) or 'none'}"
-        ),
+        detail,
         severity=cap_failure_severity("etcd_encryption"),
         source="OpenShift APIServer etcd encryption configuration",
     )

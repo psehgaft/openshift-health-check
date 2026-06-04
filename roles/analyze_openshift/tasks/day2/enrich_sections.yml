@@ -1833,7 +1833,6 @@
           {%- set etcd_encryption_type = ((((apiserver_config.get('spec') or {}).get('encryption') or {}).get('type') or 'identity') | string | lower | trim) -%}
           {%- set etcd_encryption = etcd_encryption_type in ['aescbc', 'aesgcm'] -%}
           {%- set encrypted_conditions = [
-                ('apiserver.config', (((apiserver_config.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({}))),
                 ('openshift-apiserver', (((openshift_apiserver.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({}))),
                 ('kube-apiserver', (((kube_apiserver.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({}))),
                 ('authentication', (((authentication_operator.get('status') or {}).get('conditions') or []) | selectattr('type', 'defined') | selectattr('type', 'equalto', 'Encrypted') | list | first | default({})))
@@ -1861,6 +1860,8 @@
               ) -%}
           {%- set top_detail = (
                 'apiserver_encryption_type=' ~ etcd_encryption_type
+                ~ ' rolloutEvidenceReported=' ~ ((reported_components | length) | string)
+                ~ '/' ~ ((encrypted_conditions | length) | string)
                 ~ ' ' ~ (component_details | join(' '))
               ) -%}
           {%- set recommended_action = (
@@ -1875,9 +1876,25 @@
           {%- set findings = (
                 [{
                   'severity': 'warning',
-                  'issue': ('Etcd encryption not enabled' if not etcd_encryption else 'Etcd encryption rollout incomplete'),
+                  'issue': (
+                    'Etcd encryption not enabled'
+                    if not etcd_encryption
+                    else (
+                      'Etcd encryption rollout evidence missing'
+                      if (reported_components | length) == 0
+                      else 'Etcd encryption rollout incomplete'
+                    )
+                  ),
                   'source': 'apiserver encryption configuration',
-                  'recommended_action': recommended_action
+                  'recommended_action': recommended_action,
+                  'detail': (
+                    'etcd encryption is configured, but no rollout status was reported by openshift-apiserver, kube-apiserver, or authentication resources'
+                    if (etcd_encryption and (reported_components | length) == 0)
+                    else (
+                      'etcd encryption is configured but rollout is not completed across the reported API server components; incomplete components: '
+                      ~ (missing_components | join(', '))
+                    )
+                  )
                 }]
                 if capability_status == 'WARNING'
                 else []

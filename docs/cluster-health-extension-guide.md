@@ -412,6 +412,8 @@ Treat collection changes as code changes, not as profile edits with extra steps.
 
 Prefer existing collected resources first. Do not add a new live command when the same evidence already exists in must-gather, inspect, or another collected-state input.
 
+When the new evidence is recoverable from the live OpenShift API and should participate in collected-mode backfill, update [catalogs/openshift/live-api-fallback-catalog.yml](../catalogs/openshift/live-api-fallback-catalog.yml) as part of the same change. Maintenance rules for that file are in [docs/openshift-live-api-fallback-catalog.md](openshift-live-api-fallback-catalog.md).
+
 ## Evidence And Optional Support Sources
 
 Optional support evidence is scoped by the selector dependency rules.
@@ -543,7 +545,7 @@ Example scoped collected-state run:
 ```bash
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_mode=collected \
-  -e case_bundle_path=tests/fixtures \
+  -e collected_evidence_root=tests/fixtures \
   -e selected_postures=platform_health,security_and_governance \
   -e report_output_dir=/private/tmp/ohc-scope-test \
   -e report_basename=scope-test
@@ -554,7 +556,7 @@ Example scoped capability run:
 ```bash
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_mode=collected \
-  -e case_bundle_path=tests/fixtures \
+  -e collected_evidence_root=tests/fixtures \
   -e selected_capabilities=oauth_external_identity_provider,external_alert_delivery \
   -e report_output_dir=/private/tmp/ohc-cap-test \
   -e report_basename=cap-test

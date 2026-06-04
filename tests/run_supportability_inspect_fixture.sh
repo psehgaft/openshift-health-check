@@ -20,7 +20,7 @@ ANSIBLE_STDOUT_CALLBACK=minimal \
   -e report_output_dir="${REPORT_DIR}" \
   -e report_basename=cluster-supportability \
   -e evidence_mode=inspect \
-  -e inspect_path="${INSPECT_PATH}" \
+  -e collected_evidence_root="${INSPECT_PATH}" \
   > "${LOG_PATH}" 2>&1
 
 report_json="$(find "${REPORT_DIR}" -maxdepth 1 -name 'cluster-supportability-openshift-*.json' -print | sort | tail -n 1)"

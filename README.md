@@ -28,7 +28,7 @@ It is read-only, so it does not make changes to the cluster.
 By default, it collects data in parallel so the run finishes faster. It also tells you about collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete. Optional collectors that target APIs or config objects which are not installed on the cluster are tracked separately as not applicable, rather than counted as hard collection failures.
 
 > [!IMPORTANT]
-> This tool is a reporting aid, not a replacement for operator judgment. It helps surface health signals, risks, and likely issues, but no automated report can fully understand every cluster design, business requirement, or accepted exception. Review the findings before making decisions.
+> This tool summarizes cluster health signals and likely risks. Review the findings before making operational decisions.
 
 ## Start Here
 
@@ -83,13 +83,16 @@ Most users only need the Quick Start command. These arguments cover the common a
 | Argument | Values | When to use it |
 | --- | --- | --- |
 | `report_mode` | `live`, `collected`, `auto`, `offline` | `live` reads from the current cluster. `collected` reprocesses existing support data. `auto` switches to collected mode when collected inputs are provided. `offline` is an alias for `collected`. |
+| `collected_evidence_root` | path | Preferred collected-mode input. Point it at a case bundle, extracted `must-gather`, extracted `inspect`, or a directory that contains those artifacts. |
 | `report_performance_profile` | `full`, `standard`, `fast` | `full` is the default and collects the broadest evidence set. `standard` skips expensive support collectors. `fast` keeps the run narrow. |
 | `collect_live_sosreport` | `true`, `false` | Set this to `false` when node-level diagnostics are not approved. This disables `oc debug node/<node>` and `sosreport` even when `report_performance_profile=full`. |
 | `report_run_mode` | `fresh`, `resume_last_failure` | Use `resume_last_failure` after a failed run to reuse completed artifacts. |
+| `report_profile_path` | path | Load a profile override file on top of the built-in OpenShift profile. |
 | `selected_postures` | comma-separated posture keys | Limit the rendered report to specific posture sections. |
 | `selected_capabilities` | comma-separated capability keys | Limit the rendered report to specific capability sections. |
 | `report_output_dir` | path | Write reports somewhere other than `reports/`. |
-| `report_generate_html`, `report_generate_pdf` | `true`, `false` | Disable optional rendered formats when Markdown and JSON are enough. |
+
+The playbook still supports lower-level compatibility variables such as `case_bundle_path`, `must_gather_path`, `inspect_path`, `report_generate_html`, and `report_generate_pdf`, but they are no longer the preferred interface for routine runs.
 
 If you are preparing a fresh bastion host first, use the OS bootstrap that matches the host:
 
@@ -131,14 +134,13 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml \
 - Live scan with a custom profile override file
 ```bash
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  -e cluster_health_profile_override_source_path=/path/to/custom-openshift-cluster-health-profile.yml
+  -e report_profile_path=/path/to/custom-openshift-cluster-health-profile.yml
 ```
 - Collected-state scan from existing support data
 ```bash
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_mode=collected \
-  -e must_gather_path=/path/to/must-gather.local.123456 \
-  -e inspect_path=/path/to/inspect-dir
+  -e collected_evidence_root=/path/to/case-bundle-or-must-gather
 ```
 - Selector-scoped run for only specific postures
 ```bash
@@ -150,7 +152,7 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml \
 ```bash
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_mode=collected \
-  -e case_bundle_path=/path/to/case-bundle \
+  -e collected_evidence_root=/path/to/case-bundle \
   -e selected_capabilities=oauth_external_identity_provider,external_alert_delivery
 ```
 - Resume the last failed OpenShift run
@@ -167,18 +169,14 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml \
 
 Most-used OpenShift options:
 
-- `cluster_health_profile_override_source_path`
+- `report_profile_path`
   Load a second profile file and merge it onto `inputs/openshift-cluster-health-profile.yml`
 - `report_mode`
   Use `live`, `collected`, or `auto`. `auto` resolves to `collected` when collected-state inputs are present.
 - `report_run_mode`
   Use `fresh` or `resume_last_failure`
-- `must_gather_path`
-  Reprocess an extracted `must-gather.local*` directory
-- `inspect_path`
-  Reprocess an extracted `oc adm inspect` directory
-- `case_bundle_path`
-  Reprocess a folder that contains mixed collected-state inputs
+- `collected_evidence_root`
+  Reprocess a case bundle, extracted `must-gather`, extracted `inspect`, or a directory that contains those artifacts
 - `report_output_dir`
   Choose where the report files are written
 - `report_basename`
@@ -187,24 +185,14 @@ Most-used OpenShift options:
   Limit the run to one or more posture sections while preserving shared prerequisites automatically
 - `selected_capabilities`
   Limit the run to one or more capability sections while preserving shared prerequisites automatically
-- `report_generate_html`
-  Enable or disable HTML output
-- `report_generate_pdf`
-  Enable or disable PDF output
 - `report_performance_profile`
   Choose live OpenShift collection depth. Default: `full`
 
 `must-gather` and `inspect` can run directly from the standard `oc` access path. The live OpenShift scan also pulls the Insights Operator archive from `openshift-insights` as part of the same support collection flow. `cluster-compare` needs the plugin plus an explicit baseline or reference command. Provider-managed gates and Advisor export can run in the same scan when their command prerequisites are available. Node-level `oc debug node/<node>` plus `sosreport` collection is optional and runs only when `collect_live_sosreport=true`; when enabled, it targets derived symptom nodes first and is capped by `live_support_sosreport_node_limit`. If no symptom-based targets are found, the full collector falls back to the cluster node inventory instead of reporting node diagnostics as not requested. If possible, install `omc` too. The OpenShift path can use it after `must-gather` to add more etcd and alert or rule analysis from collected support data.
 
-The same OpenShift playbook also supports collected-state reprocessing. If you set any of these inputs, the playbook automatically switches to the collected-state path:
+The same OpenShift playbook also supports collected-state reprocessing. In most cases, set `collected_evidence_root` and let the loader discover the artifact layout. The older path-specific inputs such as `must_gather_path`, `inspect_path`, `cluster_compare_path`, `advisor_export_path`, `managed_gates_path`, and `sosreport_paths` still work, but they are compatibility inputs now.
 
-- `must_gather_path`
-- `inspect_path`
-- `cluster_compare_path`
-- `advisor_export_path`
-- `managed_gates_path`
-- `sosreport_paths`
-- `case_bundle_path`
+Collected-mode live `oc get` backfill is driven by [catalogs/openshift/live-api-fallback-catalog.yml](catalogs/openshift/live-api-fallback-catalog.yml). Maintenance notes are in [docs/openshift-live-api-fallback-catalog.md](docs/openshift-live-api-fallback-catalog.md).
 
 You can also force that path explicitly with `-e report_mode=collected`.
 
@@ -1046,8 +1034,7 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml
 # collected-state scan
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_mode=collected \
-  -e must_gather_path=/path/to/must-gather.local.123456 \
-  -e inspect_path=/path/to/inspect-dir
+  -e collected_evidence_root=/path/to/case-bundle-or-must-gather
 
 # resume the last failed run
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
@@ -1055,7 +1042,7 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml \
 
 # merge a second profile file onto the default OpenShift profile
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  -e cluster_health_profile_override_source_path=/path/to/custom-openshift-cluster-health-profile.yml
+  -e report_profile_path=/path/to/custom-openshift-cluster-health-profile.yml
 ```
 
 Collected-state example:
@@ -1063,8 +1050,7 @@ Collected-state example:
 ```bash
 . .venv/bin/activate
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  -e must_gather_path=/path/to/must-gather.local.123456 \
-  -e inspect_path=/path/to/inspect-dir
+  -e collected_evidence_root=/path/to/case-bundle-or-must-gather
 ```
 
 ### Generic Kubernetes
@@ -1101,46 +1087,22 @@ ansible-playbook playbooks/minikube_cluster_health_report.yml
 
 ### Common Parameters
 
-These parameters work across the playbooks:
+These parameters cover the common cross-playbook interface:
 
 - `report_output_dir`
   Where report files are written
 - `report_basename`
   File name prefix before cluster type, cluster name, and timestamp
-- `report_generate_html`
-  Set to `true` or `false`
-- `report_generate_pdf`
-  Set to `true` or `false`
-- `collection_parallelism`
-  Number of collection commands to run at the same time
-- `collection_command_timeout_seconds`
-  Timeout for each collection command
-- `keep_collection_artifacts`
-  Keep the temporary raw collection file for debugging
 - `report_mode`
   `auto`, `live`, or `collected`
 - `report_run_mode`
   `fresh` or `resume_last_failure`
-- `must_gather_path`
-  Path to an extracted `must-gather.local*` directory
-- `inspect_path`
-  Path to an extracted `oc adm inspect` directory
-- `cluster_compare_path`
-  Path to saved `oc cluster-compare` JSON output
-- `advisor_export_path`
-  Path to saved Advisor export JSON
-- `managed_gates_path`
-  Path to saved managed-service gate JSON
-- `sosreport_paths`
-  One or more extracted `sosreport` directories or archives, typically collected through `oc debug node/<node>` when host-level node diagnostics are required
+- `collected_evidence_root`
+  Preferred collected-mode root directory for bundled or extracted support artifacts
 - `collect_live_sosreport`
   Enable or disable live `oc debug node/<node>` sosreport collection. The default `full` profile enables it when applicable. `report_performance_profile=standard` and `report_performance_profile=fast` keep it disabled unless explicitly enabled. Setting it to `false` disables node debug even when `live_support_collection_profile=all`
-- `live_support_sosreport_nodes`
-  Optional explicit node list for live sosreport collection; when empty, the scan uses derived symptom nodes, then falls back to the cluster node inventory when node diagnostics are enabled and no symptom target exists
-- `live_support_sosreport_node_limit`
-  Maximum number of target nodes for default live sosreport collection
-- `case_bundle_path`
-  Folder containing a mix of collected-state inputs discovered automatically
+
+Advanced and compatibility variables still exist for narrow workflows, but routine usage should not need low-level path wiring or format toggles.
 
 Example:
 
@@ -1148,9 +1110,7 @@ Example:
 ansible-playbook playbooks/openshift_cluster_health_report.yml \
   -e report_output_dir=./reports \
   -e report_basename=prod-cluster-health \
-  -e report_run_mode=fresh \
-  -e report_generate_html=false \
-  -e report_generate_pdf=false
+  -e report_run_mode=fresh
 ```
 
 ### Fresh Run Or Resume Last Failure

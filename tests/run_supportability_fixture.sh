@@ -4,12 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "${ROOT_DIR}/scripts/repo-runtime-env.sh"
-FIXTURE_PATH="${ROOT_DIR}/tests/fixtures/must-gather.local.mock"
-CLUSTER_COMPARE_PATH="${ROOT_DIR}/tests/fixtures/cluster-compare/mock-cluster-compare.json"
-INSPECT_PATH="${ROOT_DIR}/tests/fixtures/inspect.mock"
-SOSREPORT_PATH="${ROOT_DIR}/tests/fixtures/sosreport-worker-0"
-ADVISOR_PATH="${ROOT_DIR}/tests/fixtures/advisor/mock-advisor.json"
-MANAGED_GATES_PATH="${ROOT_DIR}/tests/fixtures/managed-gates/mock-rosa-gates.json"
+COLLECTED_EVIDENCE_ROOT="${ROOT_DIR}/tests/fixtures"
 OMC_PATH="${ROOT_DIR}/tests/fixtures/bin/omc"
 REPORT_DIR="$(mktemp -d "${REPO_TMP_ROOT}/supportability-fixture-reports.XXXXXX")"
 LOG_PATH="${REPO_TMP_ROOT}/supportability-fixture.log"
@@ -25,13 +20,8 @@ ANSIBLE_STDOUT_CALLBACK=minimal \
 "${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_output_dir="${REPORT_DIR}" \
   -e report_basename=cluster-supportability \
-  -e must_gather_path="${FIXTURE_PATH}" \
-  -e cluster_compare_path="${CLUSTER_COMPARE_PATH}" \
-  -e managed_gates_path="${MANAGED_GATES_PATH}" \
-  -e inspect_path="${INSPECT_PATH}" \
-  -e advisor_export_path="${ADVISOR_PATH}" \
+  -e collected_evidence_root="${COLLECTED_EVIDENCE_ROOT}" \
   -e omc_binary_path="${OMC_PATH}" \
-  -e "{\"sosreport_paths\":[\"${SOSREPORT_PATH}\"]}" \
   > "${LOG_PATH}" 2>&1
 
 report_json="$(find "${REPORT_DIR}" -maxdepth 1 -name 'cluster-supportability-openshift-*.json' -print | sort | tail -n 1)"

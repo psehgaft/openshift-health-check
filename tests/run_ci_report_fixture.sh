@@ -33,7 +33,7 @@ done
 "${ROOT_DIR}/scripts/run_ci_report.sh" \
   "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_basename=cluster-supportability \
-  -e case_bundle_path="${ROOT_DIR}/tests/fixtures"
+  -e collected_evidence_root="${ROOT_DIR}/tests/fixtures"
 
 "${VENV_PYTHON_BIN}" - \
   "${ROOT_DIR}/inputs/openshift-cluster-health-profile.yml" \

@@ -1,0 +1,180 @@
+---
+- name: Load OpenShift live API fallback manifest
+  ansible.builtin.include_vars:
+    file: "{{ openshift_live_api_fallback_catalog_source_path }}"
+    name: openshift_live_api_fallback_profile
+
+- name: Resolve OpenShift live API fallback context paths
+  ansible.builtin.set_fact:
+    openshift_live_api_fallback_context_path: "{{ repo_tmp_root_dir ~ '/ohc-live-api-fallback-context-' ~ (999999 | random) ~ '.json' }}"
+    openshift_live_api_fallback_plan_path: "{{ repo_tmp_root_dir ~ '/ohc-live-api-fallback-plan-' ~ (999999 | random) ~ '.json' }}"
+
+- name: Persist OpenShift live API fallback context
+  ansible.builtin.copy:
+    dest: "{{ openshift_live_api_fallback_context_path }}"
+    mode: "0600"
+    content: >-
+      {{
+        {
+          'selector_active': (report_selector_scope_active | default(false) | bool),
+          'selected_postures': (report_effective_selected_postures | default([])),
+          'selected_capabilities': (report_effective_selected_capabilities | default([])),
+          'enabled_postures': (
+            (cluster_health_profile.postures | default({}))
+            | dict2items
+            | selectattr('value.enabled', 'equalto', true)
+            | map(attribute='key')
+            | list
+          ),
+          'collected_resource_graph': (collected_resource_graph | default({}))
+        }
+        | to_nice_json
+      }}
+
+- name: Build OpenShift live API fallback plan
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/build_live_api_fallback_plan.py"
+      - "{{ openshift_live_api_fallback_catalog_source_path }}"
+      - "{{ openshift_live_api_fallback_context_path }}"
+  register: openshift_live_api_fallback_plan_cmd
+  changed_when: false
+
+- name: Persist OpenShift live API fallback plan
+  ansible.builtin.copy:
+    dest: "{{ openshift_live_api_fallback_plan_path }}"
+    mode: "0600"
+    content: "{{ openshift_live_api_fallback_plan_cmd.stdout }}"
+  when: (openshift_live_api_fallback_plan_cmd.stdout | default('') | trim | length) > 0
+
+- name: Load OpenShift live API fallback plan
+  ansible.builtin.set_fact:
+    openshift_live_api_fallback_plan: "{{ (openshift_live_api_fallback_plan_cmd.stdout | from_json) if (openshift_live_api_fallback_plan_cmd.stdout | default('') | trim | length > 0) else {'items': []} }}"
+
+- name: Collect insufficient OpenShift API resources from live cluster
+  ansible.builtin.command:
+    argv: "{{ item.argv }}"
+  loop: "{{ openshift_live_api_fallback_plan['items'] | default([]) }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: openshift_live_api_fallback_cmd
+  changed_when: false
+  failed_when: false
+  when: (openshift_live_api_fallback_plan['items'] | default([]) | length) > 0
+
+- name: Initialize OpenShift live API fallback merge facts
+  ansible.builtin.set_fact:
+    openshift_live_api_fallback_payloads: {}
+    openshift_live_api_fallback_applied_keys: []
+    openshift_live_api_fallback_failed_keys: []
+  when: openshift_live_api_fallback_cmd is defined
+
+- name: Merge successful OpenShift live API fallback payloads
+  vars:
+    live_payload: "{{ item.stdout | from_json }}"
+  ansible.builtin.set_fact:
+    openshift_live_api_fallback_payloads: "{{ openshift_live_api_fallback_payloads | combine({item.item.key: live_payload}, recursive=True) }}"
+    openshift_live_api_fallback_applied_keys: "{{ (openshift_live_api_fallback_applied_keys | default([])) + [item.item.key] }}"
+  loop: "{{ openshift_live_api_fallback_cmd.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - (item.rc | default(1) | int) == 0
+    - (item.stdout | default('') | trim | length) > 0
+    - ((item.stdout | from_json) | length) > 0
+
+- name: Record failed OpenShift live API fallback keys
+  ansible.builtin.set_fact:
+    openshift_live_api_fallback_failed_keys: "{{ (openshift_live_api_fallback_failed_keys | default([])) + [item.item.key] }}"
+  loop: "{{ openshift_live_api_fallback_cmd.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - (item.rc | default(1) | int) != 0 or (item.stdout | default('') | trim | length) == 0
+
+- name: Merge OpenShift live API fallback payloads into collected graph
+  ansible.builtin.set_fact:
+    collected_resource_graph: >-
+      {{
+        (collected_resource_graph | default({}))
+        | combine(
+            (openshift_live_api_fallback_payloads | default({})),
+            recursive=True
+          )
+      }}
+  when: (openshift_live_api_fallback_applied_keys | default([]) | length) > 0
+
+- name: Mark OpenShift live API fallback usage in evidence facts
+  ansible.builtin.set_fact:
+    collected_resource_graph: >-
+      {{
+        (collected_resource_graph | default({}))
+        | combine(
+            {
+              'source_summary': (
+                (collected_resource_graph.source_summary | default({}))
+                | combine(
+                    {
+                      'sources': (
+                        (collected_resource_graph.source_summary.sources | default([]))
+                        + ['oc get']
+                      ) | unique
+                    },
+                    recursive=True
+                  )
+              )
+            },
+            recursive=True
+          )
+      }}
+    evidence_sources: >-
+      {{
+        (evidence_sources | default([]))
+        + [{
+          'name': 'oc get',
+          'type': 'live-api-fallback',
+          'mode': 'live',
+          'detail': 'Backfilled API evidence that was missing, empty, or insufficient in collected inputs.'
+        }]
+      }}
+    evidence_summary: >-
+      {{
+        (evidence_summary | default({'source_count': 0, 'source_labels': []}))
+        | combine(
+            {
+              'source_count': ((evidence_summary.source_count | default(0) | int) + 1),
+              'source_labels': ((evidence_summary.source_labels | default([])) + ['oc get']) | unique,
+              'live_api_fallback_used': true,
+              'live_api_fallback_keys': (openshift_live_api_fallback_applied_keys | default([]))
+            },
+            recursive=True
+          )
+      }}
+    evidence_mode_resolved: hybrid
+    supportability_summary: >-
+      {{
+        (supportability_summary | default({}))
+        | combine(
+            {
+              'evidence_mode': 'hybrid',
+              'key_findings': (
+                (supportability_summary.key_findings | default([]))
+                + ['Live API fallback supplemented collected evidence for API-backed resources that were missing or insufficient.']
+              ) | unique
+            },
+            recursive=True
+          )
+      }}
+  when: (openshift_live_api_fallback_applied_keys | default([]) | length) > 0
+
+- name: Record OpenShift live API fallback limitations
+  ansible.builtin.set_fact:
+    evidence_limitations: >-
+      {{
+        (evidence_limitations | default([]))
+        + [
+            'Live API fallback did not succeed for: ' ~ ((openshift_live_api_fallback_failed_keys | default([])) | join(', '))
+          ]
+      }}
+  when: (openshift_live_api_fallback_failed_keys | default([]) | length) > 0

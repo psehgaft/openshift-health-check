@@ -6,6 +6,8 @@ from pathlib import Path
 
 def first_match(root: Path, predicate, want_dir=None):
     matches = []
+    if (want_dir is None or (want_dir is True and root.is_dir()) or (want_dir is False and root.is_file())) and predicate(root):
+        matches.append(root)
     for path in root.rglob("*"):
         if want_dir is True and not path.is_dir():
             continue
@@ -18,6 +20,8 @@ def first_match(root: Path, predicate, want_dir=None):
 
 def all_matches(root: Path, predicate, want_dir=None):
     matches = []
+    if (want_dir is None or (want_dir is True and root.is_dir()) or (want_dir is False and root.is_file())) and predicate(root):
+        matches.append(str(root))
     for path in root.rglob("*"):
         if want_dir is True and not path.is_dir():
             continue

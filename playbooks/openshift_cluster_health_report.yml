@@ -17,6 +17,7 @@
     report_generate_html: true
     report_generate_pdf: true
     report_run_mode: fresh
+    report_profile_path: ""
     report_artifact_schema_version: "1"
     report_repo_contract_version: "openshift-artifact-workspace-v1"
     collect_live_support_artifacts: true
@@ -49,6 +50,7 @@
     require_external_metrics_remote_write: false
     warn_on_ingress_without_class: false
     cluster_health_profile_source_path: "{{ playbook_dir }}/../inputs/openshift-cluster-health-profile.yml"
+    openshift_live_api_fallback_catalog_source_path: "{{ playbook_dir }}/../catalogs/openshift/live-api-fallback-catalog.yml"
     cluster_health_profile_override_source_path: ""
     selected_postures: ""
     selected_capabilities: ""
@@ -211,6 +213,7 @@
       - key: ibm_cloud_pak_business_automation
         role: capability_ibm_cloud_pak_business_automation
     case_bundle_path: ""
+    collected_evidence_root: ""
     must_gather_path: ""
     cluster_compare_path: ""
     managed_gates_path: ""
@@ -223,6 +226,8 @@
     sosreport_paths: []
     advisor_export_path: ""
     insights_archive_path: ""
+    collect_live_missing_api_evidence: true
+    collect_live_missing_etcd_encryption_evidence: true
     write_redaction_manifest: false
     redaction_manifest_path: ""
     write_redacted_bundle: false
@@ -302,13 +307,44 @@
         cluster_health_profile_override_source_path_resolved: >-
           {{
             ''
-            if (cluster_health_profile_override_source_path | default('') | trim | length) == 0
+            if (
+              (
+                report_profile_path
+                if (report_profile_path | default('') | trim | length) > 0
+                else (cluster_health_profile_override_source_path | default(''))
+              )
+              | trim
+              | length
+            ) == 0
             else (
-              cluster_health_profile_override_source_path
-              if (cluster_health_profile_override_source_path | regex_search('^/'))
-              else (playbook_dir ~ '/../' ~ cluster_health_profile_override_source_path)
+              (
+                report_profile_path
+                if (report_profile_path | default('') | trim | length) > 0
+                else (cluster_health_profile_override_source_path | default(''))
+              )
+              if (
+                (
+                  report_profile_path
+                  if (report_profile_path | default('') | trim | length) > 0
+                  else (cluster_health_profile_override_source_path | default(''))
+                ) | regex_search('^/')
+              )
+              else (
+                playbook_dir ~ '/../' ~ (
+                  report_profile_path
+                  if (report_profile_path | default('') | trim | length) > 0
+                  else (cluster_health_profile_override_source_path | default(''))
+                )
+              )
             )
           }}
+
+    - name: Prefer collected_evidence_root as the single collected-input argument
+      ansible.builtin.set_fact:
+        case_bundle_path: "{{ collected_evidence_root | default('') | trim }}"
+      when:
+        - (collected_evidence_root | default('') | trim | length) > 0
+        - (case_bundle_path | default('') | trim | length) == 0
 
     - name: Load optional cluster health profile override
       ansible.builtin.include_vars:
@@ -336,7 +372,8 @@
             else (
               'collected'
               if (
-                (case_bundle_path | default('') | trim | length > 0)
+                (collected_evidence_root | default('') | trim | length > 0)
+                or (case_bundle_path | default('') | trim | length > 0)
                 or (must_gather_path | default('') | trim | length > 0)
                 or (inspect_path | default('') | trim | length > 0)
                 or (cluster_compare_path | default('') | trim | length > 0)

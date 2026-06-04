@@ -19,7 +19,7 @@ ANSIBLE_STDOUT_CALLBACK=minimal \
 "${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_output_dir="${REPORT_DIR}" \
   -e report_basename=cluster-supportability \
-  -e case_bundle_path="${BUNDLE_PATH}" \
+  -e collected_evidence_root="${BUNDLE_PATH}" \
   > "${LOG_PATH}" 2>&1
 
 report_json="$(find "${REPORT_DIR}" -maxdepth 1 -name 'cluster-supportability-openshift-*.json' -print | sort | tail -n 1)"
@@ -51,7 +51,6 @@ print(report_path)
 PY
 
 rg -q '^# OpenShift Cluster Health Report' "${report_md}"
-rg -q 'Case bundle path' "${report_md}"
 rg -q '^## Appendix' "${report_md}"
 rg -q '^### Evidence And Supportability' "${report_md}"
 rg -q '^## Day 2 Production Readiness' "${report_md}"

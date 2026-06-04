@@ -24,7 +24,7 @@ ANSIBLE_STDOUT_CALLBACK=minimal \
 "${ANSIBLE_PLAYBOOK_BIN}" "${ROOT_DIR}/playbooks/openshift_cluster_health_report.yml" \
   -e report_output_dir="${REPORT_DIR}" \
   -e report_basename=cluster-supportability \
-  -e case_bundle_path="${BUNDLE_PATH}" \
+  -e collected_evidence_root="${BUNDLE_PATH}" \
   -e write_redaction_manifest=true \
   -e redaction_manifest_path="${MANIFEST_PATH}" \
   -e write_redacted_bundle=true \
@@ -52,8 +52,8 @@ assert payload["evidence"]["redaction_outputs"]["redacted_bundle_written"] is Tr
 assert payload["evidence"]["redaction_outputs"]["manifest_path"] == str(manifest_path_resolved)
 assert payload["evidence"]["redaction_outputs"]["redacted_bundle"]["path"] == str(redacted_root_resolved)
 assert manifest["summary"]["candidate_count"] >= 3
-assert (redacted_root_resolved / "case-bundle-sensitive/id_rsa").exists()
-assert "REDACTED FILE" in (redacted_root_resolved / "case-bundle-sensitive/id_rsa").read_text(encoding="utf-8")
+assert (redacted_root_resolved / "case-bundle-sensitive/openssh-private-key.redacted.pem").exists()
+assert "REDACTED FILE" in (redacted_root_resolved / "case-bundle-sensitive/openssh-private-key.redacted.pem").read_text(encoding="utf-8")
 assert (redacted_root_resolved / "must-gather.local.mock/quay-io-openshift-release-dev-ocp-v4.0-art-dev-sha256-mock/cluster-scoped-resources/resources.yaml").exists()
 print(report_path)
 PY
