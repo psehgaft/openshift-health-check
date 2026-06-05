@@ -16,14 +16,14 @@ It supports:
 - Rancher-managed Kubernetes
 - Minikube
 
-It uses your current `oc` or `kubectl` session, reads cluster state, and writes:
+For live runs, it uses your current `oc` or `kubectl` session. For collected runs, it reprocesses previously gathered support artifacts. In both cases it writes:
 
 - a Markdown report for people
 - a JSON report for automation
 
-Report file names include the cluster type and cluster name.
+Default report file names include the cluster type and cluster name. The CI wrapper writes stable `ci-cluster-report.*` filenames instead.
 
-It is read-only, so it does not make changes to the cluster.
+It does not change cluster workload configuration. In live OpenShift runs, optional diagnostics such as `oc debug node/<node>` and `sosreport` can create temporary debug resources when that evidence path is enabled.
 
 By default, it collects data in parallel so the run finishes faster. It also tells you about collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete. Optional collectors that target APIs or config objects which are not installed on the cluster are tracked separately as not applicable, rather than counted as hard collection failures.
 

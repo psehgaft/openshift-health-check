@@ -115,10 +115,7 @@ Coverage:
 
 - every OpenShift capability in `inputs/openshift-cluster-health-profile.yml` has a matching `roles/capability_<key>/`
 - coverage is checked by `scripts/validate_openshift_capability_role_coverage.py`
-- the expected result is:
-- `profile=65`
-- `role_backed=65`
-- `catalog_only=0`
+- the built-in OpenShift catalog is expected to be fully role-backed, with no `catalog_only` entries in validator output
 
 The `catalog-only` path is still available for future additions. The built-in OpenShift catalog
 does not use it.

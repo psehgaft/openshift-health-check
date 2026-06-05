@@ -1,29 +1,129 @@
 ---
 - name: Build namespace egress controls capability artifact facts
   vars:
+    namespace_egress_day2_section_current: "{{ (day2_capability_sections_by_key | default({})).get('namespace_egress_controls', {}) }}"
     namespace_egress_user_namespace_count: "{{ (user_namespace_names | default([]) | length) | int }}"
     namespace_egress_missing_count: "{{ (namespaces_missing_egress_controls | default([]) | length) | int }}"
-    namespace_egress_present: "{{ ((user_namespace_names | default([]) | difference(namespaces_missing_egress_controls | default([]))) | length) | int > 0 }}"
+    namespace_egress_present_count: "{{ ((user_namespace_names | default([]) | difference(namespaces_missing_egress_controls | default([]))) | length) | int }}"
+    namespace_egress_present: "{{ (namespace_egress_present_count | int) > 0 }}"
+    namespace_egress_missing_namespaces: "{{ namespaces_missing_egress_controls | default([]) }}"
+    namespace_egress_top_missing_namespaces: "{{ (namespace_egress_missing_namespaces[:15] if (namespace_egress_missing_namespaces | length) > 15 else namespace_egress_missing_namespaces) }}"
     namespace_egress_healthy: "{{ ((namespace_egress_user_namespace_count | int) == 0) or ((namespace_egress_missing_count | int) == 0) }}"
     namespace_egress_status_current: >-
       {{
         'OK'
         if namespace_egress_healthy
-        else ('WARNING' if (namespace_egress_present or (namespace_egress_user_namespace_count | int) > 0) else 'INFO')
+        else ('WARNING' if (namespace_egress_present or (namespace_egress_user_namespace_count | int) > 0 or (namespace_egress_day2_section_current.required | default(false) | bool)) else 'INFO')
       }}
-    namespace_egress_reason_current: >-
+    namespace_egress_top_detail_current: >-
       {{
         'userNamespaces=' ~ (namespace_egress_user_namespace_count | string)
-        ~ ' namespacesWithEgressControls=' ~ ((((user_namespace_names | default([]) | difference(namespaces_missing_egress_controls | default([]))) | length) | int) | string)
+        ~ ' namespacesWithEgressControls=' ~ (namespace_egress_present_count | string)
         ~ ' missingNamespaces=' ~ (namespace_egress_missing_count | string)
+        ~ (
+          ' missingList=' ~ ((namespace_egress_top_missing_namespaces | join(', ')) ~ (' ...' if (namespace_egress_missing_namespaces | length) > (namespace_egress_top_missing_namespaces | length) else ''))
+          if (namespace_egress_missing_count | int) > 0
+          else ''
+        )
+      }}
+    namespace_egress_recommended_action_current: >-
+      {{
+        'Keep namespace egress-control coverage aligned with the intended tenant isolation model.'
+        if (namespace_egress_healthy | bool)
+        else (
+          'No user namespaces were in scope for the namespace egress-control check. If this capability is expected, confirm the tenant scope and collect the corresponding NetworkPolicy and EgressFirewall inventory.'
+          if (namespace_egress_user_namespace_count | int) == 0
+          else (
+            'No namespace baseline egress restriction was found in user namespaces from match-all Egress NetworkPolicy or EgressFirewall resources. Add namespace egress controls or document the namespaces that intentionally do not use that operating model.'
+            if not (namespace_egress_present | bool)
+            else 'Namespace egress-control coverage is incomplete. Add or standardize baseline egress controls for the listed user namespaces, or document approved exceptions.'
+          )
+        )
+      }}
+    namespace_egress_findings_current: >-
+      {{
+        []
+        if (namespace_egress_healthy | bool)
+        else [{
+          'capability': 'namespace_egress_controls',
+          'issue': (
+            'prod-day2-namespace-egress-controls-missing'
+            if not (namespace_egress_present | bool)
+            else 'prod-day2-namespace-egress-controls-incomplete'
+          ),
+          'severity': ('warning' if namespace_egress_status_current == 'WARNING' else 'info'),
+          'source': 'namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces',
+          'detail': namespace_egress_top_detail_current,
+          'recommended_action': namespace_egress_recommended_action_current,
+          'docs': ((namespace_egress_day2_section_current.docs | default([])) | string)
+        }]
+      }}
+    namespace_egress_section_override_current: >-
+      {{
+        (namespace_egress_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (namespace_egress_findings_current | length),
+              'checks': [
+                {
+                  'capability': 'User namespace scope',
+                  'capability_key': 'namespace_egress_controls',
+                  'detail': 'userNamespaces=' ~ (namespace_egress_user_namespace_count | string),
+                  'level': ((namespace_egress_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces',
+                  'status': ('OK' if (namespace_egress_user_namespace_count | int) > 0 else 'INFO')
+                },
+                {
+                  'capability': 'Namespace egress controls present',
+                  'capability_key': 'namespace_egress_controls',
+                  'detail': 'namespacesWithEgressControls=' ~ (namespace_egress_present_count | string),
+                  'level': ((namespace_egress_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces',
+                  'status': (
+                    'OK'
+                    if (namespace_egress_present | bool)
+                    else ('WARN' if ((namespace_egress_user_namespace_count | int) > 0 or (namespace_egress_day2_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'Namespace egress-control coverage complete',
+                  'capability_key': 'namespace_egress_controls',
+                  'detail': 'missingNamespaces=' ~ (namespace_egress_missing_count | string) ~ (((' missingList=' ~ (namespace_egress_top_missing_namespaces | join(', '))) if (namespace_egress_top_missing_namespaces | length) > 0 else '')),
+                  'level': ((namespace_egress_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'namespace baseline egress NetworkPolicy and EgressFirewall inventory for user namespaces',
+                  'status': (
+                    'OK'
+                    if (namespace_egress_missing_count | int) == 0
+                    else ('WARN' if (namespace_egress_user_namespace_count | int) > 0 else 'INFO')
+                  )
+                }
+              ],
+              'findings': namespace_egress_findings_current,
+              'status': namespace_egress_status_current,
+              'top_detail': namespace_egress_top_detail_current,
+              'recommended_action': namespace_egress_recommended_action_current
+            },
+            recursive=True
+          )
       }}
   ansible.builtin.set_fact:
     capability_artifact_key: namespace_egress_controls
+    capability_artifact_section_override: "{{ namespace_egress_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (namespace_egress_findings_current | length) | int }}"
       security_governance_status: "{{ namespace_egress_status_current }}"
-      security_governance_reason_summary: "{{ namespace_egress_reason_current }}"
+      security_governance_reason_summary: "{{ namespace_egress_top_detail_current }}"
+      top_detail: "{{ namespace_egress_top_detail_current }}"
     capability_artifact_render_inputs:
+      day2_namespace_egress_controls_section: "{{ namespace_egress_section_override_current }}"
       user_namespace_names: "{{ user_namespace_names | default([]) }}"
       namespaces_missing_egress_controls: "{{ namespaces_missing_egress_controls | default([]) }}"
     capability_artifact_collection_inputs:

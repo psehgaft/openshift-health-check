@@ -2,15 +2,157 @@
 - name: Build cluster proxy configuration capability artifact facts
   vars:
     day2_cluster_proxy_configuration_section_current: "{{ (day2_capability_sections_by_key | default({})).get('cluster_proxy_configuration', {}) }}"
+    cluster_proxy_config_current: "{{ (analysis_graph | default({})).get('proxy_config', {}) | default({}) }}"
+    cluster_proxy_spec_current: "{{ cluster_proxy_config_current.get('spec', {}) | default({}) }}"
+    cluster_proxy_http_current: "{{ cluster_proxy_spec_current.get('httpProxy', '') | string }}"
+    cluster_proxy_https_current: "{{ cluster_proxy_spec_current.get('httpsProxy', '') | string }}"
+    cluster_proxy_no_proxy_entries_current: >-
+      {{
+        (
+          cluster_proxy_spec_current.get('noProxy', '')
+          | string
+          | split(',')
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        )
+      }}
+    cluster_proxy_missing_internal_no_proxy_entries_current: >-
+      {{
+        ['.svc', '.cluster.local']
+        | difference(cluster_proxy_no_proxy_entries_current | default([]))
+        if (
+          (cluster_proxy_http_current | length) > 0
+          or (cluster_proxy_https_current | length) > 0
+        )
+        else []
+      }}
+    cluster_proxy_configured_current: "{{ ((cluster_proxy_http_current | length) > 0) or ((cluster_proxy_https_current | length) > 0) }}"
+    cluster_proxy_no_proxy_complete_current: "{{ (cluster_proxy_configured_current | bool) and ((cluster_proxy_missing_internal_no_proxy_entries_current | length) == 0) }}"
+    cluster_proxy_status_current: >-
+      {{
+        'OK'
+        if (cluster_proxy_configured_current | bool) and (cluster_proxy_no_proxy_complete_current | bool)
+        else ('WARNING' if (day2_cluster_proxy_configuration_section_current.required | default(false) | bool) else 'INFO')
+      }}
+    cluster_proxy_configuration_detail_current: >-
+      {{
+        'httpProxyConfigured=' ~ (((cluster_proxy_http_current | length) > 0) | string)
+        ~ ' httpsProxyConfigured=' ~ (((cluster_proxy_https_current | length) > 0) | string)
+      }}
+    cluster_proxy_no_proxy_detail_current: >-
+      {{
+        'noProxyEntries=' ~ (cluster_proxy_no_proxy_entries_current | length | string)
+        ~ ' missingInternalNoProxy=' ~ ((cluster_proxy_missing_internal_no_proxy_entries_current | join(',')) or 'none')
+      }}
+    cluster_proxy_missing_detail_current: >-
+      {{
+        'proxy.config.openshift.io/cluster.spec.httpProxy and proxy.config.openshift.io/cluster.spec.httpsProxy are both empty'
+        if not (cluster_proxy_configured_current | bool)
+        else (
+          'proxy.config.openshift.io/cluster is configured but noProxy is missing required internal entries: '
+          ~ (cluster_proxy_missing_internal_no_proxy_entries_current | join(', '))
+        )
+      }}
+    cluster_proxy_recommended_action_current: >-
+      {{
+        'Keep the cluster-wide proxy configuration and internal no-proxy coverage aligned with the intended outbound network path.'
+        if (cluster_proxy_configured_current | bool) and (cluster_proxy_no_proxy_complete_current | bool)
+        else (
+          'Configure proxy.config.openshift.io/cluster.spec.httpProxy or .httpsProxy when the cluster is expected to operate behind a cluster-wide proxy.'
+          if not (cluster_proxy_configured_current | bool)
+          else 'Complete proxy.config.openshift.io/cluster.spec.noProxy with the required internal service domains such as .svc and .cluster.local before treating the cluster-wide proxy path as healthy.'
+        )
+      }}
+    cluster_proxy_findings_current: >-
+      {{
+        []
+        if (cluster_proxy_configured_current | bool) and (cluster_proxy_no_proxy_complete_current | bool)
+        else [
+          {
+            'capability': 'cluster_proxy_configuration',
+            'issue': (
+              'prod-day2-proxy-configuration-missing'
+              if not (cluster_proxy_configured_current | bool)
+              else 'prod-day2-proxy-no-proxy-incomplete'
+            ),
+            'severity': ('warning' if (day2_cluster_proxy_configuration_section_current.required | default(false) | bool) else 'info'),
+            'source': 'OpenShift cluster-wide Proxy configuration',
+            'detail': cluster_proxy_missing_detail_current,
+            'recommended_action': cluster_proxy_recommended_action_current,
+            'docs': ((day2_cluster_proxy_configuration_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    cluster_proxy_section_override_current: >-
+      {{
+        (day2_cluster_proxy_configuration_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if ((cluster_proxy_configured_current | bool) and (cluster_proxy_no_proxy_complete_current | bool)) else 1),
+              'checks': [
+                {
+                  'capability': 'Cluster proxy configuration',
+                  'capability_key': 'cluster_proxy_configuration',
+                  'detail': cluster_proxy_configuration_detail_current,
+                  'level': ((day2_cluster_proxy_configuration_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift cluster-wide Proxy configuration',
+                  'status': (
+                    'OK'
+                    if (cluster_proxy_configured_current | bool)
+                    else ('WARN' if (day2_cluster_proxy_configuration_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'Cluster proxy internal no-proxy coverage',
+                  'capability_key': 'cluster_proxy_configuration',
+                  'detail': cluster_proxy_no_proxy_detail_current,
+                  'level': ((day2_cluster_proxy_configuration_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift cluster-wide Proxy configuration',
+                  'status': (
+                    'OK'
+                    if (cluster_proxy_no_proxy_complete_current | bool)
+                    else (
+                      'WARN'
+                      if ((cluster_proxy_configured_current | bool) or (day2_cluster_proxy_configuration_section_current.required | default(false) | bool))
+                      else 'INFO'
+                    )
+                  )
+                }
+              ],
+              'findings': cluster_proxy_findings_current,
+              'status': cluster_proxy_status_current,
+              'top_detail': (
+                'httpProxyConfigured=' ~ (((cluster_proxy_http_current | length) > 0) | string)
+                ~ ' httpsProxyConfigured=' ~ (((cluster_proxy_https_current | length) > 0) | string)
+                ~ ' noProxyEntries=' ~ (cluster_proxy_no_proxy_entries_current | length | string)
+                ~ ' missingInternalNoProxy=' ~ ((cluster_proxy_missing_internal_no_proxy_entries_current | join(',')) or 'none')
+                if (cluster_proxy_configured_current | bool) and (cluster_proxy_no_proxy_complete_current | bool)
+                else cluster_proxy_missing_detail_current
+              ),
+              'recommended_action': cluster_proxy_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: cluster_proxy_configuration
+    capability_artifact_section_override: "{{ cluster_proxy_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      network_status: "{{ day2_cluster_proxy_configuration_section_current.status | default('unknown') }}"
-      network_reason_summary: "{{ day2_cluster_proxy_configuration_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if ((cluster_proxy_configured_current | bool) and (cluster_proxy_no_proxy_complete_current | bool)) else 1) | int }}"
+      network_status: "{{ cluster_proxy_status_current }}"
+      network_reason_summary: "{{ cluster_proxy_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_cluster_proxy_configuration_section: "{{ day2_cluster_proxy_configuration_section_current }}"
+      day2_cluster_proxy_configuration_section: "{{ cluster_proxy_section_override_current }}"
+      proxy_config: "{{ cluster_proxy_config_current }}"
     capability_artifact_collection_inputs:
-      cluster_proxy_configured: "{{ ((network_architecture_summary | default({})).get('cluster_proxy_configured', false)) | bool }}"
-      no_proxy_entry_count: "{{ ((network_architecture_summary | default({})).get('no_proxy_entry_count', 0)) | int }}"
-      missing_internal_no_proxy_entries: "{{ (network_architecture_summary | default({})).get('proxy_missing_internal_no_proxy_entries', []) | default([]) }}"
+      cluster_proxy_configured: "{{ cluster_proxy_configured_current | bool }}"
+      no_proxy_entry_count: "{{ (cluster_proxy_no_proxy_entries_current | length) | int }}"
+      missing_internal_no_proxy_entries: "{{ cluster_proxy_missing_internal_no_proxy_entries_current }}"

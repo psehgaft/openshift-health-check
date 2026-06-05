@@ -2,38 +2,184 @@
 - name: Build application backup and restore readiness capability artifact facts
   vars:
     day2_application_backup_and_restore_readiness_section_current: "{{ (day2_capability_sections_by_key | default({})).get('application_backup_and_restore_readiness', {}) }}"
+    application_backup_ready_current: "{{ ((day2_posture_summary | default({})).get('application_backup_ready', false)) | bool }}"
+    workload_backup_provider_present_current: "{{ ((day2_posture_summary | default({})).get('workload_backup_provider_present', false)) | bool }}"
+    oadp_backup_provider_present_current: "{{ ((day2_posture_summary | default({})).get('oadp_backup_provider_present', false)) | bool }}"
+    velero_backup_provider_present_current: "{{ ((day2_posture_summary | default({})).get('velero_backup_provider_present', false)) | bool }}"
+    commvault_backup_provider_present_current: "{{ ((day2_posture_summary | default({})).get('commvault_backup_provider_present', false)) | bool }}"
+    application_backup_evidence_present_current: "{{ ((day2_posture_summary | default({})).get('application_backup_evidence_present', false)) | bool }}"
+    application_restore_evidence_present_current: "{{ ((day2_posture_summary | default({})).get('application_restore_evidence_present', false)) | bool }}"
+    data_protection_application_count_current: "{{ ((day2_posture_summary | default({})).get('data_protection_application_count', 0)) | int }}"
+    backup_storage_location_count_current: "{{ ((day2_posture_summary | default({})).get('backup_storage_location_count', 0)) | int }}"
+    backup_schedule_count_current: "{{ ((day2_posture_summary | default({})).get('backup_schedule_count', 0)) | int }}"
+    successful_backup_count_current: "{{ ((day2_posture_summary | default({})).get('successful_backup_count', 0)) | int }}"
+    clean_successful_backup_count_current: "{{ ((day2_posture_summary | default({})).get('clean_successful_backup_count', 0)) | int }}"
+    clean_completed_restore_count_current: "{{ ((day2_posture_summary | default({})).get('clean_completed_restore_count', 0)) | int }}"
+    application_backup_findings_count_current: "{{ ((backup_recovery_summary | default({})).get('backup_posture_findings', 0)) | int }}"
+    application_backup_status_current: >-
+      {{
+        'OK'
+        if (application_backup_ready_current | bool)
+        else (
+          'WARNING'
+          if (
+            (workload_backup_provider_present_current | bool)
+            or (application_backup_evidence_present_current | bool)
+            or (application_restore_evidence_present_current | bool)
+            or (day2_application_backup_and_restore_readiness_section_current.required | default(false) | bool)
+          )
+          else 'INFO'
+        )
+      }}
+    application_backup_reason_summary_current: >-
+      {{
+        'providerPresent=' ~ (workload_backup_provider_present_current | string)
+        ~ ' backupEvidence=' ~ (application_backup_evidence_present_current | string)
+        ~ ' restoreEvidence=' ~ (application_restore_evidence_present_current | string)
+        ~ ' dpas=' ~ (data_protection_application_count_current | string)
+        ~ ' backupStorageLocations=' ~ (backup_storage_location_count_current | string)
+        ~ ' schedules=' ~ (backup_schedule_count_current | string)
+        ~ ' cleanBackups=' ~ (clean_successful_backup_count_current | string)
+        ~ ' cleanRestores=' ~ (clean_completed_restore_count_current | string)
+        ~ ' findings=' ~ (application_backup_findings_count_current | string)
+      }}
+    application_backup_missing_detail_current: >-
+      {{
+        'workload backup provider or backup and restore evidence was detected, but backup posture findings remain open'
+        if (
+          (workload_backup_provider_present_current | bool)
+          or (application_backup_evidence_present_current | bool)
+          or (application_restore_evidence_present_current | bool)
+        )
+        else 'no supported workload backup provider or backup and restore evidence was detected'
+      }}
+    application_backup_recommended_action_current: >-
+      {{
+        'Keep workload backup provider coverage and backup plus restore evidence aligned with the recovery path that teams depend on.'
+        if (application_backup_status_current == 'OK')
+        else 'Verify Commvault, OADP, or upstream Velero is present for workload backup and restore, and provide backup plus restore evidence for the expected recovery path.'
+      }}
+    application_backup_findings_current: >-
+      {{
+        []
+        if (application_backup_status_current == 'OK')
+        else [
+          {
+            'capability': 'application_backup_and_restore_readiness',
+            'issue': 'prod-day2-application-backup-baseline-incomplete',
+            'severity': (
+              'warning'
+              if (
+                (workload_backup_provider_present_current | bool)
+                or (application_backup_evidence_present_current | bool)
+                or (application_restore_evidence_present_current | bool)
+                or (day2_application_backup_and_restore_readiness_section_current.required | default(false) | bool)
+              )
+              else 'info'
+            ),
+            'source': 'workload backup and restore provider inventory',
+            'detail': application_backup_missing_detail_current,
+            'recommended_action': application_backup_recommended_action_current,
+            'docs': ((day2_application_backup_and_restore_readiness_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    application_backup_section_override_current: >-
+      {{
+        (day2_application_backup_and_restore_readiness_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (application_backup_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'Application backup and restore baseline',
+                  'capability_key': 'application_backup_and_restore_readiness',
+                  'detail': application_backup_reason_summary_current,
+                  'level': 'required',
+                  'scored': false,
+                  'source': 'workload backup and restore provider inventory',
+                  'status': (
+                    'OK'
+                    if (application_backup_ready_current | bool)
+                    else (
+                      'WARN'
+                      if (
+                        (workload_backup_provider_present_current | bool)
+                        or (application_backup_evidence_present_current | bool)
+                        or (application_restore_evidence_present_current | bool)
+                        or (day2_application_backup_and_restore_readiness_section_current.required | default(false) | bool)
+                      )
+                      else 'INFO'
+                    )
+                  )
+                },
+                {
+                  'capability': 'Workload backup and restore provider footprint',
+                  'capability_key': 'application_backup_and_restore_readiness',
+                  'detail': (
+                    'oadp_present=' ~ (oadp_backup_provider_present_current | string)
+                    ~ ' velero_present=' ~ (velero_backup_provider_present_current | string)
+                    ~ ' commvault_present=' ~ (commvault_backup_provider_present_current | string)
+                    ~ ' dpas=' ~ (data_protection_application_count_current | string)
+                    ~ ' backupstoragelocations=' ~ (backup_storage_location_count_current | string)
+                    ~ ' schedules=' ~ (backup_schedule_count_current | string)
+                  ),
+                  'level': 'required',
+                  'scored': false,
+                  'source': 'backup and recovery inventory',
+                  'status': ('OK' if (workload_backup_provider_present_current | bool) else 'INFO')
+                }
+              ],
+              'findings': application_backup_findings_current,
+              'status': application_backup_status_current,
+              'top_detail': (
+                application_backup_reason_summary_current
+                if (application_backup_status_current == 'OK')
+                else application_backup_missing_detail_current
+              ),
+              'recommended_action': application_backup_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: application_backup_and_restore_readiness
+    capability_artifact_section_override: "{{ application_backup_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      application_backup_ready: "{{ ((day2_posture_summary | default({})).get('application_backup_ready', false)) | bool }}"
-      workload_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('workload_backup_provider_present', false)) | bool }}"
-      oadp_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('oadp_backup_provider_present', false)) | bool }}"
-      velero_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('velero_backup_provider_present', false)) | bool }}"
-      commvault_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('commvault_backup_provider_present', false)) | bool }}"
-      application_backup_evidence_present: "{{ ((day2_posture_summary | default({})).get('application_backup_evidence_present', false)) | bool }}"
-      application_restore_evidence_present: "{{ ((day2_posture_summary | default({})).get('application_restore_evidence_present', false)) | bool }}"
-      data_protection_application_count: "{{ ((day2_posture_summary | default({})).get('data_protection_application_count', 0)) | int }}"
-      backup_storage_location_count: "{{ ((day2_posture_summary | default({})).get('backup_storage_location_count', 0)) | int }}"
-      backup_schedule_count: "{{ ((day2_posture_summary | default({})).get('backup_schedule_count', 0)) | int }}"
-      successful_backup_count: "{{ ((day2_posture_summary | default({})).get('successful_backup_count', 0)) | int }}"
-      clean_successful_backup_count: "{{ ((day2_posture_summary | default({})).get('clean_successful_backup_count', 0)) | int }}"
-      clean_completed_restore_count: "{{ ((day2_posture_summary | default({})).get('clean_completed_restore_count', 0)) | int }}"
-      status_summary: "{{ day2_application_backup_and_restore_readiness_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_application_backup_and_restore_readiness_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (application_backup_status_current == 'OK') else 1) | int }}"
+      application_backup_ready: "{{ application_backup_ready_current | bool }}"
+      workload_backup_provider_present: "{{ workload_backup_provider_present_current | bool }}"
+      oadp_backup_provider_present: "{{ oadp_backup_provider_present_current | bool }}"
+      velero_backup_provider_present: "{{ velero_backup_provider_present_current | bool }}"
+      commvault_backup_provider_present: "{{ commvault_backup_provider_present_current | bool }}"
+      application_backup_evidence_present: "{{ application_backup_evidence_present_current | bool }}"
+      application_restore_evidence_present: "{{ application_restore_evidence_present_current | bool }}"
+      data_protection_application_count: "{{ data_protection_application_count_current | int }}"
+      backup_storage_location_count: "{{ backup_storage_location_count_current | int }}"
+      backup_schedule_count: "{{ backup_schedule_count_current | int }}"
+      successful_backup_count: "{{ successful_backup_count_current | int }}"
+      clean_successful_backup_count: "{{ clean_successful_backup_count_current | int }}"
+      clean_completed_restore_count: "{{ clean_completed_restore_count_current | int }}"
+      status_summary: "{{ application_backup_status_current }}"
+      reason_summary: "{{ application_backup_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_application_backup_and_restore_readiness_section: "{{ day2_application_backup_and_restore_readiness_section_current }}"
+      day2_application_backup_and_restore_readiness_section: "{{ application_backup_section_override_current }}"
     capability_artifact_collection_inputs:
-      application_backup_ready: "{{ ((day2_posture_summary | default({})).get('application_backup_ready', false)) | bool }}"
-      workload_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('workload_backup_provider_present', false)) | bool }}"
-      oadp_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('oadp_backup_provider_present', false)) | bool }}"
-      velero_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('velero_backup_provider_present', false)) | bool }}"
-      commvault_backup_provider_present: "{{ ((day2_posture_summary | default({})).get('commvault_backup_provider_present', false)) | bool }}"
-      application_backup_evidence_present: "{{ ((day2_posture_summary | default({})).get('application_backup_evidence_present', false)) | bool }}"
-      application_restore_evidence_present: "{{ ((day2_posture_summary | default({})).get('application_restore_evidence_present', false)) | bool }}"
-      data_protection_application_count: "{{ ((day2_posture_summary | default({})).get('data_protection_application_count', 0)) | int }}"
-      backup_storage_location_count: "{{ ((day2_posture_summary | default({})).get('backup_storage_location_count', 0)) | int }}"
-      backup_schedule_count: "{{ ((day2_posture_summary | default({})).get('backup_schedule_count', 0)) | int }}"
-      successful_backup_count: "{{ ((day2_posture_summary | default({})).get('successful_backup_count', 0)) | int }}"
-      clean_successful_backup_count: "{{ ((day2_posture_summary | default({})).get('clean_successful_backup_count', 0)) | int }}"
-      clean_completed_restore_count: "{{ ((day2_posture_summary | default({})).get('clean_completed_restore_count', 0)) | int }}"
+      application_backup_ready: "{{ application_backup_ready_current | bool }}"
+      workload_backup_provider_present: "{{ workload_backup_provider_present_current | bool }}"
+      oadp_backup_provider_present: "{{ oadp_backup_provider_present_current | bool }}"
+      velero_backup_provider_present: "{{ velero_backup_provider_present_current | bool }}"
+      commvault_backup_provider_present: "{{ commvault_backup_provider_present_current | bool }}"
+      application_backup_evidence_present: "{{ application_backup_evidence_present_current | bool }}"
+      application_restore_evidence_present: "{{ application_restore_evidence_present_current | bool }}"
+      data_protection_application_count: "{{ data_protection_application_count_current | int }}"
+      backup_storage_location_count: "{{ backup_storage_location_count_current | int }}"
+      backup_schedule_count: "{{ backup_schedule_count_current | int }}"
+      successful_backup_count: "{{ successful_backup_count_current | int }}"
+      clean_successful_backup_count: "{{ clean_successful_backup_count_current | int }}"
+      clean_completed_restore_count: "{{ clean_completed_restore_count_current | int }}"

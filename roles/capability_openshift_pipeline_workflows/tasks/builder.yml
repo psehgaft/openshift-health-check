@@ -2,21 +2,129 @@
 - name: Build OpenShift pipeline workflows capability artifact facts
   vars:
     day2_openshift_pipeline_workflows_section_current: "{{ (day2_capability_sections_by_key | default({})).get('openshift_pipeline_workflows', {}) }}"
+    pipelines_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_pipeline_workflows_present', false)) | bool }}"
     pipelines_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_pipeline_subscription_present', false)) | bool }}"
     pipelines_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_pipeline_namespace_present', false)) | bool }}"
     pipelines_gitops_app_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_pipeline_gitops_app_present', false)) | bool }}"
+    pipelines_required_current: "{{ (day2_openshift_pipeline_workflows_section_current.required | default(false)) | bool }}"
+    pipelines_gap_status_current: "{{ 'WARNING' if (pipelines_required_current | bool) else 'INFO' }}"
+    pipelines_gap_check_status_current: "{{ 'WARN' if (pipelines_required_current | bool) else 'INFO' }}"
+    pipelines_gap_severity_current: "{{ 'warning' if (pipelines_required_current | bool) else 'info' }}"
+    pipelines_runtime_present_current: "{{ ((pipelines_namespace_present_current | bool) or (pipelines_gitops_app_present_current | bool)) | bool }}"
+    pipelines_reason_summary_current: >-
+      {{
+        'subscriptionPresent=' ~ (pipelines_subscription_present_current | string)
+        ~ ' namespacePresent=' ~ (pipelines_namespace_present_current | string)
+        ~ ' gitopsAppPresent=' ~ (pipelines_gitops_app_present_current | string)
+        ~ ' runtimePresent=' ~ (pipelines_runtime_present_current | string)
+      }}
+    pipelines_recommended_action_current: >-
+      {{
+        'Confirm the intended OpenShift Pipelines operator, namespace, and pipeline workload footprint remain healthy for the teams that depend on in-cluster delivery automation.'
+        if (pipelines_runtime_present_current | bool)
+        else 'If OpenShift Pipelines is intended, confirm the operator, openshift-pipelines footprint, and active pipeline workload evidence instead of treating operator-only context as an implemented delivery path.'
+      }}
+    pipelines_checks_current:
+      - name: Operator subscription footprint present
+        status: >-
+          {{
+            'OK'
+            if (pipelines_subscription_present_current | bool)
+            else pipelines_gap_check_status_current
+          }}
+        detail: "subscriptionPresent={{ (pipelines_subscription_present_current | bool) | string }}"
+      - name: Namespace or controller footprint present
+        status: >-
+          {{
+            'OK'
+            if (pipelines_namespace_present_current | bool)
+            else pipelines_gap_check_status_current
+          }}
+        detail: "namespacePresent={{ (pipelines_namespace_present_current | bool) | string }}"
+      - name: Runtime workflow linkage present
+        status: >-
+          {{
+            'OK'
+            if (pipelines_gitops_app_present_current | bool)
+            else ('INFO' if (pipelines_runtime_present_current | bool) else pipelines_gap_check_status_current)
+          }}
+        detail: "gitopsAppPresent={{ (pipelines_gitops_app_present_current | bool) | string }}"
+    pipelines_findings_current: >-
+      {{
+        ([] +
+        ([{
+          'capability': 'openshift_pipeline_workflows',
+          'issue': 'prod-day2-openshift-pipelines-subscription-missing',
+          'severity': pipelines_gap_severity_current,
+          'source': 'pipeline operator inventory',
+          'detail': 'No OpenShift Pipelines operator subscription footprint was detected.',
+          'recommended_action': pipelines_recommended_action_current,
+          'docs': ((day2_openshift_pipeline_workflows_section_current.docs | default([])) | string)
+        }] if not (pipelines_subscription_present_current | bool) else []) +
+        ([{
+          'capability': 'openshift_pipeline_workflows',
+          'issue': 'prod-day2-openshift-pipelines-namespace-missing',
+          'severity': pipelines_gap_severity_current,
+          'source': 'pipeline operator inventory',
+          'detail': 'No openshift-pipelines namespace or equivalent pipeline control-plane footprint was detected.',
+          'recommended_action': pipelines_recommended_action_current,
+          'docs': ((day2_openshift_pipeline_workflows_section_current.docs | default([])) | string)
+        }] if not (pipelines_namespace_present_current | bool) else []) +
+        ([{
+          'capability': 'openshift_pipeline_workflows',
+          'issue': 'prod-day2-openshift-pipelines-runtime-missing',
+          'severity': pipelines_gap_severity_current,
+          'source': 'pipeline operator inventory',
+          'detail': 'OpenShift Pipelines operator context was detected, but no GitOps-linked or active pipeline workflow footprint was confirmed.',
+          'recommended_action': pipelines_recommended_action_current,
+          'docs': ((day2_openshift_pipeline_workflows_section_current.docs | default([])) | string)
+        }] if ((pipelines_subscription_present_current | bool) and not (pipelines_runtime_present_current | bool)) else []))
+      }}
+    pipelines_section_override_current: >-
+      {{
+        (day2_openshift_pipeline_workflows_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': (pipelines_checks_current | length),
+              'finding_count': (pipelines_findings_current | length),
+              'checks': pipelines_checks_current,
+              'findings': pipelines_findings_current,
+              'status': (
+                'OK'
+                if (pipelines_runtime_present_current | bool)
+                else pipelines_gap_status_current
+              ),
+              'top_detail': (
+                pipelines_reason_summary_current
+                if ((pipelines_present_current | bool) or (pipelines_subscription_present_current | bool))
+                else 'no OpenShift Pipelines operator or runtime workflow footprint was detected'
+              ),
+              'recommended_action': pipelines_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: openshift_pipeline_workflows
+    capability_artifact_section_override: "{{ pipelines_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: "{{ (pipelines_checks_current | length) | int }}"
+      finding_count: "{{ (pipelines_findings_current | length) | int }}"
+      openshift_pipeline_workflows_present: "{{ pipelines_present_current | bool }}"
       subscription_present: "{{ pipelines_subscription_present_current | bool }}"
       namespace_present: "{{ pipelines_namespace_present_current | bool }}"
       gitops_app_present: "{{ pipelines_gitops_app_present_current | bool }}"
-      status_summary: "{{ day2_openshift_pipeline_workflows_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_openshift_pipeline_workflows_section_current.top_detail | default('unknown') }}"
+      runtime_present: "{{ pipelines_runtime_present_current | bool }}"
+      status_summary: "{{ pipelines_section_override_current.status }}"
+      reason_summary: "{{ pipelines_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_openshift_pipeline_workflows_section: "{{ day2_openshift_pipeline_workflows_section_current }}"
+      day2_openshift_pipeline_workflows_section: "{{ pipelines_section_override_current }}"
     capability_artifact_collection_inputs:
+      openshift_pipeline_workflows_present: "{{ pipelines_present_current | bool }}"
       subscription_present: "{{ pipelines_subscription_present_current | bool }}"
       namespace_present: "{{ pipelines_namespace_present_current | bool }}"
       gitops_app_present: "{{ pipelines_gitops_app_present_current | bool }}"
+      runtime_present: "{{ pipelines_runtime_present_current | bool }}"

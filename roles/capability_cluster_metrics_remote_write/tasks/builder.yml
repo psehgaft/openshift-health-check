@@ -2,14 +2,157 @@
 - name: Build cluster metrics remote write capability artifact facts
   vars:
     day2_cluster_metrics_remote_write_section_current: "{{ (day2_capability_sections_by_key | default({})).get('cluster_metrics_remote_write', {}) }}"
+    cluster_metrics_remote_write_total_current: "{{ ((day2_posture_summary | default({})).get('cluster_metrics_remote_write_count', 0)) | int }}"
+    external_cluster_metrics_remote_write_count_current: "{{ ((day2_posture_summary | default({})).get('external_cluster_metrics_remote_write_count', 0)) | int }}"
+    user_workload_metrics_remote_write_count_current: "{{ ((day2_posture_summary | default({})).get('user_workload_metrics_remote_write_count', 0)) | int }}"
+    external_user_workload_metrics_remote_write_count_current: "{{ ((day2_posture_summary | default({})).get('external_user_workload_metrics_remote_write_count', 0)) | int }}"
+    cluster_metrics_delivery_state_current: "{{ (observability_summary | default({})).get('cluster_metrics_delivery_state', 'not-configured') | string }}"
+    user_workload_metrics_delivery_state_current: "{{ (observability_summary | default({})).get('user_workload_metrics_delivery_state', 'not-configured') | string }}"
+    metrics_delivery_verification_status_current: "{{ (observability_summary | default({})).get('metrics_delivery_verification_status', 'not-configured') | string }}"
+    vendor_metrics_forwarding_present_current: "{{ ((observability_summary | default({})).get('vendor_managed_metrics_forwarding_present', false)) | bool }}"
+    metrics_forwarding_vendor_names_current: "{{ (observability_summary | default({})).get('metrics_forwarding_vendor_names', []) }}"
+    cluster_metrics_export_present_current: >-
+      {{
+        (external_cluster_metrics_remote_write_count_current | int) > 0
+        or (vendor_metrics_forwarding_present_current | bool)
+      }}
+    cluster_metrics_context_present_current: >-
+      {{
+        (cluster_metrics_remote_write_total_current | int) > 0
+        or (cluster_metrics_export_present_current | bool)
+      }}
+    cluster_metrics_verification_healthy_current: "{{ metrics_delivery_verification_status_current in ['verified', 'passed', 'ok'] }}"
+    cluster_metrics_healthy_current: >-
+      {{
+        (cluster_metrics_export_present_current | bool)
+        and (cluster_metrics_verification_healthy_current | bool)
+      }}
+    cluster_metrics_status_current: >-
+      {{
+        'OK'
+        if (cluster_metrics_healthy_current | bool)
+        else (
+          'WARNING'
+          if ((day2_cluster_metrics_remote_write_section_current.required | default(false)) | bool) and (cluster_metrics_context_present_current | bool)
+          else 'INFO'
+        )
+      }}
+    cluster_metrics_top_detail_current: >-
+      {{
+        'clusterState=' ~ cluster_metrics_delivery_state_current
+        ~ ' clusterRemoteWriteTotal=' ~ (cluster_metrics_remote_write_total_current | string)
+        ~ ' clusterRemoteWriteExternal=' ~ (external_cluster_metrics_remote_write_count_current | string)
+        ~ ' userWorkloadState=' ~ user_workload_metrics_delivery_state_current
+        ~ ' userWorkloadRemoteWriteTotal=' ~ (user_workload_metrics_remote_write_count_current | string)
+        ~ ' userWorkloadRemoteWriteExternal=' ~ (external_user_workload_metrics_remote_write_count_current | string)
+        ~ ' vendorManaged=' ~ ((vendor_metrics_forwarding_present_current | bool) | string)
+        ~ ' vendors=' ~ ((metrics_forwarding_vendor_names_current | join(',')) or 'none')
+        ~ ' verification=' ~ metrics_delivery_verification_status_current
+      }}
+    cluster_metrics_recommended_action_current: >-
+      {{
+        'Keep the cluster metrics export path verified for the intended external destination.'
+        if (cluster_metrics_healthy_current | bool)
+        else (
+          'No cluster metrics remote-write or vendor-managed metrics-forwarding evidence was found. If external metrics export is expected, configure prometheusK8s.remoteWrite or the approved vendor-managed metrics-forwarding path.'
+          if not (cluster_metrics_context_present_current | bool)
+          else 'Cluster metrics export is absent or not verified. Point the remote-write path to the intended external destination or complete the approved vendor-managed metrics-forwarding path, then verify delivery.'
+        )
+      }}
+    cluster_metrics_findings_current: >-
+      {{
+        []
+        if (cluster_metrics_healthy_current | bool)
+        else [{
+          'capability': 'cluster_metrics_remote_write',
+          'issue': (
+            'prod-day2-cluster-metrics-remote-write-missing'
+            if not (cluster_metrics_context_present_current | bool)
+            else 'prod-day2-cluster-metrics-remote-write-unverified'
+          ),
+          'severity': ('warning' if cluster_metrics_status_current == 'WARNING' else 'info'),
+          'source': 'Red Hat monitoring + vendor monitoring guidance',
+          'detail': cluster_metrics_top_detail_current,
+          'recommended_action': cluster_metrics_recommended_action_current,
+          'docs': ((day2_cluster_metrics_remote_write_section_current.docs | default([])) | string)
+        }]
+      }}
+    cluster_metrics_section_override_current: >-
+      {{
+        (day2_cluster_metrics_remote_write_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (cluster_metrics_findings_current | length),
+              'checks': [
+                {
+                  'capability': 'Cluster metrics remote write configuration',
+                  'capability_key': 'cluster_metrics_remote_write',
+                  'detail': 'clusterState=' ~ cluster_metrics_delivery_state_current ~ ' clusterRemoteWriteTotal=' ~ (cluster_metrics_remote_write_total_current | string) ~ ' vendorManaged=' ~ ((vendor_metrics_forwarding_present_current | bool) | string) ~ ' vendors=' ~ ((metrics_forwarding_vendor_names_current | join(',')) or 'none'),
+                  'level': ((day2_cluster_metrics_remote_write_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Red Hat monitoring + vendor monitoring guidance',
+                  'status': (
+                    'OK'
+                    if (cluster_metrics_context_present_current | bool)
+                    else ('WARN' if (day2_cluster_metrics_remote_write_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'External cluster metrics destination',
+                  'capability_key': 'cluster_metrics_remote_write',
+                  'detail': 'clusterRemoteWriteExternal=' ~ (external_cluster_metrics_remote_write_count_current | string) ~ ' vendorManaged=' ~ ((vendor_metrics_forwarding_present_current | bool) | string) ~ ' vendors=' ~ ((metrics_forwarding_vendor_names_current | join(',')) or 'none'),
+                  'level': ((day2_cluster_metrics_remote_write_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Red Hat monitoring + vendor monitoring guidance',
+                  'status': (
+                    'OK'
+                    if (cluster_metrics_export_present_current | bool)
+                    else ('WARN' if (day2_cluster_metrics_remote_write_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'User workload metrics export context',
+                  'capability_key': 'cluster_metrics_remote_write',
+                  'detail': 'userWorkloadState=' ~ user_workload_metrics_delivery_state_current ~ ' userWorkloadRemoteWriteTotal=' ~ (user_workload_metrics_remote_write_count_current | string) ~ ' userWorkloadRemoteWriteExternal=' ~ (external_user_workload_metrics_remote_write_count_current | string) ~ ' verification=' ~ metrics_delivery_verification_status_current,
+                  'level': ((day2_cluster_metrics_remote_write_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Red Hat monitoring + vendor monitoring guidance',
+                  'status': (
+                    'OK'
+                    if (external_user_workload_metrics_remote_write_count_current | int) > 0 and (metrics_delivery_verification_status_current in ['verified', 'passed', 'ok', 'not-verified'])
+                    else 'INFO'
+                  )
+                }
+              ],
+              'findings': cluster_metrics_findings_current,
+              'status': cluster_metrics_status_current,
+              'top_detail': cluster_metrics_top_detail_current,
+              'recommended_action': cluster_metrics_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: cluster_metrics_remote_write
+    capability_artifact_section_override: "{{ cluster_metrics_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      observability_status: "{{ day2_cluster_metrics_remote_write_section_current.status | default('unknown') }}"
-      observability_reason_summary: "{{ day2_cluster_metrics_remote_write_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (cluster_metrics_findings_current | length) | int }}"
+      observability_status: "{{ cluster_metrics_status_current }}"
+      observability_reason_summary: "{{ cluster_metrics_top_detail_current }}"
+      top_detail: "{{ cluster_metrics_top_detail_current }}"
     capability_artifact_render_inputs:
-      day2_cluster_metrics_remote_write_section: "{{ day2_cluster_metrics_remote_write_section_current }}"
+      day2_cluster_metrics_remote_write_section: "{{ cluster_metrics_section_override_current }}"
     capability_artifact_collection_inputs:
-      external_cluster_metrics_remote_write_count: "{{ ((day2_posture_summary | default({})).get('external_cluster_metrics_remote_write_count', 0)) | int }}"
-      external_user_workload_metrics_remote_write_count: "{{ ((day2_posture_summary | default({})).get('external_user_workload_metrics_remote_write_count', 0)) | int }}"
+      cluster_metrics_remote_write_count: "{{ cluster_metrics_remote_write_total_current | int }}"
+      external_cluster_metrics_remote_write_count: "{{ external_cluster_metrics_remote_write_count_current | int }}"
+      user_workload_metrics_remote_write_count: "{{ user_workload_metrics_remote_write_count_current | int }}"
+      external_user_workload_metrics_remote_write_count: "{{ external_user_workload_metrics_remote_write_count_current | int }}"
+      cluster_metrics_delivery_state: "{{ cluster_metrics_delivery_state_current }}"
+      user_workload_metrics_delivery_state: "{{ user_workload_metrics_delivery_state_current }}"
+      metrics_delivery_verification_status: "{{ metrics_delivery_verification_status_current }}"
+      vendor_managed_metrics_forwarding_present: "{{ vendor_metrics_forwarding_present_current | bool }}"

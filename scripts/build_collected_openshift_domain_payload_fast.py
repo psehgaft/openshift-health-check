@@ -27,6 +27,7 @@ POSTURE_ARTIFACT_KEYS = {
     "architecture_lifecycle": "platform_architecture_and_lifecycle",
     "capacity_snapshot": "capacity_planning_snapshot",
     "declarative_operations": "declarative_operations",
+    "release_engineering": "container_platform_adoption_and_release_engineering",
     "day2_readiness": "day2_production_readiness",
 }
 

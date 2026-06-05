@@ -2,16 +2,111 @@
 - name: Build Windows container workloads capability artifact facts
   vars:
     day2_windows_container_workloads_section_current: "{{ (day2_capability_sections_by_key | default({})).get('windows_container_workloads', {}) }}"
+    windows_container_workloads_present_current: "{{ ((day2_posture_summary | default({})).get('windows_container_workloads_present', false)) | bool }}"
+    windows_container_workloads_healthy_current: "{{ ((day2_posture_summary | default({})).get('windows_container_workloads_healthy', false)) | bool }}"
+    windows_container_workloads_required_current: "{{ (day2_windows_container_workloads_section_current.required | default(false)) | bool }}"
+    windows_container_workloads_reason_summary_current: >-
+      {{
+        (
+          day2_windows_container_workloads_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'footprint_present=' ~ (windows_container_workloads_present_current | string)
+          ~ ' healthy=' ~ (windows_container_workloads_healthy_current | string)
+        )
+      }}
+    windows_container_workloads_recommended_action_current: >-
+      {{
+        'Confirm Windows worker or Windows Machine Config Operator services remain healthy for the workloads that depend on them.'
+        if windows_container_workloads_present_current
+        else 'If Windows workloads are intended, confirm Windows Machine Config Operator footprint, Windows node presence, and the expected Windows workload path.'
+      }}
+    windows_container_workloads_status_current: >-
+      {{
+        'OK'
+        if (windows_container_workloads_present_current and windows_container_workloads_healthy_current)
+        else ('WARNING' if windows_container_workloads_required_current else 'INFO')
+      }}
+    windows_container_workloads_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'Windows workload evidence coverage',
+            'capability_key': 'windows_container_workloads',
+            'detail': (
+              'footprint_present=' ~ (windows_container_workloads_present_current | string)
+              ~ ' healthy=' ~ (windows_container_workloads_healthy_current | string)
+            ),
+            'level': ((day2_windows_container_workloads_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Windows workload capability summary',
+            'status': ('OK' if (windows_container_workloads_present_current and windows_container_workloads_healthy_current) else ('WARN' if windows_container_workloads_required_current else 'INFO'))
+          },
+          {
+            'capability': 'Windows direct capability mapping',
+            'capability_key': 'windows_container_workloads',
+            'detail': 'profile enabled; current analyzer does not expose a first-class Windows-specific collected check set',
+            'level': ((day2_windows_container_workloads_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Windows workload capability summary',
+            'status': ('INFO' if not windows_container_workloads_present_current else 'OK')
+          }
+        ]
+      }}
+    windows_container_workloads_findings_current: >-
+      {{
+        []
+        if (windows_container_workloads_present_current and windows_container_workloads_healthy_current)
+        else [
+          {
+            'capability': 'windows_container_workloads',
+            'issue': 'prod-day2-windows-workloads-needs-verification',
+            'severity': ('warning' if windows_container_workloads_required_current else 'info'),
+            'source': 'Windows workload capability summary',
+            'detail': (
+              'no healthy Windows worker or Windows Machine Config Operator footprint was confirmed'
+              if not windows_container_workloads_present_current
+              else 'Windows workload context was detected, but healthy Windows node or operator state was not confirmed'
+            ),
+            'recommended_action': windows_container_workloads_recommended_action_current,
+            'docs': ((day2_windows_container_workloads_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    windows_container_workloads_section_override_current: >-
+      {{
+        (day2_windows_container_workloads_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': (windows_container_workloads_checks_current | length),
+              'finding_count': (windows_container_workloads_findings_current | length),
+              'checks': windows_container_workloads_checks_current,
+              'findings': windows_container_workloads_findings_current,
+              'status': windows_container_workloads_status_current,
+              'top_detail': windows_container_workloads_reason_summary_current,
+              'recommended_action': windows_container_workloads_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: windows_container_workloads
+    capability_artifact_section_override: "{{ windows_container_workloads_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      windows_container_workloads_present: "{{ ((day2_posture_summary | default({})).get('windows_container_workloads_present', false)) | bool }}"
-      windows_container_workloads_healthy: "{{ ((day2_posture_summary | default({})).get('windows_container_workloads_healthy', false)) | bool }}"
-      status_summary: "{{ day2_windows_container_workloads_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_windows_container_workloads_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: "{{ (windows_container_workloads_checks_current | length) | int }}"
+      finding_count: "{{ (windows_container_workloads_findings_current | length) | int }}"
+      windows_container_workloads_present: "{{ windows_container_workloads_present_current | bool }}"
+      windows_container_workloads_healthy: "{{ windows_container_workloads_healthy_current | bool }}"
+      status_summary: "{{ windows_container_workloads_section_override_current.status }}"
+      reason_summary: "{{ windows_container_workloads_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_windows_container_workloads_section: "{{ day2_windows_container_workloads_section_current }}"
+      day2_windows_container_workloads_section: "{{ windows_container_workloads_section_override_current }}"
     capability_artifact_collection_inputs:
-      windows_container_workloads_present: "{{ ((day2_posture_summary | default({})).get('windows_container_workloads_present', false)) | bool }}"
-      windows_container_workloads_healthy: "{{ ((day2_posture_summary | default({})).get('windows_container_workloads_healthy', false)) | bool }}"
+      windows_container_workloads_present: "{{ windows_container_workloads_present_current | bool }}"
+      windows_container_workloads_healthy: "{{ windows_container_workloads_healthy_current | bool }}"

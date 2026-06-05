@@ -1,31 +1,171 @@
 ---
 - name: Build oauth external identity provider capability artifact facts
   vars:
+    oauth_idp_day2_section_current: "{{ (day2_capability_sections_by_key | default({})).get('oauth_external_identity_provider', {}) }}"
     oauth_idp_summary: "{{ auth_posture_summary | default({}) }}"
     oauth_idp_status_current: "{{ oauth_idp_summary.status | default('unknown') | string | lower }}"
+    oauth_idp_total_count: "{{ (oauth_idp_summary.identity_provider_count | default(0)) | int }}"
     oauth_idp_external_count: "{{ (oauth_idp_summary.external_identity_provider_count | default(0)) | int }}"
+    oauth_idp_local_count: "{{ (oauth_idp_summary.local_identity_provider_count | default(0)) | int }}"
     oauth_idp_invalid_count: "{{ (oauth_idp_summary.invalid_identity_provider_count | default(0)) | int }}"
     oauth_idp_kubeadmin_present: "{{ oauth_idp_summary.kubeadmin_secret_present | default(false) | bool }}"
+    oauth_idp_capability_healthy: >-
+      {{
+        (oauth_idp_external_count | int) > 0
+        and (not oauth_idp_kubeadmin_present)
+        and (oauth_idp_invalid_count | int) == 0
+        and oauth_idp_status_current == 'healthy'
+      }}
     oauth_idp_capability_status: >-
       {{
         'OK'
-        if (
-          (oauth_idp_external_count | int) > 0
-          and (not oauth_idp_kubeadmin_present)
-          and (oauth_idp_invalid_count | int) == 0
-          and oauth_idp_status_current == 'healthy'
+        if (oauth_idp_capability_healthy | bool)
+        else ('WARNING' if (oauth_idp_day2_section_current.required | default(false) | bool) or ((oauth_idp_total_count | int) > 0) else 'INFO')
+      }}
+    oauth_idp_reason_summary_current: >-
+      {{
+        'identityProviders=' ~ (oauth_idp_total_count | string)
+        ~ ' externalProviders=' ~ (oauth_idp_external_count | string)
+        ~ ' localProviders=' ~ (oauth_idp_local_count | string)
+        ~ ' invalidProviders=' ~ (oauth_idp_invalid_count | string)
+        ~ ' kubeadminSecretPresent=' ~ (oauth_idp_kubeadmin_present | string)
+        ~ ' authStatus=' ~ (oauth_idp_status_current | string)
+      }}
+    oauth_idp_recommended_action_current: >-
+      {{
+        'Keep the external OAuth identity-provider configuration aligned with the customer access standard.'
+        if (oauth_idp_capability_healthy | bool)
+        else (
+          'Configure at least one approved external OAuth identity provider before treating human access as production-ready.'
+          if (oauth_idp_external_count | int) == 0
+          else (
+            'Review and correct invalid or unclassified OAuth identity-provider entries so only supported provider configurations remain.'
+            if (oauth_idp_invalid_count | int) > 0
+            else (
+              'Remove or tightly control kubeadmin fallback according to the customer access standard.'
+              if (oauth_idp_kubeadmin_present | bool)
+              else 'Review the authentication posture and external identity-provider health before treating this capability as complete.'
+            )
+          )
         )
-        else 'WARNING'
+      }}
+    oauth_idp_findings_current: >-
+      {{
+        ([] +
+        ([{
+          'capability': 'oauth_external_identity_provider',
+          'issue': 'prod-day2-oauth-external-idp-missing',
+          'severity': ('warning' if (oauth_idp_day2_section_current.required | default(false) | bool) else 'info'),
+          'source': 'identity provider and production authentication guidance',
+          'detail': 'No approved external OAuth identity provider was detected.',
+          'recommended_action': oauth_idp_recommended_action_current,
+          'docs': ((oauth_idp_day2_section_current.docs | default([])) | string)
+        }] if (oauth_idp_external_count | int) == 0 else []) +
+        ([{
+          'capability': 'oauth_external_identity_provider',
+          'issue': 'prod-day2-oauth-external-idp-invalid',
+          'severity': 'warning',
+          'source': 'identity provider and production authentication guidance',
+          'detail': 'One or more OAuth identity-provider entries are invalid or unclassified.',
+          'recommended_action': oauth_idp_recommended_action_current,
+          'docs': ((oauth_idp_day2_section_current.docs | default([])) | string)
+        }] if (oauth_idp_invalid_count | int) > 0 else []) +
+        ([{
+          'capability': 'oauth_external_identity_provider',
+          'issue': 'prod-day2-oauth-kubeadmin-fallback-present',
+          'severity': 'warning',
+          'source': 'identity provider and production authentication guidance',
+          'detail': 'The kubeadmin fallback secret is still present.',
+          'recommended_action': oauth_idp_recommended_action_current,
+          'docs': ((oauth_idp_day2_section_current.docs | default([])) | string)
+        }] if (oauth_idp_kubeadmin_present | bool) else []))
+      }}
+    oauth_idp_section_override_current: >-
+      {{
+        (oauth_idp_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 4,
+              'finding_count': (oauth_idp_findings_current | length),
+              'checks': [
+                {
+                  'capability': 'OAuth identity provider inventory',
+                  'capability_key': 'oauth_external_identity_provider',
+                  'detail': 'identityProviders=' ~ (oauth_idp_total_count | string),
+                  'level': ((oauth_idp_day2_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'identity provider and production authentication guidance',
+                  'status': (
+                    'OK'
+                    if (oauth_idp_total_count | int) > 0
+                    else ('WARN' if (oauth_idp_day2_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'External OAuth identity provider present',
+                  'capability_key': 'oauth_external_identity_provider',
+                  'detail': 'externalProviders=' ~ (oauth_idp_external_count | string) ~ ' localProviders=' ~ (oauth_idp_local_count | string),
+                  'level': ((oauth_idp_day2_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'identity provider and production authentication guidance',
+                  'status': (
+                    'OK'
+                    if (oauth_idp_external_count | int) > 0
+                    else ('WARN' if (oauth_idp_day2_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'OAuth identity provider validity',
+                  'capability_key': 'oauth_external_identity_provider',
+                  'detail': 'invalidProviders=' ~ (oauth_idp_invalid_count | string) ~ ' authStatus=' ~ (oauth_idp_status_current | string),
+                  'level': ((oauth_idp_day2_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'identity provider and production authentication guidance',
+                  'status': (
+                    'OK'
+                    if ((oauth_idp_invalid_count | int) == 0 and oauth_idp_status_current == 'healthy')
+                    else 'WARN'
+                  )
+                },
+                {
+                  'capability': 'kubeadmin fallback removed',
+                  'capability_key': 'oauth_external_identity_provider',
+                  'detail': 'kubeadminSecretPresent=' ~ (oauth_idp_kubeadmin_present | string),
+                  'level': ((oauth_idp_day2_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'identity provider and production authentication guidance',
+                  'status': (
+                    'OK'
+                    if not (oauth_idp_kubeadmin_present | bool)
+                    else 'WARN'
+                  )
+                }
+              ],
+              'findings': oauth_idp_findings_current,
+              'status': oauth_idp_capability_status,
+              'top_detail': oauth_idp_reason_summary_current,
+              'recommended_action': oauth_idp_recommended_action_current
+            },
+            recursive=True
+          )
       }}
   ansible.builtin.set_fact:
     capability_artifact_key: oauth_external_identity_provider
+    capability_artifact_section_override: "{{ oauth_idp_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 4
+      finding_count: "{{ (oauth_idp_findings_current | length) | int }}"
       auth_posture_status: "{{ oauth_idp_capability_status }}"
-      auth_reason_summary: "{{ oauth_idp_summary.reason_summary | default('unknown') }}"
+      auth_reason_summary: "{{ oauth_idp_reason_summary_current }}"
+      top_detail: "{{ oauth_idp_reason_summary_current }}"
+    capability_artifact_render_inputs:
+      day2_oauth_external_identity_provider_section: "{{ oauth_idp_section_override_current }}"
     capability_artifact_collection_inputs:
-      identity_provider_count: "{{ (oauth_idp_summary.identity_provider_count | default(0)) | int }}"
+      identity_provider_count: "{{ oauth_idp_total_count | int }}"
       external_identity_provider_count: "{{ oauth_idp_external_count | int }}"
-      local_identity_provider_count: "{{ (oauth_idp_summary.local_identity_provider_count | default(0)) | int }}"
+      local_identity_provider_count: "{{ oauth_idp_local_count | int }}"
       invalid_identity_provider_count: "{{ oauth_idp_invalid_count | int }}"
       kubeadmin_secret_present: "{{ oauth_idp_kubeadmin_present | bool }}"

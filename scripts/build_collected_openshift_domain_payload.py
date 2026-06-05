@@ -344,10 +344,27 @@ def build_release_engineering(data):
     artifact = data.get("release_engineering_posture_artifact") or {}
     render_inputs = data.get("release_engineering_posture_render_inputs") or {}
     summary = data.get("release_engineering_adoption_summary") or {}
+    artifact_summary = field(artifact, "summary")
+    if not artifact_summary:
+        artifact_summary = None
+    artifact_release_summary = field(artifact, "release_engineering_adoption_summary")
+    if not artifact_release_summary:
+        artifact_release_summary = None
+    artifact_runner_summary = field(artifact, "cicd_runner_summary")
+    if not artifact_runner_summary:
+        artifact_runner_summary = None
+    artifact_runner_findings = field(artifact, "cicd_runner_findings")
+    if not artifact_runner_findings:
+        artifact_runner_findings = None
     return {
-        "summary": first_defined(field(artifact, "summary"), summary, default={}),
+        "summary": first_defined(
+            artifact_summary,
+            field(render_inputs, "release_engineering_adoption_summary"),
+            summary,
+            default={},
+        ),
         "release_engineering_adoption_summary": first_defined(
-            field(artifact, "release_engineering_adoption_summary"),
+            artifact_release_summary,
             field(render_inputs, "release_engineering_adoption_summary"),
             summary,
             default={},
@@ -356,13 +373,13 @@ def build_release_engineering(data):
             artifact, "recommendations", recommendation(summary, RELEASE_RECOMMENDATION)
         ),
         "cicd_runner_summary": first_defined(
-            field(artifact, "cicd_runner_summary"),
+            artifact_runner_summary,
             field(render_inputs, "cicd_runner_summary"),
             nested_get(summary, "runner_summary"),
             default={},
         ),
         "cicd_runner_findings": first_defined(
-            field(artifact, "cicd_runner_findings"),
+            artifact_runner_findings,
             field(render_inputs, "cicd_runner_findings"),
             nested_get(summary, "runner_findings"),
             default=[],

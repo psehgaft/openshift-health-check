@@ -2,18 +2,115 @@
 - name: Build descheduler operator capability artifact facts
   vars:
     day2_descheduler_operator_section_current: "{{ (day2_capability_sections_by_key | default({})).get('descheduler_operator', {}) }}"
+    descheduler_operator_present_current: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_present', false)) | bool }}"
+    descheduler_operator_healthy_current: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_healthy', false)) | bool }}"
+    descheduler_operator_context_present_current: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_context_present', false)) | bool }}"
+    descheduler_count_current: "{{ ((day2_posture_summary | default({})).get('descheduler_count', 0)) | int }}"
+    configured_descheduler_count_current: "{{ ((day2_posture_summary | default({})).get('configured_descheduler_count', 0)) | int }}"
+    descheduler_operator_status_current: >-
+      {{
+        'OK'
+        if (descheduler_operator_healthy_current | bool)
+        else ('WARNING' if ((descheduler_operator_context_present_current | bool) or (day2_descheduler_operator_section_current.required | default(false) | bool)) else 'INFO')
+      }}
+    descheduler_operator_reason_summary_current: >-
+      {{
+        'deschedulers=' ~ (descheduler_count_current | string)
+        ~ ' configuredDeschedulers=' ~ (configured_descheduler_count_current | string)
+        ~ ' contextPresent=' ~ (descheduler_operator_context_present_current | string)
+      }}
+    descheduler_operator_missing_detail_current: >-
+      {{
+        'KubeDescheduler resources were detected, but no configured resource in a ready or non-problem state was found'
+        if (descheduler_operator_present_current | bool)
+        else (
+          'descheduler operator footprint was detected, but no KubeDescheduler custom resource was found'
+          if (descheduler_operator_context_present_current | bool)
+          else 'no supported Descheduler Operator footprint was detected'
+        )
+      }}
+    descheduler_operator_recommended_action_current: >-
+      {{
+        'Keep KubeDescheduler coverage aligned with the workload-balancing policies that depend on it.'
+        if (descheduler_operator_status_current == 'OK')
+        else 'Review Descheduler Operator coverage and ensure a configured, healthy KubeDescheduler resource is present before treating workload rebalancing as healthy.'
+      }}
+    descheduler_operator_findings_current: >-
+      {{
+        []
+        if (descheduler_operator_status_current == 'OK')
+        else [
+          {
+            'capability': 'descheduler_operator',
+            'issue': 'prod-day2-descheduler-operator-missing',
+            'severity': ('warning' if ((descheduler_operator_context_present_current | bool) or (day2_descheduler_operator_section_current.required | default(false) | bool)) else 'info'),
+            'source': 'Descheduler Operator inventory',
+            'detail': descheduler_operator_missing_detail_current,
+            'recommended_action': descheduler_operator_recommended_action_current,
+            'docs': ((day2_descheduler_operator_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    descheduler_operator_section_override_current: >-
+      {{
+        (day2_descheduler_operator_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (descheduler_operator_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'Descheduler operator context',
+                  'capability_key': 'descheduler_operator',
+                  'detail': 'contextPresent=' ~ (descheduler_operator_context_present_current | string),
+                  'level': ((day2_descheduler_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Descheduler Operator inventory',
+                  'status': ('OK' if (descheduler_operator_context_present_current | bool) else 'INFO')
+                },
+                {
+                  'capability': 'Descheduler operator resource coverage',
+                  'capability_key': 'descheduler_operator',
+                  'detail': descheduler_operator_reason_summary_current,
+                  'level': ((day2_descheduler_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Descheduler Operator inventory',
+                  'status': (
+                    'OK'
+                    if (descheduler_operator_healthy_current | bool)
+                    else ('WARN' if ((descheduler_operator_context_present_current | bool) or (day2_descheduler_operator_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': descheduler_operator_findings_current,
+              'status': descheduler_operator_status_current,
+              'top_detail': (
+                descheduler_operator_reason_summary_current
+                if (descheduler_operator_status_current == 'OK')
+                else descheduler_operator_missing_detail_current
+              ),
+              'recommended_action': descheduler_operator_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: descheduler_operator
+    capability_artifact_section_override: "{{ descheduler_operator_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      descheduler_operator_present: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_present', false)) | bool }}"
-      descheduler_operator_healthy: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_healthy', false)) | bool }}"
-      descheduler_operator_context_present: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_context_present', false)) | bool }}"
-      status_summary: "{{ day2_descheduler_operator_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_descheduler_operator_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (descheduler_operator_status_current == 'OK') else 1) | int }}"
+      descheduler_operator_present: "{{ descheduler_operator_present_current | bool }}"
+      descheduler_operator_healthy: "{{ descheduler_operator_healthy_current | bool }}"
+      descheduler_operator_context_present: "{{ descheduler_operator_context_present_current | bool }}"
+      status_summary: "{{ descheduler_operator_status_current }}"
+      reason_summary: "{{ descheduler_operator_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_descheduler_operator_section: "{{ day2_descheduler_operator_section_current }}"
+      day2_descheduler_operator_section: "{{ descheduler_operator_section_override_current }}"
     capability_artifact_collection_inputs:
-      descheduler_operator_present: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_present', false)) | bool }}"
-      descheduler_operator_healthy: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_healthy', false)) | bool }}"
-      descheduler_operator_context_present: "{{ ((day2_posture_summary | default({})).get('descheduler_operator_context_present', false)) | bool }}"
+      descheduler_operator_present: "{{ descheduler_operator_present_current | bool }}"
+      descheduler_operator_healthy: "{{ descheduler_operator_healthy_current | bool }}"
+      descheduler_operator_context_present: "{{ descheduler_operator_context_present_current | bool }}"

@@ -39,16 +39,46 @@
     service_mesh_findings_current: >-
       {{
         []
-        if (service_mesh_present_current or not service_mesh_required_current)
+        if (service_mesh_present_current and service_mesh_healthy_current)
         else [
           {
             'capability': 'service_mesh_control_plane',
             'issue': 'prod-day2-service-mesh-missing',
-            'severity': 'warning',
+            'severity': ('warning' if service_mesh_required_current else 'info'),
             'source': 'service mesh control plane inventory',
-            'detail': 'no active ServiceMeshControlPlane or service mesh membership footprint was detected',
+            'detail': (
+              'service mesh context was detected, but no healthy ServiceMeshControlPlane or service mesh membership footprint was confirmed'
+              if service_mesh_context_present_current
+              else 'no active ServiceMeshControlPlane or service mesh membership footprint was detected'
+            ),
             'recommended_action': service_mesh_recommended_action_current,
             'docs': ((day2_service_mesh_control_plane_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    service_mesh_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'Service mesh control plane context',
+            'capability_key': 'service_mesh_control_plane',
+            'detail': (
+              'context_present=' ~ (service_mesh_context_present_current | string)
+              ~ ' footprint_present=' ~ (service_mesh_present_current | string)
+            ),
+            'level': ((day2_service_mesh_control_plane_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'service mesh control plane inventory',
+            'status': ('OK' if service_mesh_context_present_current else ('WARN' if service_mesh_required_current else 'INFO'))
+          },
+          {
+            'capability': 'Service mesh healthy control plane or membership footprint',
+            'capability_key': 'service_mesh_control_plane',
+            'detail': 'healthy=' ~ (service_mesh_healthy_current | string),
+            'level': ((day2_service_mesh_control_plane_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'service mesh control plane inventory',
+            'status': ('OK' if (service_mesh_present_current and service_mesh_healthy_current) else ('WARN' if (service_mesh_context_present_current or service_mesh_required_current) else 'INFO'))
           }
         ]
       }}
@@ -58,8 +88,9 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
+              'check_count': (service_mesh_checks_current | length),
               'finding_count': (service_mesh_findings_current | length),
+              'checks': service_mesh_checks_current,
               'findings': service_mesh_findings_current,
               'status': service_mesh_status_current,
               'top_detail': (
@@ -78,6 +109,8 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
+      check_count: "{{ (service_mesh_checks_current | length) | int }}"
+      finding_count: "{{ (service_mesh_findings_current | length) | int }}"
       service_mesh_control_plane_present: "{{ service_mesh_present_current | bool }}"
       service_mesh_control_plane_healthy: "{{ service_mesh_healthy_current | bool }}"
       service_mesh_control_plane_context_present: "{{ service_mesh_context_present_current | bool }}"

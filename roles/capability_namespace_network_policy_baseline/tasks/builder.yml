@@ -1,29 +1,129 @@
 ---
 - name: Build namespace network policy baseline capability artifact facts
   vars:
+    namespace_policy_day2_section_current: "{{ (day2_capability_sections_by_key | default({})).get('namespace_network_policy_baseline', {}) }}"
     namespace_policy_user_namespace_count: "{{ (user_namespace_names | default([]) | length) | int }}"
     namespace_policy_missing_count: "{{ (namespaces_without_networkpolicy | default([]) | length) | int }}"
-    namespace_policy_present: "{{ (((user_namespace_names | default([]) | difference(namespaces_without_networkpolicy | default([]))) | length) | int) > 0 }}"
+    namespace_policy_present_count: "{{ ((user_namespace_names | default([]) | difference(namespaces_without_networkpolicy | default([]))) | length) | int }}"
+    namespace_policy_present: "{{ (namespace_policy_present_count | int) > 0 }}"
+    namespace_policy_missing_namespaces: "{{ namespaces_without_networkpolicy | default([]) }}"
+    namespace_policy_top_missing_namespaces: "{{ (namespace_policy_missing_namespaces[:15] if (namespace_policy_missing_namespaces | length) > 15 else namespace_policy_missing_namespaces) }}"
     namespace_policy_healthy: "{{ ((namespace_policy_user_namespace_count | int) == 0) or ((namespace_policy_missing_count | int) == 0) }}"
     namespace_policy_status_current: >-
       {{
         'OK'
         if namespace_policy_healthy
-        else ('WARNING' if (namespace_policy_present or (namespace_policy_user_namespace_count | int) > 0) else 'INFO')
+        else ('WARNING' if (namespace_policy_present or (namespace_policy_user_namespace_count | int) > 0 or (namespace_policy_day2_section_current.required | default(false) | bool)) else 'INFO')
       }}
-    namespace_policy_reason_current: >-
+    namespace_policy_top_detail_current: >-
       {{
         'userNamespaces=' ~ (namespace_policy_user_namespace_count | string)
-        ~ ' namespacesWithDefaultDenyNetworkPolicy=' ~ ((((user_namespace_names | default([]) | difference(namespaces_without_networkpolicy | default([]))) | length) | int) | string)
+        ~ ' namespacesWithDefaultDenyNetworkPolicy=' ~ (namespace_policy_present_count | string)
         ~ ' missingNamespaces=' ~ (namespace_policy_missing_count | string)
+        ~ (
+          ' missingList=' ~ ((namespace_policy_top_missing_namespaces | join(', ')) ~ (' ...' if (namespace_policy_missing_namespaces | length) > (namespace_policy_top_missing_namespaces | length) else ''))
+          if (namespace_policy_missing_count | int) > 0
+          else ''
+        )
+      }}
+    namespace_policy_recommended_action_current: >-
+      {{
+        'Keep baseline namespace-isolation policy coverage aligned with the intended tenant model.'
+        if (namespace_policy_healthy | bool)
+        else (
+          'No user namespaces were in scope for the namespace-isolation baseline check. If this capability is expected, confirm the tenant scope and collect the corresponding namespace and NetworkPolicy inventory.'
+          if (namespace_policy_user_namespace_count | int) == 0
+          else (
+            'No namespace-wide default-deny NetworkPolicy baseline was found for evaluated user namespaces. Add a baseline deny policy or document the namespaces that intentionally do not use that operating model.'
+            if not (namespace_policy_present | bool)
+            else 'Baseline namespace-isolation coverage is incomplete. Add or standardize default-deny NetworkPolicy coverage for the listed user namespaces, or document approved exceptions.'
+          )
+        )
+      }}
+    namespace_policy_findings_current: >-
+      {{
+        []
+        if (namespace_policy_healthy | bool)
+        else [{
+          'capability': 'namespace_network_policy_baseline',
+          'issue': (
+            'prod-day2-namespace-network-policy-baseline-missing'
+            if not (namespace_policy_present | bool)
+            else 'prod-day2-namespace-network-policy-baseline-incomplete'
+          ),
+          'severity': ('warning' if namespace_policy_status_current == 'WARNING' else 'info'),
+          'source': 'namespace default-deny NetworkPolicy inventory for user namespaces',
+          'detail': namespace_policy_top_detail_current,
+          'recommended_action': namespace_policy_recommended_action_current,
+          'docs': ((namespace_policy_day2_section_current.docs | default([])) | string)
+        }]
+      }}
+    namespace_policy_section_override_current: >-
+      {{
+        (namespace_policy_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (namespace_policy_findings_current | length),
+              'checks': [
+                {
+                  'capability': 'User namespace scope',
+                  'capability_key': 'namespace_network_policy_baseline',
+                  'detail': 'userNamespaces=' ~ (namespace_policy_user_namespace_count | string),
+                  'level': ((namespace_policy_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'namespace default-deny NetworkPolicy inventory for user namespaces',
+                  'status': ('OK' if (namespace_policy_user_namespace_count | int) > 0 else 'INFO')
+                },
+                {
+                  'capability': 'Default-deny NetworkPolicy baseline present',
+                  'capability_key': 'namespace_network_policy_baseline',
+                  'detail': 'namespacesWithDefaultDenyNetworkPolicy=' ~ (namespace_policy_present_count | string),
+                  'level': ((namespace_policy_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'namespace default-deny NetworkPolicy inventory for user namespaces',
+                  'status': (
+                    'OK'
+                    if (namespace_policy_present | bool)
+                    else ('WARN' if ((namespace_policy_user_namespace_count | int) > 0 or (namespace_policy_day2_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'Default-deny NetworkPolicy coverage complete',
+                  'capability_key': 'namespace_network_policy_baseline',
+                  'detail': 'missingNamespaces=' ~ (namespace_policy_missing_count | string) ~ (((' missingList=' ~ (namespace_policy_top_missing_namespaces | join(', '))) if (namespace_policy_top_missing_namespaces | length) > 0 else '')),
+                  'level': ((namespace_policy_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'namespace default-deny NetworkPolicy inventory for user namespaces',
+                  'status': (
+                    'OK'
+                    if (namespace_policy_missing_count | int) == 0
+                    else ('WARN' if (namespace_policy_user_namespace_count | int) > 0 else 'INFO')
+                  )
+                }
+              ],
+              'findings': namespace_policy_findings_current,
+              'status': namespace_policy_status_current,
+              'top_detail': namespace_policy_top_detail_current,
+              'recommended_action': namespace_policy_recommended_action_current
+            },
+            recursive=True
+          )
       }}
   ansible.builtin.set_fact:
     capability_artifact_key: namespace_network_policy_baseline
+    capability_artifact_section_override: "{{ namespace_policy_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (namespace_policy_findings_current | length) | int }}"
       security_governance_status: "{{ namespace_policy_status_current }}"
-      security_governance_reason_summary: "{{ namespace_policy_reason_current }}"
+      security_governance_reason_summary: "{{ namespace_policy_top_detail_current }}"
+      top_detail: "{{ namespace_policy_top_detail_current }}"
     capability_artifact_render_inputs:
+      day2_namespace_network_policy_baseline_section: "{{ namespace_policy_section_override_current }}"
       user_namespace_names: "{{ user_namespace_names | default([]) }}"
       namespaces_with_default_deny_networkpolicy: "{{ namespaces_with_default_deny_networkpolicy | default([]) }}"
       namespaces_with_networkpolicy: "{{ namespaces_with_networkpolicy | default([]) }}"

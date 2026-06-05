@@ -39,16 +39,46 @@
     openshift_serverless_findings_current: >-
       {{
         []
-        if (openshift_serverless_present_current or not openshift_serverless_required_current)
+        if (openshift_serverless_present_current and openshift_serverless_healthy_current)
         else [
           {
             'capability': 'openshift_serverless',
             'issue': 'prod-day2-serverless-missing',
-            'severity': 'warning',
+            'severity': ('warning' if openshift_serverless_required_current else 'info'),
             'source': 'serverless control plane inventory',
-            'detail': 'no active KnativeServing, KnativeEventing, or Knative Service footprint was detected',
+            'detail': (
+              'serverless context was detected, but no healthy KnativeServing, KnativeEventing, or Knative Service footprint was confirmed'
+              if openshift_serverless_context_present_current
+              else 'no active KnativeServing, KnativeEventing, or Knative Service footprint was detected'
+            ),
             'recommended_action': openshift_serverless_recommended_action_current,
             'docs': ((day2_openshift_serverless_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    openshift_serverless_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'Serverless control plane context',
+            'capability_key': 'openshift_serverless',
+            'detail': (
+              'context_present=' ~ (openshift_serverless_context_present_current | string)
+              ~ ' footprint_present=' ~ (openshift_serverless_present_current | string)
+            ),
+            'level': ((day2_openshift_serverless_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'serverless control plane inventory',
+            'status': ('OK' if openshift_serverless_context_present_current else ('WARN' if openshift_serverless_required_current else 'INFO'))
+          },
+          {
+            'capability': 'Healthy Knative service footprint',
+            'capability_key': 'openshift_serverless',
+            'detail': 'healthy=' ~ (openshift_serverless_healthy_current | string),
+            'level': ((day2_openshift_serverless_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'serverless control plane inventory',
+            'status': ('OK' if (openshift_serverless_present_current and openshift_serverless_healthy_current) else ('WARN' if (openshift_serverless_context_present_current or openshift_serverless_required_current) else 'INFO'))
           }
         ]
       }}
@@ -58,8 +88,9 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
+              'check_count': (openshift_serverless_checks_current | length),
               'finding_count': (openshift_serverless_findings_current | length),
+              'checks': openshift_serverless_checks_current,
               'findings': openshift_serverless_findings_current,
               'status': openshift_serverless_status_current,
               'top_detail': (
@@ -78,6 +109,8 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
+      check_count: "{{ (openshift_serverless_checks_current | length) | int }}"
+      finding_count: "{{ (openshift_serverless_findings_current | length) | int }}"
       openshift_serverless_present: "{{ openshift_serverless_present_current | bool }}"
       openshift_serverless_healthy: "{{ openshift_serverless_healthy_current | bool }}"
       openshift_serverless_context_present: "{{ openshift_serverless_context_present_current | bool }}"

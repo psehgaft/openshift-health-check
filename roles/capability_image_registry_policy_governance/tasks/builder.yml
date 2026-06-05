@@ -2,14 +2,147 @@
 - name: Build image registry policy governance capability artifact facts
   vars:
     day2_image_registry_policy_governance_section_current: "{{ (day2_capability_sections_by_key | default({})).get('image_registry_policy_governance', {}) }}"
+    image_registry_findings_current: "{{ image_registry_findings | default([]) }}"
+    image_registry_issue_names_current: "{{ image_registry_findings_current | map(attribute='issue') | reject('equalto', '') | list }}"
+    image_registry_issue_details_current: "{{ image_registry_findings_current | map(attribute='detail') | reject('equalto', '') | list }}"
+    image_registry_finding_count_current: "{{ (image_registry_findings_current | length) | int }}"
+    image_registry_public_route_issue_current: "{{ 'public-internal-image-registry-route' in image_registry_issue_names_current }}"
+    image_registry_filter_policy_issue_current: "{{ 'missing-image-registry-filter-policy' in image_registry_issue_names_current }}"
+    image_registry_insecure_registry_issue_current: "{{ 'insecure-image-registries-configured' in image_registry_issue_names_current }}"
+    image_registry_internal_usage_issue_current: "{{ 'internal-registry-images-in-user-workloads' in image_registry_issue_names_current }}"
+    image_registry_policy_required_current: "{{ (day2_image_registry_policy_governance_section_current.required | default(false)) | bool }}"
+    image_registry_policy_clean_current: "{{ (image_registry_finding_count_current | int) == 0 }}"
+    image_registry_policy_status_current: >-
+      {{
+        'OK'
+        if (image_registry_policy_clean_current | bool)
+        else (
+          'WARNING'
+          if (
+            (image_registry_insecure_registry_issue_current | bool)
+            or (image_registry_public_route_issue_current | bool)
+            or (image_registry_policy_required_current | bool)
+          )
+          else 'INFO'
+        )
+      }}
+    image_registry_policy_top_detail_current: >-
+      {{
+        'image_registry_findings=' ~ (image_registry_finding_count_current | string)
+        ~ ' issues=' ~ ((image_registry_issue_names_current | unique | sort | join(',')) or 'none')
+      }}
+    image_registry_policy_recommended_action_current: >-
+      {{
+        'No image-registry-governance remediation is required for this capability.'
+        if (image_registry_policy_clean_current | bool)
+        else 'Review registry exposure, import policy, insecure registry configuration, and internal-registry workload usage before treating image supply paths as intentionally governed.'
+      }}
+    image_registry_policy_checks_current:
+      - capability: Registry public route exposure
+        capability_key: image_registry_policy_governance
+        detail: >-
+          {{
+            'publicRouteIssue=' ~ ((image_registry_public_route_issue_current | bool) | string)
+          }}
+        level: "{{ ((day2_image_registry_policy_governance_section_current.criticality | default('medium')) | string) }}"
+        scored: false
+        source: registry governance guidance
+        status: "{{ 'WARN' if (image_registry_public_route_issue_current | bool) else 'OK' }}"
+      - capability: Image registry filter policy baseline
+        capability_key: image_registry_policy_governance
+        detail: >-
+          {{
+            'filterPolicyMissing=' ~ ((image_registry_filter_policy_issue_current | bool) | string)
+          }}
+        level: "{{ ((day2_image_registry_policy_governance_section_current.criticality | default('medium')) | string) }}"
+        scored: false
+        source: registry governance guidance
+        status: >-
+          {{
+            'WARN'
+            if (image_registry_filter_policy_issue_current | bool)
+            else 'OK'
+          }}
+      - capability: Insecure registries absent
+        capability_key: image_registry_policy_governance
+        detail: >-
+          {{
+            'insecureRegistryIssue=' ~ ((image_registry_insecure_registry_issue_current | bool) | string)
+          }}
+        level: "{{ ((day2_image_registry_policy_governance_section_current.criticality | default('medium')) | string) }}"
+        scored: false
+        source: registry governance guidance
+        status: "{{ 'WARN' if (image_registry_insecure_registry_issue_current | bool) else 'OK' }}"
+      - capability: Internal registry usage by user workloads
+        capability_key: image_registry_policy_governance
+        detail: >-
+          {{
+            'internalRegistryUsageIssue=' ~ ((image_registry_internal_usage_issue_current | bool) | string)
+          }}
+        level: "{{ ((day2_image_registry_policy_governance_section_current.criticality | default('medium')) | string) }}"
+        scored: false
+        source: registry governance guidance
+        status: >-
+          {{
+            'WARN'
+            if (image_registry_internal_usage_issue_current | bool)
+            else 'OK'
+          }}
+    image_registry_policy_findings_current: >-
+      {{
+        []
+        if (image_registry_policy_clean_current | bool)
+        else [
+          {
+            'capability': 'image_registry_policy_governance',
+            'issue': 'prod-day2-image-registry-governance-findings',
+            'severity': ('warning' if image_registry_policy_status_current == 'WARNING' else 'info'),
+            'source': 'registry governance guidance',
+            'detail': (
+              ((image_registry_issue_details_current | unique | sort | join('; ')) or image_registry_policy_top_detail_current)
+            ),
+            'recommended_action': image_registry_policy_recommended_action_current,
+            'docs': ((day2_image_registry_policy_governance_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    image_registry_policy_section_override_current: >-
+      {{
+        (day2_image_registry_policy_governance_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': (image_registry_policy_checks_current | length),
+              'finding_count': (image_registry_policy_findings_current | length),
+              'checks': image_registry_policy_checks_current,
+              'findings': image_registry_policy_findings_current,
+              'status': image_registry_policy_status_current,
+              'top_detail': (
+                image_registry_policy_top_detail_current
+                ~ (
+                  ' details=' ~ ((image_registry_issue_details_current | unique | sort | join('; ')) or 'none')
+                  if not (image_registry_policy_clean_current | bool)
+                  else ''
+                )
+              ),
+              'recommended_action': image_registry_policy_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: image_registry_policy_governance
+    capability_artifact_section_override: "{{ image_registry_policy_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      security_governance_status: "{{ day2_image_registry_policy_governance_section_current.status | default('unknown') }}"
-      security_governance_reason_summary: "{{ day2_image_registry_policy_governance_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: "{{ (image_registry_policy_checks_current | length) | int }}"
+      finding_count: "{{ (image_registry_policy_findings_current | length) | int }}"
+      security_governance_status: "{{ image_registry_policy_status_current }}"
+      security_governance_reason_summary: "{{ image_registry_policy_section_override_current.top_detail }}"
+      top_detail: "{{ image_registry_policy_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_image_registry_policy_governance_section: "{{ day2_image_registry_policy_governance_section_current }}"
+      day2_image_registry_policy_governance_section: "{{ image_registry_policy_section_override_current }}"
     capability_artifact_collection_inputs:
-      image_registry_findings_count: "{{ (image_registry_findings | default([]) | length) | int }}"
-      image_registry_issue_names: "{{ image_registry_findings | default([]) | map(attribute='issue') | reject('equalto', '') | list }}"
+      image_registry_findings_count: "{{ image_registry_finding_count_current | int }}"
+      image_registry_issue_names: "{{ image_registry_issue_names_current }}"

@@ -6,8 +6,11 @@
     control_plane_recovery_applicable_current: "{{ not (cluster_profile.is_hosted_control_plane | default(false) | bool) }}"
     control_plane_runtime_healthy_current: >-
       {{
-        (day2_posture_summary.control_plane_runtime_healthy | default(false)) | bool
-        if day2_posture_summary.control_plane_runtime_healthy is defined
+        ((backup_recovery_summary | default({})).get('control_plane_runtime_healthy', false)) | bool
+        if ((backup_recovery_summary | default({})).get('control_plane_runtime_healthy', none)) is not none
+        else (
+          (day2_posture_summary.control_plane_runtime_healthy | default(false)) | bool
+          if day2_posture_summary.control_plane_runtime_healthy is defined
         else (
           (platform_health_summary | default({}) | length) > 0
           and (platform_health_summary.apiserver_readyz_failed | default(0) | int) == 0
@@ -15,18 +18,44 @@
           and (platform_health_summary.etcd_leader_unhealthy | default(0) | int) == 0
           and (platform_health_summary.etcd_runtime_degraded | default(0) | int) == 0
         )
+        )
       }}
-    control_plane_backup_evidence_scanned_current: "{{ (control_plane_backup_evidence_summary.present | default(false)) | bool }}"
-    control_plane_snapshot_evidence_collected_current: "{{ (control_plane_backup_evidence_summary.healthy | default(false)) | bool }}"
-    control_plane_backup_node_count_current: "{{ (control_plane_backup_evidence_summary.node_count | default(0)) | int }}"
-    control_plane_backup_nodes_with_any_artifacts_current: "{{ (control_plane_backup_evidence_summary.nodes_with_any_artifacts | default(0)) | int }}"
-    control_plane_backup_nodes_with_matching_pairs_current: "{{ (control_plane_backup_evidence_summary.nodes_with_matching_pairs | default(0)) | int }}"
+    control_plane_backup_evidence_scanned_current: >-
+      {{
+        ((backup_recovery_summary | default({})).get('control_plane_backup_evidence_scanned', false)) | bool
+        if ((backup_recovery_summary | default({})).get('control_plane_backup_evidence_scanned', none)) is not none
+        else (control_plane_backup_evidence_summary.present | default(false)) | bool
+      }}
+    control_plane_snapshot_evidence_collected_current: >-
+      {{
+        ((backup_recovery_summary | default({})).get('control_plane_snapshot_evidence_collected', false)) | bool
+        if ((backup_recovery_summary | default({})).get('control_plane_snapshot_evidence_collected', none)) is not none
+        else (control_plane_backup_evidence_summary.healthy | default(false)) | bool
+      }}
+    control_plane_backup_node_count_current: >-
+      {{
+        ((backup_recovery_summary | default({})).get('control_plane_backup_node_count', 0)) | int
+        if ((backup_recovery_summary | default({})).get('control_plane_backup_node_count', none)) is not none
+        else (control_plane_backup_evidence_summary.node_count | default(0)) | int
+      }}
+    control_plane_backup_nodes_with_any_artifacts_current: >-
+      {{
+        ((backup_recovery_summary | default({})).get('control_plane_backup_nodes_with_any_artifacts', 0)) | int
+        if ((backup_recovery_summary | default({})).get('control_plane_backup_nodes_with_any_artifacts', none)) is not none
+        else (control_plane_backup_evidence_summary.nodes_with_any_artifacts | default(0)) | int
+      }}
+    control_plane_backup_nodes_with_matching_pairs_current: >-
+      {{
+        ((backup_recovery_summary | default({})).get('control_plane_backup_nodes_with_matching_pairs', 0)) | int
+        if ((backup_recovery_summary | default({})).get('control_plane_backup_nodes_with_matching_pairs', none)) is not none
+        else (control_plane_backup_evidence_summary.nodes_with_matching_pairs | default(0)) | int
+      }}
     control_plane_backup_status_current: >-
       {{
-        'INFO'
+        'OK'
         if (not control_plane_recovery_applicable_current)
         else (
-          'WARNING'
+          'CRITICAL'
           if (not control_plane_runtime_healthy_current)
           else (
             'OK'
@@ -58,14 +87,105 @@
           )
         )
       }}
+    control_plane_backup_recommended_action_current: >-
+      {{
+        'No remediation is required for this check beyond keeping control-plane recovery evidence current.'
+        if (control_plane_backup_status_current == 'OK')
+        else (
+          'Track control-plane recovery readiness from the management cluster for this hosted control plane.'
+          if (not control_plane_recovery_applicable_current)
+          else (
+            'Stabilize kube-apiserver and etcd health before treating control-plane recovery readiness as valid.'
+            if (not control_plane_runtime_healthy_current)
+            else 'Enable live control-plane node backup evidence collection with oc debug access, or provide collected backup artifact evidence to the report.'
+          )
+        )
+      }}
+    control_plane_backup_findings_current: >-
+      {{
+        []
+        if (control_plane_backup_status_current in ['OK', 'INFO'])
+        else [
+          {
+            'capability': 'control_plane_backup_and_recovery_readiness',
+            'issue': (
+              'prod-day2-control-plane-runtime-unhealthy-for-recovery'
+              if (not control_plane_runtime_healthy_current)
+              else 'prod-day2-control-plane-backup-evidence-missing'
+            ),
+            'severity': ('critical' if (control_plane_backup_status_current == 'CRITICAL') else 'warning'),
+            'source': 'OpenShift control plane backup and recovery guidance',
+            'detail': control_plane_backup_reason_current,
+            'recommended_action': control_plane_backup_recommended_action_current,
+            'docs': ((control_plane_backup_day2_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    control_plane_backup_section_override_current: >-
+      {{
+        (control_plane_backup_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (control_plane_backup_status_current in ['OK', 'INFO']) else 1),
+              'checks': [
+                {
+                  'capability': 'Control plane backup and recovery baseline',
+                  'capability_key': 'control_plane_backup_and_recovery_readiness',
+                  'detail': (
+                    'applicable=' ~ (control_plane_recovery_applicable_current | string)
+                    ~ ' runtimeHealthy=' ~ (control_plane_runtime_healthy_current | string)
+                    ~ ' snapshotEvidenceScanned=' ~ (control_plane_backup_evidence_scanned_current | string)
+                    ~ ' snapshotEvidenceCollected=' ~ (control_plane_snapshot_evidence_collected_current | string)
+                  ),
+                  'level': 'required',
+                  'scored': false,
+                  'source': 'OpenShift control plane backup and recovery guidance',
+                  'status': (
+                    'OK'
+                    if (not control_plane_recovery_applicable_current)
+                    else ('OK' if (control_plane_runtime_healthy_current | bool) else 'WARN')
+                  )
+                },
+                {
+                  'capability': 'Control plane backup evidence coverage',
+                  'capability_key': 'control_plane_backup_and_recovery_readiness',
+                  'detail': (
+                    'nodesScanned=' ~ (control_plane_backup_node_count_current | string)
+                    ~ ' nodesWithAnyArtifacts=' ~ (control_plane_backup_nodes_with_any_artifacts_current | string)
+                    ~ ' matchingPairs=' ~ (control_plane_backup_nodes_with_matching_pairs_current | string)
+                  ),
+                  'level': 'required',
+                  'scored': false,
+                  'source': 'OpenShift control plane backup and recovery guidance',
+                  'status': (
+                    'OK'
+                    if ((not control_plane_recovery_applicable_current) or (control_plane_snapshot_evidence_collected_current | bool))
+                    else ('WARN' if (control_plane_runtime_healthy_current | bool) else 'INFO')
+                  )
+                }
+              ],
+              'findings': control_plane_backup_findings_current,
+              'status': control_plane_backup_status_current,
+              'top_detail': control_plane_backup_reason_current,
+              'recommended_action': control_plane_backup_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: control_plane_backup_and_recovery_readiness
+    capability_artifact_section_override: "{{ control_plane_backup_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      backup_recovery_status: "{{ control_plane_backup_day2_section_current.status | default(control_plane_backup_status_current) }}"
-      backup_recovery_reason_summary: "{{ control_plane_backup_day2_section_current.top_detail | default(control_plane_backup_reason_current) }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (control_plane_backup_status_current in ['OK', 'INFO']) else 1) | int }}"
+      backup_recovery_status: "{{ control_plane_backup_status_current }}"
+      backup_recovery_reason_summary: "{{ control_plane_backup_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_control_plane_backup_and_recovery_readiness_section: "{{ control_plane_backup_day2_section_current }}"
+      day2_control_plane_backup_and_recovery_readiness_section: "{{ control_plane_backup_section_override_current }}"
     capability_artifact_collection_inputs:
       control_plane_recovery_applicable: "{{ control_plane_recovery_applicable_current | bool }}"
       control_plane_runtime_healthy: "{{ control_plane_runtime_healthy_current | bool }}"

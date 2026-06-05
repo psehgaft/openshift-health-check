@@ -6,6 +6,10 @@
     cert_manager_operator_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('cert_manager_operator_namespace_present', false)) | bool }}"
     cert_manager_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('cert_manager_namespace_present', false)) | bool }}"
     cert_manager_present_current: "{{ ((day2_posture_summary | default({})).get('cert_manager_operator_present', false)) | bool }}"
+    cert_manager_required_current: "{{ (day2_cert_manager_operator_section_current.required | default(false)) | bool }}"
+    cert_manager_gap_status_current: "{{ 'WARNING' if (cert_manager_required_current | bool) else 'INFO' }}"
+    cert_manager_gap_check_status_current: "{{ 'WARN' if (cert_manager_required_current | bool) else 'INFO' }}"
+    cert_manager_gap_severity_current: "{{ 'warning' if (cert_manager_required_current | bool) else 'info' }}"
     cert_manager_reason_summary_current: >-
       {{
         'subscription_present=' ~ (cert_manager_subscription_present_current | string)
@@ -18,21 +22,61 @@
         if cert_manager_present_current
         else 'If cert-manager is intended, deploy or confirm the operator, namespace, and certificate-management footprint.'
       }}
+    cert_manager_checks_current:
+      - name: Operator subscription footprint present
+        status: >-
+          {{
+            'OK'
+            if (cert_manager_subscription_present_current | bool)
+            else cert_manager_gap_check_status_current
+          }}
+        detail: "subscriptionPresent={{ (cert_manager_subscription_present_current | bool) | string }}"
+      - name: Operator namespace footprint present
+        status: >-
+          {{
+            'OK'
+            if (cert_manager_operator_namespace_present_current | bool)
+            else cert_manager_gap_check_status_current
+          }}
+        detail: "operatorNamespacePresent={{ (cert_manager_operator_namespace_present_current | bool) | string }}"
+      - name: Certificate management namespace footprint present
+        status: >-
+          {{
+            'OK'
+            if (cert_manager_namespace_present_current | bool)
+            else cert_manager_gap_check_status_current
+          }}
+        detail: "certManagerNamespacePresent={{ (cert_manager_namespace_present_current | bool) | string }}"
     cert_manager_findings_current: >-
       {{
-        []
-        if cert_manager_present_current
-        else [
-          {
-            'capability': 'cert_manager_operator',
-            'issue': 'prod-day2-platform-cert-manager-missing',
-            'severity': 'info',
-            'source': 'certificate management inventory',
-            'detail': 'no cert-manager operator footprint was detected',
-            'recommended_action': cert_manager_recommended_action_current,
-            'docs': ((day2_cert_manager_operator_section_current.docs | default([])) | string)
-          }
-        ]
+        ([] +
+        ([{
+          'capability': 'cert_manager_operator',
+          'issue': 'prod-day2-platform-cert-manager-subscription-missing',
+          'severity': cert_manager_gap_severity_current,
+          'source': 'certificate management inventory',
+          'detail': 'No cert-manager operator subscription footprint was detected.',
+          'recommended_action': cert_manager_recommended_action_current,
+          'docs': ((day2_cert_manager_operator_section_current.docs | default([])) | string)
+        }] if not (cert_manager_subscription_present_current | bool) else []) +
+        ([{
+          'capability': 'cert_manager_operator',
+          'issue': 'prod-day2-platform-cert-manager-operator-namespace-missing',
+          'severity': cert_manager_gap_severity_current,
+          'source': 'certificate management inventory',
+          'detail': 'No cert-manager operator namespace footprint was detected.',
+          'recommended_action': cert_manager_recommended_action_current,
+          'docs': ((day2_cert_manager_operator_section_current.docs | default([])) | string)
+        }] if not (cert_manager_operator_namespace_present_current | bool) else []) +
+        ([{
+          'capability': 'cert_manager_operator',
+          'issue': 'prod-day2-platform-cert-manager-namespace-missing',
+          'severity': cert_manager_gap_severity_current,
+          'source': 'certificate management inventory',
+          'detail': 'No cert-manager workload namespace footprint was detected.',
+          'recommended_action': cert_manager_recommended_action_current,
+          'docs': ((day2_cert_manager_operator_section_current.docs | default([])) | string)
+        }] if not (cert_manager_namespace_present_current | bool) else []))
       }}
     cert_manager_section_override_current: >-
       {{
@@ -40,13 +84,14 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
-              'finding_count': (0 if cert_manager_present_current else 1),
+              'check_count': (cert_manager_checks_current | length),
+              'finding_count': (cert_manager_findings_current | length),
+              'checks': cert_manager_checks_current,
               'findings': cert_manager_findings_current,
-              'status': ('OK' if cert_manager_present_current else 'INFO'),
+              'status': ('OK' if cert_manager_present_current else cert_manager_gap_status_current),
               'top_detail': (
                 cert_manager_reason_summary_current
-                if cert_manager_present_current
+                if (cert_manager_present_current or cert_manager_subscription_present_current or cert_manager_operator_namespace_present_current or cert_manager_namespace_present_current)
                 else 'no cert-manager operator footprint was detected'
               ),
               'recommended_action': cert_manager_recommended_action_current
@@ -60,6 +105,8 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
+      check_count: "{{ (cert_manager_checks_current | length) | int }}"
+      finding_count: "{{ (cert_manager_findings_current | length) | int }}"
       cert_manager_operator_present: "{{ cert_manager_present_current | bool }}"
       subscription_present: "{{ cert_manager_subscription_present_current | bool }}"
       cert_manager_operator_namespace_present: "{{ cert_manager_operator_namespace_present_current | bool }}"

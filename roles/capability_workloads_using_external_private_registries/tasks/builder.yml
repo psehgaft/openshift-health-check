@@ -1,27 +1,171 @@
 ---
 - name: Build workloads using external private registries capability artifact facts
+  vars:
+    external_registry_day2_section_current: "{{ (day2_capability_sections_by_key | default({})).get('workloads_using_external_private_registries', {}) }}"
+    external_private_registry_count_current: "{{ ((day2_posture_summary | default({})).get('external_private_registry_count', 0)) | int }}"
+    external_private_registry_workload_count_current: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workload_count', 0)) | int }}"
+    external_private_registry_workloads_with_pull_secret_current: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workloads_with_pull_secret', 0)) | int }}"
+    external_private_registry_workloads_with_serviceaccount_pull_secret_current: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workloads_with_serviceaccount_pull_secret', 0)) | int }}"
+    credentialed_public_registry_count_current: "{{ ((day2_posture_summary | default({})).get('credentialed_public_registry_count', 0)) | int }}"
+    workloads_with_image_pull_secret_current: "{{ ((day2_posture_summary | default({})).get('workloads_with_image_pull_secret', 0)) | int }}"
+    cluster_image_mirror_configuration_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_image_mirror_configuration_present', false)) | bool }}"
+    disconnected_cluster_image_sources_present_current: "{{ ((day2_posture_summary | default({})).get('disconnected_cluster_image_sources_present', false)) | bool }}"
+    image_mirror_resource_count_current: "{{ ((day2_posture_summary | default({})).get('image_mirror_resource_count', 0)) | int }}"
+    disconnected_catalogsource_count_current: "{{ ((day2_posture_summary | default({})).get('disconnected_catalogsource_count', 0)) | int }}"
+    external_registry_usage_detected_current: "{{ ((external_private_registry_count_current | int) > 0) or ((credentialed_public_registry_count_current | int) > 0) }}"
+    external_registry_credential_path_healthy_current: >-
+      {{
+        (
+          ((external_private_registry_workloads_with_pull_secret_current | int) > 0)
+          or ((external_private_registry_workloads_with_serviceaccount_pull_secret_current | int) > 0)
+        )
+        or ((credentialed_public_registry_count_current | int) > 0)
+      }}
+    external_registry_capability_healthy_current: "{{ (external_registry_usage_detected_current | bool) and (external_registry_credential_path_healthy_current | bool) }}"
+    external_registry_status_current: >-
+      {{
+        'OK'
+        if (external_registry_capability_healthy_current | bool)
+        else ('WARNING' if (external_registry_usage_detected_current | bool) or (external_registry_day2_section_current.required | default(false) | bool) else 'INFO')
+      }}
+    external_registry_top_detail_current: >-
+      {{
+        'externalPrivateRegistryCount=' ~ (external_private_registry_count_current | string)
+        ~ ' externalPrivateRegistryWorkloads=' ~ (external_private_registry_workload_count_current | string)
+        ~ ' externalRegistryWorkloadsWithImagePullSecrets=' ~ (external_private_registry_workloads_with_pull_secret_current | string)
+        ~ ' externalRegistryWorkloadsWithServiceAccountPullSecrets=' ~ (external_private_registry_workloads_with_serviceaccount_pull_secret_current | string)
+        ~ ' credentialedPublicRegistryCount=' ~ (credentialed_public_registry_count_current | string)
+        ~ ' workloadsWithImagePullSecrets=' ~ (workloads_with_image_pull_secret_current | string)
+        ~ ' imageMirrorResources=' ~ (image_mirror_resource_count_current | string)
+        ~ ' disconnectedCatalogSources=' ~ (disconnected_catalogsource_count_current | string)
+      }}
+    external_registry_recommended_action_current: >-
+      {{
+        'Keep external registry pull-credential, mirror, and trust paths aligned with the workloads that depend on them.'
+        if (external_registry_capability_healthy_current | bool)
+        else (
+          'No workload evidence showed external private registry usage or credentialed public-registry pulls. If this capability is expected, confirm the intended image sources and collect the corresponding workload image and pull-secret evidence.'
+          if not (external_registry_usage_detected_current | bool)
+          else 'External registry workloads were detected but the pull-credential path is incomplete. Review imagePullSecrets, service account pull-secret references, mirrored-image configuration, and additional trust configuration for the affected namespaces and workloads.'
+        )
+      }}
+    external_registry_findings_current: >-
+      {{
+        []
+        if (external_registry_capability_healthy_current | bool)
+        else [{
+          'capability': 'workloads_using_external_private_registries',
+          'issue': (
+            'prod-day2-external-private-registry-missing'
+            if not (external_registry_usage_detected_current | bool)
+            else 'prod-day2-external-private-registry-credential-path-incomplete'
+          ),
+          'severity': ('warning' if external_registry_status_current == 'WARNING' else 'info'),
+          'source': 'Kubernetes imagePullSecrets and workload image inventory',
+          'detail': external_registry_top_detail_current,
+          'recommended_action': external_registry_recommended_action_current,
+          'docs': ((external_registry_day2_section_current.docs | default([])) | string)
+        }]
+      }}
+    external_registry_section_override_current: >-
+      {{
+        (external_registry_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 4,
+              'finding_count': (external_registry_findings_current | length),
+              'checks': [
+                {
+                  'capability': 'External registry usage detected',
+                  'capability_key': 'workloads_using_external_private_registries',
+                  'detail': 'externalPrivateRegistryCount=' ~ (external_private_registry_count_current | string) ~ ' credentialedPublicRegistryCount=' ~ (credentialed_public_registry_count_current | string),
+                  'level': ((external_registry_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Kubernetes imagePullSecrets and workload image inventory',
+                  'status': (
+                    'OK'
+                    if (external_registry_usage_detected_current | bool)
+                    else ('WARN' if (external_registry_day2_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'Workload imagePullSecret coverage',
+                  'capability_key': 'workloads_using_external_private_registries',
+                  'detail': 'externalRegistryWorkloadsWithImagePullSecrets=' ~ (external_private_registry_workloads_with_pull_secret_current | string) ~ ' workloadsWithImagePullSecrets=' ~ (workloads_with_image_pull_secret_current | string),
+                  'level': ((external_registry_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Kubernetes imagePullSecrets and workload image inventory',
+                  'status': (
+                    'OK'
+                    if ((external_private_registry_workloads_with_pull_secret_current | int) > 0 or not (external_registry_usage_detected_current | bool))
+                    else 'WARN'
+                  )
+                },
+                {
+                  'capability': 'Service account pull-secret coverage',
+                  'capability_key': 'workloads_using_external_private_registries',
+                  'detail': 'externalRegistryWorkloadsWithServiceAccountPullSecrets=' ~ (external_private_registry_workloads_with_serviceaccount_pull_secret_current | string),
+                  'level': ((external_registry_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Kubernetes imagePullSecrets and workload image inventory',
+                  'status': (
+                    'OK'
+                    if ((external_private_registry_workloads_with_serviceaccount_pull_secret_current | int) > 0 or not (external_registry_usage_detected_current | bool))
+                    else 'WARN'
+                  )
+                },
+                {
+                  'capability': 'Mirror and disconnected registry context',
+                  'capability_key': 'workloads_using_external_private_registries',
+                  'detail': 'clusterImageMirrorConfigurationPresent=' ~ (cluster_image_mirror_configuration_present_current | string) ~ ' disconnectedClusterImageSourcesPresent=' ~ (disconnected_cluster_image_sources_present_current | string) ~ ' imageMirrorResources=' ~ (image_mirror_resource_count_current | string) ~ ' disconnectedCatalogSources=' ~ (disconnected_catalogsource_count_current | string),
+                  'level': ((external_registry_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Kubernetes imagePullSecrets and workload image inventory',
+                  'status': (
+                    'OK'
+                    if ((cluster_image_mirror_configuration_present_current | bool) or (disconnected_cluster_image_sources_present_current | bool))
+                    else 'INFO'
+                  )
+                }
+              ],
+              'findings': external_registry_findings_current,
+              'status': external_registry_status_current,
+              'top_detail': external_registry_top_detail_current,
+              'recommended_action': external_registry_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: workloads_using_external_private_registries
+    capability_artifact_section_override: "{{ external_registry_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      workloads_using_external_private_registries_present: "{{ ((day2_posture_summary | default({})).get('workloads_using_external_private_registries_present', false)) | bool }}"
-      external_private_registry_count: "{{ ((day2_posture_summary | default({})).get('external_private_registry_count', 0)) | int }}"
-      external_private_registry_workload_count: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workload_count', 0)) | int }}"
-      external_private_registry_workloads_with_pull_secret: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workloads_with_pull_secret', 0)) | int }}"
-      external_private_registry_workloads_with_serviceaccount_pull_secret: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workloads_with_serviceaccount_pull_secret', 0)) | int }}"
-      credentialed_public_registry_count: "{{ ((day2_posture_summary | default({})).get('credentialed_public_registry_count', 0)) | int }}"
-      workloads_with_image_pull_secret: "{{ ((day2_posture_summary | default({})).get('workloads_with_image_pull_secret', 0)) | int }}"
+      accounting_state: assessed
+      check_count: 4
+      finding_count: "{{ (external_registry_findings_current | length) | int }}"
+      workloads_using_external_private_registries_present: "{{ external_registry_usage_detected_current | bool }}"
+      external_private_registry_count: "{{ external_private_registry_count_current | int }}"
+      external_private_registry_workload_count: "{{ external_private_registry_workload_count_current | int }}"
+      external_private_registry_workloads_with_pull_secret: "{{ external_private_registry_workloads_with_pull_secret_current | int }}"
+      external_private_registry_workloads_with_serviceaccount_pull_secret: "{{ external_private_registry_workloads_with_serviceaccount_pull_secret_current | int }}"
+      credentialed_public_registry_count: "{{ credentialed_public_registry_count_current | int }}"
+      workloads_with_image_pull_secret: "{{ workloads_with_image_pull_secret_current | int }}"
+      workload_status: "{{ external_registry_status_current }}"
+      top_detail: "{{ external_registry_top_detail_current }}"
     capability_artifact_render_inputs:
-      cluster_image_mirror_configuration_present: "{{ ((day2_posture_summary | default({})).get('cluster_image_mirror_configuration_present', false)) | bool }}"
-      disconnected_cluster_image_sources_present: "{{ ((day2_posture_summary | default({})).get('disconnected_cluster_image_sources_present', false)) | bool }}"
+      day2_workloads_using_external_private_registries_section: "{{ external_registry_section_override_current }}"
+      cluster_image_mirror_configuration_present: "{{ cluster_image_mirror_configuration_present_current | bool }}"
+      disconnected_cluster_image_sources_present: "{{ disconnected_cluster_image_sources_present_current | bool }}"
     capability_artifact_collection_inputs:
-      external_private_registry_count: "{{ ((day2_posture_summary | default({})).get('external_private_registry_count', 0)) | int }}"
-      external_private_registry_workload_count: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workload_count', 0)) | int }}"
-      external_private_registry_workloads_with_pull_secret: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workloads_with_pull_secret', 0)) | int }}"
-      external_private_registry_workloads_with_serviceaccount_pull_secret: "{{ ((day2_posture_summary | default({})).get('external_private_registry_workloads_with_serviceaccount_pull_secret', 0)) | int }}"
-      credentialed_public_registry_count: "{{ ((day2_posture_summary | default({})).get('credentialed_public_registry_count', 0)) | int }}"
-      workloads_with_image_pull_secret: "{{ ((day2_posture_summary | default({})).get('workloads_with_image_pull_secret', 0)) | int }}"
-      cluster_image_mirror_configuration_present: "{{ ((day2_posture_summary | default({})).get('cluster_image_mirror_configuration_present', false)) | bool }}"
-      image_mirror_resource_count: "{{ ((day2_posture_summary | default({})).get('image_mirror_resource_count', 0)) | int }}"
-      disconnected_cluster_image_sources_present: "{{ ((day2_posture_summary | default({})).get('disconnected_cluster_image_sources_present', false)) | bool }}"
-      disconnected_catalogsource_count: "{{ ((day2_posture_summary | default({})).get('disconnected_catalogsource_count', 0)) | int }}"
+      external_private_registry_count: "{{ external_private_registry_count_current | int }}"
+      external_private_registry_workload_count: "{{ external_private_registry_workload_count_current | int }}"
+      external_private_registry_workloads_with_pull_secret: "{{ external_private_registry_workloads_with_pull_secret_current | int }}"
+      external_private_registry_workloads_with_serviceaccount_pull_secret: "{{ external_private_registry_workloads_with_serviceaccount_pull_secret_current | int }}"
+      credentialed_public_registry_count: "{{ credentialed_public_registry_count_current | int }}"
+      workloads_with_image_pull_secret: "{{ workloads_with_image_pull_secret_current | int }}"
+      cluster_image_mirror_configuration_present: "{{ cluster_image_mirror_configuration_present_current | bool }}"
+      image_mirror_resource_count: "{{ image_mirror_resource_count_current | int }}"
+      disconnected_cluster_image_sources_present: "{{ disconnected_cluster_image_sources_present_current | bool }}"
+      disconnected_catalogsource_count: "{{ disconnected_catalogsource_count_current | int }}"

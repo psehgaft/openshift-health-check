@@ -2,6 +2,9 @@
 - name: Build LokiStack logging capability artifact facts
   vars:
     day2_loki_stack_logging_section_current: "{{ (day2_capability_sections_by_key | default({})).get('loki_stack_logging', {}) }}"
+    loki_vendor_names_current: "{{ (observability_summary | default({})).get('log_forwarding_vendor_names', []) }}"
+    loki_vendor_managed_log_forwarding_present_current: "{{ ((observability_summary | default({})).get('vendor_managed_log_forwarding_present', false)) | bool }}"
+    loki_logs_delivery_verification_status_current: "{{ (observability_summary | default({})).get('logs_delivery_verification_status', 'not-configured') | string }}"
     loki_crd_present_current: >-
       {{
         (
@@ -18,7 +21,17 @@
       }}
     lokistack_count_current: "{{ (((analysis_graph.lokistacks | default({})).get('items', []) | length) | int) }}"
     loki_namespace_present_current: "{{ ('openshift-logging' in (namespace_names | default([])) or 'loki' in (namespace_names | default([]))) | bool }}"
-    loki_context_present_current: "{{ (loki_namespace_present_current | bool) or (loki_crd_present_current | bool) }}"
+    loki_vendor_context_present_current: >-
+      {{
+        (loki_vendor_managed_log_forwarding_present_current | bool)
+        and ('loki' in (loki_vendor_names_current | default([])))
+      }}
+    loki_context_present_current: >-
+      {{
+        (loki_namespace_present_current | bool)
+        or (loki_crd_present_current | bool)
+        or (loki_vendor_context_present_current | bool)
+      }}
     loki_configuration_present_current: "{{ (lokistack_count_current | int) > 0 }}"
     loki_workload_present_current: >-
       {{
@@ -32,14 +45,17 @@
         ) > 0
       }}
     loki_stack_logging_present_current: "{{ (loki_configuration_present_current | bool) or (loki_workload_present_current | bool) }}"
-    loki_missing_status_current: "{{ 'WARNING' if ((loki_context_present_current | bool) or (day2_loki_stack_logging_section_current.required | default(false) | bool)) else 'INFO' }}"
-    loki_missing_check_status_current: "{{ 'WARN' if ((loki_context_present_current | bool) or (day2_loki_stack_logging_section_current.required | default(false) | bool)) else 'INFO' }}"
-    loki_missing_severity_current: "{{ 'warning' if ((loki_context_present_current | bool) or (day2_loki_stack_logging_section_current.required | default(false) | bool)) else 'info' }}"
+    loki_missing_status_current: "{{ 'WARNING' if (day2_loki_stack_logging_section_current.required | default(false) | bool) else 'INFO' }}"
+    loki_missing_check_status_current: "{{ 'WARN' if (day2_loki_stack_logging_section_current.required | default(false) | bool) else 'INFO' }}"
+    loki_missing_severity_current: "{{ 'warning' if (day2_loki_stack_logging_section_current.required | default(false) | bool) else 'info' }}"
     loki_reason_summary_current: >-
       {{
         'lokistacks=' ~ ((lokistack_count_current | int) | string)
         ~ ' namespace_present=' ~ ((loki_namespace_present_current | bool) | string)
         ~ ' crd_present=' ~ ((loki_crd_present_current | bool) | string)
+        ~ ' vendorManaged=' ~ ((loki_vendor_context_present_current | bool) | string)
+        ~ ' vendors=' ~ ((loki_vendor_names_current | join(',')) or 'none')
+        ~ ' verification=' ~ loki_logs_delivery_verification_status_current
         ~ ' workload_present=' ~ ((loki_workload_present_current | bool) | string)
       }}
     loki_recommended_action_current: >-
@@ -47,9 +63,13 @@
         'Validate that expected log streams are reaching Loki through the intended forwarding path.'
         if (loki_stack_logging_present_current | bool)
         else (
-          'Loki operator or chart context was detected, but no LokiStack custom resource configuration was found. Create and validate lokistacks.loki.grafana.com resources, then confirm the managed Loki workload footprint.'
-          if (loki_context_present_current | bool)
-          else 'If LokiStack-based centralized logging is intended, confirm the LokiStack custom resource configuration or managed Loki workload footprint.'
+          'Loki was inferred from vendor-managed log-forwarding evidence, but no LokiStack custom resource configuration or managed Loki workload footprint was confirmed. Verify the intended Loki delivery path end to end, or add the expected LokiStack resources and workloads.'
+          if (loki_vendor_context_present_current | bool)
+          else (
+            'Loki operator or chart context was detected, but no LokiStack custom resource configuration was found. Create and validate lokistacks.loki.grafana.com resources, then confirm the managed Loki workload footprint.'
+            if (loki_context_present_current | bool)
+            else 'If LokiStack-based centralized logging is intended, confirm the LokiStack custom resource configuration or managed Loki workload footprint.'
+          )
         )
       }}
     loki_findings_current: >-
@@ -63,9 +83,13 @@
             'severity': loki_missing_severity_current,
             'source': 'LokiStack and Loki workload inventory',
             'detail': (
-              'Loki operator or chart context was detected, but no LokiStack custom resource configuration was found and no Loki-managed workload footprint was detected'
-              if (loki_context_present_current | bool)
-              else 'no LokiStack custom resource configuration or Loki-managed workload footprint was detected'
+              'Loki was inferred from vendor-managed log-forwarding evidence, but no LokiStack custom resource configuration or Loki-managed workload footprint was confirmed'
+              if (loki_vendor_context_present_current | bool)
+              else (
+                'Loki operator or chart context was detected, but no LokiStack custom resource configuration was found and no Loki-managed workload footprint was detected'
+                if (loki_context_present_current | bool)
+                else 'no LokiStack custom resource configuration or Loki-managed workload footprint was detected'
+              )
             ),
             'recommended_action': loki_recommended_action_current,
             'docs': ((day2_loki_stack_logging_section_current.docs | default([])) | string)
@@ -81,11 +105,25 @@
             'detail': (
               'namespace_present=' ~ ((loki_namespace_present_current | bool) | string)
               ~ ' crd_present=' ~ ((loki_crd_present_current | bool) | string)
+              ~ ' vendorManaged=' ~ ((loki_vendor_context_present_current | bool) | string)
             ),
             'level': ((day2_loki_stack_logging_section_current.criticality | default('low')) | string),
             'scored': false,
             'source': 'LokiStack and Loki workload inventory',
             'status': ('OK' if (loki_context_present_current | bool) else ('WARN' if (day2_loki_stack_logging_section_current.required | default(false) | bool) else 'INFO'))
+          },
+          {
+            'capability': 'Loki vendor-managed forwarding context',
+            'capability_key': 'loki_stack_logging',
+            'detail': (
+              'vendorManaged=' ~ ((loki_vendor_context_present_current | bool) | string)
+              ~ ' vendors=' ~ ((loki_vendor_names_current | join(',')) or 'none')
+              ~ ' verification=' ~ loki_logs_delivery_verification_status_current
+            ),
+            'level': ((day2_loki_stack_logging_section_current.criticality | default('low')) | string),
+            'scored': false,
+            'source': 'observability forwarding inventory',
+            'status': ('OK' if (loki_vendor_context_present_current | bool) else 'INFO')
           },
           {
             'capability': 'LokiStack custom resource configuration',
@@ -122,9 +160,13 @@
                 loki_reason_summary_current
                 if (loki_stack_logging_present_current | bool)
                 else (
-                  'Loki operator or chart context was detected, but no LokiStack custom resource configuration was found and no Loki-managed workload footprint was detected'
-                  if (loki_context_present_current | bool)
-                  else 'no LokiStack custom resource configuration or Loki-managed workload footprint was detected'
+                  'Loki was inferred from vendor-managed log-forwarding evidence, but no LokiStack custom resource configuration or Loki-managed workload footprint was confirmed'
+                  if (loki_vendor_context_present_current | bool)
+                  else (
+                    'Loki operator or chart context was detected, but no LokiStack custom resource configuration was found and no Loki-managed workload footprint was detected'
+                    if (loki_context_present_current | bool)
+                    else 'no LokiStack custom resource configuration or Loki-managed workload footprint was detected'
+                  )
                 )
               ),
               'recommended_action': loki_recommended_action_current
@@ -151,3 +193,5 @@
       loki_namespace_present: "{{ loki_namespace_present_current | bool }}"
       loki_crd_present: "{{ loki_crd_present_current | bool }}"
       loki_workload_present: "{{ loki_workload_present_current | bool }}"
+      loki_vendor_managed_forwarding_present: "{{ loki_vendor_context_present_current | bool }}"
+      loki_logs_delivery_verification_status: "{{ loki_logs_delivery_verification_status_current }}"

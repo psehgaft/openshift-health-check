@@ -2,14 +2,183 @@
 - name: Build cluster log forwarding capability artifact facts
   vars:
     day2_cluster_log_forwarding_section_current: "{{ (day2_capability_sections_by_key | default({})).get('cluster_log_forwarding', {}) }}"
+    cluster_log_forwarder_count_current: "{{ (((analysis_graph | default({})).get('clusterlogforwarders', {}) | default({})).get('items', []) | length) | int }}"
+    cluster_log_application_delivery_state_current: "{{ (observability_summary | default({})).get('application_logs_delivery_state', 'not-collected') | string }}"
+    cluster_log_infrastructure_delivery_state_current: "{{ (observability_summary | default({})).get('infrastructure_logs_delivery_state', 'not-collected') | string }}"
+    cluster_log_audit_delivery_state_current: "{{ (observability_summary | default({})).get('audit_logs_delivery_state', 'not-collected') | string }}"
+    cluster_log_external_output_count_current: "{{ ((observability_summary | default({})).get('external_log_output_count', 0)) | int }}"
+    cluster_log_vendor_managed_present_current: "{{ ((observability_summary | default({})).get('vendor_managed_log_forwarding_present', false)) | bool }}"
+    cluster_log_vendor_names_current: "{{ (observability_summary | default({})).get('log_forwarding_vendor_names', []) }}"
+    cluster_log_verification_status_current: "{{ (observability_summary | default({})).get('logs_delivery_verification_status', 'not-configured') | string }}"
+    cluster_log_gap_count_current: "{{ ((observability_summary | default({})).get('log_gap_count', 0)) | int }}"
+    cluster_log_openshift_logging_namespace_present_current: >-
+      {{
+        ((((analysis_graph | default({})).get('namespaces', {}) | default({})).get('items', []))
+        | selectattr('metadata.name', 'defined')
+        | selectattr('metadata.name', 'equalto', 'openshift-logging')
+        | list
+        | length) > 0
+      }}
+    cluster_log_collection_present_current: >-
+      {{
+        cluster_log_application_delivery_state_current != 'not-collected'
+        or cluster_log_infrastructure_delivery_state_current != 'not-collected'
+        or cluster_log_audit_delivery_state_current != 'not-collected'
+        or (cluster_log_forwarder_count_current | int) > 0
+        or (cluster_log_vendor_managed_present_current | bool)
+      }}
+    cluster_log_external_destination_present_current: >-
+      {{
+        (cluster_log_external_output_count_current | int) > 0
+        or (cluster_log_vendor_managed_present_current | bool)
+      }}
+    cluster_log_coverage_present_current: >-
+      {{
+        cluster_log_application_delivery_state_current != 'not-collected'
+        and cluster_log_infrastructure_delivery_state_current != 'not-collected'
+        and cluster_log_audit_delivery_state_current != 'not-collected'
+      }}
+    cluster_log_verification_healthy_current: "{{ cluster_log_verification_status_current in ['verified', 'passed', 'ok'] }}"
+    cluster_log_healthy_current: >-
+      {{
+        (cluster_log_collection_present_current | bool)
+        and (cluster_log_external_destination_present_current | bool)
+        and (cluster_log_coverage_present_current | bool)
+        and (cluster_log_verification_healthy_current | bool)
+        and ((cluster_log_gap_count_current | int) == 0)
+      }}
+    cluster_log_status_current: >-
+      {{
+        'OK'
+        if (cluster_log_healthy_current | bool)
+        else (
+          'WARNING'
+          if (
+            ((day2_cluster_log_forwarding_section_current.required | default(false)) | bool)
+            and (
+              (cluster_log_collection_present_current | bool)
+              or (cluster_log_external_destination_present_current | bool)
+              or (cluster_log_gap_count_current | int) > 0
+            )
+          )
+          else 'INFO'
+        )
+      }}
+    cluster_log_top_detail_current: >-
+      {{
+        'clusterlogforwarders=' ~ (cluster_log_forwarder_count_current | string)
+        ~ ' app=' ~ cluster_log_application_delivery_state_current
+        ~ ' infra=' ~ cluster_log_infrastructure_delivery_state_current
+        ~ ' audit=' ~ cluster_log_audit_delivery_state_current
+        ~ ' externalOutputs=' ~ (cluster_log_external_output_count_current | string)
+        ~ ' vendorManaged=' ~ ((cluster_log_vendor_managed_present_current | bool) | string)
+        ~ ' vendors=' ~ ((cluster_log_vendor_names_current | join(',')) or 'none')
+        ~ ' verification=' ~ cluster_log_verification_status_current
+        ~ ' logGaps=' ~ (cluster_log_gap_count_current | string)
+      }}
+    cluster_log_recommended_action_current: >-
+      {{
+        'Keep the centralized logging path verified for the required log classes and destinations.'
+        if (cluster_log_healthy_current | bool)
+        else (
+          'No native ClusterLogForwarder or vendor-managed log-forwarding evidence was found. If centralized logging is expected, configure either ClusterLogForwarder pipelines with external outputs or the approved vendor-managed log-forwarding path for application, infrastructure, and audit logs.'
+          if not (cluster_log_collection_present_current | bool)
+          else 'Complete the intended log-forwarding path by wiring application, infrastructure, and audit log collection to external outputs or the approved vendor-managed destination, then verify export end to end.'
+        )
+      }}
+    cluster_log_findings_current: >-
+      {{
+        []
+        if (cluster_log_healthy_current | bool)
+        else [{
+          'capability': 'cluster_log_forwarding',
+          'issue': (
+            'prod-day2-cluster-log-forwarding-missing'
+            if not (cluster_log_collection_present_current | bool)
+            else 'prod-day2-cluster-log-forwarding-unverified'
+          ),
+          'severity': ('warning' if cluster_log_status_current == 'WARNING' else 'info'),
+          'source': 'cluster logging and external forwarding guidance',
+          'detail': cluster_log_top_detail_current,
+          'recommended_action': cluster_log_recommended_action_current,
+          'docs': ((day2_cluster_log_forwarding_section_current.docs | default([])) | string)
+        }]
+      }}
+    cluster_log_section_override_current: >-
+      {{
+        (day2_cluster_log_forwarding_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 4,
+              'finding_count': (cluster_log_findings_current | length),
+              'checks': [
+                {
+                  'capability': 'Cluster log forwarding collection path',
+                  'capability_key': 'cluster_log_forwarding',
+                  'detail': 'clusterlogforwarders=' ~ (cluster_log_forwarder_count_current | string) ~ ' vendorManaged=' ~ ((cluster_log_vendor_managed_present_current | bool) | string) ~ ' vendors=' ~ ((cluster_log_vendor_names_current | join(',')) or 'none'),
+                  'level': ((day2_cluster_log_forwarding_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'cluster logging and external forwarding guidance',
+                  'status': ('OK' if (cluster_log_collection_present_current | bool) else ('WARN' if (day2_cluster_log_forwarding_section_current.required | default(false) | bool) else 'INFO'))
+                },
+                {
+                  'capability': 'Cluster log forwarding external destinations',
+                  'capability_key': 'cluster_log_forwarding',
+                  'detail': 'externalOutputs=' ~ (cluster_log_external_output_count_current | string) ~ ' vendorManaged=' ~ ((cluster_log_vendor_managed_present_current | bool) | string) ~ ' vendors=' ~ ((cluster_log_vendor_names_current | join(',')) or 'none'),
+                  'level': ((day2_cluster_log_forwarding_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'cluster logging and external forwarding guidance',
+                  'status': ('OK' if (cluster_log_external_destination_present_current | bool) else ('WARN' if (day2_cluster_log_forwarding_section_current.required | default(false) | bool) else 'INFO'))
+                },
+                {
+                  'capability': 'Cluster log forwarding log coverage',
+                  'capability_key': 'cluster_log_forwarding',
+                  'detail': 'application=' ~ cluster_log_application_delivery_state_current ~ ' infrastructure=' ~ cluster_log_infrastructure_delivery_state_current ~ ' audit=' ~ cluster_log_audit_delivery_state_current,
+                  'level': ((day2_cluster_log_forwarding_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'cluster logging and external forwarding guidance',
+                  'status': ('OK' if (cluster_log_coverage_present_current | bool) else ('WARN' if (day2_cluster_log_forwarding_section_current.required | default(false) | bool) else 'INFO'))
+                },
+                {
+                  'capability': 'Cluster log forwarding delivery verification',
+                  'capability_key': 'cluster_log_forwarding',
+                  'detail': 'verification=' ~ cluster_log_verification_status_current ~ ' logGaps=' ~ (cluster_log_gap_count_current | string) ~ ' openshiftLoggingNamespace=' ~ ((cluster_log_openshift_logging_namespace_present_current | bool) | string),
+                  'level': ((day2_cluster_log_forwarding_section_current.criticality | default('high')) | string),
+                  'scored': false,
+                  'source': 'cluster logging inventory',
+                  'status': (
+                    'OK'
+                    if ((cluster_log_verification_healthy_current | bool) and ((cluster_log_gap_count_current | int) == 0))
+                    else ('WARN' if (day2_cluster_log_forwarding_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                }
+              ],
+              'findings': cluster_log_findings_current,
+              'status': cluster_log_status_current,
+              'top_detail': cluster_log_top_detail_current,
+              'recommended_action': cluster_log_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: cluster_log_forwarding
+    capability_artifact_section_override: "{{ cluster_log_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      observability_status: "{{ day2_cluster_log_forwarding_section_current.status | default('unknown') }}"
-      observability_reason_summary: "{{ day2_cluster_log_forwarding_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 4
+      finding_count: "{{ (cluster_log_findings_current | length) | int }}"
+      observability_status: "{{ cluster_log_status_current }}"
+      observability_reason_summary: "{{ cluster_log_top_detail_current }}"
+      top_detail: "{{ cluster_log_top_detail_current }}"
     capability_artifact_render_inputs:
-      day2_cluster_log_forwarding_section: "{{ day2_cluster_log_forwarding_section_current }}"
+      day2_cluster_log_forwarding_section: "{{ cluster_log_section_override_current }}"
     capability_artifact_collection_inputs:
-      cluster_log_forwarding_healthy: "{{ ((day2_posture_summary | default({})).get('cluster_log_forwarding_healthy', false)) | bool }}"
-      vendor_managed_log_forwarding_present: "{{ ((day2_posture_summary | default({})).get('vendor_managed_log_forwarding_present', false)) | bool }}"
+      cluster_log_forwarding_healthy: "{{ cluster_log_healthy_current | bool }}"
+      vendor_managed_log_forwarding_present: "{{ cluster_log_vendor_managed_present_current | bool }}"
+      clusterlogforwarder_count: "{{ cluster_log_forwarder_count_current | int }}"
+      external_log_output_count: "{{ cluster_log_external_output_count_current | int }}"
+      logs_delivery_verification_status: "{{ cluster_log_verification_status_current }}"
+      log_gap_count: "{{ cluster_log_gap_count_current | int }}"

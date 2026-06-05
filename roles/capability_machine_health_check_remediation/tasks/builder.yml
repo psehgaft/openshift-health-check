@@ -1,28 +1,115 @@
 ---
 - name: Build machine health check remediation capability artifact facts
   vars:
+    day2_machine_health_check_remediation_section_current: "{{ (day2_capability_sections_by_key | default({})).get('machine_health_check_remediation', {}) }}"
     machinehealthcheck_expected_current: "{{ declarative_operations_summary.machinehealthcheck_expected | default((day2_posture_summary | default({})).get('machinehealthcheck_expected', false)) | bool }}"
     machinehealthcheck_count_current: "{{ declarative_operations_summary.machinehealthcheck_count | default((day2_posture_summary | default({})).get('machinehealthcheck_count', 0)) | int }}"
     machine_healthcheck_findings_current: "{{ (machine_healthcheck_findings | default([])) | length }}"
     machine_health_check_status_current: >-
       {{
-        'WARNING'
-        if (machinehealthcheck_expected_current and (machinehealthcheck_count_current == 0 or (machine_healthcheck_findings_current | int) > 0))
-        else 'OK'
+        'OK'
+        if ((not machinehealthcheck_expected_current) or ((machinehealthcheck_count_current | int) > 0 and (machine_healthcheck_findings_current | int) == 0))
+        else ('WARNING' if (day2_machine_health_check_remediation_section_current.required | default(false) | bool or machinehealthcheck_expected_current) else 'INFO')
       }}
-    machine_health_check_reason_current: >-
+    machine_health_check_reason_summary_current: >-
       {{
         'machine remediation evidence: expected='
         ~ (machinehealthcheck_expected_current | string)
         ~ ', machineHealthChecks=' ~ (machinehealthcheck_count_current | string)
         ~ ', findings=' ~ (machine_healthcheck_findings_current | string)
       }}
+    machine_health_check_missing_detail_current: >-
+      {{
+        'worker auto-remediation is expected, but no MachineHealthCheck resources were found'
+        if (machinehealthcheck_expected_current | bool) and (machinehealthcheck_count_current | int) == 0
+        else 'MachineHealthCheck resources were detected, but remediation findings remain open'
+      }}
+    machine_health_check_recommended_action_current: >-
+      {{
+        'Keep MachineHealthCheck coverage aligned with worker-pool remediation expectations and monitor for drift.'
+        if (machine_health_check_status_current == 'OK')
+        else (
+          'Define MachineHealthCheck resources for Machine API-managed worker pools where worker auto-remediation is expected.'
+          if (machinehealthcheck_expected_current | bool) and (machinehealthcheck_count_current | int) == 0
+          else 'Review and clear the current MachineHealthCheck remediation findings before treating worker auto-remediation as healthy.'
+        )
+      }}
+    machine_health_check_findings_override_current: >-
+      {{
+        []
+        if (machine_health_check_status_current == 'OK')
+        else [
+          {
+            'capability': 'machine_health_check_remediation',
+            'issue': (
+              'prod-day2-machinehealthcheck-missing'
+              if (machinehealthcheck_count_current | int) == 0
+              else 'prod-day2-machinehealthcheck-coverage-incomplete'
+            ),
+            'severity': ('warning' if (day2_machine_health_check_remediation_section_current.required | default(false) | bool or machinehealthcheck_expected_current) else 'info'),
+            'source': 'machine remediation posture for Machine API worker pools',
+            'detail': machine_health_check_missing_detail_current,
+            'recommended_action': machine_health_check_recommended_action_current,
+            'docs': ((day2_machine_health_check_remediation_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    machine_health_check_section_override_current: >-
+      {{
+        (day2_machine_health_check_remediation_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (machine_health_check_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'MachineHealthCheck expectation',
+                  'capability_key': 'machine_health_check_remediation',
+                  'detail': 'expected=' ~ (machinehealthcheck_expected_current | string),
+                  'level': ((day2_machine_health_check_remediation_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'machine remediation posture for Machine API worker pools',
+                  'status': ('OK' if (machinehealthcheck_expected_current | bool) else 'INFO')
+                },
+                {
+                  'capability': 'MachineHealthCheck resource coverage',
+                  'capability_key': 'machine_health_check_remediation',
+                  'detail': 'machineHealthChecks=' ~ (machinehealthcheck_count_current | string) ~ ' findings=' ~ (machine_healthcheck_findings_current | string),
+                  'level': ((day2_machine_health_check_remediation_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'machine remediation posture for Machine API worker pools',
+                  'status': (
+                    'OK'
+                    if ((not machinehealthcheck_expected_current) or ((machinehealthcheck_count_current | int) > 0 and (machine_healthcheck_findings_current | int) == 0))
+                    else ('WARN' if (machinehealthcheck_expected_current | bool or (day2_machine_health_check_remediation_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': machine_health_check_findings_override_current,
+              'status': machine_health_check_status_current,
+              'top_detail': (
+                machine_health_check_reason_summary_current
+                if (machine_health_check_status_current == 'OK')
+                else machine_health_check_missing_detail_current
+              ),
+              'recommended_action': machine_health_check_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: machine_health_check_remediation
+    capability_artifact_section_override: "{{ machine_health_check_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (machine_health_check_status_current == 'OK') else 1) | int }}"
       backup_recovery_status: "{{ machine_health_check_status_current }}"
-      backup_recovery_reason_summary: "{{ machine_health_check_reason_current }}"
+      backup_recovery_reason_summary: "{{ machine_health_check_section_override_current.top_detail }}"
+    capability_artifact_render_inputs:
+      day2_machine_health_check_remediation_section: "{{ machine_health_check_section_override_current }}"
     capability_artifact_collection_inputs:
       machinehealthcheck_expected: "{{ machinehealthcheck_expected_current | bool }}"
       machinehealthcheck_count: "{{ machinehealthcheck_count_current | int }}"

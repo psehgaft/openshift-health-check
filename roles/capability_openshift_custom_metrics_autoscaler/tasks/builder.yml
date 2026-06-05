@@ -3,14 +3,109 @@
   vars:
     day2_openshift_custom_metrics_autoscaler_section_current: "{{ (day2_capability_sections_by_key | default({})).get('openshift_custom_metrics_autoscaler', {}) }}"
     openshift_custom_metrics_autoscaler_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_custom_metrics_autoscaler_present', false)) | bool }}"
+    openshift_custom_metrics_autoscaler_context_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_custom_metrics_autoscaler_context_present', false)) | bool }}"
+    openshift_custom_metrics_autoscaler_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_custom_metrics_autoscaler_subscription_present', false)) | bool }}"
+    openshift_custom_metrics_autoscaler_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_custom_metrics_autoscaler_namespace_present', false)) | bool }}"
+    openshift_custom_metrics_autoscaler_crd_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_custom_metrics_autoscaler_crd_present', false)) | bool }}"
+    openshift_custom_metrics_autoscaler_workload_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_custom_metrics_autoscaler_workload_present', false)) | bool }}"
+    openshift_custom_metrics_autoscaler_status_current: >-
+      {{
+        'OK'
+        if (openshift_custom_metrics_autoscaler_present_current | bool)
+        else ('WARNING' if ((openshift_custom_metrics_autoscaler_context_present_current | bool) or (day2_openshift_custom_metrics_autoscaler_section_current.required | default(false) | bool)) else 'INFO')
+      }}
+    openshift_custom_metrics_autoscaler_reason_summary_current: >-
+      {{
+        'contextPresent=' ~ (openshift_custom_metrics_autoscaler_context_present_current | string)
+        ~ ' subscriptionPresent=' ~ (openshift_custom_metrics_autoscaler_subscription_present_current | string)
+        ~ ' namespacePresent=' ~ (openshift_custom_metrics_autoscaler_namespace_present_current | string)
+        ~ ' crdPresent=' ~ (openshift_custom_metrics_autoscaler_crd_present_current | string)
+        ~ ' workloadPresent=' ~ (openshift_custom_metrics_autoscaler_workload_present_current | string)
+      }}
+    openshift_custom_metrics_autoscaler_missing_detail_current: >-
+      {{
+        'custom metrics autoscaler operator footprint was detected, but no custom metrics autoscaler resource footprint was found'
+        if (openshift_custom_metrics_autoscaler_context_present_current | bool)
+        else 'no custom metrics autoscaler footprint was detected'
+      }}
+    openshift_custom_metrics_autoscaler_recommended_action_current: >-
+      {{
+        'Keep the custom metrics autoscaler deployment aligned with the workloads that depend on it.'
+        if (openshift_custom_metrics_autoscaler_status_current == 'OK')
+        else 'Review custom metrics autoscaler operator coverage and ensure the intended KEDA or custom metrics autoscaler resources are present before treating scale-out behavior as healthy.'
+      }}
+    openshift_custom_metrics_autoscaler_findings_current: >-
+      {{
+        []
+        if (openshift_custom_metrics_autoscaler_status_current == 'OK')
+        else [
+          {
+            'capability': 'openshift_custom_metrics_autoscaler',
+            'issue': 'prod-day2-openshift-custom-metrics-autoscaler-missing',
+            'severity': ('warning' if ((openshift_custom_metrics_autoscaler_context_present_current | bool) or (day2_openshift_custom_metrics_autoscaler_section_current.required | default(false) | bool)) else 'info'),
+            'source': 'OpenShift custom metrics autoscaler inventory',
+            'detail': openshift_custom_metrics_autoscaler_missing_detail_current,
+            'recommended_action': openshift_custom_metrics_autoscaler_recommended_action_current,
+            'docs': ((day2_openshift_custom_metrics_autoscaler_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    openshift_custom_metrics_autoscaler_section_override_current: >-
+      {{
+        (day2_openshift_custom_metrics_autoscaler_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (openshift_custom_metrics_autoscaler_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'OpenShift custom metrics autoscaler context',
+                  'capability_key': 'openshift_custom_metrics_autoscaler',
+                  'detail': 'contextPresent=' ~ (openshift_custom_metrics_autoscaler_context_present_current | string),
+                  'level': ((day2_openshift_custom_metrics_autoscaler_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift custom metrics autoscaler inventory',
+                  'status': ('OK' if (openshift_custom_metrics_autoscaler_context_present_current | bool) else 'INFO')
+                },
+                {
+                  'capability': 'OpenShift custom metrics autoscaler resource coverage',
+                  'capability_key': 'openshift_custom_metrics_autoscaler',
+                  'detail': openshift_custom_metrics_autoscaler_reason_summary_current,
+                  'level': ((day2_openshift_custom_metrics_autoscaler_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift custom metrics autoscaler inventory',
+                  'status': (
+                    'OK'
+                    if (openshift_custom_metrics_autoscaler_present_current | bool)
+                    else ('WARN' if ((openshift_custom_metrics_autoscaler_context_present_current | bool) or (day2_openshift_custom_metrics_autoscaler_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': openshift_custom_metrics_autoscaler_findings_current,
+              'status': openshift_custom_metrics_autoscaler_status_current,
+              'top_detail': (
+                openshift_custom_metrics_autoscaler_reason_summary_current
+                if (openshift_custom_metrics_autoscaler_status_current == 'OK')
+                else openshift_custom_metrics_autoscaler_missing_detail_current
+              ),
+              'recommended_action': openshift_custom_metrics_autoscaler_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: openshift_custom_metrics_autoscaler
+    capability_artifact_section_override: "{{ openshift_custom_metrics_autoscaler_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (openshift_custom_metrics_autoscaler_status_current == 'OK') else 1) | int }}"
       openshift_custom_metrics_autoscaler_present: "{{ openshift_custom_metrics_autoscaler_present_current | bool }}"
-      status_summary: "{{ day2_openshift_custom_metrics_autoscaler_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_openshift_custom_metrics_autoscaler_section_current.top_detail | default('unknown') }}"
+      status_summary: "{{ openshift_custom_metrics_autoscaler_status_current }}"
+      reason_summary: "{{ openshift_custom_metrics_autoscaler_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_openshift_custom_metrics_autoscaler_section: "{{ day2_openshift_custom_metrics_autoscaler_section_current }}"
+      day2_openshift_custom_metrics_autoscaler_section: "{{ openshift_custom_metrics_autoscaler_section_override_current }}"
     capability_artifact_collection_inputs:
       openshift_custom_metrics_autoscaler_present: "{{ openshift_custom_metrics_autoscaler_present_current | bool }}"

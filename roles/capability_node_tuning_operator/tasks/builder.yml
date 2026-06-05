@@ -2,18 +2,117 @@
 - name: Build node tuning operator capability artifact facts
   vars:
     day2_node_tuning_operator_section_current: "{{ (day2_capability_sections_by_key | default({})).get('node_tuning_operator', {}) }}"
+    node_tuning_operator_present_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_present', false)) | bool }}"
+    node_tuning_operator_healthy_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_healthy', false)) | bool }}"
+    node_tuning_operator_context_present_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_context_present', false)) | bool }}"
+    node_tuning_tuned_count_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_tuned_count', 0)) | int }}"
+    node_tuning_custom_tuned_count_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_custom_tuned_count', 0)) | int }}"
+    node_tuning_tunedprofile_count_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_tunedprofile_count', 0)) | int }}"
+    node_tuning_performanceprofile_count_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_performanceprofile_count', 0)) | int }}"
+    node_tuning_ready_performanceprofile_count_current: "{{ ((day2_posture_summary | default({})).get('node_tuning_ready_performanceprofile_count', 0)) | int }}"
+    node_tuning_operator_status_current: >-
+      {{
+        'OK'
+        if (node_tuning_operator_healthy_current | bool)
+        else ('WARNING' if ((node_tuning_operator_context_present_current | bool) or (day2_node_tuning_operator_section_current.required | default(false) | bool)) else 'INFO')
+      }}
+    node_tuning_operator_reason_summary_current: >-
+      {{
+        'tuneds=' ~ (node_tuning_tuned_count_current | string)
+        ~ ' customTuneds=' ~ (node_tuning_custom_tuned_count_current | string)
+        ~ ' tunedProfiles=' ~ (node_tuning_tunedprofile_count_current | string)
+        ~ ' performanceProfiles=' ~ (node_tuning_performanceprofile_count_current | string)
+        ~ ' readyPerformanceProfiles=' ~ (node_tuning_ready_performanceprofile_count_current | string)
+        ~ ' contextPresent=' ~ (node_tuning_operator_context_present_current | string)
+      }}
+    node_tuning_operator_missing_detail_current: >-
+      {{
+        'node tuning operator context was detected, but no custom Tuned or PerformanceProfile resource footprint was found'
+        if (node_tuning_operator_context_present_current | bool) and not (node_tuning_operator_present_current | bool)
+        else 'node tuning resources were detected, but the current assessment still marks them unhealthy'
+      }}
+    node_tuning_operator_recommended_action_current: >-
+      {{
+        'Keep Tuned and PerformanceProfile coverage aligned with the node pools that depend on it.'
+        if (node_tuning_operator_status_current == 'OK')
+        else 'Review Node Tuning Operator coverage and the readiness of custom Tuned or PerformanceProfile resources before treating node-level tuning as healthy.'
+      }}
+    node_tuning_operator_findings_current: >-
+      {{
+        []
+        if (node_tuning_operator_status_current == 'OK')
+        else [
+          {
+            'capability': 'node_tuning_operator',
+            'issue': 'prod-day2-node-tuning-operator-missing',
+            'severity': ('warning' if ((node_tuning_operator_context_present_current | bool) or (day2_node_tuning_operator_section_current.required | default(false) | bool)) else 'info'),
+            'source': 'Node Tuning Operator inventory',
+            'detail': node_tuning_operator_missing_detail_current,
+            'recommended_action': node_tuning_operator_recommended_action_current,
+            'docs': ((day2_node_tuning_operator_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    node_tuning_operator_section_override_current: >-
+      {{
+        (day2_node_tuning_operator_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (node_tuning_operator_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'Node tuning operator context',
+                  'capability_key': 'node_tuning_operator',
+                  'detail': 'contextPresent=' ~ (node_tuning_operator_context_present_current | string),
+                  'level': ((day2_node_tuning_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Node Tuning Operator inventory',
+                  'status': ('OK' if (node_tuning_operator_context_present_current | bool) else 'INFO')
+                },
+                {
+                  'capability': 'Node tuning operator resource coverage',
+                  'capability_key': 'node_tuning_operator',
+                  'detail': node_tuning_operator_reason_summary_current,
+                  'level': ((day2_node_tuning_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Node Tuning Operator inventory',
+                  'status': (
+                    'OK'
+                    if (node_tuning_operator_healthy_current | bool)
+                    else ('WARN' if ((node_tuning_operator_context_present_current | bool) or (day2_node_tuning_operator_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': node_tuning_operator_findings_current,
+              'status': node_tuning_operator_status_current,
+              'top_detail': (
+                node_tuning_operator_reason_summary_current
+                if (node_tuning_operator_status_current == 'OK')
+                else node_tuning_operator_missing_detail_current
+              ),
+              'recommended_action': node_tuning_operator_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: node_tuning_operator
+    capability_artifact_section_override: "{{ node_tuning_operator_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      node_tuning_operator_present: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_present', false)) | bool }}"
-      node_tuning_operator_healthy: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_healthy', false)) | bool }}"
-      node_tuning_operator_context_present: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_context_present', false)) | bool }}"
-      status_summary: "{{ day2_node_tuning_operator_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_node_tuning_operator_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (node_tuning_operator_status_current == 'OK') else 1) | int }}"
+      node_tuning_operator_present: "{{ node_tuning_operator_present_current | bool }}"
+      node_tuning_operator_healthy: "{{ node_tuning_operator_healthy_current | bool }}"
+      node_tuning_operator_context_present: "{{ node_tuning_operator_context_present_current | bool }}"
+      status_summary: "{{ node_tuning_operator_status_current }}"
+      reason_summary: "{{ node_tuning_operator_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_node_tuning_operator_section: "{{ day2_node_tuning_operator_section_current }}"
+      day2_node_tuning_operator_section: "{{ node_tuning_operator_section_override_current }}"
     capability_artifact_collection_inputs:
-      node_tuning_operator_present: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_present', false)) | bool }}"
-      node_tuning_operator_healthy: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_healthy', false)) | bool }}"
-      node_tuning_operator_context_present: "{{ ((day2_posture_summary | default({})).get('node_tuning_operator_context_present', false)) | bool }}"
+      node_tuning_operator_present: "{{ node_tuning_operator_present_current | bool }}"
+      node_tuning_operator_healthy: "{{ node_tuning_operator_healthy_current | bool }}"
+      node_tuning_operator_context_present: "{{ node_tuning_operator_context_present_current | bool }}"

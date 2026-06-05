@@ -2,18 +2,113 @@
 - name: Build cost management operator capability artifact facts
   vars:
     day2_cost_management_operator_section_current: "{{ (day2_capability_sections_by_key | default({})).get('cost_management_operator', {}) }}"
+    cost_management_operator_present_current: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_present', false)) | bool }}"
+    cost_management_operator_healthy_current: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_healthy', false)) | bool }}"
+    cost_management_operator_context_present_current: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_context_present', false)) | bool }}"
+    cost_management_operator_status_current: >-
+      {{
+        'OK'
+        if (cost_management_operator_healthy_current | bool)
+        else ('WARNING' if ((cost_management_operator_context_present_current | bool) or (day2_cost_management_operator_section_current.required | default(false) | bool)) else 'INFO')
+      }}
+    cost_management_operator_reason_summary_current: >-
+      {{
+        'present=' ~ (cost_management_operator_present_current | string)
+        ~ ' healthy=' ~ (cost_management_operator_healthy_current | string)
+        ~ ' contextPresent=' ~ (cost_management_operator_context_present_current | string)
+      }}
+    cost_management_operator_missing_detail_current: >-
+      {{
+        'CostManagementMetricsConfig resources were detected, but their status includes a problem condition or status'
+        if (cost_management_operator_present_current | bool)
+        else (
+          'cost management metrics operator footprint was detected, but no CostManagementMetricsConfig resource was found'
+          if (cost_management_operator_context_present_current | bool)
+          else 'no supported cost management metrics operator footprint was detected'
+        )
+      }}
+    cost_management_operator_recommended_action_current: >-
+      {{
+        'Keep CostManagementMetricsConfig coverage aligned with the cost reporting path that depends on it.'
+        if (cost_management_operator_status_current == 'OK')
+        else 'Review cost management operator coverage and ensure CostManagementMetricsConfig resources are present and healthy before treating chargeback or usage reporting as healthy.'
+      }}
+    cost_management_operator_findings_current: >-
+      {{
+        []
+        if (cost_management_operator_status_current == 'OK')
+        else [
+          {
+            'capability': 'cost_management_operator',
+            'issue': 'prod-day2-platform-cost-management-missing',
+            'severity': ('warning' if ((cost_management_operator_context_present_current | bool) or (day2_cost_management_operator_section_current.required | default(false) | bool)) else 'info'),
+            'source': 'cost management inventory',
+            'detail': cost_management_operator_missing_detail_current,
+            'recommended_action': cost_management_operator_recommended_action_current,
+            'docs': ((day2_cost_management_operator_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    cost_management_operator_section_override_current: >-
+      {{
+        (day2_cost_management_operator_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (cost_management_operator_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'Cost management operator context',
+                  'capability_key': 'cost_management_operator',
+                  'detail': 'contextPresent=' ~ (cost_management_operator_context_present_current | string),
+                  'level': ((day2_cost_management_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'cost management inventory',
+                  'status': ('OK' if (cost_management_operator_context_present_current | bool) else 'INFO')
+                },
+                {
+                  'capability': 'Cost management operator resource coverage',
+                  'capability_key': 'cost_management_operator',
+                  'detail': cost_management_operator_reason_summary_current,
+                  'level': ((day2_cost_management_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'cost management inventory',
+                  'status': (
+                    'OK'
+                    if (cost_management_operator_healthy_current | bool)
+                    else ('WARN' if ((cost_management_operator_context_present_current | bool) or (day2_cost_management_operator_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': cost_management_operator_findings_current,
+              'status': cost_management_operator_status_current,
+              'top_detail': (
+                cost_management_operator_reason_summary_current
+                if (cost_management_operator_status_current == 'OK')
+                else cost_management_operator_missing_detail_current
+              ),
+              'recommended_action': cost_management_operator_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: cost_management_operator
+    capability_artifact_section_override: "{{ cost_management_operator_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      cost_management_operator_present: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_present', false)) | bool }}"
-      cost_management_operator_healthy: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_healthy', false)) | bool }}"
-      cost_management_operator_context_present: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_context_present', false)) | bool }}"
-      status_summary: "{{ day2_cost_management_operator_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_cost_management_operator_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (cost_management_operator_status_current == 'OK') else 1) | int }}"
+      cost_management_operator_present: "{{ cost_management_operator_present_current | bool }}"
+      cost_management_operator_healthy: "{{ cost_management_operator_healthy_current | bool }}"
+      cost_management_operator_context_present: "{{ cost_management_operator_context_present_current | bool }}"
+      status_summary: "{{ cost_management_operator_status_current }}"
+      reason_summary: "{{ cost_management_operator_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_cost_management_operator_section: "{{ day2_cost_management_operator_section_current }}"
+      day2_cost_management_operator_section: "{{ cost_management_operator_section_override_current }}"
     capability_artifact_collection_inputs:
-      cost_management_operator_present: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_present', false)) | bool }}"
-      cost_management_operator_healthy: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_healthy', false)) | bool }}"
-      cost_management_operator_context_present: "{{ ((day2_posture_summary | default({})).get('cost_management_operator_context_present', false)) | bool }}"
+      cost_management_operator_present: "{{ cost_management_operator_present_current | bool }}"
+      cost_management_operator_healthy: "{{ cost_management_operator_healthy_current | bool }}"
+      cost_management_operator_context_present: "{{ cost_management_operator_context_present_current | bool }}"

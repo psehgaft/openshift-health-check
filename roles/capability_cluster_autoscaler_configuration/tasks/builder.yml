@@ -2,14 +2,114 @@
 - name: Build cluster autoscaler configuration capability artifact facts
   vars:
     day2_cluster_autoscaler_configuration_section_current: "{{ (day2_capability_sections_by_key | default({})).get('cluster_autoscaler_configuration', {}) }}"
+    cluster_autoscaler_present_current: "{{ ((day2_posture_summary | default({})).get('cluster_autoscaler_present', false)) | bool }}"
+    machine_autoscaler_count_current: "{{ ((day2_posture_summary | default({})).get('machine_autoscaler_count', 0)) | int }}"
+    clusterautoscaler_count_current: "{{ ((day2_posture_summary | default({})).get('clusterautoscaler_count', 0)) | int }}"
+    hostedcluster_count_current: "{{ ((day2_posture_summary | default({})).get('hostedcluster_count', 0)) | int }}"
+    nodepool_count_current: "{{ ((day2_posture_summary | default({})).get('nodepool_count', 0)) | int }}"
+    hostedcluster_autoscaling_present_current: "{{ ((day2_posture_summary | default({})).get('hostedcluster_autoscaling_present', false)) | bool }}"
+    nodepool_autoscaling_present_current: "{{ ((day2_posture_summary | default({})).get('nodepool_autoscaling_present', false)) | bool }}"
+    cluster_autoscaler_expected_current: "{{ ((day2_posture_summary | default({})).get('cluster_autoscaler_expected', false)) | bool }}"
+    cluster_autoscaler_status_current: >-
+      {{
+        'OK'
+        if ((not cluster_autoscaler_expected_current) or (cluster_autoscaler_present_current | bool))
+        else ('WARNING' if (day2_cluster_autoscaler_configuration_section_current.required | default(false) | bool or cluster_autoscaler_expected_current) else 'INFO')
+      }}
+    cluster_autoscaler_reason_summary_current: >-
+      {{
+        'expected=' ~ (cluster_autoscaler_expected_current | string)
+        ~ ' clusterAutoscalers=' ~ (clusterautoscaler_count_current | string)
+        ~ ' machineAutoscalers=' ~ (machine_autoscaler_count_current | string)
+        ~ ' hostedClusters=' ~ (hostedcluster_count_current | string)
+        ~ ' nodePools=' ~ (nodepool_count_current | string)
+        ~ ' hostedClusterAutoscaling=' ~ (hostedcluster_autoscaling_present_current | string)
+        ~ ' nodePoolAutoscaling=' ~ (nodepool_autoscaling_present_current | string)
+      }}
+    cluster_autoscaler_missing_detail_current: >-
+      {{
+        'worker autoscaling is expected, but no ClusterAutoscaler or MachineAutoscaler footprint was detected'
+        if not (cluster_autoscaler_present_current | bool)
+        else 'cluster autoscaling footprint was detected, but the current assessment still marks the capability unhealthy'
+      }}
+    cluster_autoscaler_recommended_action_current: >-
+      {{
+        'Keep autoscaling coverage aligned with the worker pools that depend on it.'
+        if (cluster_autoscaler_status_current == 'OK')
+        else 'Define or complete ClusterAutoscaler and MachineAutoscaler coverage for the worker pools that are expected to scale automatically.'
+      }}
+    cluster_autoscaler_findings_current: >-
+      {{
+        []
+        if (cluster_autoscaler_status_current == 'OK')
+        else [
+          {
+            'capability': 'cluster_autoscaler_configuration',
+            'issue': 'prod-day2-cluster-autoscaler-missing',
+            'severity': ('warning' if (day2_cluster_autoscaler_configuration_section_current.required | default(false) | bool or cluster_autoscaler_expected_current) else 'info'),
+            'source': 'cluster autoscaler guidance for Machine API worker pools',
+            'detail': cluster_autoscaler_missing_detail_current,
+            'recommended_action': cluster_autoscaler_recommended_action_current,
+            'docs': ((day2_cluster_autoscaler_configuration_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    cluster_autoscaler_section_override_current: >-
+      {{
+        (day2_cluster_autoscaler_configuration_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (cluster_autoscaler_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'Cluster autoscaler expectation',
+                  'capability_key': 'cluster_autoscaler_configuration',
+                  'detail': 'expected=' ~ (cluster_autoscaler_expected_current | string) ~ ' hostedClusters=' ~ (hostedcluster_count_current | string) ~ ' nodePools=' ~ (nodepool_count_current | string),
+                  'level': ((day2_cluster_autoscaler_configuration_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'cluster autoscaler guidance for Machine API worker pools',
+                  'status': ('OK' if (cluster_autoscaler_expected_current | bool) else 'INFO')
+                },
+                {
+                  'capability': 'Cluster autoscaler resource coverage',
+                  'capability_key': 'cluster_autoscaler_configuration',
+                  'detail': 'clusterAutoscalers=' ~ (clusterautoscaler_count_current | string) ~ ' machineAutoscalers=' ~ (machine_autoscaler_count_current | string) ~ ' hostedClusterAutoscaling=' ~ (hostedcluster_autoscaling_present_current | string) ~ ' nodePoolAutoscaling=' ~ (nodepool_autoscaling_present_current | string),
+                  'level': ((day2_cluster_autoscaler_configuration_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'cluster autoscaler guidance for Machine API worker pools',
+                  'status': (
+                    'OK'
+                    if ((not cluster_autoscaler_expected_current) or (cluster_autoscaler_present_current | bool))
+                    else ('WARN' if (cluster_autoscaler_expected_current | bool or (day2_cluster_autoscaler_configuration_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': cluster_autoscaler_findings_current,
+              'status': cluster_autoscaler_status_current,
+              'top_detail': (
+                cluster_autoscaler_reason_summary_current
+                if (cluster_autoscaler_status_current == 'OK')
+                else cluster_autoscaler_missing_detail_current
+              ),
+              'recommended_action': cluster_autoscaler_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: cluster_autoscaler_configuration
+    capability_artifact_section_override: "{{ cluster_autoscaler_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      platform_status: "{{ day2_cluster_autoscaler_configuration_section_current.status | default('unknown') }}"
-      platform_reason_summary: "{{ day2_cluster_autoscaler_configuration_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (cluster_autoscaler_status_current == 'OK') else 1) | int }}"
+      platform_status: "{{ cluster_autoscaler_status_current }}"
+      platform_reason_summary: "{{ cluster_autoscaler_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_cluster_autoscaler_configuration_section: "{{ day2_cluster_autoscaler_configuration_section_current }}"
+      day2_cluster_autoscaler_configuration_section: "{{ cluster_autoscaler_section_override_current }}"
     capability_artifact_collection_inputs:
-      cluster_autoscaler_present: "{{ ((day2_posture_summary | default({})).get('cluster_autoscaler_present', false)) | bool }}"
-      machine_autoscaler_count: "{{ ((day2_posture_summary | default({})).get('machine_autoscaler_count', 0)) | int }}"
+      cluster_autoscaler_present: "{{ cluster_autoscaler_present_current | bool }}"
+      machine_autoscaler_count: "{{ machine_autoscaler_count_current | int }}"

@@ -4,6 +4,23 @@
     day2_ibm_cloud_pak_business_automation_section_current: "{{ (day2_capability_sections_by_key | default({})).get('ibm_cloud_pak_business_automation', {}) }}"
     ibm_cloud_pak_business_automation_present_current: "{{ ((day2_posture_summary | default({})).get('ibm_cloud_pak_business_automation_present', false)) | bool }}"
     ibm_cloud_pak_business_automation_healthy_current: "{{ ((day2_posture_summary | default({})).get('ibm_cloud_pak_business_automation_healthy', false)) | bool }}"
+    ibm_cp4ba_checks_current:
+      - name: Platform footprint present
+        status: >-
+          {{
+            'OK'
+            if (ibm_cloud_pak_business_automation_present_current | bool)
+            else 'INFO'
+          }}
+        detail: "present={{ (ibm_cloud_pak_business_automation_present_current | bool) | string }}"
+      - name: Platform health signal clean
+        status: >-
+          {{
+            'OK'
+            if (ibm_cloud_pak_business_automation_present_current and ibm_cloud_pak_business_automation_healthy_current)
+            else ('WARN' if (ibm_cloud_pak_business_automation_present_current | bool) else 'INFO')
+          }}
+        detail: "healthy={{ (ibm_cloud_pak_business_automation_healthy_current | bool) | string }}"
     ibm_cp4ba_recommended_action_current: >-
       {{
         'Confirm the CP4BA control-plane footprint remains healthy and aligned with the intended automation and workflow platform design.'
@@ -32,8 +49,9 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
-              'finding_count': (0 if ibm_cloud_pak_business_automation_present_current else 1),
+              'check_count': (ibm_cp4ba_checks_current | length),
+              'finding_count': (ibm_cp4ba_findings_current | length),
+              'checks': ibm_cp4ba_checks_current,
               'findings': ibm_cp4ba_findings_current,
               'status': (
                 'OK'
@@ -56,6 +74,8 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
+      check_count: "{{ (ibm_cp4ba_checks_current | length) | int }}"
+      finding_count: "{{ (ibm_cp4ba_findings_current | length) | int }}"
       ibm_cloud_pak_business_automation_present: "{{ ibm_cloud_pak_business_automation_present_current | bool }}"
       ibm_cloud_pak_business_automation_healthy: "{{ ibm_cloud_pak_business_automation_healthy_current | bool }}"
       status_summary: "{{ ibm_cp4ba_section_override_current.status }}"

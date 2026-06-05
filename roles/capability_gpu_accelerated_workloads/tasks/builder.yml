@@ -2,16 +2,111 @@
 - name: Build GPU accelerated workloads capability artifact facts
   vars:
     day2_gpu_accelerated_workloads_section_current: "{{ (day2_capability_sections_by_key | default({})).get('gpu_accelerated_workloads', {}) }}"
+    gpu_accelerated_workloads_present_current: "{{ ((day2_posture_summary | default({})).get('gpu_accelerated_workloads_present', false)) | bool }}"
+    gpu_accelerated_workloads_healthy_current: "{{ ((day2_posture_summary | default({})).get('gpu_accelerated_workloads_healthy', false)) | bool }}"
+    gpu_accelerated_workloads_required_current: "{{ (day2_gpu_accelerated_workloads_section_current.required | default(false)) | bool }}"
+    gpu_accelerated_workloads_reason_summary_current: >-
+      {{
+        (
+          day2_gpu_accelerated_workloads_section_current.top_detail
+          | default('')
+          | string
+          | trim
+        )
+        or (
+          'footprint_present=' ~ (gpu_accelerated_workloads_present_current | string)
+          ~ ' healthy=' ~ (gpu_accelerated_workloads_healthy_current | string)
+        )
+      }}
+    gpu_accelerated_workloads_recommended_action_current: >-
+      {{
+        'Confirm GPU operator services, node resources, and workload scheduling remain healthy for accelerator-dependent workloads.'
+        if gpu_accelerated_workloads_present_current
+        else 'If GPU workloads are intended, confirm GPU operator footprint, GPU-capable node resources, and the intended accelerator scheduling path.'
+      }}
+    gpu_accelerated_workloads_status_current: >-
+      {{
+        'OK'
+        if (gpu_accelerated_workloads_present_current and gpu_accelerated_workloads_healthy_current)
+        else ('WARNING' if gpu_accelerated_workloads_required_current else 'INFO')
+      }}
+    gpu_accelerated_workloads_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'GPU workload evidence coverage',
+            'capability_key': 'gpu_accelerated_workloads',
+            'detail': (
+              'footprint_present=' ~ (gpu_accelerated_workloads_present_current | string)
+              ~ ' healthy=' ~ (gpu_accelerated_workloads_healthy_current | string)
+            ),
+            'level': ((day2_gpu_accelerated_workloads_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'GPU workload capability summary',
+            'status': ('OK' if (gpu_accelerated_workloads_present_current and gpu_accelerated_workloads_healthy_current) else ('WARN' if gpu_accelerated_workloads_required_current else 'INFO'))
+          },
+          {
+            'capability': 'GPU direct capability mapping',
+            'capability_key': 'gpu_accelerated_workloads',
+            'detail': 'profile enabled; current analyzer does not expose a first-class GPU-specific collected check set',
+            'level': ((day2_gpu_accelerated_workloads_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'GPU workload capability summary',
+            'status': ('INFO' if not gpu_accelerated_workloads_present_current else 'OK')
+          }
+        ]
+      }}
+    gpu_accelerated_workloads_findings_current: >-
+      {{
+        []
+        if (gpu_accelerated_workloads_present_current and gpu_accelerated_workloads_healthy_current)
+        else [
+          {
+            'capability': 'gpu_accelerated_workloads',
+            'issue': 'prod-day2-gpu-workloads-needs-verification',
+            'severity': ('warning' if gpu_accelerated_workloads_required_current else 'info'),
+            'source': 'GPU workload capability summary',
+            'detail': (
+              'no healthy GPU operator or GPU-capable node footprint was confirmed'
+              if not gpu_accelerated_workloads_present_current
+              else 'GPU workload context was detected, but healthy accelerator resources were not confirmed'
+            ),
+            'recommended_action': gpu_accelerated_workloads_recommended_action_current,
+            'docs': ((day2_gpu_accelerated_workloads_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    gpu_accelerated_workloads_section_override_current: >-
+      {{
+        (day2_gpu_accelerated_workloads_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': (gpu_accelerated_workloads_checks_current | length),
+              'finding_count': (gpu_accelerated_workloads_findings_current | length),
+              'checks': gpu_accelerated_workloads_checks_current,
+              'findings': gpu_accelerated_workloads_findings_current,
+              'status': gpu_accelerated_workloads_status_current,
+              'top_detail': gpu_accelerated_workloads_reason_summary_current,
+              'recommended_action': gpu_accelerated_workloads_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: gpu_accelerated_workloads
+    capability_artifact_section_override: "{{ gpu_accelerated_workloads_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      gpu_accelerated_workloads_present: "{{ ((day2_posture_summary | default({})).get('gpu_accelerated_workloads_present', false)) | bool }}"
-      gpu_accelerated_workloads_healthy: "{{ ((day2_posture_summary | default({})).get('gpu_accelerated_workloads_healthy', false)) | bool }}"
-      status_summary: "{{ day2_gpu_accelerated_workloads_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_gpu_accelerated_workloads_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: "{{ (gpu_accelerated_workloads_checks_current | length) | int }}"
+      finding_count: "{{ (gpu_accelerated_workloads_findings_current | length) | int }}"
+      gpu_accelerated_workloads_present: "{{ gpu_accelerated_workloads_present_current | bool }}"
+      gpu_accelerated_workloads_healthy: "{{ gpu_accelerated_workloads_healthy_current | bool }}"
+      status_summary: "{{ gpu_accelerated_workloads_section_override_current.status }}"
+      reason_summary: "{{ gpu_accelerated_workloads_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_gpu_accelerated_workloads_section: "{{ day2_gpu_accelerated_workloads_section_current }}"
+      day2_gpu_accelerated_workloads_section: "{{ gpu_accelerated_workloads_section_override_current }}"
     capability_artifact_collection_inputs:
-      gpu_accelerated_workloads_present: "{{ ((day2_posture_summary | default({})).get('gpu_accelerated_workloads_present', false)) | bool }}"
-      gpu_accelerated_workloads_healthy: "{{ ((day2_posture_summary | default({})).get('gpu_accelerated_workloads_healthy', false)) | bool }}"
+      gpu_accelerated_workloads_present: "{{ gpu_accelerated_workloads_present_current | bool }}"
+      gpu_accelerated_workloads_healthy: "{{ gpu_accelerated_workloads_healthy_current | bool }}"

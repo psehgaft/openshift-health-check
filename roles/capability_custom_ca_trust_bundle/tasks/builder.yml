@@ -12,30 +12,135 @@
     custom_ca_no_proxy_entries_current: "{{ ((custom_ca_proxy_spec_current.noProxy | default('')).split(',') | map('trim') | reject('equalto', '') | list) if ((custom_ca_proxy_spec_current.noProxy | default('') | length) > 0) else [] }}"
     custom_ca_missing_no_proxy_current: "{{ ['.svc', '.cluster.local'] | difference(custom_ca_no_proxy_entries_current | default([])) if (custom_ca_cluster_proxy_configured_current | bool) else [] }}"
     custom_ca_trusted_configured_current: "{{ ((custom_ca_proxy_trusted_ca_name_current | length) > 0) or ((custom_ca_image_trusted_ca_name_current | length) > 0) }}"
-    custom_ca_status_current: "{{ 'OK' if custom_ca_trusted_configured_current else 'WARNING' }}"
-    custom_ca_reason_current: >-
+    custom_ca_status_current: >-
       {{
-        (
-          custom_ca_day2_section_current.top_detail
-          | default('')
-          | string
-          | trim
-        )
-        or (
-          'proxyConfigured=' ~ (custom_ca_cluster_proxy_configured_current | string)
-          ~ ', proxyTrustedCA=' ~ ((custom_ca_proxy_trusted_ca_name_current | string) or 'none')
-          ~ ', imageAdditionalTrustedCA=' ~ ((custom_ca_image_trusted_ca_name_current | string) or 'none')
-          ~ ', missingNoProxy=' ~ ((custom_ca_missing_no_proxy_current | join(',')) or 'none')
-        )
+        'OK'
+        if (custom_ca_trusted_configured_current | bool)
+        else ('WARNING' if (custom_ca_day2_section_current.required | default(false) | bool) else 'INFO')
+      }}
+    custom_ca_reason_summary_current: >-
+      {{
+        'proxyConfigured=' ~ (custom_ca_cluster_proxy_configured_current | string)
+        ~ ' proxyTrustedCA=' ~ ((custom_ca_proxy_trusted_ca_name_current | string) or 'none')
+        ~ ' imageAdditionalTrustedCA=' ~ ((custom_ca_image_trusted_ca_name_current | string) or 'none')
+        ~ ' missingNoProxy=' ~ ((custom_ca_missing_no_proxy_current | join(',')) or 'none')
+      }}
+    custom_ca_proxy_reference_detail_current: >-
+      {{
+        'proxy.config.openshift.io/cluster.spec.trustedCA.name='
+        ~ ((custom_ca_proxy_trusted_ca_name_current | string) or 'none')
+      }}
+    custom_ca_image_reference_detail_current: >-
+      {{
+        'image.config.openshift.io/cluster.spec.additionalTrustedCA.name='
+        ~ ((custom_ca_image_trusted_ca_name_current | string) or 'none')
+      }}
+    custom_ca_proxy_context_detail_current: >-
+      {{
+        'clusterProxyConfigured=' ~ (custom_ca_cluster_proxy_configured_current | string)
+        ~ ' missingInternalNoProxy=' ~ ((custom_ca_missing_no_proxy_current | join(',')) or 'none')
+      }}
+    custom_ca_missing_detail_current: >-
+      {{
+        'cluster-wide proxy is configured, but neither proxy.config.openshift.io/cluster.spec.trustedCA nor image.config.openshift.io/cluster.spec.additionalTrustedCA references a ConfigMap'
+        if (custom_ca_cluster_proxy_configured_current | bool)
+        else 'neither proxy.config.openshift.io/cluster.spec.trustedCA nor image.config.openshift.io/cluster.spec.additionalTrustedCA references a ConfigMap'
+      }}
+    custom_ca_recommended_action_current: >-
+      {{
+        'Keep the enterprise trust-bundle references aligned with the workloads and platform components that depend on them.'
+        if (custom_ca_trusted_configured_current | bool)
+        else 'Reference the intended custom trust bundle ConfigMap through proxy.config.openshift.io/cluster.spec.trustedCA and/or image.config.openshift.io/cluster.spec.additionalTrustedCA before treating enterprise outbound TLS trust as healthy.'
+      }}
+    custom_ca_findings_current: >-
+      {{
+        []
+        if (custom_ca_trusted_configured_current | bool)
+        else [
+          {
+            'capability': 'custom_ca_trust_bundle',
+            'issue': 'prod-day2-custom-ca-trust-missing',
+            'severity': ('warning' if (custom_ca_day2_section_current.required | default(false) | bool) else 'info'),
+            'source': 'OpenShift Proxy and Image trust configuration',
+            'detail': custom_ca_missing_detail_current,
+            'recommended_action': custom_ca_recommended_action_current,
+            'docs': ((custom_ca_day2_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    custom_ca_section_override_current: >-
+      {{
+        (custom_ca_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (0 if (custom_ca_trusted_configured_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'Custom trust bundle proxy reference',
+                  'capability_key': 'custom_ca_trust_bundle',
+                  'detail': custom_ca_proxy_reference_detail_current,
+                  'level': ((custom_ca_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift Proxy and Image trust configuration',
+                  'status': (
+                    'OK'
+                    if (custom_ca_proxy_trusted_ca_name_current | length) > 0
+                    else ('WARN' if (custom_ca_cluster_proxy_configured_current | bool) and (custom_ca_day2_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'Custom trust bundle image reference',
+                  'capability_key': 'custom_ca_trust_bundle',
+                  'detail': custom_ca_image_reference_detail_current,
+                  'level': ((custom_ca_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift Proxy and Image trust configuration',
+                  'status': (
+                    'OK'
+                    if (custom_ca_image_trusted_ca_name_current | length) > 0
+                    else ('WARN' if (custom_ca_day2_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'Custom trust bundle proxy context',
+                  'capability_key': 'custom_ca_trust_bundle',
+                  'detail': custom_ca_proxy_context_detail_current,
+                  'level': ((custom_ca_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift Proxy and Image trust configuration',
+                  'status': (
+                    'OK'
+                    if (custom_ca_trusted_configured_current | bool)
+                    else ('WARN' if (custom_ca_cluster_proxy_configured_current | bool) and (custom_ca_day2_section_current.required | default(false) | bool) else 'INFO')
+                  )
+                }
+              ],
+              'findings': custom_ca_findings_current,
+              'status': custom_ca_status_current,
+              'top_detail': (
+                custom_ca_reason_summary_current
+                if (custom_ca_trusted_configured_current | bool)
+                else custom_ca_missing_detail_current
+              ),
+              'recommended_action': custom_ca_recommended_action_current
+            },
+            recursive=True
+          )
       }}
   ansible.builtin.set_fact:
     capability_artifact_key: custom_ca_trust_bundle
+    capability_artifact_section_override: "{{ custom_ca_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       network_architecture_status: "{{ custom_ca_status_current }}"
-      network_architecture_reason_summary: "{{ custom_ca_reason_current }}"
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (0 if (custom_ca_trusted_configured_current | bool) else 1) | int }}"
+      network_architecture_reason_summary: "{{ custom_ca_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_custom_ca_trust_bundle_section: "{{ custom_ca_day2_section_current }}"
+      day2_custom_ca_trust_bundle_section: "{{ custom_ca_section_override_current }}"
       proxy_config: "{{ (analysis_graph | default({})).get('proxy_config', {}) }}"
       image_config: "{{ (analysis_graph | default({})).get('image_config', {}) }}"
     capability_artifact_collection_inputs:

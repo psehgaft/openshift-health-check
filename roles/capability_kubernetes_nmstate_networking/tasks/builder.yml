@@ -2,18 +2,119 @@
 - name: Build Kubernetes NMState networking capability artifact facts
   vars:
     day2_kubernetes_nmstate_networking_section_current: "{{ (day2_capability_sections_by_key | default({})).get('kubernetes_nmstate_networking', {}) }}"
+    kubernetes_nmstate_networking_present_current: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_present', false)) | bool }}"
+    kubernetes_nmstate_networking_healthy_current: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_healthy', false)) | bool }}"
+    kubernetes_nmstate_networking_context_present_current: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_context_present', false)) | bool }}"
+    kubernetes_nmstate_nmstate_count_current: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_nmstate_count', 0)) | int }}"
+    kubernetes_nmstate_nodenetworkconfigurationpolicy_count_current: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_nodenetworkconfigurationpolicy_count', 0)) | int }}"
+    kubernetes_nmstate_ready_nodenetworkconfigurationpolicy_count_current: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_ready_nodenetworkconfigurationpolicy_count', 0)) | int }}"
+    kubernetes_nmstate_nodenetworkstate_count_current: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_nodenetworkstate_count', 0)) | int }}"
+    kubernetes_nmstate_networking_status_current: >-
+      {{
+        'OK'
+        if (kubernetes_nmstate_networking_healthy_current | bool)
+        else ('WARNING' if ((kubernetes_nmstate_networking_context_present_current | bool) or (day2_kubernetes_nmstate_networking_section_current.required | default(false) | bool)) else 'INFO')
+      }}
+    kubernetes_nmstate_networking_reason_summary_current: >-
+      {{
+        'nmstates=' ~ (kubernetes_nmstate_nmstate_count_current | string)
+        ~ ' nodeNetworkConfigurationPolicies=' ~ (kubernetes_nmstate_nodenetworkconfigurationpolicy_count_current | string)
+        ~ ' readyNodeNetworkConfigurationPolicies=' ~ (kubernetes_nmstate_ready_nodenetworkconfigurationpolicy_count_current | string)
+        ~ ' nodeNetworkStates=' ~ (kubernetes_nmstate_nodenetworkstate_count_current | string)
+        ~ ' contextPresent=' ~ (kubernetes_nmstate_networking_context_present_current | string)
+      }}
+    kubernetes_nmstate_networking_missing_detail_current: >-
+      {{
+        'Kubernetes NMState resources were detected, but the current assessment still marks them unhealthy'
+        if (kubernetes_nmstate_networking_present_current | bool)
+        else (
+          'Kubernetes NMState footprint was detected, but no NMState or NodeNetworkConfigurationPolicy resource was found to show managed node-network intent'
+          if (kubernetes_nmstate_networking_context_present_current | bool)
+          else 'no supported Kubernetes NMState footprint was detected'
+        )
+      }}
+    kubernetes_nmstate_networking_recommended_action_current: >-
+      {{
+        'Keep NMState and NodeNetworkConfigurationPolicy coverage aligned with intended node-network management.'
+        if (kubernetes_nmstate_networking_status_current == 'OK')
+        else 'Review Kubernetes NMState operator coverage and ensure NMState or NodeNetworkConfigurationPolicy resources clearly express the intended managed node-network configuration.'
+      }}
+    kubernetes_nmstate_networking_findings_current: >-
+      {{
+        []
+        if (kubernetes_nmstate_networking_status_current == 'OK')
+        else [
+          {
+            'capability': 'kubernetes_nmstate_networking',
+            'issue': 'prod-day2-kubernetes-nmstate-networking-missing',
+            'severity': ('warning' if ((kubernetes_nmstate_networking_context_present_current | bool) or (day2_kubernetes_nmstate_networking_section_current.required | default(false) | bool)) else 'info'),
+            'source': 'Kubernetes NMState inventory',
+            'detail': kubernetes_nmstate_networking_missing_detail_current,
+            'recommended_action': kubernetes_nmstate_networking_recommended_action_current,
+            'docs': ((day2_kubernetes_nmstate_networking_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    kubernetes_nmstate_networking_section_override_current: >-
+      {{
+        (day2_kubernetes_nmstate_networking_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 2,
+              'finding_count': (0 if (kubernetes_nmstate_networking_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'Kubernetes NMState networking context',
+                  'capability_key': 'kubernetes_nmstate_networking',
+                  'detail': 'contextPresent=' ~ (kubernetes_nmstate_networking_context_present_current | string),
+                  'level': ((day2_kubernetes_nmstate_networking_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Kubernetes NMState inventory',
+                  'status': ('OK' if (kubernetes_nmstate_networking_context_present_current | bool) else 'INFO')
+                },
+                {
+                  'capability': 'Kubernetes NMState resource coverage',
+                  'capability_key': 'kubernetes_nmstate_networking',
+                  'detail': kubernetes_nmstate_networking_reason_summary_current,
+                  'level': ((day2_kubernetes_nmstate_networking_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Kubernetes NMState inventory',
+                  'status': (
+                    'OK'
+                    if (kubernetes_nmstate_networking_healthy_current | bool)
+                    else ('WARN' if ((kubernetes_nmstate_networking_context_present_current | bool) or (day2_kubernetes_nmstate_networking_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': kubernetes_nmstate_networking_findings_current,
+              'status': kubernetes_nmstate_networking_status_current,
+              'top_detail': (
+                kubernetes_nmstate_networking_reason_summary_current
+                if (kubernetes_nmstate_networking_status_current == 'OK')
+                else kubernetes_nmstate_networking_missing_detail_current
+              ),
+              'recommended_action': kubernetes_nmstate_networking_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: kubernetes_nmstate_networking
+    capability_artifact_section_override: "{{ kubernetes_nmstate_networking_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      kubernetes_nmstate_networking_present: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_present', false)) | bool }}"
-      kubernetes_nmstate_networking_healthy: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_healthy', false)) | bool }}"
-      kubernetes_nmstate_networking_context_present: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_context_present', false)) | bool }}"
-      status_summary: "{{ day2_kubernetes_nmstate_networking_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_kubernetes_nmstate_networking_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 2
+      finding_count: "{{ (0 if (kubernetes_nmstate_networking_status_current == 'OK') else 1) | int }}"
+      kubernetes_nmstate_networking_present: "{{ kubernetes_nmstate_networking_present_current | bool }}"
+      kubernetes_nmstate_networking_healthy: "{{ kubernetes_nmstate_networking_healthy_current | bool }}"
+      kubernetes_nmstate_networking_context_present: "{{ kubernetes_nmstate_networking_context_present_current | bool }}"
+      status_summary: "{{ kubernetes_nmstate_networking_status_current }}"
+      reason_summary: "{{ kubernetes_nmstate_networking_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_kubernetes_nmstate_networking_section: "{{ day2_kubernetes_nmstate_networking_section_current }}"
+      day2_kubernetes_nmstate_networking_section: "{{ kubernetes_nmstate_networking_section_override_current }}"
     capability_artifact_collection_inputs:
-      kubernetes_nmstate_networking_present: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_present', false)) | bool }}"
-      kubernetes_nmstate_networking_healthy: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_healthy', false)) | bool }}"
-      kubernetes_nmstate_networking_context_present: "{{ ((day2_posture_summary | default({})).get('kubernetes_nmstate_networking_context_present', false)) | bool }}"
+      kubernetes_nmstate_networking_present: "{{ kubernetes_nmstate_networking_present_current | bool }}"
+      kubernetes_nmstate_networking_healthy: "{{ kubernetes_nmstate_networking_healthy_current | bool }}"
+      kubernetes_nmstate_networking_context_present: "{{ kubernetes_nmstate_networking_context_present_current | bool }}"

@@ -5,6 +5,23 @@
     openshift_aap_present_current: "{{ ((day2_posture_summary | default({})).get('openshift_aap_present', false)) | bool }}"
     openshift_aap_missing_status_current: "{{ 'WARNING' if (day2_openshift_aap_section_current.required | default(false) | bool) else 'INFO' }}"
     openshift_aap_missing_severity_current: "{{ 'warning' if (day2_openshift_aap_section_current.required | default(false) | bool) else 'info' }}"
+    openshift_aap_checks_current:
+      - name: Operator or control-plane footprint present
+        status: >-
+          {{
+            'OK'
+            if (openshift_aap_present_current | bool)
+            else ('WARN' if (day2_openshift_aap_section_current.required | default(false) | bool) else 'INFO')
+          }}
+        detail: "present={{ (openshift_aap_present_current | bool) | string }}"
+      - name: Managed workload footprint present
+        status: >-
+          {{
+            'OK'
+            if (openshift_aap_present_current | bool)
+            else ('WARN' if (day2_openshift_aap_section_current.required | default(false) | bool) else 'INFO')
+          }}
+        detail: "managedWorkloadPresent={{ (openshift_aap_present_current | bool) | string }}"
     openshift_aap_recommended_action_current: >-
       {{
         'Confirm the Ansible Automation Platform footprint remains healthy and aligned with the intended automation control-plane design.'
@@ -33,8 +50,9 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
-              'finding_count': (0 if openshift_aap_present_current else 1),
+              'check_count': (openshift_aap_checks_current | length),
+              'finding_count': (openshift_aap_findings_current | length),
+              'checks': openshift_aap_checks_current,
               'findings': openshift_aap_findings_current,
               'status': ('OK' if openshift_aap_present_current else openshift_aap_missing_status_current),
               'top_detail': (
@@ -53,6 +71,8 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
+      check_count: "{{ (openshift_aap_checks_current | length) | int }}"
+      finding_count: "{{ (openshift_aap_findings_current | length) | int }}"
       openshift_aap_present: "{{ openshift_aap_present_current | bool }}"
       status_summary: "{{ openshift_aap_section_override_current.status }}"
       reason_summary: "{{ openshift_aap_section_override_current.top_detail }}"
