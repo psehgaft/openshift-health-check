@@ -4,6 +4,8 @@
     declarative_gitops_day2_section_current: "{{ (day2_capability_sections_by_key | default({})).get('declarative_gitops_operations', {}) }}"
     declarative_gitops_required_current: "{{ (((cluster_health_profile | default({})).get('capabilities', {})).get('declarative_gitops_operations', {})).get('required', false) | bool }}"
     declarative_gitops_present_current: "{{ ((day2_posture_summary | default({})).get('gitops_present', false)) | bool }}"
+    declarative_gitops_controller_context_present_current: "{{ ((day2_posture_summary | default({})).get('gitops_controller_context_present', false)) | bool }}"
+    declarative_gitops_application_configuration_present_current: "{{ ((day2_posture_summary | default({})).get('gitops_application_configuration_present', false)) | bool }}"
     declarative_gitops_operational_current: "{{ ((day2_posture_summary | default({})).get('gitops_operational', false)) | bool }}"
     declarative_gitops_automated_sync_present_current: "{{ ((day2_posture_summary | default({})).get('gitops_automated_sync_present', false)) | bool }}"
     declarative_gitops_argocd_count_current: "{{ ((day2_posture_summary | default({})).get('argocd_count', 0)) | int }}"
@@ -18,7 +20,7 @@
         else (
           'WARNING'
           if (
-            (declarative_gitops_application_count_current == 0)
+            (not declarative_gitops_application_configuration_present_current)
             or (not declarative_gitops_operational_current)
             or (
               (declarative_gitops_application_count_current > 0)
@@ -28,34 +30,125 @@
           else 'OK'
         )
       }}
-    declarative_gitops_reason_current: >-
+    declarative_gitops_context_detail_current: >-
       {{
-        (
-          declarative_gitops_day2_section_current.top_detail
-          | default('')
-          | string
-          | trim
-        )
-        or (
-          'present=' ~ (declarative_gitops_present_current | string)
-          ~ ', operational=' ~ (declarative_gitops_operational_current | string)
-          ~ ', argocds=' ~ (declarative_gitops_argocd_count_current | string)
-          ~ ', applications=' ~ (declarative_gitops_application_count_current | string)
-          ~ ', repoBacked=' ~ (declarative_gitops_repo_backed_application_count_current | string)
-          ~ ', automatedSync=' ~ (declarative_gitops_automated_sync_application_count_current | string)
-          ~ ', appProjects=' ~ (declarative_gitops_appproject_count_current | string)
-        )
+        'argocds=' ~ (declarative_gitops_argocd_count_current | string)
+        ~ ' appProjects=' ~ (declarative_gitops_appproject_count_current | string)
+      }}
+    declarative_gitops_configuration_detail_current: >-
+      {{
+        'applications=' ~ (declarative_gitops_application_count_current | string)
+        ~ ' repoBacked=' ~ (declarative_gitops_repo_backed_application_count_current | string)
+      }}
+    declarative_gitops_reconciliation_detail_current: >-
+      {{
+        'operational=' ~ (declarative_gitops_operational_current | string)
+        ~ ' automatedSync=' ~ (declarative_gitops_automated_sync_application_count_current | string)
+      }}
+    declarative_gitops_reason_current: "{{ declarative_gitops_context_detail_current ~ ' ' ~ declarative_gitops_configuration_detail_current ~ ' ' ~ declarative_gitops_reconciliation_detail_current }}"
+    declarative_gitops_findings_current: >-
+      {{
+        []
+        if (declarative_gitops_status_current == 'OK')
+        else [
+          {
+            'capability': 'declarative_gitops_operations',
+            'issue': (
+              'prod-day2-gitops-missing'
+              if not declarative_gitops_present_current
+              else (
+                'prod-day2-gitops-applications-missing'
+                if not declarative_gitops_application_configuration_present_current
+                else (
+                  'prod-day2-gitops-automated-sync-missing'
+                  if not declarative_gitops_automated_sync_present_current
+                  else 'prod-day2-gitops-applications-unhealthy'
+                )
+              )
+            ),
+            'severity': ('warning' if declarative_gitops_required_current else 'info'),
+            'source': 'GitOps resource inventory',
+            'detail': (
+              'no Argo CD controller context or declarative application inventory was detected'
+              if not declarative_gitops_present_current
+              else (
+                'GitOps controller context was detected, but no repo-backed declarative applications were found'
+                if not declarative_gitops_application_configuration_present_current
+                else (
+                  'repo-backed GitOps applications were found, but automated sync was not configured'
+                  if not declarative_gitops_automated_sync_present_current
+                  else 'repo-backed GitOps applications were found, but not all were healthy and synced'
+                )
+              )
+            )
+          }
+        ]
+      }}
+    declarative_gitops_section_override_current: >-
+      {{
+        (declarative_gitops_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (0 if (declarative_gitops_status_current == 'OK') else 1),
+              'checks': [
+                {
+                  'capability': 'GitOps controller or chart context',
+                  'capability_key': 'declarative_gitops_operations',
+                  'detail': declarative_gitops_context_detail_current,
+                  'level': ((declarative_gitops_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'GitOps resource inventory',
+                  'status': ('OK' if (declarative_gitops_controller_context_present_current | bool) else ('WARN' if declarative_gitops_required_current else 'INFO'))
+                },
+                {
+                  'capability': 'GitOps declarative application configuration',
+                  'capability_key': 'declarative_gitops_operations',
+                  'detail': declarative_gitops_configuration_detail_current,
+                  'level': ((declarative_gitops_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'GitOps resource inventory',
+                  'status': ('OK' if (declarative_gitops_application_configuration_present_current | bool) else ('WARN' if ((declarative_gitops_controller_context_present_current | bool) or declarative_gitops_required_current) else 'INFO'))
+                },
+                {
+                  'capability': 'GitOps reconciliation health and automation',
+                  'capability_key': 'declarative_gitops_operations',
+                  'detail': declarative_gitops_reconciliation_detail_current,
+                  'level': ((declarative_gitops_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'GitOps resource inventory',
+                  'status': ('OK' if ((declarative_gitops_operational_current | bool) and (declarative_gitops_automated_sync_present_current | bool)) else ('WARN' if (declarative_gitops_present_current or declarative_gitops_required_current) else 'INFO'))
+                }
+              ],
+              'findings': declarative_gitops_findings_current,
+              'status': declarative_gitops_status_current,
+              'top_detail': declarative_gitops_reason_current,
+              'recommended_action': (
+                'Confirm GitOps controller health, repo-backed applications, and automated reconciliation remain in service.'
+                if (declarative_gitops_status_current == 'OK')
+                else 'If GitOps is intended, confirm the controller rollout, repo-backed application definitions, and automated reconciliation state.'
+              )
+            },
+            recursive=True
+          )
       }}
   ansible.builtin.set_fact:
     capability_artifact_key: declarative_gitops_operations
+    capability_artifact_section_override: "{{ declarative_gitops_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (0 if (declarative_gitops_status_current == 'OK') else 1) | int }}"
       declarative_operations_status: "{{ declarative_gitops_status_current }}"
       declarative_operations_reason_summary: "{{ declarative_gitops_reason_current }}"
     capability_artifact_render_inputs:
-      day2_declarative_gitops_operations_section: "{{ declarative_gitops_day2_section_current }}"
+      day2_declarative_gitops_operations_section: "{{ declarative_gitops_section_override_current }}"
     capability_artifact_collection_inputs:
       gitops_present: "{{ declarative_gitops_present_current | bool }}"
+      gitops_controller_context_present: "{{ declarative_gitops_controller_context_present_current | bool }}"
+      gitops_application_configuration_present: "{{ declarative_gitops_application_configuration_present_current | bool }}"
       gitops_operational: "{{ declarative_gitops_operational_current | bool }}"
       gitops_automated_sync_present: "{{ declarative_gitops_automated_sync_present_current | bool }}"
       argocd_count: "{{ declarative_gitops_argocd_count_current | int }}"

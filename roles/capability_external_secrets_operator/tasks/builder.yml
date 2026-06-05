@@ -2,24 +2,148 @@
 - name: Build external secrets operator capability artifact facts
   vars:
     day2_external_secrets_operator_section_current: "{{ (day2_capability_sections_by_key | default({})).get('external_secrets_operator', {}) }}"
+    ext_secret_store_count_current: "{{ ((day2_posture_summary | default({})).get('external_secret_store_count', 0)) | int }}"
+    ext_secret_count_current: "{{ ((day2_posture_summary | default({})).get('external_secret_count', 0)) | int }}"
+    ext_secret_ready_store_count_current: "{{ ((day2_posture_summary | default({})).get('external_secret_ready_store_count', 0)) | int }}"
+    ext_secret_ready_count_current: "{{ ((day2_posture_summary | default({})).get('external_secret_ready_count', 0)) | int }}"
+    ext_secrets_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_subscription_present', false)) | bool }}"
+    ext_secrets_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_namespace_present', false)) | bool }}"
+    ext_secrets_crd_present_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_crd_present', false)) | bool }}"
+    ext_secrets_operator_workload_present_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_operator_workload_present', false)) | bool }}"
+    ext_secrets_context_present_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_context_present', false)) | bool }}"
+    ext_secrets_configuration_present_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_configuration_present', false)) | bool }}"
+    ext_secrets_managed_sync_present_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_managed_sync_present', false)) | bool }}"
+    ext_secrets_healthy_current: "{{ ((day2_posture_summary | default({})).get('external_secrets_healthy', false)) | bool }}"
+    ext_secrets_required_current: "{{ (day2_external_secrets_operator_section_current.required | default(false)) | bool }}"
+    ext_secrets_gap_status_current: "{{ 'WARNING' if ((ext_secrets_context_present_current | bool) or (ext_secrets_required_current | bool)) else 'INFO' }}"
+    ext_secrets_gap_check_status_current: "{{ 'WARN' if ((ext_secrets_context_present_current | bool) or (ext_secrets_required_current | bool)) else 'INFO' }}"
+    ext_secrets_gap_severity_current: "{{ 'warning' if ((ext_secrets_context_present_current | bool) or (ext_secrets_required_current | bool)) else 'info' }}"
+    ext_secrets_present_current: "{{ ((ext_secrets_context_present_current | bool) or (ext_secrets_configuration_present_current | bool) or (ext_secrets_managed_sync_present_current | bool)) | bool }}"
+    ext_secrets_context_detail_current: >-
+      {{
+        'subscription_present=' ~ (ext_secrets_subscription_present_current | string)
+        ~ ' namespace_present=' ~ (ext_secrets_namespace_present_current | string)
+        ~ ' crd_present=' ~ (ext_secrets_crd_present_current | string)
+        ~ ' operator_workload_present=' ~ (ext_secrets_operator_workload_present_current | string)
+      }}
+    ext_secrets_configuration_detail_current: >-
+      {{
+        'clustersecretstores_and_secretstores=' ~ (ext_secret_store_count_current | string)
+        ~ ' externalsecrets=' ~ (ext_secret_count_current | string)
+      }}
+    ext_secrets_sync_detail_current: >-
+      {{
+        'ready_stores=' ~ (ext_secret_ready_store_count_current | string) ~ '/' ~ (ext_secret_store_count_current | string)
+        ~ ' ready_externalsecrets=' ~ (ext_secret_ready_count_current | string) ~ '/' ~ (ext_secret_count_current | string)
+      }}
+    ext_secrets_reason_summary_current: "{{ ext_secrets_context_detail_current ~ ' ' ~ ext_secrets_configuration_detail_current ~ ' ' ~ ext_secrets_sync_detail_current }}"
+    ext_secrets_missing_detail_current: >-
+      {{
+        'External Secrets Operator context was detected, but required store or ExternalSecret configuration is incomplete or not reconciling cleanly'
+        if (ext_secrets_context_present_current | bool)
+        else (
+          'External secret store and sync configuration was detected, but no External Secrets Operator context or active secret synchronization footprint was confirmed'
+          if (ext_secrets_configuration_present_current | bool)
+          else 'no External Secrets Operator context, store configuration, or active secret synchronization footprint was detected'
+        )
+      }}
+    ext_secrets_recommended_action_current: >-
+      {{
+        'Confirm External Secrets Operator continues reconciling secret stores and ExternalSecret resources successfully.'
+        if (ext_secrets_healthy_current | bool)
+        else (
+          'External Secrets Operator context was detected, but required store or ExternalSecret configuration is incomplete or not reconciling cleanly. Confirm the operator rollout, store definitions, and ExternalSecret synchronization state.'
+          if (ext_secrets_context_present_current | bool)
+          else 'If External Secrets Operator is intended, deploy the operator, define store and ExternalSecret resources, and confirm active secret synchronization.'
+        )
+      }}
+    ext_secrets_findings_current: >-
+      {{
+        []
+        if (ext_secrets_healthy_current | bool)
+        else [
+          {
+            'capability': 'external_secrets_operator',
+            'issue': 'prod-day2-external-secrets-missing',
+            'severity': ext_secrets_gap_severity_current,
+            'source': 'external secrets integration guidance',
+            'detail': ext_secrets_missing_detail_current,
+            'recommended_action': ext_secrets_recommended_action_current,
+            'docs': ((day2_external_secrets_operator_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    ext_secrets_section_override_current: >-
+      {{
+        (day2_external_secrets_operator_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (0 if (ext_secrets_healthy_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'External Secrets Operator context',
+                  'capability_key': 'external_secrets_operator',
+                  'detail': ext_secrets_context_detail_current,
+                  'level': ((day2_external_secrets_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'external secrets integration guidance',
+                  'status': ('OK' if (ext_secrets_context_present_current | bool) else ext_secrets_gap_check_status_current)
+                },
+                {
+                  'capability': 'External secret store and sync configuration',
+                  'capability_key': 'external_secrets_operator',
+                  'detail': ext_secrets_configuration_detail_current,
+                  'level': ((day2_external_secrets_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'external secrets integration guidance',
+                  'status': ('OK' if (ext_secrets_configuration_present_current | bool) else ('WARN' if ((ext_secrets_context_present_current | bool) or (ext_secrets_required_current | bool)) else 'INFO'))
+                },
+                {
+                  'capability': 'External secret managed sync footprint',
+                  'capability_key': 'external_secrets_operator',
+                  'detail': ext_secrets_sync_detail_current,
+                  'level': ((day2_external_secrets_operator_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'external secrets integration guidance',
+                  'status': ('OK' if (ext_secrets_healthy_current | bool) else ('WARN' if ((ext_secrets_configuration_present_current | bool) or (ext_secrets_required_current | bool)) else 'INFO'))
+                }
+              ],
+              'findings': ext_secrets_findings_current,
+              'status': ('OK' if (ext_secrets_healthy_current | bool) else ext_secrets_gap_status_current),
+              'top_detail': (
+                ext_secrets_reason_summary_current
+                if (ext_secrets_healthy_current | bool)
+                else ext_secrets_missing_detail_current
+              ),
+              'recommended_action': ext_secrets_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: external_secrets_operator
+    capability_artifact_section_override: "{{ ext_secrets_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      external_secret_store_count: "{{ ((day2_posture_summary | default({})).get('external_secret_store_count', 0)) | int }}"
-      external_secret_count: "{{ ((day2_posture_summary | default({})).get('external_secret_count', 0)) | int }}"
-      external_secret_ready_store_count: "{{ ((day2_posture_summary | default({})).get('external_secret_ready_store_count', 0)) | int }}"
-      external_secret_ready_count: "{{ ((day2_posture_summary | default({})).get('external_secret_ready_count', 0)) | int }}"
-      external_secrets_namespace_present: "{{ ((day2_posture_summary | default({})).get('external_secrets_namespace_present', false)) | bool }}"
-      external_secrets_healthy: "{{ ((day2_posture_summary | default({})).get('external_secrets_healthy', false)) | bool }}"
-      status_summary: "{{ day2_external_secrets_operator_section_current.status | default('unknown') }}"
-      reason_summary: "{{ day2_external_secrets_operator_section_current.top_detail | default('unknown') }}"
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (0 if (ext_secrets_healthy_current | bool) else 1) | int }}"
+      external_secret_store_count: "{{ ext_secret_store_count_current | int }}"
+      external_secret_count: "{{ ext_secret_count_current | int }}"
+      external_secret_ready_store_count: "{{ ext_secret_ready_store_count_current | int }}"
+      external_secret_ready_count: "{{ ext_secret_ready_count_current | int }}"
+      external_secrets_namespace_present: "{{ ext_secrets_namespace_present_current | bool }}"
+      external_secrets_healthy: "{{ ext_secrets_healthy_current | bool }}"
+      status_summary: "{{ ext_secrets_section_override_current.status | default('unknown') }}"
+      reason_summary: "{{ ext_secrets_section_override_current.top_detail | default('unknown') }}"
     capability_artifact_render_inputs:
-      day2_external_secrets_operator_section: "{{ day2_external_secrets_operator_section_current }}"
+      day2_external_secrets_operator_section: "{{ ext_secrets_section_override_current }}"
     capability_artifact_collection_inputs:
-      external_secret_store_count: "{{ ((day2_posture_summary | default({})).get('external_secret_store_count', 0)) | int }}"
-      external_secret_count: "{{ ((day2_posture_summary | default({})).get('external_secret_count', 0)) | int }}"
-      external_secret_ready_store_count: "{{ ((day2_posture_summary | default({})).get('external_secret_ready_store_count', 0)) | int }}"
-      external_secret_ready_count: "{{ ((day2_posture_summary | default({})).get('external_secret_ready_count', 0)) | int }}"
-      external_secrets_namespace_present: "{{ ((day2_posture_summary | default({})).get('external_secrets_namespace_present', false)) | bool }}"
-      external_secrets_healthy: "{{ ((day2_posture_summary | default({})).get('external_secrets_healthy', false)) | bool }}"
+      external_secret_store_count: "{{ ext_secret_store_count_current | int }}"
+      external_secret_count: "{{ ext_secret_count_current | int }}"
+      external_secret_ready_store_count: "{{ ext_secret_ready_store_count_current | int }}"
+      external_secret_ready_count: "{{ ext_secret_ready_count_current | int }}"
+      external_secrets_namespace_present: "{{ ext_secrets_namespace_present_current | bool }}"
+      external_secrets_healthy: "{{ ext_secrets_healthy_current | bool }}"

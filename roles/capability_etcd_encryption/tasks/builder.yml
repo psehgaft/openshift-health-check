@@ -1,25 +1,154 @@
 ---
 - name: Build etcd encryption capability artifact facts
   vars:
+    day2_etcd_encryption_section_current: "{{ (day2_capability_sections_by_key | default({})).get('etcd_encryption', {}) }}"
     etcd_encryption_enabled_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption', false)) | bool }}"
     etcd_encryption_complete_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption_complete', false)) | bool }}"
     etcd_encryption_type_current: "{{ (day2_posture_summary | default({})).get('etcd_encryption_type', 'unknown') }}"
     etcd_encryption_reported_component_count_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption_reported_component_count', 0)) | int }}"
     etcd_encryption_completed_component_count_current: "{{ ((day2_posture_summary | default({})).get('etcd_encryption_completed_component_count', 0)) | int }}"
-    etcd_encryption_status_current: "{{ 'OK' if (etcd_encryption_enabled_current and etcd_encryption_complete_current) else 'WARNING' }}"
-    etcd_encryption_reason_current: >-
+    etcd_encryption_expected_component_count_current: 3
+    etcd_encryption_status_current: >-
+      {{
+        'OK'
+        if (etcd_encryption_enabled_current and etcd_encryption_complete_current)
+        else ('WARNING' if (day2_etcd_encryption_section_current.required | default(false) | bool) else 'INFO')
+      }}
+    etcd_encryption_reason_summary_current: >-
       {{
         'apiserver_encryption_type=' ~ etcd_encryption_type_current
         ~ ' reportedComponents=' ~ (etcd_encryption_reported_component_count_current | string)
         ~ ' completedComponents=' ~ (etcd_encryption_completed_component_count_current | string)
       }}
+    etcd_encryption_configuration_detail_current: >-
+      {{
+        'apiserver.config.openshift.io/cluster.spec.encryption.type=' ~ etcd_encryption_type_current
+      }}
+    etcd_encryption_rollout_evidence_detail_current: >-
+      {{
+        'reportedComponents=' ~ (etcd_encryption_reported_component_count_current | string)
+        ~ '/' ~ (etcd_encryption_expected_component_count_current | string)
+      }}
+    etcd_encryption_rollout_completion_detail_current: >-
+      {{
+        'completedComponents=' ~ (etcd_encryption_completed_component_count_current | string)
+        ~ '/' ~ (etcd_encryption_expected_component_count_current | string)
+      }}
+    etcd_encryption_missing_detail_current: >-
+      {{
+        'apiserver.config.openshift.io/cluster.spec.encryption.type is not set to aescbc or aesgcm'
+        if not (etcd_encryption_enabled_current | bool)
+        else (
+          'etcd encryption is configured, but no rollout status was reported by openshift-apiserver, kube-apiserver, or authentication resources'
+          if (etcd_encryption_reported_component_count_current | int) == 0
+          else (
+            'etcd encryption is configured but rollout is not completed across the reported API server components'
+            ~ '; reportedComponents=' ~ (etcd_encryption_reported_component_count_current | string)
+            ~ '/' ~ (etcd_encryption_expected_component_count_current | string)
+            ~ ' completedComponents=' ~ (etcd_encryption_completed_component_count_current | string)
+            ~ '/' ~ (etcd_encryption_expected_component_count_current | string)
+          )
+        )
+      }}
+    etcd_encryption_recommended_action_current: >-
+      {{
+        'Confirm APIServer encryption remains enabled and all rollout-status resources continue to report encrypted completion.'
+        if (etcd_encryption_enabled_current and etcd_encryption_complete_current)
+        else (
+          'Set apiserver.config.openshift.io/cluster.spec.encryption.type to a supported encrypted mode such as aescbc or aesgcm, then confirm rollout completion in openshift-apiserver, kube-apiserver, and authentication.'
+          if not (etcd_encryption_enabled_current | bool)
+          else 'Confirm the encryption rollout completes across openshift-apiserver, kube-apiserver, and authentication, and collect their Encrypted status conditions in the next report run.'
+        )
+      }}
+    etcd_encryption_findings_current: >-
+      {{
+        []
+        if (etcd_encryption_enabled_current and etcd_encryption_complete_current)
+        else [
+          {
+            'capability': 'etcd_encryption',
+            'issue': (
+              'prod-day2-etcd-encryption-not-enabled'
+              if not (etcd_encryption_enabled_current | bool)
+              else 'prod-day2-etcd-encryption-rollout-incomplete'
+            ),
+            'severity': ('warning' if (day2_etcd_encryption_section_current.required | default(false) | bool) else 'info'),
+            'source': 'OpenShift APIServer etcd encryption configuration',
+            'detail': etcd_encryption_missing_detail_current,
+            'recommended_action': etcd_encryption_recommended_action_current,
+            'docs': ((day2_etcd_encryption_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    etcd_encryption_section_override_current: >-
+      {{
+        (day2_etcd_encryption_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (0 if (etcd_encryption_enabled_current and etcd_encryption_complete_current) else 1),
+              'checks': [
+                {
+                  'capability': 'APIServer etcd encryption configuration',
+                  'capability_key': 'etcd_encryption',
+                  'detail': etcd_encryption_configuration_detail_current,
+                  'level': ((day2_etcd_encryption_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift APIServer etcd encryption configuration',
+                  'status': ('OK' if (etcd_encryption_enabled_current | bool) else ('WARN' if (day2_etcd_encryption_section_current.required | default(false) | bool) else 'INFO'))
+                },
+                {
+                  'capability': 'etcd encryption rollout evidence',
+                  'capability_key': 'etcd_encryption',
+                  'detail': etcd_encryption_rollout_evidence_detail_current,
+                  'level': ((day2_etcd_encryption_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift APIServer etcd encryption configuration',
+                  'status': (
+                    'OK'
+                    if ((etcd_encryption_enabled_current | bool) and (etcd_encryption_reported_component_count_current | int) > 0)
+                    else ('WARN' if (etcd_encryption_enabled_current | bool) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'etcd encryption rollout completion',
+                  'capability_key': 'etcd_encryption',
+                  'detail': etcd_encryption_rollout_completion_detail_current,
+                  'level': ((day2_etcd_encryption_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OpenShift APIServer etcd encryption configuration',
+                  'status': (
+                    'OK'
+                    if (etcd_encryption_enabled_current and etcd_encryption_complete_current)
+                    else ('WARN' if (etcd_encryption_enabled_current | bool) else 'INFO')
+                  )
+                }
+              ],
+              'findings': etcd_encryption_findings_current,
+              'status': etcd_encryption_status_current,
+              'top_detail': (
+                etcd_encryption_reason_summary_current
+                if (etcd_encryption_enabled_current and etcd_encryption_complete_current)
+                else etcd_encryption_missing_detail_current
+              ),
+              'recommended_action': etcd_encryption_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: etcd_encryption
+    capability_artifact_section_override: "{{ etcd_encryption_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (0 if (etcd_encryption_enabled_current and etcd_encryption_complete_current) else 1) | int }}"
       security_governance_status: "{{ etcd_encryption_status_current }}"
-      security_governance_reason_summary: "{{ etcd_encryption_reason_current }}"
+      security_governance_reason_summary: "{{ etcd_encryption_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
+      day2_etcd_encryption_section: "{{ etcd_encryption_section_override_current }}"
       analysis_graph:
         apiserver_config: "{{ (analysis_graph | default({})).get('apiserver_config', {}) }}"
         openshift_apiserver: "{{ (analysis_graph | default({})).get('openshift_apiserver', {}) }}"

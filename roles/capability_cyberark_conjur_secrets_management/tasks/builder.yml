@@ -36,49 +36,146 @@
       {{ matches.count }}
 
 - name: Build CyberArk Conjur secrets management capability artifact facts
+  vars:
+    conjur_present_current: >-
+      {{
+        (day2_posture_summary | default({})).get(
+          'cyberark_conjur_present',
+          (
+            (cyberark_conjur_direct_namespace_present | bool)
+            or (cyberark_conjur_direct_workload_present | bool)
+            or ((cyberark_conjur_direct_secretproviderclass_count | int) > 0)
+          )
+        ) | bool
+      }}
+    conjur_context_present_current: >-
+      {{
+        (day2_posture_summary | default({})).get(
+          'cyberark_conjur_context_present',
+          (
+            (cyberark_conjur_direct_namespace_present | bool)
+            or (cyberark_conjur_direct_workload_present | bool)
+            or ((cyberark_conjur_direct_secretproviderclass_count | int) > 0)
+          )
+        ) | bool
+      }}
+    conjur_healthy_current: >-
+      {{
+        (day2_posture_summary | default({})).get(
+          'cyberark_conjur_healthy',
+          (
+            (cyberark_conjur_direct_workload_present | bool)
+            or ((cyberark_conjur_direct_secretproviderclass_count | int) > 0)
+          )
+        ) | bool
+      }}
+    conjur_namespace_present_current: "{{ (day2_posture_summary | default({})).get('cyberark_conjur_namespace_present', (cyberark_conjur_direct_namespace_present | bool)) | bool }}"
+    conjur_workload_present_current: "{{ (day2_posture_summary | default({})).get('cyberark_conjur_workload_present', (cyberark_conjur_direct_workload_present | bool)) | bool }}"
+    conjur_secretproviderclass_count_current: "{{ (day2_posture_summary | default({})).get('cyberark_conjur_secretproviderclass_count', (cyberark_conjur_direct_secretproviderclass_count | int)) | int }}"
+    conjur_required_current: "{{ (((cluster_health_profile | default({})).get('capabilities', {})).get('cyberark_conjur_secrets_management', {})).get('required', false) | bool }}"
+    conjur_gap_status_current: "{{ 'WARNING' if ((conjur_context_present_current | bool) or (conjur_required_current | bool)) else 'INFO' }}"
+    conjur_gap_check_status_current: "{{ 'WARN' if ((conjur_context_present_current | bool) or (conjur_required_current | bool)) else 'INFO' }}"
+    conjur_gap_severity_current: "{{ 'warning' if ((conjur_context_present_current | bool) or (conjur_required_current | bool)) else 'info' }}"
+    conjur_context_detail_current: >-
+      {{
+        'namespace_present=' ~ (conjur_namespace_present_current | string)
+        ~ ' secretproviderclasses=' ~ (conjur_secretproviderclass_count_current | string)
+        ~ ' workload_present=' ~ (conjur_workload_present_current | string)
+      }}
+    conjur_configuration_detail_current: "{{ 'conjur_secretproviderclasses=' ~ (conjur_secretproviderclass_count_current | string) }}"
+    conjur_workload_detail_current: "{{ 'workload_present=' ~ (conjur_workload_present_current | string) }}"
+    conjur_recommended_action_current: >-
+      {{
+        'Confirm the Conjur secret-delivery path remains active for the intended workloads.'
+        if (conjur_healthy_current | bool)
+        else (
+          'Conjur deployment context was detected, but no Conjur-backed SecretProviderClass configuration or managed Conjur workload footprint was confirmed. Review Conjur server, authenticator, CSI provider, or application-facing secret delivery rollout.'
+          if (conjur_context_present_current | bool)
+          else 'If CyberArk Conjur is intended, deploy the Conjur components and confirm an application-facing secret delivery configuration and workload footprint.'
+        )
+      }}
+    conjur_findings_current: >-
+      {{
+        []
+        if (conjur_healthy_current | bool)
+        else [
+          {
+            'capability': 'cyberark_conjur_secrets_management',
+            'issue': 'prod-day2-cyberark-conjur-secrets-management-missing',
+            'severity': conjur_gap_severity_current,
+            'source': 'CyberArk Conjur workload and Secrets Provider inventory',
+            'detail': (
+              'Conjur deployment context was detected, but no Conjur-backed SecretProviderClass configuration or managed Conjur workload footprint was confirmed'
+              if (conjur_context_present_current | bool)
+              else 'no Conjur deployment context, secret delivery configuration, or managed workload footprint was detected'
+            ),
+            'recommended_action': conjur_recommended_action_current
+          }
+        ]
+      }}
+    conjur_section_override_current: >-
+      {{
+        {
+          'accounting_state': 'assessed',
+          'check_count': 3,
+          'finding_count': (0 if (conjur_healthy_current | bool) else 1),
+          'checks': [
+            {
+              'capability': 'CyberArk Conjur deployment context',
+              'capability_key': 'cyberark_conjur_secrets_management',
+              'detail': conjur_context_detail_current,
+              'level': 'medium',
+              'scored': false,
+              'source': 'CyberArk Conjur workload and Secrets Provider inventory',
+              'status': ('OK' if (conjur_context_present_current | bool) else conjur_gap_check_status_current)
+            },
+            {
+              'capability': 'Conjur-backed secret delivery configuration',
+              'capability_key': 'cyberark_conjur_secrets_management',
+              'detail': conjur_configuration_detail_current,
+              'level': 'medium',
+              'scored': false,
+              'source': 'CyberArk Conjur workload and Secrets Provider inventory',
+              'status': ('OK' if ((conjur_secretproviderclass_count_current | int) > 0) else ('WARN' if ((conjur_context_present_current | bool) or (conjur_required_current | bool)) else 'INFO'))
+            },
+            {
+              'capability': 'CyberArk Conjur managed workload footprint',
+              'capability_key': 'cyberark_conjur_secrets_management',
+              'detail': conjur_workload_detail_current,
+              'level': 'medium',
+              'scored': false,
+              'source': 'CyberArk Conjur workload and Secrets Provider inventory',
+              'status': ('OK' if (conjur_workload_present_current | bool) else ('WARN' if ((conjur_context_present_current | bool) or (conjur_required_current | bool)) else 'INFO'))
+            }
+          ],
+          'findings': conjur_findings_current,
+          'status': ('OK' if (conjur_healthy_current | bool) else conjur_gap_status_current),
+          'top_detail': (
+            conjur_context_detail_current ~ ' ' ~ conjur_configuration_detail_current ~ ' ' ~ conjur_workload_detail_current
+            if (conjur_healthy_current | bool)
+            else (
+              'Conjur deployment context was detected, but no Conjur-backed SecretProviderClass configuration or managed Conjur workload footprint was confirmed'
+              if (conjur_context_present_current | bool)
+              else 'no Conjur deployment context, secret delivery configuration, or managed workload footprint was detected'
+            )
+          ),
+          'recommended_action': conjur_recommended_action_current
+        }
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: cyberark_conjur_secrets_management
+    capability_artifact_section_override: "{{ conjur_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      cyberark_conjur_present: >-
-        {{
-          (day2_posture_summary | default({})).get(
-            'cyberark_conjur_present',
-            (
-              (cyberark_conjur_direct_namespace_present | bool)
-              or (cyberark_conjur_direct_workload_present | bool)
-              or ((cyberark_conjur_direct_secretproviderclass_count | int) > 0)
-            )
-          ) | bool
-        }}
-      cyberark_conjur_healthy: >-
-        {{
-          (day2_posture_summary | default({})).get(
-            'cyberark_conjur_healthy',
-            (
-              (cyberark_conjur_direct_workload_present | bool)
-              or ((cyberark_conjur_direct_secretproviderclass_count | int) > 0)
-            )
-          ) | bool
-        }}
-      conjur_secretproviderclass_count: >-
-        {{
-          (day2_posture_summary | default({})).get(
-            'cyberark_conjur_secretproviderclass_count',
-            (cyberark_conjur_direct_secretproviderclass_count | int)
-          ) | int
-        }}
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (0 if (conjur_healthy_current | bool) else 1) | int }}"
+      cyberark_conjur_present: "{{ conjur_present_current | bool }}"
+      cyberark_conjur_healthy: "{{ conjur_healthy_current | bool }}"
+      conjur_secretproviderclass_count: "{{ conjur_secretproviderclass_count_current | int }}"
     capability_artifact_render_inputs:
-      conjur_namespace_present: >-
-        {{ (day2_posture_summary | default({})).get('cyberark_conjur_namespace_present', (cyberark_conjur_direct_namespace_present | bool)) | bool }}
-      conjur_workload_present: >-
-        {{ (day2_posture_summary | default({})).get('cyberark_conjur_workload_present', (cyberark_conjur_direct_workload_present | bool)) | bool }}
-      conjur_secretproviderclass_count: >-
-        {{ (day2_posture_summary | default({})).get('cyberark_conjur_secretproviderclass_count', (cyberark_conjur_direct_secretproviderclass_count | int)) | int }}
+      day2_cyberark_conjur_secrets_management_section: "{{ conjur_section_override_current }}"
     capability_artifact_collection_inputs:
-      conjur_namespace_present: >-
-        {{ (day2_posture_summary | default({})).get('cyberark_conjur_namespace_present', (cyberark_conjur_direct_namespace_present | bool)) | bool }}
-      conjur_workload_present: >-
-        {{ (day2_posture_summary | default({})).get('cyberark_conjur_workload_present', (cyberark_conjur_direct_workload_present | bool)) | bool }}
-      conjur_secretproviderclass_count: >-
-        {{ (day2_posture_summary | default({})).get('cyberark_conjur_secretproviderclass_count', (cyberark_conjur_direct_secretproviderclass_count | int)) | int }}
+      conjur_namespace_present: "{{ conjur_namespace_present_current | bool }}"
+      conjur_workload_present: "{{ conjur_workload_present_current | bool }}"
+      conjur_secretproviderclass_count: "{{ conjur_secretproviderclass_count_current | int }}"

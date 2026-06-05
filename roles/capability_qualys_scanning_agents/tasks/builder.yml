@@ -5,25 +5,43 @@
     qualys_subscription_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_subscription_present', false)) | bool }}"
     qualys_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_namespace_present', false)) | bool }}"
     qualys_crd_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_crd_present', false)) | bool }}"
+    qualys_operator_workload_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_operator_workload_present', false)) | bool }}"
     qualys_workload_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_workload_present', false)) | bool }}"
-    qualys_context_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_scanning_agents_context_present', false) or qualys_subscription_present_current or qualys_namespace_present_current or qualys_crd_present_current) | bool }}"
+    qualys_k8s_mode_arg_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_k8s_mode_arg_present', false)) | bool }}"
+    qualys_privileged_security_context_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_privileged_security_context_present', false)) | bool }}"
+    qualys_service_account_config_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_service_account_config_present', false)) | bool }}"
+    qualys_activation_config_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_activation_config_present', false)) | bool }}"
+    qualys_required_deployment_configuration_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_required_deployment_configuration_present', false)) | bool }}"
+    qualys_context_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_scanning_agents_context_present', false) or qualys_subscription_present_current or qualys_namespace_present_current or qualys_crd_present_current or qualys_operator_workload_present_current or qualys_workload_present_current) | bool }}"
     qualys_present_current: "{{ ((day2_posture_summary | default({})).get('qualys_scanning_agents_present', false) or qualys_workload_present_current) | bool }}"
     qualys_required_current: "{{ (day2_qualys_scanning_agents_section_current.required | default(false)) | bool }}"
     qualys_gap_check_status_current: "{{ 'WARN' if (qualys_required_current | bool) else 'INFO' }}"
     qualys_gap_severity_current: "{{ 'warning' if (qualys_required_current | bool) else 'info' }}"
-    qualys_reason_summary_current: >-
+    qualys_context_detail_current: >-
       {{
         'subscription_present=' ~ (qualys_subscription_present_current | string)
         ~ ' namespace_present=' ~ (qualys_namespace_present_current | string)
         ~ ' crd_present=' ~ (qualys_crd_present_current | string)
-        ~ ' context_present=' ~ (qualys_context_present_current | string)
-        ~ ' workload_present=' ~ (qualys_workload_present_current | string)
+        ~ ' operator_workload_present=' ~ (qualys_operator_workload_present_current | string)
       }}
+    qualys_configuration_detail_current: >-
+      {{
+        'k8s_mode_arg_present=' ~ (qualys_k8s_mode_arg_present_current | string)
+        ~ ' privileged_security_context_present=' ~ (qualys_privileged_security_context_present_current | string)
+        ~ ' service_account_config_present=' ~ (qualys_service_account_config_present_current | string)
+        ~ ' activation_config_present=' ~ (qualys_activation_config_present_current | string)
+      }}
+    qualys_workload_detail_current: "{{ 'workload_present=' ~ (qualys_workload_present_current | string) }}"
+    qualys_reason_summary_current: "{{ qualys_context_detail_current ~ ' ' ~ qualys_configuration_detail_current ~ ' ' ~ qualys_workload_detail_current }}"
     qualys_recommended_action_current: >-
       {{
-        'Confirm the Qualys agent footprint is healthy and that the intended collection and reporting path remains in service.'
+        'Confirm the Qualys scanner footprint is healthy and that the intended sensor coverage remains in service.'
         if qualys_present_current
-        else 'If Qualys scanning is intended, deploy or confirm the Qualys container sensor or cloud-agent workload footprint. Operator, namespace, or CRD context alone is not treated as active scanning coverage.'
+        else (
+          'Qualys operator or chart context was detected, but the documented deployment configuration for a Qualys OpenShift sensor could not be confirmed. Review the DaemonSet or unified Helm deployment for the required --k8s-mode arguments, service account, privileged security context, and activation settings, then confirm active sensor rollout.'
+          if qualys_context_present_current
+          else 'If Qualys scanning is intended, deploy the documented OpenShift sensor path with the required deployment configuration and confirm active managed scanner workloads.'
+        )
       }}
     qualys_findings_current: >-
       {{
@@ -35,7 +53,11 @@
             'issue': 'prod-day2-qualys-scanning-agents-missing',
             'severity': qualys_gap_severity_current,
             'source': 'Qualys agent inventory',
-            'detail': 'no Qualys container sensor or cloud-agent workload footprint was detected; operator, namespace, or CRD context alone is not treated as active scanning coverage',
+            'detail': (
+              'Qualys operator or chart context was detected, but the documented deployment configuration for a Qualys OpenShift sensor could not be confirmed and no managed scanner workload footprint was detected'
+              if qualys_context_present_current
+              else 'no Qualys documented deployment configuration or managed scanner workload footprint was detected'
+            ),
             'recommended_action': qualys_recommended_action_current,
             'docs': ((day2_qualys_scanning_agents_section_current.docs | default([])) | string)
           }
@@ -47,25 +69,47 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
+              'check_count': 3,
               'finding_count': (0 if qualys_present_current else 1),
               'checks': [
                 {
-                  'capability': 'Qualys scanning agent footprint',
+                  'capability': 'Qualys operator or chart context',
                   'capability_key': 'qualys_scanning_agents',
-                  'detail': qualys_reason_summary_current,
+                  'detail': qualys_context_detail_current,
                   'level': ((day2_qualys_scanning_agents_section_current.criticality | default('medium')) | string),
                   'scored': false,
                   'source': 'Qualys agent inventory',
-                  'status': ('OK' if qualys_present_current else qualys_gap_check_status_current)
-                }
+                  'status': ('OK' if qualys_context_present_current else qualys_gap_check_status_current)
+                },
+                {
+                  'capability': 'Qualys required deployment configuration',
+                  'capability_key': 'qualys_scanning_agents',
+                  'detail': qualys_configuration_detail_current,
+                  'level': ((day2_qualys_scanning_agents_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Qualys agent inventory',
+                  'status': ('OK' if qualys_required_deployment_configuration_present_current else ('WARN' if (qualys_context_present_current or qualys_required_current) else 'INFO'))
+                },
+                {
+                  'capability': 'Qualys managed workload footprint',
+                  'capability_key': 'qualys_scanning_agents',
+                  'detail': qualys_workload_detail_current,
+                  'level': ((day2_qualys_scanning_agents_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Qualys agent inventory',
+                  'status': ('OK' if qualys_workload_present_current else ('WARN' if (qualys_context_present_current or qualys_required_current) else 'INFO'))
+                },
               ],
               'findings': qualys_findings_current,
               'status': ('OK' if qualys_present_current else 'INFO'),
               'top_detail': (
                 qualys_reason_summary_current
                 if qualys_present_current
-                else 'no Qualys container sensor or cloud-agent workload footprint was detected'
+                else (
+                  'Qualys operator or chart context was detected, but the documented deployment configuration for a Qualys OpenShift sensor could not be confirmed and no managed scanner workload footprint was detected'
+                  if qualys_context_present_current
+                  else 'no Qualys documented deployment configuration or managed scanner workload footprint was detected'
+                )
               ),
               'recommended_action': qualys_recommended_action_current
             },
@@ -78,12 +122,14 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
-      check_count: 1
+      check_count: 3
       finding_count: "{{ (0 if qualys_present_current else 1) | int }}"
       subscription_present: "{{ qualys_subscription_present_current | bool }}"
       namespace_present: "{{ qualys_namespace_present_current | bool }}"
       crd_present: "{{ qualys_crd_present_current | bool }}"
+      operator_workload_present: "{{ qualys_operator_workload_present_current | bool }}"
       context_present: "{{ qualys_context_present_current | bool }}"
+      configuration_present: "{{ qualys_required_deployment_configuration_present_current | bool }}"
       workload_present: "{{ qualys_workload_present_current | bool }}"
       status: "{{ 'OK' if qualys_present_current else 'INFO' }}"
       status_summary: "{{ 'OK' if qualys_present_current else 'INFO' }}"
@@ -95,5 +141,11 @@
       subscription_present: "{{ qualys_subscription_present_current | bool }}"
       namespace_present: "{{ qualys_namespace_present_current | bool }}"
       crd_present: "{{ qualys_crd_present_current | bool }}"
+      operator_workload_present: "{{ qualys_operator_workload_present_current | bool }}"
       context_present: "{{ qualys_context_present_current | bool }}"
+      k8s_mode_arg_present: "{{ qualys_k8s_mode_arg_present_current | bool }}"
+      privileged_security_context_present: "{{ qualys_privileged_security_context_present_current | bool }}"
+      service_account_config_present: "{{ qualys_service_account_config_present_current | bool }}"
+      activation_config_present: "{{ qualys_activation_config_present_current | bool }}"
+      required_deployment_configuration_present: "{{ qualys_required_deployment_configuration_present_current | bool }}"
       workload_present: "{{ qualys_workload_present_current | bool }}"

@@ -2,56 +2,40 @@
 - name: Build Splunk observability capability artifact facts
   vars:
     day2_splunk_observability_section_current: "{{ (day2_capability_sections_by_key | default({})).get('splunk_observability', {}) }}"
-    splunk_crd_present_current: >-
-      {{
-        (
-          ((analysis_graph.crds | default({})).get('items', []) | default([]))
-          | selectattr('metadata', 'defined')
-          | selectattr('metadata.name', 'defined')
-          | map(attribute='metadata.name')
-          | map('string')
-          | map('lower')
-          | select('search', 'enterprise\\.splunk\\.com|monitoring\\.splunk\\.com|collectors\\.splunk\\.com|opentelemetrycollectors\\.opentelemetry\\.io|otelcollectors\\.opentelemetry\\.io')
-          | list
-          | length
-        ) > 0
-      }}
-    splunk_namespace_present_current: "{{ ('splunk' in (namespace_names | default([]))) | bool }}"
-    splunk_workload_present_current: >-
-      {{
-        (
-          (all_workload_blobs | default([]))
-          | map('string')
-          | map('lower')
-          | select('search', 'splunk-otel-collector|splunk-connect-for-kubernetes|splunk-cluster-receiver|splunk-kubernetes-objects|splunk-enterprise|splunk-indexer|splunk-search-head|signalfx-agent|splunk-otel-agent|splunk-otel-k8s-cluster-receiver|splunk-otel-operator')
-          | list
-          | length
-        ) > 0
-      }}
-    splunk_observability_present_current: "{{ splunk_workload_present_current | bool }}"
+    splunk_namespace_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_namespace_present', false)) | bool }}"
+    splunk_crd_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_crd_present', false)) | bool }}"
+    splunk_operator_workload_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_operator_workload_present', false)) | bool }}"
+    splunk_workload_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_workload_present', false)) | bool }}"
+    splunk_cluster_name_config_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_cluster_name_config_present', false)) | bool }}"
+    splunk_destination_config_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_destination_config_present', false)) | bool }}"
+    splunk_required_deployment_configuration_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_required_deployment_configuration_present', false)) | bool }}"
+    splunk_context_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_context_present', false) or splunk_namespace_present_current or splunk_crd_present_current or splunk_operator_workload_present_current or splunk_workload_present_current) | bool }}"
+    splunk_observability_present_current: "{{ ((day2_posture_summary | default({})).get('splunk_observability_present', false) or splunk_workload_present_current) | bool }}"
     splunk_missing_status_current: "{{ 'WARNING' if (day2_splunk_observability_section_current.required | default(false) | bool) else 'INFO' }}"
     splunk_missing_check_status_current: "{{ 'WARN' if (day2_splunk_observability_section_current.required | default(false) | bool) else 'INFO' }}"
     splunk_missing_severity_current: "{{ 'warning' if (day2_splunk_observability_section_current.required | default(false) | bool) else 'info' }}"
-    splunk_reason_summary_current: >-
+    splunk_context_detail_current: >-
       {{
-        (
-          'cluster meets criteria for Splunk-managed observability: '
-          ~ 'namespace_present=' ~ ((splunk_namespace_present_current | bool) | string)
-          ~ ' crd_present=' ~ ((splunk_crd_present_current | bool) | string)
-          ~ ' workload_present=' ~ ((splunk_workload_present_current | bool) | string)
-        )
-        if (splunk_observability_present_current | bool)
-        else (
-          'namespace_present=' ~ ((splunk_namespace_present_current | bool) | string)
-          ~ ' crd_present=' ~ ((splunk_crd_present_current | bool) | string)
-          ~ ' workload_present=' ~ ((splunk_workload_present_current | bool) | string)
-        )
+        'namespace_present=' ~ ((splunk_namespace_present_current | bool) | string)
+        ~ ' crd_present=' ~ ((splunk_crd_present_current | bool) | string)
+        ~ ' operator_workload_present=' ~ ((splunk_operator_workload_present_current | bool) | string)
       }}
+    splunk_configuration_detail_current: >-
+      {{
+        'cluster_name_config_present=' ~ ((splunk_cluster_name_config_present_current | bool) | string)
+        ~ ' destination_config_present=' ~ ((splunk_destination_config_present_current | bool) | string)
+      }}
+    splunk_workload_detail_current: "{{ 'workload_present=' ~ ((splunk_workload_present_current | bool) | string) }}"
+    splunk_reason_summary_current: "{{ splunk_context_detail_current ~ ' ' ~ splunk_configuration_detail_current ~ ' ' ~ splunk_workload_detail_current }}"
     splunk_recommended_action_current: >-
       {{
-        'Validate that cluster metrics, logs, and alerting signals reach Splunk through the intended collector and delivery path.'
+        'Validate that cluster metrics, logs, and traces reach Splunk through the intended telemetry path.'
         if (splunk_observability_present_current | bool)
-        else 'If Splunk-managed observability is intended, confirm the OpenTelemetry or Splunk workload footprint and the expected telemetry delivery path.'
+        else (
+          'Splunk operator or chart context was detected, but the documented deployment configuration for Splunk OpenTelemetry on OpenShift could not be confirmed. Review the Helm or operator-backed deployment for clusterName and destination settings, then confirm active collector rollout.'
+          if (splunk_context_present_current | bool)
+          else 'If Splunk-managed observability is intended, deploy the documented Helm or operator-backed collector path with clusterName and destination settings, then confirm active managed collector workloads.'
+        )
       }}
     splunk_findings_current: >-
       {{
@@ -63,7 +47,11 @@
             'issue': 'prod-day2-splunk-observability-missing',
             'severity': splunk_missing_severity_current,
             'source': 'Splunk OpenTelemetry and logging inventory',
-            'detail': 'no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was detected',
+            'detail': (
+              'Splunk operator or chart context was detected, but the documented deployment configuration for Splunk OpenTelemetry on OpenShift could not be confirmed and no managed collector workload footprint was detected'
+              if (splunk_context_present_current | bool)
+              else 'no Splunk documented deployment configuration or managed collector workload footprint was detected'
+            ),
             'recommended_action': splunk_recommended_action_current,
             'docs': ((day2_splunk_observability_section_current.docs | default([])) | string)
           }
@@ -75,25 +63,47 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
+              'check_count': 3,
               'finding_count': (0 if (splunk_observability_present_current | bool) else 1),
               'checks': [
                 {
-                  'capability': 'Splunk observability footprint',
+                  'capability': 'Splunk operator or chart context',
                   'capability_key': 'splunk_observability',
-                  'detail': splunk_reason_summary_current,
+                  'detail': splunk_context_detail_current,
                   'level': ((day2_splunk_observability_section_current.criticality | default('medium')) | string),
                   'scored': false,
                   'source': 'Splunk OpenTelemetry and logging inventory',
-                  'status': ('OK' if (splunk_observability_present_current | bool) else splunk_missing_check_status_current)
-                }
+                  'status': ('OK' if (splunk_context_present_current | bool) else splunk_missing_check_status_current)
+                },
+                {
+                  'capability': 'Splunk required deployment configuration',
+                  'capability_key': 'splunk_observability',
+                  'detail': splunk_configuration_detail_current,
+                  'level': ((day2_splunk_observability_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Splunk OpenTelemetry and logging inventory',
+                  'status': ('OK' if (splunk_required_deployment_configuration_present_current | bool) else ('WARN' if ((splunk_context_present_current | bool) or (day2_splunk_observability_section_current.required | default(false) | bool)) else 'INFO'))
+                },
+                {
+                  'capability': 'Splunk managed workload footprint',
+                  'capability_key': 'splunk_observability',
+                  'detail': splunk_workload_detail_current,
+                  'level': ((day2_splunk_observability_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'Splunk OpenTelemetry and logging inventory',
+                  'status': ('OK' if (splunk_workload_present_current | bool) else ('WARN' if ((splunk_context_present_current | bool) or (day2_splunk_observability_section_current.required | default(false) | bool)) else 'INFO'))
+                },
               ],
               'findings': splunk_findings_current,
               'status': ('OK' if (splunk_observability_present_current | bool) else splunk_missing_status_current),
               'top_detail': (
                 splunk_reason_summary_current
                 if (splunk_observability_present_current | bool)
-                else 'no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was detected'
+                else (
+                  'Splunk operator or chart context was detected, but the documented deployment configuration for Splunk OpenTelemetry on OpenShift could not be confirmed and no managed collector workload footprint was detected'
+                  if (splunk_context_present_current | bool)
+                  else 'no Splunk documented deployment configuration or managed collector workload footprint was detected'
+                )
               ),
               'recommended_action': splunk_recommended_action_current
             },
@@ -106,7 +116,7 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
-      check_count: 1
+      check_count: 3
       finding_count: "{{ (0 if (splunk_observability_present_current | bool) else 1) | int }}"
       status: "{{ 'OK' if (splunk_observability_present_current | bool) else splunk_missing_status_current }}"
       status_summary: "{{ 'OK' if (splunk_observability_present_current | bool) else splunk_missing_status_current }}"
@@ -117,4 +127,8 @@
     capability_artifact_collection_inputs:
       splunk_namespace_present: "{{ splunk_namespace_present_current | bool }}"
       splunk_crd_present: "{{ splunk_crd_present_current | bool }}"
+      splunk_operator_workload_present: "{{ splunk_operator_workload_present_current | bool }}"
       splunk_workload_present: "{{ splunk_workload_present_current | bool }}"
+      splunk_cluster_name_config_present: "{{ splunk_cluster_name_config_present_current | bool }}"
+      splunk_destination_config_present: "{{ splunk_destination_config_present_current | bool }}"
+      splunk_required_deployment_configuration_present: "{{ splunk_required_deployment_configuration_present_current | bool }}"

@@ -558,6 +558,14 @@ def image_registry(image):
 
 all_workloads = pods + deployments + statefulsets + daemonsets
 all_workload_blobs = [text_blob(item) for item in all_workloads]
+all_workload_object_blobs = [
+    json.dumps(item, sort_keys=True, default=str).lower()
+    for item in all_workloads
+]
+all_configuration_object_blobs = all_workload_object_blobs + [
+    json.dumps(item, sort_keys=True, default=str).lower()
+    for item in configmaps + secrets + serviceaccounts
+]
 backup_provider_inventory_blobs = all_workload_blobs + [
     json.dumps(item, sort_keys=True, default=str).lower()
     for item in namespaces + subscriptions + crds + serviceaccounts + rolebindings + clusterrolebindings
@@ -816,16 +824,47 @@ dynatrace_observability_present = bool(
 qualys_subscription_present = "qualys-cloud-agent-operator" in subscription_packages
 qualys_namespace_present = "qualys" in namespace_names or "qualys-agent" in namespace_names
 qualys_crd_present = crd_has("qualys")
+qualys_operator_workload_present = any_keyword(
+    [
+        "qualys-cloud-agent-operator",
+    ],
+    all_workload_blobs,
+)
 qualys_workload_present = any_keyword(
     [
-        "qualys",
         "qualys-cloud-agent",
         "qualys-agent",
         "qualys-container-sensor",
         "qcs-sensor",
         "qualys/qcs-sensor",
+        "cluster-sensor",
+        "qualys/cluster-sensor",
     ],
     all_workload_blobs,
+)
+qualys_k8s_mode_arg_present = any(
+    any(token in blob for token in ['"--k8s-mode"', '"--registry-sensor"', '"--cicd-deployed-sensor"', '"--sensor-without-persistent-storage"'])
+    for blob in all_workload_object_blobs
+)
+qualys_privileged_security_context_present = any(
+    '"privileged": true' in blob
+    for blob in all_workload_object_blobs
+)
+qualys_service_account_config_present = any(
+    '"serviceaccountname": "qualysuser"' in blob or '"serviceaccountname": "qualys' in blob
+    for blob in all_workload_object_blobs
+)
+qualys_activation_config_present = any(
+    any(token in blob for token in ["activationid", "customerid", "activation id", "customer id"])
+    for blob in all_configuration_object_blobs
+)
+qualys_required_deployment_configuration_present = bool(
+    qualys_k8s_mode_arg_present
+    and (
+        qualys_privileged_security_context_present
+        or qualys_service_account_config_present
+        or qualys_activation_config_present
+    )
 )
 qualys_scanning_agents_present = bool(
     qualys_workload_present
@@ -834,6 +873,30 @@ qualys_scanning_agents_context_present = bool(
     qualys_subscription_present
     or qualys_namespace_present
     or qualys_crd_present
+    or qualys_operator_workload_present
+    or qualys_workload_present
+)
+trivy_subscription_present = "trivy-operator" in subscription_packages
+trivy_namespace_present = "trivy-system" in namespace_names or "starboard-system" in namespace_names
+trivy_crd_present = crd_has(
+    "vulnerabilityreports.aquasecurity.github.io",
+    "configauditreports.aquasecurity.github.io",
+    "rbacassessmentreports.aquasecurity.github.io",
+    "exposedsecretreports.aquasecurity.github.io",
+    "clustercompliancereports.aquasecurity.github.io",
+)
+trivy_workload_present = any_keyword(
+    [
+        "trivy-operator",
+        "starboard",
+        "trivy-scanner",
+    ],
+    all_workload_blobs,
+)
+trivy_operator_context_present = bool(
+    trivy_subscription_present
+    or trivy_namespace_present
+    or trivy_crd_present
 )
 prisma_subscription_present = "prisma-cloud-compute" in subscription_packages or "prisma-cloud-operator" in subscription_packages
 prisma_namespace_present = "twistlock" in namespace_names or "prisma-cloud" in namespace_names
@@ -884,6 +947,12 @@ splunk_crd_present = crd_has(
     "opentelemetrycollectors.opentelemetry.io",
     "otelcollectors.opentelemetry.io",
 )
+splunk_operator_workload_present = any_keyword(
+    [
+        "splunk-otel-operator",
+    ],
+    all_workload_blobs,
+)
 splunk_workload_present = any_keyword(
     [
         "splunk-otel-collector",
@@ -896,13 +965,39 @@ splunk_workload_present = any_keyword(
         "signalfx-agent",
         "splunk-otel-agent",
         "splunk-otel-k8s-cluster-receiver",
-        "splunk-otel-operator",
     ],
     all_workload_blobs,
+)
+splunk_cluster_name_config_present = any(
+    "clustername" in blob
+    for blob in all_configuration_object_blobs
+)
+splunk_destination_config_present = any(
+    any(
+        token in blob
+        for token in [
+            "splunkobservability",
+            "splunkplatform",
+            "accesstoken",
+            "realm",
+            "signalfxendpoint",
+            "hec_token",
+            "hec.token",
+            "services/collector",
+            "splunkplatform.endpoint",
+            "splunkplatform.token",
+        ]
+    )
+    for blob in all_configuration_object_blobs
+)
+splunk_required_deployment_configuration_present = bool(
+    splunk_cluster_name_config_present and splunk_destination_config_present
 )
 splunk_context_present = bool(
     splunk_namespace_present
     or splunk_crd_present
+    or splunk_operator_workload_present
+    or splunk_workload_present
 )
 splunk_observability_present = bool(splunk_workload_present)
 loki_namespace_present = "openshift-logging" in namespace_names or "loki" in namespace_names or "logging-loki" in namespace_names
@@ -1986,13 +2081,32 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "Cost management operator configuration": "cost_management_operator",
         "External secrets integration": "external_secrets_operator",
         "CyberArk Conjur secrets management footprint": "cyberark_conjur_secrets_management",
+        "User workload monitoring configuration path": "user_workload_metrics_monitoring",
+        "User workload metrics scrape inventory": "user_workload_metrics_monitoring",
+        "User workload metrics coverage path": "user_workload_metrics_monitoring",
         "User workload monitoring enabled": "user_workload_metrics_monitoring",
         "User workload alerting and SLOs": "user_workload_alerting_and_slos",
         "Grafana dashboard inventory": "grafana_metrics_dashboards",
+        "Prometheus persistent storage": "persistent_monitoring_storage",
+        "Alertmanager persistent storage": "persistent_monitoring_storage",
+        "Thanos Ruler persistent storage": "persistent_monitoring_storage",
         "Persistent cluster monitoring storage": "persistent_monitoring_storage",
+        "Cluster log forwarding collection path": "cluster_log_forwarding",
+        "Cluster log forwarding external destinations": "cluster_log_forwarding",
+        "Cluster log forwarding log coverage": "cluster_log_forwarding",
         "External log forwarding": "cluster_log_forwarding",
+        "Cluster metrics remote write configuration": "cluster_metrics_remote_write",
+        "External cluster metrics destination": "cluster_metrics_remote_write",
+        "User workload metrics export context": "cluster_metrics_remote_write",
         "Cluster metrics remote write": "cluster_metrics_remote_write",
+        "External alert receiver inventory": "external_alert_delivery",
+        "Alert routing to external receiver": "external_alert_delivery",
+        "External alert delivery verification": "external_alert_delivery",
         "External alert delivery": "external_alert_delivery",
+        "Cluster network observability operator subscription": "cluster_network_observability",
+        "Cluster network observability namespace": "cluster_network_observability",
+        "Cluster network observability CRD inventory": "cluster_network_observability",
+        "Cluster network observability FlowCollector or workload footprint": "cluster_network_observability",
         "Cluster network observability footprint": "cluster_network_observability",
         "API server audit logging and retention": "api_server_audit_and_log_retention",
         "Application backup and restore baseline": "application_backup_and_restore_readiness",
@@ -2008,16 +2122,30 @@ def add_check(capability, status, detail, source, level="recommended", scored=Tr
         "Trusted image admission policy": "image_signature_and_admission_policy",
         "Cluster image mirror configuration": "cluster_image_mirror_configuration",
         "Disconnected installation image sources": "disconnected_cluster_image_sources",
+        "OVN-Kubernetes network context": "ovn_ipsec_encryption",
+        "OVN IPsec configuration presence": "ovn_ipsec_encryption",
         "OVN IPsec pod-to-pod encryption configured": "ovn_ipsec_encryption",
+        "OVN IPsec pod-to-pod mode": "ovn_ipsec_encryption",
+        "APIServer etcd encryption configuration": "etcd_encryption",
+        "etcd encryption rollout evidence": "etcd_encryption",
+        "etcd encryption rollout completion": "etcd_encryption",
         "etcd encryption enabled": "etcd_encryption",
         "Cluster proxy configuration": "cluster_proxy_configuration",
         "Custom trust bundle configuration": "custom_ca_trust_bundle",
         "Ingress controller topology and sharding": "ingress_controller_topology_and_sharding",
         "Application external private registry usage": "workloads_using_external_private_registries",
         "Cluster-hosted CI/CD runners": "cluster_hosted_cicd_runners",
+        "RHACS vulnerability scanning": "workload_vulnerability_scanning",
+        "Qualys workload scanning": "workload_vulnerability_scanning",
+        "Prisma Cloud Compute or Twistlock vulnerability scanning": "workload_vulnerability_scanning",
+        "Aqua workload scanning": "workload_vulnerability_scanning",
+        "Trivy Operator vulnerability scanning": "workload_vulnerability_scanning",
         "Workload vulnerability scanner agents": "workload_vulnerability_scanning",
         "Namespace network policy baseline": "namespace_network_policy_baseline",
         "Namespace egress controls": "namespace_egress_controls",
+        "ACM managed-cluster context": "advanced_cluster_management",
+        "ACM Klusterlet registration configuration": "advanced_cluster_management",
+        "ACM managed-cluster add-on or agent footprint": "advanced_cluster_management",
         "ACM managed-cluster registration": "advanced_cluster_management",
     }
     capability_key = capability_key if capability_key is not None else capability_key_map.get(capability, "")
@@ -2150,23 +2278,63 @@ def add_finding(issue, detail, severity="warning", source="general", capability_
     })
 
 gitops_present = bool(argocds or gitops_apps or gitops_projects)
+gitops_controller_context_present = bool(
+    len(argocds) > 0
+    or len(gitops_projects) > 0
+    or "openshift-gitops" in namespace_names
+)
+gitops_application_configuration_present = bool(
+    len(gitops_apps_with_repo_source) > 0
+)
 gitops_operational = bool(
     len(gitops_apps_with_repo_source) > 0
     and len(gitops_apps_healthy_and_synced) == len(gitops_apps_with_repo_source)
 )
 gitops_automated_sync_present = len(gitops_apps_with_automated_sync) > 0
+gitops_reconciliation_healthy = bool(
+    len(gitops_apps_with_repo_source) > 0
+    and len(gitops_apps_healthy_and_synced) == len(gitops_apps_with_repo_source)
+    and len(gitops_apps_with_automated_sync) > 0
+)
+gitops_context_detail = (
+    f"argocds={len(argocds)} "
+    f"appprojects={len(gitops_projects)} "
+    f"openshift_gitops_namespace={'openshift-gitops' in namespace_names}"
+)
+gitops_configuration_detail = (
+    f"applications={len(gitops_apps)} "
+    f"repoBackedApplications={len(gitops_apps_with_repo_source)}"
+)
+gitops_reconciliation_detail = (
+    f"healthySyncedApplications={len(gitops_apps_healthy_and_synced)}/{len(gitops_apps_with_repo_source)} "
+    f"automatedSyncApplications={len(gitops_apps_with_automated_sync)}"
+)
 add_check(
-    "GitOps controller and application inventory",
-    cap_status_for_presence("declarative_gitops_operations", gitops_present, gitops_operational),
-    (
-        f"argocds={len(argocds)} applications={len(gitops_apps)} "
-        f"repoBackedApplications={len(gitops_apps_with_repo_source)} "
-        f"healthySyncedApplications={len(gitops_apps_healthy_and_synced)} "
-        f"automatedSyncApplications={len(gitops_apps_with_automated_sync)} "
-        f"appprojects={len(gitops_projects)}"
-    ),
+    "GitOps controller or chart context",
+    ("OK" if gitops_controller_context_present else ("WARN" if cap_required("declarative_gitops_operations") else "INFO")),
+    gitops_context_detail,
     "GitOps resource inventory",
     level=cap_level("declarative_gitops_operations", base_required_level),
+    scored=False,
+    capability_key="declarative_gitops_operations",
+)
+add_check(
+    "GitOps declarative application configuration",
+    ("OK" if gitops_application_configuration_present else ("WARN" if (gitops_controller_context_present or cap_required("declarative_gitops_operations")) else "INFO")),
+    gitops_configuration_detail,
+    "GitOps resource inventory",
+    level=cap_level("declarative_gitops_operations", base_required_level),
+    scored=False,
+    capability_key="declarative_gitops_operations",
+)
+add_check(
+    "GitOps reconciliation health and automation",
+    ("OK" if gitops_reconciliation_healthy else ("WARN" if (gitops_present or cap_required("declarative_gitops_operations")) else "INFO")),
+    gitops_reconciliation_detail,
+    "GitOps resource inventory",
+    level=cap_level("declarative_gitops_operations", base_required_level),
+    scored=False,
+    capability_key="declarative_gitops_operations",
 )
 if not gitops_present and cap_required("declarative_gitops_operations"):
     add_finding(
@@ -2209,6 +2377,24 @@ if gitops_present and len(gitops_apps) > 0 and not gitops_automated_sync_present
 
 ext_secret_store_count = len(clustersecretstores) + len(secretstores)
 ext_secrets_namespace_present = "external-secrets-operator" in namespace_names
+ext_secrets_subscription_present = (
+    "external-secrets-operator" in subscription_packages
+    or "external-secrets" in subscription_packages
+)
+ext_secrets_crd_present = crd_has(
+    "externalsecrets.external-secrets.io",
+    "clustersecretstores.external-secrets.io",
+    "secretstores.external-secrets.io",
+)
+ext_secrets_operator_workload_present = any_keyword(
+    [
+        "external-secrets-operator",
+        "external-secrets",
+        "external-secrets-webhook",
+        "external-secrets-cert-controller",
+    ],
+    all_workload_blobs,
+)
 ext_secrets_present = bool(
     ext_secret_store_count > 0
     or len(externalsecrets) > 0
@@ -2228,19 +2414,59 @@ ext_secrets_healthy = bool(
     and len(ready_secret_stores) == ext_secret_store_count
     and len(ready_external_secrets) == len(externalsecrets)
 )
+ext_secrets_context_present = bool(
+    ext_secrets_subscription_present
+    or ext_secrets_namespace_present
+    or ext_secrets_crd_present
+    or ext_secrets_operator_workload_present
+)
+ext_secrets_configuration_present = bool(
+    ext_secret_store_count > 0 and len(externalsecrets) > 0
+)
+ext_secrets_managed_sync_present = bool(
+    len(ready_external_secrets) > 0 and len(ready_secret_stores) > 0
+)
+ext_secrets_context_detail = (
+    f"subscription_present={ext_secrets_subscription_present} "
+    f"namespace_present={ext_secrets_namespace_present} "
+    f"crd_present={ext_secrets_crd_present} "
+    f"operator_workload_present={ext_secrets_operator_workload_present}"
+)
+ext_secrets_configuration_detail = (
+    f"clustersecretstores={len(clustersecretstores)} "
+    f"secretstores={len(secretstores)} "
+    f"externalsecrets={len(externalsecrets)}"
+)
+ext_secrets_sync_detail = (
+    f"ready_stores={len(ready_secret_stores)}/{ext_secret_store_count} "
+    f"ready_externalsecrets={len(ready_external_secrets)}/{len(externalsecrets)}"
+)
 add_check(
-    "External secrets integration",
-    cap_status_for_presence("external_secrets_operator", ext_secrets_present, ext_secrets_healthy),
-    (
-        f"clustersecretstores={len(clustersecretstores)} "
-        f"secretstores={len(secretstores)} "
-        f"externalsecrets={len(externalsecrets)} "
-        f"ready_stores={len(ready_secret_stores)} "
-        f"ready_externalsecrets={len(ready_external_secrets)} "
-        f"operator_namespace={ext_secrets_namespace_present}"
-    ),
+    "External Secrets Operator context",
+    ("OK" if ext_secrets_context_present else ("WARN" if cap_required("external_secrets_operator") else "INFO")),
+    ext_secrets_context_detail,
     "external secrets integration guidance",
     level=external_secrets_level,
+    scored=False,
+    capability_key="external_secrets_operator",
+)
+add_check(
+    "External secret store and sync configuration",
+    ("OK" if ext_secrets_configuration_present else ("WARN" if (ext_secrets_context_present or cap_required("external_secrets_operator")) else "INFO")),
+    ext_secrets_configuration_detail,
+    "external secrets integration guidance",
+    level=external_secrets_level,
+    scored=False,
+    capability_key="external_secrets_operator",
+)
+add_check(
+    "External secret managed sync footprint",
+    ("OK" if ext_secrets_healthy else ("WARN" if (ext_secrets_configuration_present or cap_required("external_secrets_operator")) else "INFO")),
+    ext_secrets_sync_detail,
+    "external secrets integration guidance",
+    level=external_secrets_level,
+    scored=False,
+    capability_key="external_secrets_operator",
 )
 if cap_required("external_secrets_operator") and not ext_secrets_present:
     add_finding(
@@ -2292,6 +2518,11 @@ conjur_secretproviderclass_resources = [
     )
 ]
 conjur_secretproviderclass_present = len(conjur_secretproviderclass_resources) > 0
+conjur_context_present = bool(
+    conjur_namespace_present
+    or conjur_workload_present
+    or conjur_secretproviderclass_present
+)
 cyberark_conjur_secrets_management_present = bool(
     conjur_workload_present
     or conjur_secretproviderclass_present
@@ -2302,17 +2533,31 @@ cyberark_conjur_secrets_management_healthy = bool(
     or conjur_secretproviderclass_present
 )
 add_check(
-    "CyberArk Conjur secrets management footprint",
-    cap_status_for_presence(
-        "cyberark_conjur_secrets_management",
-        cyberark_conjur_secrets_management_present,
-        cyberark_conjur_secrets_management_healthy,
-    ),
+    "CyberArk Conjur deployment context",
+    ("OK" if conjur_context_present else ("WARN" if cap_required("cyberark_conjur_secrets_management") else "INFO")),
     (
-        f"conjur_namespaces={conjur_namespace_present} "
-        f"conjur_workload_present={conjur_workload_present} "
-        f"conjur_secretproviderclasses={len(conjur_secretproviderclass_resources)}"
+        f"namespace_present={conjur_namespace_present} "
+        f"secretproviderclasses={len(conjur_secretproviderclass_resources)} "
+        f"workload_present={conjur_workload_present}"
     ),
+    "CyberArk Conjur workload and Secrets Provider inventory",
+    level=cap_level("cyberark_conjur_secrets_management", "informational"),
+    scored=False,
+    capability_key="cyberark_conjur_secrets_management",
+)
+add_check(
+    "Conjur-backed secret delivery configuration",
+    ("OK" if conjur_secretproviderclass_present else ("WARN" if (conjur_context_present or cap_required("cyberark_conjur_secrets_management")) else "INFO")),
+    f"conjur_secretproviderclasses={len(conjur_secretproviderclass_resources)}",
+    "CyberArk Conjur workload and Secrets Provider inventory",
+    level=cap_level("cyberark_conjur_secrets_management", "informational"),
+    scored=False,
+    capability_key="cyberark_conjur_secrets_management",
+)
+add_check(
+    "CyberArk Conjur managed workload footprint",
+    ("OK" if conjur_workload_present else ("WARN" if (conjur_context_present or cap_required("cyberark_conjur_secrets_management")) else "INFO")),
+    f"conjur_workload_present={conjur_workload_present}",
     "CyberArk Conjur workload and Secrets Provider inventory",
     level=cap_level("cyberark_conjur_secrets_management", "informational"),
     scored=False,
@@ -2341,18 +2586,66 @@ elif cap_required("cyberark_conjur_secrets_management") and not cyberark_conjur_
         ),
     )
 
+user_workload_vendor_metrics_present = bool(obs.get("vendor_managed_metrics_forwarding_present"))
+user_workload_monitoring_context_present = (
+    enable_user_workload
+    or user_workload_vendor_metrics_present
+)
+user_workload_monitoring_scrape_present = (
+    len(servicemonitors) > 0
+    or len(podmonitors) > 0
+    or bool(uwm)
+)
+user_workload_monitoring_healthy = (
+    user_workload_monitoring_scrape_present
+    or user_workload_vendor_metrics_present
+)
 add_check(
-    "User workload monitoring enabled",
-    cap_status_for_presence(
-        "user_workload_metrics_monitoring",
-        enable_user_workload or bool(obs.get("vendor_managed_metrics_forwarding_present")),
-        len(servicemonitors) > 0 or len(podmonitors) > 0 or bool(uwm) or bool(obs.get("vendor_managed_metrics_forwarding_present")),
+    "User workload monitoring configuration path",
+    (
+        "OK"
+        if user_workload_monitoring_context_present
+        else ("WARN" if cap_required("user_workload_metrics_monitoring") else "INFO")
     ),
-    f"enableUserWorkload={enable_user_workload} servicemonitors={len(servicemonitors)} podmonitors={len(podmonitors)} user_workload_config_present={bool(uwm)} vendor_managed={bool(obs.get('vendor_managed_metrics_forwarding_present'))} vendors={','.join(obs.get('metrics_forwarding_vendor_names') or []) or 'none'}",
+    (
+        f"enableUserWorkload={enable_user_workload} "
+        f"vendor_managed={user_workload_vendor_metrics_present} "
+        f"vendors={','.join(obs.get('metrics_forwarding_vendor_names') or []) or 'none'}"
+    ),
     "user workload monitoring and platform monitoring guidance",
     level=cap_level("user_workload_metrics_monitoring", base_required_level),
 )
-if not enable_user_workload and not bool(obs.get("vendor_managed_metrics_forwarding_present")):
+add_check(
+    "User workload metrics scrape inventory",
+    (
+        "OK"
+        if (user_workload_monitoring_scrape_present or user_workload_vendor_metrics_present)
+        else ("WARN" if (user_workload_monitoring_context_present or cap_required("user_workload_metrics_monitoring")) else "INFO")
+    ),
+    (
+        f"servicemonitors={len(servicemonitors)} "
+        f"podmonitors={len(podmonitors)} "
+        f"user_workload_config_present={bool(uwm)}"
+    ),
+    "user workload monitoring and platform monitoring guidance",
+    level=cap_level("user_workload_metrics_monitoring", base_required_level),
+)
+add_check(
+    "User workload metrics coverage path",
+    (
+        "OK"
+        if user_workload_monitoring_healthy
+        else ("WARN" if (user_workload_monitoring_context_present or cap_required("user_workload_metrics_monitoring")) else "INFO")
+    ),
+    (
+        f"native_scrape_present={user_workload_monitoring_scrape_present} "
+        f"vendor_managed={user_workload_vendor_metrics_present} "
+        f"vendors={','.join(obs.get('metrics_forwarding_vendor_names') or []) or 'none'}"
+    ),
+    "user workload monitoring and platform monitoring guidance",
+    level=cap_level("user_workload_metrics_monitoring", base_required_level),
+)
+if not enable_user_workload and not user_workload_vendor_metrics_present:
     add_finding(
         "prod-day2-user-workload-monitoring-disabled",
         "cluster-monitoring-config does not enable user workload monitoring, and no approved vendor-managed workload metrics path was detected",
@@ -2468,12 +2761,36 @@ if not grafana_dashboard_present and cap_required("grafana_metrics_dashboards"):
     )
 
 add_check(
-    "Persistent cluster monitoring storage",
-    cap_status_for_presence("persistent_monitoring_storage", monitoring_persistence_present, monitoring_persistent),
+    "Prometheus persistent storage",
     (
-        f"prometheus={prometheus_storage_request or 'missing'} "
-        f"alertmanager={alertmanager_storage_request or 'missing'} "
-        f"thanosRuler={thanos_ruler_storage_request or ('not-required' if not is_multi_node_cluster else 'missing')} "
+        "OK"
+        if prometheus_persistent
+        else ("WARN" if cap_required("persistent_monitoring_storage") else "INFO")
+    ),
+    f"storage_request={prometheus_storage_request or 'missing'}",
+    "Red Hat monitoring + IBM/Azure guidance",
+    level=cap_level("persistent_monitoring_storage", choose_level(base_required_level, telemetry_level)),
+)
+add_check(
+    "Alertmanager persistent storage",
+    (
+        "OK"
+        if alertmanager_persistent
+        else ("WARN" if cap_required("persistent_monitoring_storage") else "INFO")
+    ),
+    f"storage_request={alertmanager_storage_request or 'missing'}",
+    "Red Hat monitoring + IBM/Azure guidance",
+    level=cap_level("persistent_monitoring_storage", choose_level(base_required_level, telemetry_level)),
+)
+add_check(
+    "Thanos Ruler persistent storage",
+    (
+        "OK"
+        if (thanos_ruler_persistent or not is_multi_node_cluster)
+        else ("WARN" if cap_required("persistent_monitoring_storage") else "INFO")
+    ),
+    (
+        f"storage_request={thanos_ruler_storage_request or ('not-required' if not is_multi_node_cluster else 'missing')} "
         f"multiNode={is_multi_node_cluster}"
     ),
     "Red Hat monitoring + IBM/Azure guidance",
@@ -2509,26 +2826,48 @@ log_forwarding_present = (
     or len(clusterlogforwarders) > 0
     or vendor_log_forwarding_present
 )
+cluster_log_forwarding_external_outputs = len(obs.get("external_log_forwarding_outputs") or [])
 add_check(
-    "External log forwarding",
-    cap_status_for_presence("cluster_log_forwarding", log_collection_present, cluster_log_forwarding_healthy),
+    "Cluster log forwarding collection path",
     (
-        (
-            "meets criteria via vendor-managed log forwarding evidence: "
-            f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'unknown'} "
-            f"clusterlogforwarders={len(clusterlogforwarders)} "
-            f"external_outputs={len(obs.get('external_log_forwarding_outputs') or [])}"
-        )
-        if vendor_log_forwarding_present and cluster_log_forwarding_healthy
-        else (
-            f"clusterlogforwarders={len(clusterlogforwarders)} "
-            f"app={obs.get('application_logs_delivery_state') or 'not-collected'} "
-            f"infra={obs.get('infrastructure_logs_delivery_state') or 'not-collected'} "
-            f"audit={obs.get('audit_logs_delivery_state') or 'not-collected'} "
-            f"external_outputs={len(obs.get('external_log_forwarding_outputs') or [])} "
-            f"vendor_managed={vendor_log_forwarding_present} "
-            f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'none'}"
-        )
+        "OK"
+        if log_collection_present
+        else ("WARN" if cap_required("cluster_log_forwarding") else "INFO")
+    ),
+    (
+        f"clusterlogforwarders={len(clusterlogforwarders)} "
+        f"vendor_managed={vendor_log_forwarding_present} "
+        f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'none'}"
+    ),
+    "cluster logging and external forwarding guidance",
+    level=cap_level("cluster_log_forwarding", telemetry_level),
+)
+add_check(
+    "Cluster log forwarding external destinations",
+    (
+        "OK"
+        if (cluster_log_forwarding_external_outputs > 0 or vendor_log_forwarding_present)
+        else ("WARN" if (log_collection_present or cap_required("cluster_log_forwarding")) else "INFO")
+    ),
+    (
+        f"external_outputs={cluster_log_forwarding_external_outputs} "
+        f"vendor_managed={vendor_log_forwarding_present} "
+        f"vendors={','.join(vendor_log_forwarding_names) if vendor_log_forwarding_names else 'none'}"
+    ),
+    "cluster logging and external forwarding guidance",
+    level=cap_level("cluster_log_forwarding", telemetry_level),
+)
+add_check(
+    "Cluster log forwarding log coverage",
+    (
+        "OK"
+        if cluster_log_forwarding_healthy
+        else ("WARN" if (log_collection_present or cap_required("cluster_log_forwarding")) else "INFO")
+    ),
+    (
+        f"application={obs.get('application_logs_delivery_state') or 'not-collected'} "
+        f"infrastructure={obs.get('infrastructure_logs_delivery_state') or 'not-collected'} "
+        f"audit={obs.get('audit_logs_delivery_state') or 'not-collected'}"
     ),
     "cluster logging and external forwarding guidance",
     level=cap_level("cluster_log_forwarding", telemetry_level),
@@ -2559,17 +2898,47 @@ cluster_remote_write = int(obs.get("external_cluster_metrics_remote_write_count"
 user_remote_write_total = int(obs.get("user_workload_metrics_remote_write_count") or 0)
 user_remote_write = int(obs.get("external_user_workload_metrics_remote_write_count") or 0)
 add_check(
-    "Cluster metrics remote write",
-    cap_status_for_presence("cluster_metrics_remote_write", cluster_remote_write_total > 0 or vendor_metrics_forwarding_present, cluster_remote_write > 0 or vendor_metrics_forwarding_present),
+    "Cluster metrics remote write configuration",
+    (
+        "OK"
+        if (cluster_remote_write_total > 0 or vendor_metrics_forwarding_present)
+        else ("WARN" if cap_required("cluster_metrics_remote_write") else "INFO")
+    ),
     (
         f"cluster_state={obs.get('cluster_metrics_delivery_state') or 'not-configured'} "
         f"cluster_remote_write_total={cluster_remote_write_total} "
-        f"cluster_remote_write_external={cluster_remote_write} "
-        f"user_workload_state={obs.get('user_workload_metrics_delivery_state') or 'not-configured'} "
-        f"user_workload_remote_write_total={user_remote_write_total} "
-        f"user_workload_remote_write_external={user_remote_write} "
         f"vendor_managed={vendor_metrics_forwarding_present} "
         f"vendors={','.join(vendor_metrics_forwarding_names) if vendor_metrics_forwarding_names else 'none'}"
+    ),
+    "Red Hat monitoring + vendor monitoring guidance",
+    level=cap_level("cluster_metrics_remote_write", telemetry_level),
+)
+add_check(
+    "External cluster metrics destination",
+    (
+        "OK"
+        if (cluster_remote_write > 0 or vendor_metrics_forwarding_present)
+        else ("WARN" if ((cluster_remote_write_total > 0) or cap_required("cluster_metrics_remote_write")) else "INFO")
+    ),
+    (
+        f"cluster_remote_write_external={cluster_remote_write} "
+        f"vendor_managed={vendor_metrics_forwarding_present} "
+        f"vendors={','.join(vendor_metrics_forwarding_names) if vendor_metrics_forwarding_names else 'none'}"
+    ),
+    "Red Hat monitoring + vendor monitoring guidance",
+    level=cap_level("cluster_metrics_remote_write", telemetry_level),
+)
+add_check(
+    "User workload metrics export context",
+    (
+        "OK"
+        if (user_remote_write_total == 0 or user_remote_write > 0 or vendor_metrics_forwarding_present)
+        else ("WARN" if (cluster_remote_write_total > 0 or user_remote_write_total > 0 or cap_required("cluster_metrics_remote_write")) else "INFO")
+    ),
+    (
+        f"user_workload_state={obs.get('user_workload_metrics_delivery_state') or 'not-configured'} "
+        f"user_workload_remote_write_total={user_remote_write_total} "
+        f"user_workload_remote_write_external={user_remote_write}"
     ),
     "Red Hat monitoring + vendor monitoring guidance",
     level=cap_level("cluster_metrics_remote_write", telemetry_level),
@@ -2589,14 +2958,48 @@ elif cap_required("cluster_metrics_remote_write") and cluster_remote_write == 0 
         source="Red Hat monitoring + vendor monitoring guidance",
     )
 
+external_alert_receiver_count = int(obs.get("external_alert_receiver_count") or 0)
+external_alert_source_count = int(obs.get("alert_delivery_source_count") or 0)
+external_alert_routed = bool(obs.get("alert_routing_to_external_receiver_configured"))
+external_alert_verification = str(obs.get("alert_delivery_verification_status") or "not-configured").strip().lower()
 add_check(
-    "External alert delivery",
-    cap_status_for_presence("external_alert_delivery", external_alert_delivery_present, external_alert_delivery_healthy),
+    "External alert receiver inventory",
+    (
+        "OK"
+        if external_alert_receiver_count > 0
+        else ("WARN" if cap_required("external_alert_delivery") else "INFO")
+    ),
+    (
+        f"external_receivers={external_alert_receiver_count} "
+        f"alert_sources={external_alert_source_count}"
+    ),
+    "AlertmanagerConfig and monitoring alert delivery inventory",
+    level=cap_level("external_alert_delivery", telemetry_level),
+)
+add_check(
+    "Alert routing to external receiver",
+    (
+        "OK"
+        if external_alert_routed
+        else ("WARN" if (external_alert_receiver_count > 0 or cap_required("external_alert_delivery")) else "INFO")
+    ),
+    (
+        f"routed={external_alert_routed} "
+        f"external_receivers={external_alert_receiver_count}"
+    ),
+    "AlertmanagerConfig and monitoring alert delivery inventory",
+    level=cap_level("external_alert_delivery", telemetry_level),
+)
+add_check(
+    "External alert delivery verification",
+    (
+        "OK"
+        if external_alert_verification in ["verified", "passed", "ok"]
+        else ("WARN" if (external_alert_delivery_present or cap_required("external_alert_delivery")) else "INFO")
+    ),
     (
         f"state={obs.get('alert_delivery_state') or 'not-configured'} "
-        f"external_receivers={int(obs.get('external_alert_receiver_count') or 0)} "
-        f"alert_sources={int(obs.get('alert_delivery_source_count') or 0)} "
-        f"routed={bool(obs.get('alert_routing_to_external_receiver_configured'))}"
+        f"verification={obs.get('alert_delivery_verification_status') or 'not-configured'}"
     ),
     "AlertmanagerConfig and monitoring alert delivery inventory",
     level=cap_level("external_alert_delivery", telemetry_level),
@@ -2622,16 +3025,49 @@ elif cap_required("external_alert_delivery") and not external_alert_delivery_hea
     )
 
 add_check(
-    "Cluster network observability footprint",
-    cap_status_for_presence(
-        "cluster_network_observability",
-        cluster_network_observability_present,
-        cluster_network_observability_healthy,
+    "Cluster network observability operator subscription",
+    (
+        "OK"
+        if cluster_network_observability_subscription_present
+        else ("WARN" if (cluster_network_observability_present or cap_required("cluster_network_observability")) else "INFO")
+    ),
+    f"subscriptionPresent={cluster_network_observability_subscription_present}",
+    "OpenShift network observability operator and workload inventory",
+    level=cap_level("cluster_network_observability", "informational"),
+    scored=False,
+)
+add_check(
+    "Cluster network observability namespace",
+    (
+        "OK"
+        if cluster_network_observability_namespace_present
+        else ("WARN" if (cluster_network_observability_present or cap_required("cluster_network_observability")) else "INFO")
+    ),
+    f"namespacePresent={cluster_network_observability_namespace_present}",
+    "OpenShift network observability operator and workload inventory",
+    level=cap_level("cluster_network_observability", "informational"),
+    scored=False,
+)
+add_check(
+    "Cluster network observability CRD inventory",
+    (
+        "OK"
+        if cluster_network_observability_crd_present
+        else ("WARN" if (cluster_network_observability_present or cap_required("cluster_network_observability")) else "INFO")
+    ),
+    f"crdPresent={cluster_network_observability_crd_present}",
+    "OpenShift network observability operator and workload inventory",
+    level=cap_level("cluster_network_observability", "informational"),
+    scored=False,
+)
+add_check(
+    "Cluster network observability FlowCollector or workload footprint",
+    (
+        "OK"
+        if (cluster_network_observability_flowcollector_present or cluster_network_observability_workload_present)
+        else ("WARN" if (cluster_network_observability_present or cap_required("cluster_network_observability")) else "INFO")
     ),
     (
-        f"subscriptionPresent={cluster_network_observability_subscription_present} "
-        f"namespacePresent={cluster_network_observability_namespace_present} "
-        f"crdPresent={cluster_network_observability_crd_present} "
         f"flowCollectors={cluster_network_observability_flowcollector_count} "
         f"workloadPresent={cluster_network_observability_workload_present}"
     ),
@@ -3119,7 +3555,7 @@ for standard_name in requested_compliance_standards:
         "compliance requirements validation evidence",
         level=compliance_level,
         scored=False,
-        capability_key="",
+        capability_key="compliance_requirements_validation",
     )
     requested_compliance_standard_status.append(
         f"{standard_name}={runtime_status if standard_name == 'FIPS' else verdict}"
@@ -3645,9 +4081,27 @@ if deprecated_icsp_only:
     )
 
 add_check(
-    "OVN IPsec pod-to-pod encryption configured",
-    cap_status_for_presence("ovn_ipsec_encryption", ovn_ipsec_encryption),
-    f"networkType={network_type} ovnNetwork={ovn_network} ipsecConfigPresent={ipsec_config_present} mode={ipsec_mode}",
+    "OVN-Kubernetes network context",
+    ("OK" if ovn_network else ("WARN" if cap_required("ovn_ipsec_encryption") else "INFO")),
+    f"network.operator.openshift.io/cluster.status.networkType={network_type} ovnNetwork={ovn_network}",
+    "OVN-Kubernetes IPsec configuration",
+    level=cap_level("ovn_ipsec_encryption", "informational"),
+    scored=False,
+)
+add_check(
+    "OVN IPsec configuration presence",
+    ("OK" if ipsec_config_present else ("WARN" if (ovn_network or cap_required("ovn_ipsec_encryption")) else "INFO")),
+    "network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig present="
+    + str(ipsec_config_present),
+    "OVN-Kubernetes IPsec configuration",
+    level=cap_level("ovn_ipsec_encryption", "informational"),
+    scored=False,
+)
+add_check(
+    "OVN IPsec pod-to-pod mode",
+    ("OK" if ovn_ipsec_encryption else ("WARN" if (ovn_network or cap_required("ovn_ipsec_encryption")) else "INFO")),
+    "network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode="
+    + str(ipsec_mode),
     "OVN-Kubernetes IPsec configuration",
     level=cap_level("ovn_ipsec_encryption", "informational"),
     scored=False,
@@ -3679,9 +4133,37 @@ if not ovn_ipsec_encryption and cap_required("ovn_ipsec_encryption"):
     )
 
 add_check(
-    "etcd encryption enabled",
-    cap_status_for_presence("etcd_encryption", etcd_encryption, etcd_encryption_complete),
-    etcd_encryption_detail_text,
+    "APIServer etcd encryption configuration",
+    ("OK" if etcd_encryption else ("WARN" if cap_required("etcd_encryption") else "INFO")),
+    "apiserver.config.openshift.io/cluster.spec.encryption.type=" + etcd_encryption_type,
+    "OpenShift APIServer etcd encryption configuration",
+    level=cap_level("etcd_encryption", "informational"),
+    scored=False,
+)
+add_check(
+    "etcd encryption rollout evidence",
+    (
+        "OK"
+        if (etcd_encryption and len(etcd_encryption_reported_components) > 0)
+        else ("WARN" if etcd_encryption else "INFO")
+    ),
+    (
+        f"reportedComponents={len(etcd_encryption_reported_components)}/{len(etcd_encryption_conditions)}"
+    ),
+    "OpenShift APIServer etcd encryption configuration",
+    level=cap_level("etcd_encryption", "informational"),
+    scored=False,
+)
+add_check(
+    "etcd encryption rollout completion",
+    (
+        "OK"
+        if etcd_encryption_complete
+        else ("WARN" if etcd_encryption else "INFO")
+    ),
+    (
+        f"completedComponents={len(etcd_encryption_completed_components)}/{len(etcd_encryption_conditions)}"
+    ),
     "OpenShift APIServer etcd encryption configuration",
     level=cap_level("etcd_encryption", "informational"),
     scored=False,
@@ -3879,31 +4361,127 @@ if not cicd_runner_present and cap_required("cluster_hosted_cicd_runners"):
         source="workload inventory for GitLab, Jenkins, Azure DevOps, GitHub Actions, and Tekton runner agents",
     )
 
-add_check(
-    "Workload vulnerability scanner agents",
-    cap_status_for_presence("workload_vulnerability_scanning", workload_scanner_present),
-    (
-        f"scanner_present={workload_scanner_present} "
-        f"scanner_context_present={workload_scanner_context_present} "
-        f"scanner_subscription_present={workload_scanner_subscription_present} "
-        f"report_crd_present={workload_vulnerability_report_crd_present} "
-        f"scanner_workload_present={workload_scanner_workload_present} "
-        f"scanner_namespace_present={workload_scanner_namespace_present}"
-    ),
-    "live workload scanner operator, agent, and report inventory",
-    level=cap_level("workload_vulnerability_scanning", "informational"),
-    scored=False,
-)
+workload_vulnerability_scanner_vendor_rows = [
+    {
+        "label": "RHACS vulnerability scanning",
+        "context_present": advanced_cluster_security_context_present,
+        "configuration_present": False,
+        "workload_present": acs_workload_present,
+        "source": "RHACS operator and secured-cluster inventory",
+        "detail": (
+            f"subscription_present={acs_operator_subscription_present} "
+            f"namespace_present={acs_namespace_present} "
+            f"crd_present={acs_crd_present} "
+            f"configuration_present=False "
+            f"workload_present={acs_workload_present}; "
+            "required Central or SecuredCluster custom resource configuration could not be confirmed from current live evidence"
+        ),
+    },
+    {
+        "label": "Qualys workload scanning",
+        "context_present": qualys_scanning_agents_context_present,
+        "configuration_present": qualys_required_deployment_configuration_present,
+        "workload_present": qualys_workload_present,
+        "source": "Qualys agent inventory",
+        "detail": (
+            f"subscription_present={qualys_subscription_present} "
+            f"namespace_present={qualys_namespace_present} "
+            f"crd_present={qualys_crd_present} "
+            f"configuration_present={qualys_required_deployment_configuration_present} "
+            f"workload_present={qualys_workload_present}; "
+            "required deployment configuration is verified from documented Qualys OpenShift sensor signals when present"
+        ),
+    },
+    {
+        "label": "Prisma Cloud Compute or Twistlock vulnerability scanning",
+        "context_present": prisma_twistlock_context_present,
+        "configuration_present": False,
+        "workload_present": prisma_workload_present,
+        "source": "Prisma Cloud Compute inventory",
+        "detail": (
+            f"subscription_present={prisma_subscription_present} "
+            f"namespace_present={prisma_namespace_present} "
+            f"crd_present={prisma_crd_present} "
+            f"configuration_present=False "
+            f"workload_present={prisma_workload_present}; "
+            "required Prisma Cloud Compute custom resource configuration could not be confirmed from current live evidence"
+        ),
+    },
+    {
+        "label": "Aqua workload scanning",
+        "context_present": aqua_platform_context_present,
+        "configuration_present": False,
+        "workload_present": aqua_workload_present,
+        "source": "Aqua operator and enforcer inventory",
+        "detail": (
+            f"subscription_present={aqua_subscription_present} "
+            f"namespace_present={aqua_namespace_present} "
+            f"crd_present={aqua_crd_present} "
+            f"configuration_present=False "
+            f"workload_present={aqua_workload_present}; "
+            "required Aqua custom resource configuration could not be confirmed from current live evidence"
+        ),
+    },
+    {
+        "label": "Trivy Operator vulnerability scanning",
+        "context_present": trivy_operator_context_present,
+        "configuration_present": False,
+        "workload_present": trivy_workload_present,
+        "source": "Trivy operator inventory",
+        "detail": (
+            f"subscription_present={trivy_subscription_present} "
+            f"namespace_present={trivy_namespace_present} "
+            f"crd_present={trivy_crd_present} "
+            f"configuration_present=False "
+            f"workload_present={trivy_workload_present}; "
+            "no first-class Trivy custom resource configuration is modeled in current live evidence; active coverage is confirmed from operator-managed scanner workloads"
+        ),
+    },
+]
+workload_vulnerability_scanner_present_vendors = [
+    row["label"] for row in workload_vulnerability_scanner_vendor_rows if row["workload_present"]
+]
+workload_vulnerability_scanner_context_only_vendors = [
+    row["label"] for row in workload_vulnerability_scanner_vendor_rows
+    if row["context_present"] and not row["workload_present"]
+]
+for row in workload_vulnerability_scanner_vendor_rows:
+    add_check(
+        row["label"],
+        (
+            "OK"
+            if row["workload_present"]
+            else ("WARN" if (row["context_present"] or cap_required("workload_vulnerability_scanning")) else "INFO")
+        ),
+        row["detail"],
+        row["source"],
+        level=cap_level("workload_vulnerability_scanning", "informational"),
+        scored=False,
+        capability_key="workload_vulnerability_scanning",
+    )
 if not workload_scanner_present and cap_required("workload_vulnerability_scanning"):
     add_finding(
         "prod-day2-workload-vulnerability-scanner-missing",
         (
-            "no live workload vulnerability or security scanner workload footprint was detected"
-            if not workload_scanner_context_present
-            else "scanner context was detected from namespace, subscription, or CRD evidence, but no live workload vulnerability or security scanner workload footprint was found"
+            "no active RHACS, Qualys, Prisma Cloud Compute, Aqua, or Trivy workload scanner footprint was detected"
+            if not workload_vulnerability_scanner_context_only_vendors
+            else (
+                "scanner context was detected for: "
+                + ", ".join(workload_vulnerability_scanner_context_only_vendors)
+                + "; no active scanner workload footprint was confirmed for those products"
+            )
         ),
         severity=cap_failure_severity("workload_vulnerability_scanning"),
         source="live workload scanner operator, agent, and report inventory",
+        recommended_action=(
+            "Deploy or document an approved workload vulnerability scanning product such as RHACS, Qualys, Prisma Cloud Compute, Aqua, or Trivy Operator, then confirm active scanner workload rollout."
+            if not workload_vulnerability_scanner_context_only_vendors
+            else (
+                "Complete the required product configuration and confirm managed scanner workloads for: "
+                + ", ".join(workload_vulnerability_scanner_context_only_vendors)
+                + "."
+            )
+        ),
     )
 
 namespaces_missing_networkpolicy = sorted(user_namespace_names - namespaces_with_default_deny_networkpolicy)
@@ -4077,182 +4655,6 @@ platform_app_catalog = [
         "detail": f"subscription_present={'openshift-cert-manager-operator' in subscription_packages} cert_manager_operator_namespace={'cert-manager-operator' in namespace_names} cert_manager_namespace={'cert-manager' in namespace_names}",
         "issue": "prod-day2-platform-cert-manager-missing",
         "finding": "no cert-manager operator footprint was detected",
-    },
-    {
-        "key": "advanced_cluster_security",
-        "capability": "Advanced Cluster Security operator footprint",
-        "level": acs_level,
-        "source": "RHACS operator and secured-cluster inventory",
-        "present": advanced_cluster_security_present,
-        "detail": (
-            f"subscription_present={acs_operator_subscription_present} "
-            f"acs_namespace_present={acs_namespace_present} "
-            f"acs_crd_present={acs_crd_present} "
-            f"acs_workload_present={acs_workload_present}"
-        ),
-        "issue": "prod-day2-platform-acs-missing",
-        "finding": "no RHACS Central, Scanner, Sensor, admission-control, or secured-cluster workload footprint was detected; operator, namespace, or CRD context alone is not treated as active ACS coverage",
-    },
-    {
-        "key": "dynatrace_observability",
-        "capability": "Dynatrace observability footprint",
-        "level": cap_level("dynatrace_observability", "informational"),
-        "source": "Dynatrace operator and workload inventory",
-        "present": dynatrace_observability_present,
-        "detail": (
-            (
-                "cluster meets criteria for Dynatrace-managed observability: "
-                f"dynakubes={len(dynakubes)} "
-                f"edgeconnects={len(edgeconnects)} "
-                f"operator_workload_present={dynatrace_operator_workload_present} "
-                f"observability_workload_present={dynatrace_observability_workload_present}"
-            )
-            if dynatrace_observability_present
-            else (
-                f"subscription_present={dynatrace_operator_subscription_present} "
-                f"namespace_present={dynatrace_namespace_present} "
-                f"crd_present={dynatrace_crd_present} "
-                f"dynakubes={len(dynakubes)} "
-                f"edgeconnects={len(edgeconnects)} "
-                f"operator_workload_present={dynatrace_operator_workload_present} "
-                f"observability_workload_present={dynatrace_observability_workload_present}"
-            )
-        ),
-        "issue": "prod-day2-dynatrace-observability-missing",
-        "finding": "no Dynatrace DynaKube, OneAgent, ActiveGate, CSI driver, OpenTelemetry collector, log-monitoring, or other managed observability workload footprint was detected",
-    },
-    {
-        "key": "qualys_scanning_agents",
-        "capability": "Qualys scanning agent footprint",
-        "level": cap_level("qualys_scanning_agents", "informational"),
-        "source": "Qualys agent inventory",
-        "present": qualys_scanning_agents_present,
-        "detail": (
-            f"subscription_present={qualys_subscription_present} "
-            f"namespace_present={qualys_namespace_present} "
-            f"crd_present={qualys_crd_present} "
-            f"workload_present={qualys_workload_present}"
-        ),
-        "issue": "prod-day2-qualys-scanning-agents-missing",
-        "finding": "no Qualys container sensor, cloud-agent, or Qualys-managed workload footprint was detected; operator, namespace, or CRD context alone is not treated as active scanner coverage",
-    },
-    {
-        "key": "prisma_twistlock_defenders",
-        "capability": "Prisma Cloud Defender footprint",
-        "level": cap_level("prisma_twistlock_defenders", "informational"),
-        "source": "Prisma Cloud Compute inventory",
-        "present": prisma_twistlock_defenders_present,
-        "detail": (
-            f"subscription_present={prisma_subscription_present} "
-            f"namespace_present={prisma_namespace_present} "
-            f"crd_present={prisma_crd_present} "
-            f"workload_present={prisma_workload_present}"
-        ),
-        "issue": "prod-day2-prisma-twistlock-defenders-missing",
-        "finding": "no Prisma Cloud Compute or Twistlock Console or Defender workload footprint was detected",
-    },
-    {
-        "key": "aqua_security_platform",
-        "capability": "Aqua security platform footprint",
-        "level": cap_level("aqua_security_platform", "informational"),
-        "source": "Aqua operator and enforcer inventory",
-        "present": aqua_security_platform_present,
-        "detail": (
-            f"subscription_present={aqua_subscription_present} "
-            f"namespace_present={aqua_namespace_present} "
-            f"crd_present={aqua_crd_present} "
-            f"workload_present={aqua_workload_present}"
-        ),
-        "issue": "prod-day2-aqua-security-platform-missing",
-        "finding": "no Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected",
-    },
-    {
-        "key": "splunk_observability",
-        "capability": "Splunk observability footprint",
-        "level": cap_level("splunk_observability", "informational"),
-        "source": "Splunk OpenTelemetry and logging inventory",
-        "present": splunk_observability_present,
-        "detail": (
-            (
-                "cluster meets criteria for Splunk-managed observability: "
-                f"namespace_present={splunk_namespace_present} "
-                f"crd_present={splunk_crd_present} "
-                f"workload_present={splunk_workload_present}"
-            )
-            if splunk_observability_present
-            else (
-                f"namespace_present={splunk_namespace_present} "
-                f"crd_present={splunk_crd_present} "
-                f"workload_present={splunk_workload_present}"
-            )
-        ),
-        "issue": "prod-day2-splunk-observability-missing",
-        "finding": "no Splunk OpenTelemetry Collector, Splunk Connect for Kubernetes, Splunk Enterprise, or other Splunk-managed observability workload footprint was detected",
-    },
-    {
-        "key": "loki_stack_logging",
-        "capability": "LokiStack logging footprint",
-        "level": cap_level("loki_stack_logging", "informational"),
-        "source": "LokiStack and Loki workload inventory",
-        "present": loki_stack_logging_present,
-        "detail": (
-            f"lokistacks={len(lokistacks)} "
-            f"namespace_present={loki_namespace_present} "
-            f"crd_present={loki_crd_present} "
-            f"workload_present={loki_workload_present}"
-        ),
-        "issue": "prod-day2-loki-stack-logging-missing",
-        "finding": "no LokiStack custom resource or Loki-managed workload footprint was detected",
-    },
-    {
-        "key": "datadog_observability",
-        "capability": "Datadog observability footprint",
-        "level": cap_level("datadog_observability", "informational"),
-        "source": "Datadog operator and agent inventory",
-        "present": datadog_observability_present,
-        "detail": (
-            (
-                "cluster meets criteria for Datadog-managed observability: "
-                f"datadogagents={len(datadogagents)} "
-                f"workload_present={datadog_workload_present}"
-            )
-            if datadog_observability_present
-            else (
-                f"subscription_present={datadog_subscription_present} "
-                f"namespace_present={datadog_namespace_present} "
-                f"crd_present={datadog_crd_present} "
-                f"datadogagents={len(datadogagents)} "
-                f"workload_present={datadog_workload_present}"
-            )
-        ),
-        "issue": "prod-day2-datadog-observability-missing",
-        "finding": "no DatadogAgent custom resource or Datadog-managed agent workload footprint was detected",
-    },
-    {
-        "key": "appdynamics_observability",
-        "capability": "AppDynamics observability footprint",
-        "level": cap_level("appdynamics_observability", "informational"),
-        "source": "AppDynamics cluster agent inventory",
-        "present": appdynamics_observability_present,
-        "detail": (
-            (
-                "cluster meets criteria for AppDynamics-managed observability: "
-                f"clusteragents={len(clusteragents)} "
-                f"infravizs={len(infravizs)} "
-                f"workload_present={appdynamics_workload_present}"
-            )
-            if appdynamics_observability_present
-            else (
-                f"subscription_present={appdynamics_subscription_present} "
-                f"namespace_present={appdynamics_namespace_present} "
-                f"crd_present={appdynamics_crd_present} "
-                f"clusteragents={len(clusteragents)} "
-                f"infravizs={len(infravizs)} "
-                f"workload_present={appdynamics_workload_present}"
-            )
-        ),
-        "issue": "prod-day2-appdynamics-observability-missing",
-        "finding": "no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected",
     },
     {
         "key": "openshift_aap",
@@ -4660,6 +5062,529 @@ platform_app_catalog = [
     },
 ]
 
+dynatrace_context_detail = (
+    f"subscription_present={dynatrace_operator_subscription_present} "
+    f"namespace_present={dynatrace_namespace_present} "
+    f"crd_present={dynatrace_crd_present} "
+    f"operator_workload_present={dynatrace_operator_workload_present} "
+    f"edgeconnects={len(edgeconnects)}"
+)
+dynatrace_configuration_detail = f"dynakubes={len(dynakubes)}"
+dynatrace_workload_detail = f"observability_workload_present={dynatrace_observability_workload_present}"
+dynatrace_missing_detail = (
+    "Dynatrace operator or chart context was detected, but no DynaKube custom resource configuration was found and no Dynatrace-managed workload footprint was detected"
+    if dynatrace_context_present
+    else "no Dynatrace DynaKube custom resource configuration or Dynatrace-managed workload footprint was detected"
+)
+dynatrace_recommended_action = (
+    "Validate that cluster metrics, logs, and alert routing reach Dynatrace through the intended telemetry path."
+    if dynatrace_observability_present
+    else (
+        "Dynatrace operator or chart context was detected, but no DynaKube custom resource configuration was found. Create and validate dynakubes.dynatrace.com resources, then confirm the OneAgent, ActiveGate, CSI driver, OpenTelemetry collector, log-monitoring, or other managed observability workload footprint."
+        if dynatrace_context_present
+        else "If Dynatrace-managed observability is intended, confirm operator or chart installation, DynaKube custom resource configuration, and managed workload rollout."
+    )
+)
+add_check(
+    "Dynatrace operator or chart context",
+    ("OK" if dynatrace_context_present else ("WARN" if cap_required("dynatrace_observability") else "INFO")),
+    dynatrace_context_detail,
+    "Dynatrace operator and workload inventory",
+    level=cap_level("dynatrace_observability", "informational"),
+    scored=False,
+    capability_key="dynatrace_observability",
+)
+add_check(
+    "DynaKube custom resource configuration",
+    ("OK" if dynatrace_dynakube_present else ("WARN" if (dynatrace_context_present or cap_required("dynatrace_observability")) else "INFO")),
+    dynatrace_configuration_detail,
+    "Dynatrace operator and workload inventory",
+    level=cap_level("dynatrace_observability", "informational"),
+    scored=False,
+    capability_key="dynatrace_observability",
+)
+add_check(
+    "Dynatrace managed workload footprint",
+    ("OK" if dynatrace_observability_workload_present else ("WARN" if (dynatrace_context_present or cap_required("dynatrace_observability")) else "INFO")),
+    dynatrace_workload_detail,
+    "Dynatrace operator and workload inventory",
+    level=cap_level("dynatrace_observability", "informational"),
+    scored=False,
+    capability_key="dynatrace_observability",
+)
+if not dynatrace_observability_present:
+    add_finding(
+        "prod-day2-dynatrace-observability-missing",
+        dynatrace_missing_detail,
+        severity=cap_failure_severity("dynatrace_observability"),
+        source="Dynatrace operator and workload inventory",
+        recommended_action=dynatrace_recommended_action,
+    )
+
+acs_context_detail = (
+    f"subscription_present={acs_operator_subscription_present} "
+    f"namespace_present={acs_namespace_present} "
+    f"crd_present={acs_crd_present}"
+)
+acs_configuration_detail = "required Central or SecuredCluster custom resource configuration could not be confirmed from current collected evidence"
+acs_workload_detail = f"workload_present={acs_workload_present}"
+acs_missing_detail = (
+    f"{acs_context_detail}; required Central or SecuredCluster custom resource configuration could not be confirmed and no RHACS-managed workload footprint was detected"
+    if advanced_cluster_security_context_present
+    else f"{acs_context_detail}; no RHACS operator/chart footprint or RHACS-managed workload footprint was detected"
+)
+acs_recommended_action = (
+    "Confirm the RHACS footprint is healthy and that the intended workload-security services remain in service."
+    if advanced_cluster_security_present
+    else (
+        "RHACS operator or chart context was detected, but the required Central or SecuredCluster custom resource configuration could not be confirmed and no active RHACS workload footprint was found. Create and validate Central or SecuredCluster resources, then confirm Central, Scanner, Sensor, admission-control, and secured-cluster rollout."
+        if advanced_cluster_security_context_present
+        else "If RHACS is the intended workload-security platform, install the operator or chart, apply the required Central or SecuredCluster custom resource configuration, and confirm active workload rollout."
+    )
+)
+add_check(
+    "RHACS operator or chart context",
+    ("OK" if advanced_cluster_security_context_present else ("WARN" if cap_enabled("advanced_cluster_security") else "INFO")),
+    acs_context_detail,
+    "RHACS operator and secured-cluster inventory",
+    level=acs_level,
+    scored=False,
+    capability_key="advanced_cluster_security",
+)
+add_check(
+    "RHACS custom resource configuration",
+    ("OK" if False else ("WARN" if (advanced_cluster_security_context_present or cap_enabled("advanced_cluster_security")) else "INFO")),
+    acs_configuration_detail,
+    "RHACS operator and secured-cluster inventory",
+    level=acs_level,
+    scored=False,
+    capability_key="advanced_cluster_security",
+)
+add_check(
+    "RHACS managed workload footprint",
+    ("OK" if acs_workload_present else ("WARN" if (advanced_cluster_security_context_present or cap_enabled("advanced_cluster_security")) else "INFO")),
+    acs_workload_detail,
+    "RHACS operator and secured-cluster inventory",
+    level=acs_level,
+    scored=False,
+    capability_key="advanced_cluster_security",
+)
+if not advanced_cluster_security_present and cap_enabled("advanced_cluster_security"):
+    add_finding(
+        "prod-day2-platform-acs-missing",
+        acs_missing_detail,
+        severity=cap_failure_severity("advanced_cluster_security"),
+        source="RHACS operator and secured-cluster inventory",
+        recommended_action=acs_recommended_action,
+    )
+
+prisma_context_detail = (
+    f"subscription_present={prisma_subscription_present} "
+    f"namespace_present={prisma_namespace_present} "
+    f"crd_present={prisma_crd_present}"
+)
+prisma_configuration_detail = "required Prisma Cloud Compute custom resource configuration could not be confirmed from current collected evidence"
+prisma_workload_detail = f"workload_present={prisma_workload_present}"
+prisma_missing_detail = (
+    f"{prisma_context_detail}; required Prisma Cloud Compute custom resource configuration could not be confirmed and no Console or Defender workload footprint was detected"
+    if prisma_twistlock_context_present
+    else f"{prisma_context_detail}; no Prisma Cloud Compute or Twistlock operator/chart footprint or Console or Defender workload footprint was detected"
+)
+prisma_recommended_action = (
+    "Confirm the Prisma Cloud Compute footprint is healthy and that the intended Console and Defender services remain in service."
+    if prisma_twistlock_defenders_present
+    else (
+        "Prisma Cloud Compute or Twistlock operator or chart context was detected, but the required custom resource configuration could not be confirmed and no Console or Defender workload footprint was found. Review the Prisma Cloud custom resource rollout and Defender deployment state."
+        if prisma_twistlock_context_present
+        else "If Prisma Cloud Compute or Twistlock is intended, confirm that the operator or chart is installed, then apply the required custom resource configuration and Console or Defender workload footprint."
+    )
+)
+add_check(
+    "Prisma Cloud Compute or Twistlock operator or chart context",
+    ("OK" if prisma_twistlock_context_present else ("WARN" if cap_enabled("prisma_twistlock_defenders") else "INFO")),
+    prisma_context_detail,
+    "Prisma Cloud Compute inventory",
+    level=cap_level("prisma_twistlock_defenders", "informational"),
+    scored=False,
+    capability_key="prisma_twistlock_defenders",
+)
+add_check(
+    "Prisma Cloud Compute custom resource configuration",
+    ("OK" if False else ("WARN" if (prisma_twistlock_context_present or cap_enabled("prisma_twistlock_defenders")) else "INFO")),
+    prisma_configuration_detail,
+    "Prisma Cloud Compute inventory",
+    level=cap_level("prisma_twistlock_defenders", "informational"),
+    scored=False,
+    capability_key="prisma_twistlock_defenders",
+)
+add_check(
+    "Prisma Cloud Compute managed workload footprint",
+    ("OK" if prisma_workload_present else ("WARN" if (prisma_twistlock_context_present or cap_enabled("prisma_twistlock_defenders")) else "INFO")),
+    prisma_workload_detail,
+    "Prisma Cloud Compute inventory",
+    level=cap_level("prisma_twistlock_defenders", "informational"),
+    scored=False,
+    capability_key="prisma_twistlock_defenders",
+)
+if not prisma_twistlock_defenders_present and cap_enabled("prisma_twistlock_defenders"):
+    add_finding(
+        "prod-day2-prisma-twistlock-defenders-missing",
+        prisma_missing_detail,
+        severity=cap_failure_severity("prisma_twistlock_defenders"),
+        source="Prisma Cloud Compute inventory",
+        recommended_action=prisma_recommended_action,
+    )
+
+aqua_context_detail = (
+    f"subscription_present={aqua_subscription_present} "
+    f"namespace_present={aqua_namespace_present} "
+    f"crd_present={aqua_crd_present}"
+)
+aqua_configuration_detail = "required Aqua custom resource configuration could not be confirmed from current collected evidence"
+aqua_workload_detail = f"workload_present={aqua_workload_present}"
+aqua_missing_detail = (
+    f"{aqua_context_detail}; required Aqua custom resource configuration could not be confirmed and no Aqua-managed workload footprint was detected"
+    if aqua_platform_context_present
+    else f"{aqua_context_detail}; no Aqua operator/chart footprint or Aqua-managed workload footprint was detected"
+)
+aqua_recommended_action = (
+    "Confirm the Aqua footprint is healthy and that the intended Console, Gateway, and Enforcer services remain in service."
+    if aqua_security_platform_present
+    else (
+        "Aqua operator or chart context was detected, but the required Aqua custom resource configuration could not be confirmed and no Aqua Console, Gateway, Enforcer, kube-enforcer, or other managed workload footprint was found. Review the Aqua custom resource rollout and enforcement deployment state."
+        if aqua_platform_context_present
+        else "If Aqua security is intended, confirm that the Aqua operator or chart is installed, then apply the required Aqua custom resource configuration and managed workload footprint."
+    )
+)
+add_check(
+    "Aqua operator or chart context",
+    ("OK" if aqua_platform_context_present else ("WARN" if cap_enabled("aqua_security_platform") else "INFO")),
+    aqua_context_detail,
+    "Aqua operator and enforcer inventory",
+    level=cap_level("aqua_security_platform", "informational"),
+    scored=False,
+    capability_key="aqua_security_platform",
+)
+add_check(
+    "Aqua custom resource configuration",
+    ("OK" if False else ("WARN" if (aqua_platform_context_present or cap_enabled("aqua_security_platform")) else "INFO")),
+    aqua_configuration_detail,
+    "Aqua operator and enforcer inventory",
+    level=cap_level("aqua_security_platform", "informational"),
+    scored=False,
+    capability_key="aqua_security_platform",
+)
+add_check(
+    "Aqua managed workload footprint",
+    ("OK" if aqua_workload_present else ("WARN" if (aqua_platform_context_present or cap_enabled("aqua_security_platform")) else "INFO")),
+    aqua_workload_detail,
+    "Aqua operator and enforcer inventory",
+    level=cap_level("aqua_security_platform", "informational"),
+    scored=False,
+    capability_key="aqua_security_platform",
+)
+if not aqua_security_platform_present and cap_enabled("aqua_security_platform"):
+    add_finding(
+        "prod-day2-aqua-security-platform-missing",
+        aqua_missing_detail,
+        severity=cap_failure_severity("aqua_security_platform"),
+        source="Aqua operator and enforcer inventory",
+        recommended_action=aqua_recommended_action,
+    )
+
+qualys_context_detail = (
+    f"subscription_present={qualys_subscription_present} "
+    f"namespace_present={qualys_namespace_present} "
+    f"crd_present={qualys_crd_present} "
+    f"operator_workload_present={qualys_operator_workload_present}"
+)
+qualys_configuration_detail = (
+    f"k8s_mode_arg_present={qualys_k8s_mode_arg_present} "
+    f"privileged_security_context_present={qualys_privileged_security_context_present} "
+    f"service_account_config_present={qualys_service_account_config_present} "
+    f"activation_config_present={qualys_activation_config_present}"
+)
+qualys_workload_detail = f"workload_present={qualys_workload_present}"
+qualys_missing_detail = (
+    "Qualys operator or chart context was detected, but the documented deployment configuration for a Qualys OpenShift sensor could not be confirmed and no managed scanner workload footprint was detected"
+    if qualys_scanning_agents_context_present
+    else "no Qualys documented deployment configuration or managed scanner workload footprint was detected"
+)
+qualys_recommended_action = (
+    "Confirm the Qualys scanner footprint is healthy and that the intended sensor coverage remains in service."
+    if qualys_scanning_agents_present
+    else (
+        "Qualys operator or chart context was detected, but the documented deployment configuration for a Qualys OpenShift sensor could not be confirmed. Review the DaemonSet or unified Helm deployment for the required --k8s-mode arguments, service account, privileged security context, and activation settings, then confirm active sensor rollout."
+        if qualys_scanning_agents_context_present
+        else "If Qualys scanning is intended, deploy the documented OpenShift sensor path with the required deployment configuration and confirm active managed scanner workloads."
+    )
+)
+add_check(
+    "Qualys operator or chart context",
+    ("OK" if qualys_scanning_agents_context_present else ("WARN" if cap_enabled("qualys_scanning_agents") else "INFO")),
+    qualys_context_detail,
+    "Qualys agent inventory",
+    level=cap_level("qualys_scanning_agents", "informational"),
+    scored=False,
+    capability_key="qualys_scanning_agents",
+)
+add_check(
+    "Qualys required deployment configuration",
+    ("OK" if qualys_required_deployment_configuration_present else ("WARN" if (qualys_scanning_agents_context_present or cap_enabled("qualys_scanning_agents")) else "INFO")),
+    qualys_configuration_detail,
+    "Qualys agent inventory",
+    level=cap_level("qualys_scanning_agents", "informational"),
+    scored=False,
+    capability_key="qualys_scanning_agents",
+)
+add_check(
+    "Qualys managed workload footprint",
+    ("OK" if qualys_workload_present else ("WARN" if (qualys_scanning_agents_context_present or cap_enabled("qualys_scanning_agents")) else "INFO")),
+    qualys_workload_detail,
+    "Qualys agent inventory",
+    level=cap_level("qualys_scanning_agents", "informational"),
+    scored=False,
+    capability_key="qualys_scanning_agents",
+)
+if not qualys_scanning_agents_present and cap_enabled("qualys_scanning_agents"):
+    add_finding(
+        "prod-day2-qualys-scanning-agents-missing",
+        qualys_missing_detail,
+        severity=cap_failure_severity("qualys_scanning_agents"),
+        source="Qualys agent inventory",
+        recommended_action=qualys_recommended_action,
+    )
+
+splunk_context_detail = (
+    f"namespace_present={splunk_namespace_present} "
+    f"crd_present={splunk_crd_present} "
+    f"operator_workload_present={splunk_operator_workload_present}"
+)
+splunk_configuration_detail = (
+    f"cluster_name_config_present={splunk_cluster_name_config_present} "
+    f"destination_config_present={splunk_destination_config_present}"
+)
+splunk_workload_detail = f"workload_present={splunk_workload_present}"
+splunk_missing_detail = (
+    "Splunk operator or chart context was detected, but the documented deployment configuration for Splunk OpenTelemetry on OpenShift could not be confirmed and no managed collector workload footprint was detected"
+    if splunk_context_present
+    else "no Splunk documented deployment configuration or managed collector workload footprint was detected"
+)
+splunk_recommended_action = (
+    "Validate that cluster metrics, logs, and traces reach Splunk through the intended telemetry path."
+    if splunk_observability_present
+    else (
+        "Splunk operator or chart context was detected, but the documented deployment configuration for Splunk OpenTelemetry on OpenShift could not be confirmed. Review the Helm or operator-backed deployment for clusterName and destination settings, then confirm active collector rollout."
+        if splunk_context_present
+        else "If Splunk-managed observability is intended, deploy the documented Helm or operator-backed collector path with clusterName and destination settings, then confirm active managed collector workloads."
+    )
+)
+add_check(
+    "Splunk operator or chart context",
+    ("OK" if splunk_context_present else ("WARN" if cap_enabled("splunk_observability") else "INFO")),
+    splunk_context_detail,
+    "Splunk OpenTelemetry and logging inventory",
+    level=cap_level("splunk_observability", "informational"),
+    scored=False,
+    capability_key="splunk_observability",
+)
+add_check(
+    "Splunk required deployment configuration",
+    ("OK" if splunk_required_deployment_configuration_present else ("WARN" if (splunk_context_present or cap_enabled("splunk_observability")) else "INFO")),
+    splunk_configuration_detail,
+    "Splunk OpenTelemetry and logging inventory",
+    level=cap_level("splunk_observability", "informational"),
+    scored=False,
+    capability_key="splunk_observability",
+)
+add_check(
+    "Splunk managed workload footprint",
+    ("OK" if splunk_workload_present else ("WARN" if (splunk_context_present or cap_enabled("splunk_observability")) else "INFO")),
+    splunk_workload_detail,
+    "Splunk OpenTelemetry and logging inventory",
+    level=cap_level("splunk_observability", "informational"),
+    scored=False,
+    capability_key="splunk_observability",
+)
+if not splunk_observability_present and cap_enabled("splunk_observability"):
+    add_finding(
+        "prod-day2-splunk-observability-missing",
+        splunk_missing_detail,
+        severity=cap_failure_severity("splunk_observability"),
+        source="Splunk OpenTelemetry and logging inventory",
+        recommended_action=splunk_recommended_action,
+    )
+
+loki_context_detail = (
+    f"namespace_present={loki_namespace_present} "
+    f"crd_present={loki_crd_present}"
+)
+loki_configuration_detail = f"lokistacks={len(lokistacks)}"
+loki_workload_detail = f"workload_present={loki_workload_present}"
+loki_missing_detail = (
+    "Loki operator or chart context was detected, but no LokiStack custom resource configuration was found and no Loki-managed workload footprint was detected"
+    if loki_stack_context_present
+    else "no LokiStack custom resource configuration or Loki-managed workload footprint was detected"
+)
+loki_recommended_action = (
+    "Confirm the Loki footprint is healthy and that the intended centralized logging services remain in service."
+    if loki_stack_logging_present
+    else (
+        "Loki operator or chart context was detected, but no LokiStack custom resource configuration was found. Create and validate lokistacks.loki.grafana.com resources, then confirm the managed Loki workload footprint."
+        if loki_stack_context_present
+        else "If LokiStack-based centralized logging is intended, confirm the LokiStack custom resource configuration or managed Loki workload footprint."
+    )
+)
+add_check(
+    "Loki operator or chart context",
+    ("OK" if loki_stack_context_present else ("WARN" if cap_enabled("loki_stack_logging") else "INFO")),
+    loki_context_detail,
+    "LokiStack and Loki workload inventory",
+    level=cap_level("loki_stack_logging", "informational"),
+    scored=False,
+    capability_key="loki_stack_logging",
+)
+add_check(
+    "LokiStack custom resource configuration",
+    ("OK" if len(lokistacks) > 0 else ("WARN" if (loki_stack_context_present or cap_enabled("loki_stack_logging")) else "INFO")),
+    loki_configuration_detail,
+    "LokiStack and Loki workload inventory",
+    level=cap_level("loki_stack_logging", "informational"),
+    scored=False,
+    capability_key="loki_stack_logging",
+)
+add_check(
+    "Loki managed workload footprint",
+    ("OK" if loki_workload_present else ("WARN" if (loki_stack_context_present or cap_enabled("loki_stack_logging")) else "INFO")),
+    loki_workload_detail,
+    "LokiStack and Loki workload inventory",
+    level=cap_level("loki_stack_logging", "informational"),
+    scored=False,
+    capability_key="loki_stack_logging",
+)
+if not loki_stack_logging_present and cap_enabled("loki_stack_logging"):
+    add_finding(
+        "prod-day2-loki-stack-logging-missing",
+        loki_missing_detail,
+        severity=cap_failure_severity("loki_stack_logging"),
+        source="LokiStack and Loki workload inventory",
+        recommended_action=loki_recommended_action,
+    )
+
+datadog_context_detail = (
+    f"subscription_present={datadog_subscription_present} "
+    f"namespace_present={datadog_namespace_present} "
+    f"crd_present={datadog_crd_present}"
+)
+datadog_configuration_detail = f"datadogagents={len(datadogagents)}"
+datadog_workload_detail = f"workload_present={datadog_workload_present}"
+datadog_missing_detail = (
+    "Datadog operator or chart context was detected, but no DatadogAgent custom resource configuration was found and no Datadog-managed agent workload footprint was detected"
+    if datadog_context_present
+    else "no DatadogAgent custom resource configuration or Datadog-managed agent workload footprint was detected"
+)
+datadog_recommended_action = (
+    "Validate that cluster metrics, logs, and traces reach Datadog through the intended telemetry path."
+    if datadog_observability_present
+    else (
+        "Datadog operator or chart context was detected, but no DatadogAgent custom resource configuration was found. Create and validate datadogagents.datadoghq.com resources, then confirm the managed agent footprint and telemetry delivery path."
+        if datadog_context_present
+        else "If Datadog-managed observability is intended, confirm the DatadogAgent custom resource configuration, agent footprint, and telemetry delivery path."
+    )
+)
+add_check(
+    "Datadog operator or chart context",
+    ("OK" if datadog_context_present else ("WARN" if cap_enabled("datadog_observability") else "INFO")),
+    datadog_context_detail,
+    "Datadog operator and agent inventory",
+    level=cap_level("datadog_observability", "informational"),
+    scored=False,
+    capability_key="datadog_observability",
+)
+add_check(
+    "DatadogAgent custom resource configuration",
+    ("OK" if len(datadogagents) > 0 else ("WARN" if (datadog_context_present or cap_enabled("datadog_observability")) else "INFO")),
+    datadog_configuration_detail,
+    "Datadog operator and agent inventory",
+    level=cap_level("datadog_observability", "informational"),
+    scored=False,
+    capability_key="datadog_observability",
+)
+add_check(
+    "Datadog managed workload footprint",
+    ("OK" if datadog_workload_present else ("WARN" if (datadog_context_present or cap_enabled("datadog_observability")) else "INFO")),
+    datadog_workload_detail,
+    "Datadog operator and agent inventory",
+    level=cap_level("datadog_observability", "informational"),
+    scored=False,
+    capability_key="datadog_observability",
+)
+if not datadog_observability_present and cap_enabled("datadog_observability"):
+    add_finding(
+        "prod-day2-datadog-observability-missing",
+        datadog_missing_detail,
+        severity=cap_failure_severity("datadog_observability"),
+        source="Datadog operator and agent inventory",
+        recommended_action=datadog_recommended_action,
+    )
+
+appdynamics_context_detail = (
+    f"subscription_present={appdynamics_subscription_present} "
+    f"namespace_present={appdynamics_namespace_present} "
+    f"crd_present={appdynamics_crd_present}"
+)
+appdynamics_configuration_detail = f"clusteragents={len(clusteragents)} infravizs={len(infravizs)}"
+appdynamics_workload_detail = f"workload_present={appdynamics_workload_present}"
+appdynamics_missing_detail = (
+    "AppDynamics operator or chart context was detected, but no ClusterAgent or InfraViz custom resource configuration was found and no AppDynamics-managed workload footprint was detected"
+    if appdynamics_context_present
+    else "no AppDynamics ClusterAgent or InfraViz custom resource configuration or AppDynamics-managed workload footprint was detected"
+)
+appdynamics_recommended_action = (
+    "Validate that cluster visibility data reaches the intended AppDynamics destination."
+    if appdynamics_observability_present
+    else (
+        "AppDynamics operator or chart context was detected, but no ClusterAgent or InfraViz custom resource configuration was found. Create and validate clusteragents.appdynamics.com or infravizs.appdynamics.com resources, then confirm the supporting managed workload footprint."
+        if appdynamics_context_present
+        else "If AppDynamics cluster visibility is intended, confirm the ClusterAgent or InfraViz custom resource configuration and supporting workload footprint."
+    )
+)
+add_check(
+    "AppDynamics operator or chart context",
+    ("OK" if appdynamics_context_present else ("WARN" if cap_enabled("appdynamics_observability") else "INFO")),
+    appdynamics_context_detail,
+    "AppDynamics cluster agent inventory",
+    level=cap_level("appdynamics_observability", "informational"),
+    scored=False,
+    capability_key="appdynamics_observability",
+)
+add_check(
+    "AppDynamics custom resource configuration",
+    ("OK" if (len(clusteragents) > 0 or len(infravizs) > 0) else ("WARN" if (appdynamics_context_present or cap_enabled("appdynamics_observability")) else "INFO")),
+    appdynamics_configuration_detail,
+    "AppDynamics cluster agent inventory",
+    level=cap_level("appdynamics_observability", "informational"),
+    scored=False,
+    capability_key="appdynamics_observability",
+)
+add_check(
+    "AppDynamics managed workload footprint",
+    ("OK" if appdynamics_workload_present else ("WARN" if (appdynamics_context_present or cap_enabled("appdynamics_observability")) else "INFO")),
+    appdynamics_workload_detail,
+    "AppDynamics cluster agent inventory",
+    level=cap_level("appdynamics_observability", "informational"),
+    scored=False,
+    capability_key="appdynamics_observability",
+)
+if not appdynamics_observability_present and cap_enabled("appdynamics_observability"):
+    add_finding(
+        "prod-day2-appdynamics-observability-missing",
+        appdynamics_missing_detail,
+        severity=cap_failure_severity("appdynamics_observability"),
+        source="AppDynamics cluster agent inventory",
+        recommended_action=appdynamics_recommended_action,
+    )
+
 for item in platform_app_catalog:
     present = bool(item["present"])
     key = item["key"]
@@ -4731,27 +5656,6 @@ if cap_required("windows_container_workloads") and windows_workloads_context_pre
         "Windows Machine Config Operator footprint was detected, but no Windows node or Windows-targeted workload was found",
         severity=cap_failure_severity("windows_container_workloads"),
         source="node, workload, and Windows Machine Config Operator inventory",
-    )
-if cap_required("loki_stack_logging") and loki_stack_context_present and not loki_stack_logging_present:
-    add_finding(
-        "prod-day2-loki-stack-logging-missing",
-        "Loki namespace or CRD footprint was detected, but no LokiStack custom resource or Loki-managed workload footprint was found",
-        severity=cap_failure_severity("loki_stack_logging"),
-        source="LokiStack and Loki workload inventory",
-    )
-if cap_required("datadog_observability") and datadog_context_present and not datadog_observability_present:
-    add_finding(
-        "prod-day2-datadog-observability-missing",
-        "Datadog operator, namespace, or CRD footprint was detected, but no DatadogAgent custom resource or Datadog-managed workload footprint was found",
-        severity=cap_failure_severity("datadog_observability"),
-        source="Datadog operator and agent inventory",
-    )
-if cap_required("appdynamics_observability") and appdynamics_context_present and not appdynamics_observability_present:
-    add_finding(
-        "prod-day2-appdynamics-observability-missing",
-        "AppDynamics operator, namespace, or CRD footprint was detected, but no ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was found",
-        severity=cap_failure_severity("appdynamics_observability"),
-        source="AppDynamics cluster agent inventory",
     )
 if cap_required("openshift_custom_metrics_autoscaler") and openshift_custom_metrics_autoscaler_context_present and not openshift_custom_metrics_autoscaler_present:
     add_finding(
@@ -4869,10 +5773,35 @@ elif cap_required("descheduler_operator") and descheduler_present and not desche
 
 if cap_enabled("advanced_cluster_management"):
     add_check(
-        "ACM managed-cluster registration",
-        cap_status_for_presence("advanced_cluster_management", acm_registration_present, acm_registration_healthy),
+        "ACM managed-cluster context",
+        ("OK" if acm_registration_present else ("WARN" if cap_required("advanced_cluster_management") else "INFO")),
         (
             f"klusterlets={len(klusterlets)} "
+            f"managedclusteraddons={len(managedclusteraddons)} "
+            f"agent_namespaces={','.join(acm_agent_namespaces) or 'none'}"
+        ),
+        "managed-cluster registration inventory",
+        level=cap_level("advanced_cluster_management", "informational"),
+        scored=False,
+        capability_key="advanced_cluster_management",
+    )
+    add_check(
+        "ACM Klusterlet registration configuration",
+        ("OK" if len(klusterlets) > 0 else ("WARN" if (acm_registration_present or cap_required("advanced_cluster_management")) else "INFO")),
+        f"klusterlets={len(klusterlets)}",
+        "managed-cluster registration inventory",
+        level=cap_level("advanced_cluster_management", "informational"),
+        scored=False,
+        capability_key="advanced_cluster_management",
+    )
+    add_check(
+        "ACM managed-cluster add-on or agent footprint",
+        (
+            "OK"
+            if (len(managedclusteraddons) > 0 or len(acm_agent_namespaces) > 0)
+            else ("WARN" if (acm_registration_present or cap_required("advanced_cluster_management")) else "INFO")
+        ),
+        (
             f"managedclusteraddons={len(managedclusteraddons)} "
             f"agent_namespaces={','.join(acm_agent_namespaces) or 'none'}"
         ),
@@ -5001,6 +5930,8 @@ print(json.dumps({
         "baseline_profile": day2_baseline_profile,
         "capability_profile": capability_profile,
         "gitops_present": gitops_present,
+        "gitops_controller_context_present": gitops_controller_context_present,
+        "gitops_application_configuration_present": gitops_application_configuration_present,
         "gitops_operational": gitops_operational,
         "gitops_automated_sync_present": gitops_automated_sync_present,
         "argocd_count": len(argocds),
@@ -5025,11 +5956,18 @@ print(json.dumps({
         "external_secret_count": len(externalsecrets),
         "external_secret_ready_store_count": len(ready_secret_stores),
         "external_secret_ready_count": len(ready_external_secrets),
+        "external_secrets_subscription_present": ext_secrets_subscription_present,
         "external_secrets_namespace_present": ext_secrets_namespace_present,
+        "external_secrets_crd_present": ext_secrets_crd_present,
+        "external_secrets_operator_workload_present": ext_secrets_operator_workload_present,
+        "external_secrets_context_present": ext_secrets_context_present,
+        "external_secrets_configuration_present": ext_secrets_configuration_present,
+        "external_secrets_managed_sync_present": ext_secrets_managed_sync_present,
         "external_secrets_healthy": ext_secrets_healthy,
         "cyberark_conjur_namespace_present": conjur_namespace_present,
         "cyberark_conjur_workload_present": conjur_workload_present,
         "cyberark_conjur_secretproviderclass_count": len(conjur_secretproviderclass_resources),
+        "cyberark_conjur_context_present": conjur_context_present,
         "cyberark_conjur_present": cyberark_conjur_secrets_management_present,
         "cyberark_conjur_healthy": cyberark_conjur_secrets_management_healthy,
         "clusterautoscaler_count": len(clusterautoscalers),
@@ -5213,7 +6151,13 @@ print(json.dumps({
         "qualys_subscription_present": qualys_subscription_present,
         "qualys_namespace_present": qualys_namespace_present,
         "qualys_crd_present": qualys_crd_present,
+        "qualys_operator_workload_present": qualys_operator_workload_present,
         "qualys_workload_present": qualys_workload_present,
+        "qualys_k8s_mode_arg_present": qualys_k8s_mode_arg_present,
+        "qualys_privileged_security_context_present": qualys_privileged_security_context_present,
+        "qualys_service_account_config_present": qualys_service_account_config_present,
+        "qualys_activation_config_present": qualys_activation_config_present,
+        "qualys_required_deployment_configuration_present": qualys_required_deployment_configuration_present,
         "qualys_scanning_agents_present": qualys_scanning_agents_present,
         "qualys_scanning_agents_context_present": qualys_scanning_agents_context_present,
         "prisma_subscription_present": prisma_subscription_present,
@@ -5224,6 +6168,15 @@ print(json.dumps({
         "aqua_namespace_present": aqua_namespace_present,
         "aqua_crd_present": aqua_crd_present,
         "aqua_workload_present": aqua_workload_present,
+        "splunk_namespace_present": splunk_namespace_present,
+        "splunk_crd_present": splunk_crd_present,
+        "splunk_operator_workload_present": splunk_operator_workload_present,
+        "splunk_workload_present": splunk_workload_present,
+        "splunk_cluster_name_config_present": splunk_cluster_name_config_present,
+        "splunk_destination_config_present": splunk_destination_config_present,
+        "splunk_required_deployment_configuration_present": splunk_required_deployment_configuration_present,
+        "splunk_context_present": splunk_context_present,
+        "splunk_observability_present": splunk_observability_present,
         "windows_container_workloads_present": windows_workloads_present,
         "windows_container_workloads_healthy": windows_workloads_healthy,
         "windows_container_workloads_context_present": windows_workloads_context_present,

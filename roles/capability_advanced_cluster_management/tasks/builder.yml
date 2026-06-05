@@ -1,32 +1,141 @@
 ---
 - name: Build advanced cluster management capability artifact facts
+  vars:
+    day2_advanced_cluster_management_section_current: "{{ (day2_capability_sections_by_key | default({})).get('advanced_cluster_management', {}) }}"
+    acm_klusterlet_count_current: "{{ ((day2_posture_summary | default({})).get('acm_klusterlet_count', 0)) | int }}"
+    acm_managedclusteraddon_count_current: "{{ ((day2_posture_summary | default({})).get('acm_managedclusteraddon_count', 0)) | int }}"
+    acm_agent_namespace_count_current: "{{ ((day2_posture_summary | default({})).get('acm_agent_namespace_count', 0)) | int }}"
+    acm_registration_present_current: >-
+      {{
+        (
+          (acm_klusterlet_count_current | int > 0)
+          or (acm_managedclusteraddon_count_current | int > 0)
+          or (acm_agent_namespace_count_current | int > 0)
+        ) | bool
+      }}
+    acm_registration_healthy_current: >-
+      {{
+        (
+          (acm_klusterlet_count_current | int > 0)
+          or (acm_agent_namespace_count_current | int > 0)
+        ) | bool
+      }}
+    acm_context_detail_current: >-
+      {{
+        'klusterlets=' ~ (acm_klusterlet_count_current | string)
+        ~ ' managedclusteraddons=' ~ (acm_managedclusteraddon_count_current | string)
+        ~ ' agentNamespaces=' ~ (acm_agent_namespace_count_current | string)
+      }}
+    acm_registration_detail_current: "{{ 'klusterlets=' ~ (acm_klusterlet_count_current | string) }}"
+    acm_agent_footprint_detail_current: >-
+      {{
+        'managedclusteraddons=' ~ (acm_managedclusteraddon_count_current | string)
+        ~ ' agentNamespaces=' ~ (acm_agent_namespace_count_current | string)
+      }}
+    acm_status_current: >-
+      {{
+        'OK'
+        if (acm_registration_healthy_current | bool)
+        else ('WARNING' if (day2_advanced_cluster_management_section_current.required | default(false) | bool) else 'INFO')
+      }}
+    acm_missing_detail_current: >-
+      {{
+        'no ACM managed-cluster signals were found from Klusterlet, ManagedClusterAddOn, or ACM agent namespaces'
+        if not (acm_registration_present_current | bool)
+        else 'partial ACM evidence was found from ManagedClusterAddOn objects, but no Klusterlet resource or ACM agent namespace was detected to demonstrate managed-cluster registration'
+      }}
+    acm_recommended_action_current: >-
+      {{
+        'Keep managed-cluster registration and ACM agent services healthy for the intended fleet-management workflows.'
+        if (acm_registration_healthy_current | bool)
+        else 'If ACM is intended, confirm Klusterlet registration, managed-cluster add-on rollout, and ACM agent namespace footprint for this cluster.'
+      }}
+    acm_findings_current: >-
+      {{
+        []
+        if (acm_registration_healthy_current | bool)
+        else [
+          {
+            'capability': 'advanced_cluster_management',
+            'issue': 'prod-day2-acm-management-missing',
+            'severity': ('warning' if (day2_advanced_cluster_management_section_current.required | default(false) | bool) else 'info'),
+            'source': 'managed-cluster registration inventory',
+            'detail': acm_missing_detail_current,
+            'recommended_action': acm_recommended_action_current,
+            'docs': ((day2_advanced_cluster_management_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    acm_section_override_current: >-
+      {{
+        (day2_advanced_cluster_management_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (0 if (acm_registration_healthy_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'ACM managed-cluster context',
+                  'capability_key': 'advanced_cluster_management',
+                  'detail': acm_context_detail_current,
+                  'level': ((day2_advanced_cluster_management_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'managed-cluster registration inventory',
+                  'status': ('OK' if (acm_registration_present_current | bool) else ('WARN' if (day2_advanced_cluster_management_section_current.required | default(false) | bool) else 'INFO'))
+                },
+                {
+                  'capability': 'ACM Klusterlet registration configuration',
+                  'capability_key': 'advanced_cluster_management',
+                  'detail': acm_registration_detail_current,
+                  'level': ((day2_advanced_cluster_management_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'managed-cluster registration inventory',
+                  'status': ('OK' if (acm_klusterlet_count_current | int) > 0 else ('WARN' if ((acm_registration_present_current | bool) or (day2_advanced_cluster_management_section_current.required | default(false) | bool)) else 'INFO'))
+                },
+                {
+                  'capability': 'ACM managed-cluster add-on or agent footprint',
+                  'capability_key': 'advanced_cluster_management',
+                  'detail': acm_agent_footprint_detail_current,
+                  'level': ((day2_advanced_cluster_management_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'managed-cluster registration inventory',
+                  'status': ('OK' if (((acm_managedclusteraddon_count_current | int) > 0) or ((acm_agent_namespace_count_current | int) > 0)) else ('WARN' if ((acm_registration_present_current | bool) or (day2_advanced_cluster_management_section_current.required | default(false) | bool)) else 'INFO'))
+                }
+              ],
+              'findings': acm_findings_current,
+              'status': acm_status_current,
+              'top_detail': (
+                acm_context_detail_current
+                if (acm_registration_healthy_current | bool)
+                else acm_missing_detail_current
+              ),
+              'recommended_action': acm_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: advanced_cluster_management
+    capability_artifact_section_override: "{{ acm_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      acm_managed: "{{ ((day2_posture_summary | default({})).get('acm_managed', false)) | bool }}"
-      acm_klusterlet_count: "{{ ((day2_posture_summary | default({})).get('acm_klusterlet_count', 0)) | int }}"
-      acm_managedclusteraddon_count: "{{ ((day2_posture_summary | default({})).get('acm_managedclusteraddon_count', 0)) | int }}"
-      acm_agent_namespace_count: "{{ ((day2_posture_summary | default({})).get('acm_agent_namespace_count', 0)) | int }}"
-      acm_registration_present: >-
-        {{
-          (
-            (((day2_posture_summary | default({})).get('acm_klusterlet_count', 0)) | int > 0)
-            or (((day2_posture_summary | default({})).get('acm_managedclusteraddon_count', 0)) | int > 0)
-            or (((day2_posture_summary | default({})).get('acm_agent_namespace_count', 0)) | int > 0)
-          ) | bool
-        }}
-      acm_registration_healthy: >-
-        {{
-          (
-            (((day2_posture_summary | default({})).get('acm_klusterlet_count', 0)) | int > 0)
-            or (((day2_posture_summary | default({})).get('acm_agent_namespace_count', 0)) | int > 0)
-          ) | bool
-        }}
+      accounting_state: assessed
+      check_count: 3
+      finding_count: "{{ (0 if (acm_registration_healthy_current | bool) else 1) | int }}"
+      acm_managed: "{{ acm_registration_present_current | bool }}"
+      acm_klusterlet_count: "{{ acm_klusterlet_count_current | int }}"
+      acm_managedclusteraddon_count: "{{ acm_managedclusteraddon_count_current | int }}"
+      acm_agent_namespace_count: "{{ acm_agent_namespace_count_current | int }}"
+      acm_registration_present: "{{ acm_registration_present_current | bool }}"
+      acm_registration_healthy: "{{ acm_registration_healthy_current | bool }}"
+      status_summary: "{{ acm_section_override_current.status | default('unknown') }}"
+      reason_summary: "{{ acm_section_override_current.top_detail | default('unknown') }}"
     capability_artifact_render_inputs:
+      day2_advanced_cluster_management_section: "{{ acm_section_override_current }}"
       day2_posture_summary: "{{ day2_posture_summary | default({}) }}"
     capability_artifact_collection_inputs:
-      acm_managed: "{{ ((day2_posture_summary | default({})).get('acm_managed', false)) | bool }}"
-      acm_klusterlet_count: "{{ ((day2_posture_summary | default({})).get('acm_klusterlet_count', 0)) | int }}"
-      acm_managedclusteraddon_count: "{{ ((day2_posture_summary | default({})).get('acm_managedclusteraddon_count', 0)) | int }}"
-      acm_agent_namespace_count: "{{ ((day2_posture_summary | default({})).get('acm_agent_namespace_count', 0)) | int }}"
+      acm_managed: "{{ acm_registration_present_current | bool }}"
+      acm_klusterlet_count: "{{ acm_klusterlet_count_current | int }}"
+      acm_managedclusteraddon_count: "{{ acm_managedclusteraddon_count_current | int }}"
+      acm_agent_namespace_count: "{{ acm_agent_namespace_count_current | int }}"

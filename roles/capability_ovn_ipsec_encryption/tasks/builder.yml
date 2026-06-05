@@ -11,8 +11,16 @@
     ovn_ipsec_mode_current: "{{ (((ovn_ipsec_ipsec_config_current or {}).get('mode') or ('Full' if (ovn_ipsec_ipsec_config_current is mapping) else 'Disabled')) | string | trim) }}"
     ovn_ipsec_external_only_current: "{{ (ovn_ipsec_is_ovn_current and (ovn_ipsec_ipsec_config_current is mapping) and ((ovn_ipsec_mode_current | lower) == 'external')) | bool }}"
     ovn_ipsec_enabled_current: "{{ (ovn_ipsec_is_ovn_current and (ovn_ipsec_ipsec_config_current is mapping) and ((ovn_ipsec_mode_current | lower) == 'full')) | bool }}"
-    ovn_ipsec_status_current: "{{ (ovn_ipsec_day2_section_current.status | default('') | string | trim) or ('OK' if ovn_ipsec_enabled_current else 'WARNING') }}"
-    ovn_ipsec_reason_current: >-
+    ovn_ipsec_status_current: >-
+      {{
+        (ovn_ipsec_day2_section_current.status | default('') | string | trim)
+        or (
+          'OK'
+          if ovn_ipsec_enabled_current
+          else ('WARNING' if (ovn_ipsec_day2_section_current.required | default(false) | bool) else 'INFO')
+        )
+      }}
+    ovn_ipsec_reason_summary_current: >-
       {{
         (
           ovn_ipsec_day2_section_current.top_detail
@@ -27,14 +35,119 @@
           ~ ' mode=' ~ (ovn_ipsec_mode_current | string)
         )
       }}
+    ovn_ipsec_context_detail_current: >-
+      {{
+        'network.operator.openshift.io/cluster.status.networkType=' ~ (ovn_ipsec_network_type_current | string)
+        ~ ' ovnNetwork=' ~ (ovn_ipsec_is_ovn_current | string)
+      }}
+    ovn_ipsec_configuration_detail_current: >-
+      {{
+        'network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig present='
+        ~ ((ovn_ipsec_ipsec_config_current is mapping) | string)
+      }}
+    ovn_ipsec_mode_detail_current: >-
+      {{
+        'network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode='
+        ~ (ovn_ipsec_mode_current | string)
+      }}
+    ovn_ipsec_missing_detail_current: >-
+      {{
+        'network.operator.openshift.io/cluster.status.networkType does not report OVNKubernetes'
+        if not (ovn_ipsec_is_ovn_current | bool)
+        else (
+          'OVN-Kubernetes IPsec is configured for external traffic only; pod-to-pod encryption requires network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full'
+          if (ovn_ipsec_external_only_current | bool)
+          else 'network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig is missing or disabled for pod-to-pod encryption'
+        )
+      }}
+    ovn_ipsec_recommended_action_current: >-
+      {{
+        'Keep OVN-Kubernetes IPsec enabled and monitor for configuration drift.'
+        if (ovn_ipsec_enabled_current | bool)
+        else 'Use OVN-Kubernetes and configure network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required.'
+      }}
+    ovn_ipsec_findings_current: >-
+      {{
+        []
+        if (ovn_ipsec_enabled_current | bool)
+        else [
+          {
+            'capability': 'ovn_ipsec_encryption',
+            'issue': 'prod-day2-ipsec-not-enabled',
+            'severity': ('warning' if (ovn_ipsec_day2_section_current.required | default(false) | bool) else 'info'),
+            'source': 'OVN-Kubernetes IPsec configuration',
+            'detail': 'OVN-Kubernetes pod-to-pod IPsec is not fully configured: ' ~ ovn_ipsec_missing_detail_current,
+            'recommended_action': ovn_ipsec_recommended_action_current,
+            'docs': ((ovn_ipsec_day2_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    ovn_ipsec_section_override_current: >-
+      {{
+        (ovn_ipsec_day2_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': 3,
+              'finding_count': (0 if (ovn_ipsec_enabled_current | bool) else 1),
+              'checks': [
+                {
+                  'capability': 'OVN-Kubernetes network context',
+                  'capability_key': 'ovn_ipsec_encryption',
+                  'detail': ovn_ipsec_context_detail_current,
+                  'level': ((ovn_ipsec_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OVN-Kubernetes IPsec configuration',
+                  'status': ('OK' if (ovn_ipsec_is_ovn_current | bool) else ('WARN' if (ovn_ipsec_day2_section_current.required | default(false) | bool) else 'INFO'))
+                },
+                {
+                  'capability': 'OVN IPsec configuration presence',
+                  'capability_key': 'ovn_ipsec_encryption',
+                  'detail': ovn_ipsec_configuration_detail_current,
+                  'level': ((ovn_ipsec_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OVN-Kubernetes IPsec configuration',
+                  'status': (
+                    'OK'
+                    if (ovn_ipsec_ipsec_config_current is mapping)
+                    else ('WARN' if ((ovn_ipsec_is_ovn_current | bool) or (ovn_ipsec_day2_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                },
+                {
+                  'capability': 'OVN IPsec pod-to-pod mode',
+                  'capability_key': 'ovn_ipsec_encryption',
+                  'detail': ovn_ipsec_mode_detail_current,
+                  'level': ((ovn_ipsec_day2_section_current.criticality | default('medium')) | string),
+                  'scored': false,
+                  'source': 'OVN-Kubernetes IPsec configuration',
+                  'status': (
+                    'OK'
+                    if (ovn_ipsec_enabled_current | bool)
+                    else ('WARN' if ((ovn_ipsec_is_ovn_current | bool) or (ovn_ipsec_day2_section_current.required | default(false) | bool)) else 'INFO')
+                  )
+                }
+              ],
+              'findings': ovn_ipsec_findings_current,
+              'status': ovn_ipsec_status_current,
+              'top_detail': (
+                ovn_ipsec_reason_summary_current
+                if (ovn_ipsec_enabled_current | bool)
+                else 'OVN-Kubernetes pod-to-pod IPsec is not fully configured: ' ~ ovn_ipsec_missing_detail_current
+              ),
+              'recommended_action': ovn_ipsec_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: ovn_ipsec_encryption
+    capability_artifact_section_override: "{{ ovn_ipsec_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       network_architecture_status: "{{ ovn_ipsec_status_current }}"
-      network_architecture_reason_summary: "{{ ovn_ipsec_reason_current }}"
+      network_architecture_reason_summary: "{{ ovn_ipsec_section_override_current.top_detail }}"
     capability_artifact_render_inputs:
-      day2_ovn_ipsec_encryption_section: "{{ ovn_ipsec_day2_section_current }}"
+      day2_ovn_ipsec_encryption_section: "{{ ovn_ipsec_section_override_current }}"
       network_config: "{{ ovn_ipsec_network_config_current }}"
     capability_artifact_collection_inputs:
       network_type: "{{ ovn_ipsec_network_type_current }}"
