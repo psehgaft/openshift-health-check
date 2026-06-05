@@ -75,6 +75,7 @@ Current OpenShift report order comes from the design notes and template. Keep it
 10. Declarative Operations
 11. Container Platform Adoption And Release Engineering
 12. Day 2 Production Readiness
+13. Capabilities Assessments
 
 Appendix placement:
 
@@ -98,6 +99,12 @@ The repo no longer uses one large shared OpenShift analysis owner per concern. P
   - `roles/report_common`
 
 Prefer changing the posture or capability role that owns the behavior before touching shared report plumbing.
+
+Current built-in catalog rule:
+
+- every capability in `inputs/openshift-cluster-health-profile.yml` is expected to have a matching `roles/capability_<key>/`
+- the built-in OpenShift capability catalog is fully role-backed
+- validator output from `scripts/validate_openshift_capability_role_coverage.py` should not show built-in `catalog_only` entries
 
 Current rule of thumb:
 
@@ -141,6 +148,12 @@ Current enforced behavior:
 - `enabled=false` means the posture or capability section must not appear in the final OpenShift report.
 - `enabled=true` means it must be present in the final report.
 - Capability order in Day 2 may be assessment-priority order, not raw profile order.
+
+Metadata contract for rendered capability sections:
+
+- capability-local section overrides must carry required profile metadata through to the final section object
+- do not drop `owner`, `docs`, or `verification` when a builder emits a full `capability_artifact_section_override`
+- rendered capability validation treats missing `docs`, `verification`, `owner`, `recommended_action`, or `top_detail` as contract failures
 
 Files that currently enforce this contract:
 
@@ -443,6 +456,17 @@ For OpenShift runtime validation, prefer the narrowest realistic path first:
 - full `scripts/validate_repo.sh` before closing out broad contract changes
 
 The goal is not just “syntax clean”. The goal is “unlikely to break the latest working repo behavior”.
+
+## Documentation Quality
+
+Treat docs as part of the repo contract, not polish work at the end.
+
+- keep `README.md`, `docs/DESIGN-PRINCIPLE.md`, and `docs/cluster-health-extension-guide.md` aligned with actual repo behavior
+- do not describe the live OpenShift path as strictly read-only when optional diagnostics such as `oc debug node/<node>` or `sosreport` may run
+- distinguish live-session requirements from collected/offline reprocessing behavior
+- avoid brittle documentation that hard-codes transient validator counts when the real invariant is structural
+- remove filler, repeated phrasing, and generic “AI-generated” prose that does not add operational guidance
+- when changing report structure, capability metadata rules, or validation behavior, review the affected docs in the same change
 
 ## Change Discipline
 
