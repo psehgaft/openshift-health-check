@@ -7,10 +7,11 @@
     aqua_crd_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_crd_present', false)) | bool }}"
     aqua_workload_present_current: "{{ ((day2_posture_summary | default({})).get('aqua_workload_present', false)) | bool }}"
     aqua_context_present_current: "{{ (aqua_subscription_present_current or aqua_namespace_present_current or aqua_crd_present_current) | bool }}"
+    aqua_configuration_present_current: false
     aqua_present_current: "{{ aqua_workload_present_current | bool }}"
-    aqua_missing_status_current: "{{ 'WARNING' if (day2_aqua_security_platform_section_current.required | default(false) | bool) else 'INFO' }}"
-    aqua_missing_check_status_current: "{{ 'WARN' if (day2_aqua_security_platform_section_current.required | default(false) | bool) else 'INFO' }}"
-    aqua_missing_severity_current: "{{ 'warning' if (day2_aqua_security_platform_section_current.required | default(false) | bool) else 'info' }}"
+    aqua_missing_status_current: "{{ 'WARNING' if ((aqua_context_present_current | bool) or (day2_aqua_security_platform_section_current.required | default(false) | bool)) else 'INFO' }}"
+    aqua_missing_check_status_current: "{{ 'WARN' if ((aqua_context_present_current | bool) or (day2_aqua_security_platform_section_current.required | default(false) | bool)) else 'INFO' }}"
+    aqua_missing_severity_current: "{{ 'warning' if ((aqua_context_present_current | bool) or (day2_aqua_security_platform_section_current.required | default(false) | bool)) else 'info' }}"
     aqua_reason_summary_current: >-
       {{
         'subscription_present=' ~ (aqua_subscription_present_current | string)
@@ -23,9 +24,9 @@
         'Confirm the Aqua platform footprint is healthy and that the intended enforcement path remains in service.'
         if aqua_present_current
         else (
-          'Aqua operator, namespace, or CRD context was detected, but no Aqua Console, Gateway, Enforcer, kube-enforcer, or other managed workload footprint was found. Review Aqua rollout state.'
+          'Aqua operator or chart context was detected, but the required Aqua custom resource configuration could not be confirmed and no Aqua Console, Gateway, Enforcer, kube-enforcer, or other managed workload footprint was found. Review the Aqua custom resource rollout and enforcement deployment state.'
           if aqua_context_present_current
-          else 'If Aqua security is intended, deploy or confirm the Aqua Console, Gateway, Enforcer, kube-enforcer, or other managed workload footprint.'
+          else 'If Aqua security is intended, confirm that the Aqua operator or chart is installed, then apply the required Aqua custom resource configuration and managed workload footprint.'
         )
       }}
     aqua_findings_current: >-
@@ -38,9 +39,55 @@
             'issue': 'prod-day2-aqua-security-platform-missing',
             'severity': aqua_missing_severity_current,
             'source': 'Aqua operator and enforcer inventory',
-            'detail': 'no Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected',
+            'detail': (
+              'operator_present=' ~ (aqua_subscription_present_current | string)
+              ~ ' namespace_present=' ~ (aqua_namespace_present_current | string)
+              ~ ' crd_present=' ~ (aqua_crd_present_current | string)
+              ~ '; required Aqua custom resource configuration could not be confirmed and no Aqua-managed workload footprint was detected'
+              if aqua_context_present_current
+              else 'operator_present=' ~ (aqua_subscription_present_current | string)
+              ~ ' namespace_present=' ~ (aqua_namespace_present_current | string)
+              ~ ' crd_present=' ~ (aqua_crd_present_current | string)
+              ~ '; no Aqua operator/chart footprint or Aqua-managed workload footprint was detected'
+            ),
             'recommended_action': aqua_recommended_action_current,
             'docs': ((day2_aqua_security_platform_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    aqua_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'Aqua operator or chart context',
+            'capability_key': 'aqua_security_platform',
+            'detail': (
+              'subscription_present=' ~ (aqua_subscription_present_current | string)
+              ~ ' namespace_present=' ~ (aqua_namespace_present_current | string)
+              ~ ' crd_present=' ~ (aqua_crd_present_current | string)
+            ),
+            'level': ((day2_aqua_security_platform_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Aqua operator and enforcer inventory',
+            'status': ('OK' if aqua_context_present_current else ('WARN' if (day2_aqua_security_platform_section_current.required | default(false) | bool) else 'INFO'))
+          },
+          {
+            'capability': 'Aqua custom resource configuration',
+            'capability_key': 'aqua_security_platform',
+            'detail': 'required Aqua custom resource configuration could not be confirmed from current collected evidence',
+            'level': ((day2_aqua_security_platform_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Aqua operator and enforcer inventory',
+            'status': ('OK' if aqua_configuration_present_current else aqua_missing_check_status_current)
+          },
+          {
+            'capability': 'Aqua managed workload footprint',
+            'capability_key': 'aqua_security_platform',
+            'detail': 'workload_present=' ~ (aqua_workload_present_current | string),
+            'level': ((day2_aqua_security_platform_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Aqua operator and enforcer inventory',
+            'status': ('OK' if aqua_workload_present_current else aqua_missing_check_status_current)
           }
         ]
       }}
@@ -50,25 +97,21 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
+              'check_count': (aqua_checks_current | length),
               'finding_count': (0 if aqua_present_current else 1),
-              'checks': [
-                {
-                  'capability': 'Aqua security platform footprint',
-                  'capability_key': 'aqua_security_platform',
-                  'detail': aqua_reason_summary_current,
-                  'level': ((day2_aqua_security_platform_section_current.criticality | default('medium')) | string),
-                  'scored': false,
-                  'source': 'Aqua operator and enforcer inventory',
-                  'status': ('OK' if aqua_present_current else aqua_missing_check_status_current)
-                }
-              ],
+              'checks': aqua_checks_current,
               'findings': aqua_findings_current,
               'status': ('OK' if aqua_present_current else aqua_missing_status_current),
               'top_detail': (
                 aqua_reason_summary_current
                 if aqua_present_current
-                else 'no Aqua Console, Aqua Gateway, Aqua Enforcer, kube-enforcer, or other Aqua-managed workload footprint was detected'
+                else (
+                  'operator_present=' ~ (aqua_subscription_present_current | string)
+                  ~ ' namespace_present=' ~ (aqua_namespace_present_current | string)
+                  ~ ' crd_present=' ~ (aqua_crd_present_current | string)
+                  ~ ' workload_present=' ~ (aqua_workload_present_current | string)
+                  ~ '; required Aqua custom resource configuration could not be confirmed'
+                )
               ),
               'recommended_action': aqua_recommended_action_current
             },
@@ -81,11 +124,12 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
-      check_count: 1
+      check_count: "{{ (aqua_checks_current | length) | int }}"
       finding_count: "{{ (0 if aqua_present_current else 1) | int }}"
       subscription_present: "{{ aqua_subscription_present_current | bool }}"
       namespace_present: "{{ aqua_namespace_present_current | bool }}"
       crd_present: "{{ aqua_crd_present_current | bool }}"
+      configuration_present: "{{ aqua_configuration_present_current | bool }}"
       workload_present: "{{ aqua_workload_present_current | bool }}"
       status: "{{ 'OK' if aqua_present_current else aqua_missing_status_current }}"
       status_summary: "{{ 'OK' if aqua_present_current else aqua_missing_status_current }}"
@@ -97,4 +141,5 @@
       subscription_present: "{{ aqua_subscription_present_current | bool }}"
       namespace_present: "{{ aqua_namespace_present_current | bool }}"
       crd_present: "{{ aqua_crd_present_current | bool }}"
+      configuration_present: "{{ aqua_configuration_present_current | bool }}"
       workload_present: "{{ aqua_workload_present_current | bool }}"

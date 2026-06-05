@@ -3644,7 +3644,10 @@ if not ovn_ipsec_encryption and cap_required("ovn_ipsec_encryption"):
         else (
             f"OVN-Kubernetes IPsec is configured for external traffic only (mode={ipsec_mode}); pod-to-pod IPsec requires mode=Full."
             if ovn_ipsec_external_only
-            else f"spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig is missing or disabled (mode={ipsec_mode})"
+            else (
+                "network.operator.openshift.io/cluster.spec.defaultNetwork."
+                f"ovnKubernetesConfig.ipsecConfig is missing or disabled (mode={ipsec_mode})"
+            )
         )
     )
     add_finding(
@@ -3653,7 +3656,10 @@ if not ovn_ipsec_encryption and cap_required("ovn_ipsec_encryption"):
         severity=cap_failure_severity("ovn_ipsec_encryption"),
         source="OVN-Kubernetes IPsec configuration",
         recommended_action=(
-            "Use OVN-Kubernetes and configure spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required."
+            "Use OVN-Kubernetes and configure "
+            "network.operator.openshift.io/cluster.spec.defaultNetwork."
+            "ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node "
+            "pod-network encryption is required."
         ),
     )
 
@@ -3668,7 +3674,7 @@ add_check(
 if not etcd_encryption and cap_required("etcd_encryption"):
     add_finding(
         "prod-day2-etcd-encryption-not-enabled",
-        "apiserver.config.openshift.io/cluster does not set spec.encryption.type to aescbc or aesgcm",
+        "apiserver.config.openshift.io/cluster.spec.encryption.type is not set to aescbc or aesgcm",
         severity=cap_failure_severity("etcd_encryption"),
         source="OpenShift APIServer etcd encryption configuration",
     )
@@ -3706,7 +3712,7 @@ add_check(
 if not cluster_proxy_configured and cap_required("cluster_proxy_configuration"):
     add_finding(
         "prod-day2-proxy-configuration-missing",
-        "proxy.config.openshift.io/cluster does not set spec.httpProxy or spec.httpsProxy",
+        "proxy.config.openshift.io/cluster.spec.httpProxy and proxy.config.openshift.io/cluster.spec.httpsProxy are both empty",
         severity=cap_failure_severity("cluster_proxy_configuration"),
         source="OpenShift cluster-wide Proxy configuration",
     )

@@ -19,6 +19,8 @@
     datadog_subscription_present_current: "{{ ('datadog-operator' in (subscription_packages | default([]))) | bool }}"
     datadog_namespace_present_current: "{{ ('datadog' in (namespace_names | default([]))) | bool }}"
     datadogagent_count_current: "{{ (((analysis_graph.datadogagents | default({})).get('items', []) | length) | int) }}"
+    datadog_context_present_current: "{{ (datadog_subscription_present_current | bool) or (datadog_namespace_present_current | bool) or (datadog_crd_present_current | bool) }}"
+    datadog_configuration_present_current: "{{ (datadogagent_count_current | int) > 0 }}"
     datadog_workload_present_current: >-
       {{
         (
@@ -30,10 +32,10 @@
           | length
         ) > 0
       }}
-    datadog_observability_present_current: "{{ ((datadogagent_count_current | int) > 0) or (datadog_workload_present_current | bool) }}"
-    datadog_missing_status_current: "{{ 'WARNING' if (day2_datadog_observability_section_current.required | default(false) | bool) else 'INFO' }}"
-    datadog_missing_check_status_current: "{{ 'WARN' if (day2_datadog_observability_section_current.required | default(false) | bool) else 'INFO' }}"
-    datadog_missing_severity_current: "{{ 'warning' if (day2_datadog_observability_section_current.required | default(false) | bool) else 'info' }}"
+    datadog_observability_present_current: "{{ (datadog_configuration_present_current | bool) or (datadog_workload_present_current | bool) }}"
+    datadog_missing_status_current: "{{ 'WARNING' if ((datadog_context_present_current | bool) or (day2_datadog_observability_section_current.required | default(false) | bool)) else 'INFO' }}"
+    datadog_missing_check_status_current: "{{ 'WARN' if ((datadog_context_present_current | bool) or (day2_datadog_observability_section_current.required | default(false) | bool)) else 'INFO' }}"
+    datadog_missing_severity_current: "{{ 'warning' if ((datadog_context_present_current | bool) or (day2_datadog_observability_section_current.required | default(false) | bool)) else 'info' }}"
     datadog_reason_summary_current: >-
       {{
         (
@@ -54,7 +56,11 @@
       {{
         'Validate that cluster metrics, logs, and alert routing reach Datadog through the intended telemetry path.'
         if (datadog_observability_present_current | bool)
-        else 'If Datadog-managed observability is intended, deploy or confirm the Datadog operator, agent footprint, and telemetry delivery path.'
+        else (
+          'Datadog operator or chart context was detected, but no DatadogAgent custom resource configuration was found. Create and validate datadogagents.datadoghq.com resources, then confirm the managed agent footprint and telemetry delivery path.'
+          if (datadog_context_present_current | bool)
+          else 'If Datadog-managed observability is intended, confirm the DatadogAgent custom resource configuration, agent footprint, and telemetry delivery path.'
+        )
       }}
     datadog_findings_current: >-
       {{
@@ -66,9 +72,49 @@
             'issue': 'prod-day2-datadog-observability-missing',
             'severity': datadog_missing_severity_current,
             'source': 'Datadog operator and agent inventory',
-            'detail': 'no DatadogAgent custom resource or Datadog-managed agent workload footprint was detected',
+            'detail': (
+              'Datadog operator or chart context was detected, but no DatadogAgent custom resource configuration was found and no Datadog-managed agent workload footprint was detected'
+              if (datadog_context_present_current | bool)
+              else 'no DatadogAgent custom resource configuration or Datadog-managed agent workload footprint was detected'
+            ),
             'recommended_action': datadog_recommended_action_current,
             'docs': ((day2_datadog_observability_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    datadog_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'Datadog operator or chart context',
+            'capability_key': 'datadog_observability',
+            'detail': (
+              'subscription_present=' ~ ((datadog_subscription_present_current | bool) | string)
+              ~ ' namespace_present=' ~ ((datadog_namespace_present_current | bool) | string)
+              ~ ' crd_present=' ~ ((datadog_crd_present_current | bool) | string)
+            ),
+            'level': ((day2_datadog_observability_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Datadog operator and agent inventory',
+            'status': ('OK' if (datadog_context_present_current | bool) else ('WARN' if (day2_datadog_observability_section_current.required | default(false) | bool) else 'INFO'))
+          },
+          {
+            'capability': 'DatadogAgent custom resource configuration',
+            'capability_key': 'datadog_observability',
+            'detail': 'datadogagents=' ~ ((datadogagent_count_current | int) | string),
+            'level': ((day2_datadog_observability_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Datadog operator and agent inventory',
+            'status': ('OK' if (datadog_configuration_present_current | bool) else datadog_missing_check_status_current)
+          },
+          {
+            'capability': 'Datadog managed workload footprint',
+            'capability_key': 'datadog_observability',
+            'detail': 'workload_present=' ~ ((datadog_workload_present_current | bool) | string),
+            'level': ((day2_datadog_observability_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Datadog operator and agent inventory',
+            'status': ('OK' if (datadog_workload_present_current | bool) else datadog_missing_check_status_current)
           }
         ]
       }}
@@ -78,25 +124,19 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
+              'check_count': (datadog_checks_current | length),
               'finding_count': (0 if (datadog_observability_present_current | bool) else 1),
-              'checks': [
-                {
-                  'capability': 'Datadog observability footprint',
-                  'capability_key': 'datadog_observability',
-                  'detail': datadog_reason_summary_current,
-                  'level': ((day2_datadog_observability_section_current.criticality | default('medium')) | string),
-                  'scored': false,
-                  'source': 'Datadog operator and agent inventory',
-                  'status': ('OK' if (datadog_observability_present_current | bool) else datadog_missing_check_status_current)
-                }
-              ],
+              'checks': datadog_checks_current,
               'findings': datadog_findings_current,
               'status': ('OK' if (datadog_observability_present_current | bool) else datadog_missing_status_current),
               'top_detail': (
                 datadog_reason_summary_current
                 if (datadog_observability_present_current | bool)
-                else 'no DatadogAgent custom resource or Datadog-managed agent workload footprint was detected'
+                else (
+                  'Datadog operator or chart context was detected, but no DatadogAgent custom resource configuration was found and no Datadog-managed agent workload footprint was detected'
+                  if (datadog_context_present_current | bool)
+                  else 'no DatadogAgent custom resource configuration or Datadog-managed agent workload footprint was detected'
+                )
               ),
               'recommended_action': datadog_recommended_action_current
             },
@@ -109,7 +149,7 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
-      check_count: 1
+      check_count: "{{ (datadog_checks_current | length) | int }}"
       finding_count: "{{ (0 if (datadog_observability_present_current | bool) else 1) | int }}"
       status: "{{ 'OK' if (datadog_observability_present_current | bool) else datadog_missing_status_current }}"
       status_summary: "{{ 'OK' if (datadog_observability_present_current | bool) else datadog_missing_status_current }}"

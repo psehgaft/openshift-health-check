@@ -1939,9 +1939,9 @@
                   'This cluster is not using OVN-Kubernetes, so this capability is not currently demonstrated from collected network evidence.'
                   if not ovn_network
                   else (
-                    'OVN-Kubernetes IPsec is configured for external traffic only. Set spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required.'
+                    'OVN-Kubernetes IPsec is configured for external traffic only. Set network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required.'
                     if ovn_ipsec_external_only
-                    else 'Enable OVN-Kubernetes IPsec with spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required.'
+                    else 'Enable OVN-Kubernetes IPsec with network.operator.openshift.io/cluster.spec.defaultNetwork.ovnKubernetesConfig.ipsecConfig.mode=Full when inter-node pod-network encryption is required.'
                   )
                 )
               ) -%}
@@ -2374,9 +2374,9 @@
                 or dynatrace_operator_workload_present
                 or dynatrace_edgeconnect_present
               ) -%}
+          {%- set dynatrace_configuration_present = dynatrace_dynakube_present -%}
           {%- set dynatrace_observability_present = (
-                dynatrace_dynakube_present
-                or dynatrace_edgeconnect_present
+                dynatrace_configuration_present
                 or dynatrace_workload_present
               ) -%}
           {%- set capability_status = (
@@ -2397,9 +2397,9 @@
                 'No Dynatrace observability remediation is required for this capability.'
                 if capability_status == 'OK'
                 else (
-                  'Dynatrace context was detected, but no DynaKube, OneAgent, ActiveGate, CSI driver, OpenTelemetry collector, log-monitoring, or other managed observability workload footprint was found. Review operator rollout and workload deployment state.'
+                  'Dynatrace operator or chart context was detected, but no DynaKube custom resource configuration was found. Create and validate dynakubes.dynatrace.com resources, then confirm the OneAgent, ActiveGate, CSI driver, OpenTelemetry collector, log-monitoring, or other managed observability workload footprint.'
                   if dynatrace_context_present
-                  else 'No Dynatrace footprint was detected. If Dynatrace is the intended primary observability path, review operator installation, namespace footprint, DynaKube resources, and managed observability workload rollout.'
+                  else 'No Dynatrace footprint was detected. If Dynatrace is the intended primary observability path, review operator installation, DynaKube custom resource configuration, and managed observability workload rollout.'
                 )
               ) -%}
           {%- set findings = (
@@ -2408,7 +2408,7 @@
                 else [{
                   'severity': ('warning' if capability_status == 'WARNING' else 'info'),
                   'issue': (
-                    'Dynatrace context present but managed observability footprint missing'
+                    'Dynatrace operator or chart context present but required DynaKube configuration missing'
                     if dynatrace_context_present
                     else 'Dynatrace observability footprint missing'
                   ),
@@ -2416,18 +2416,41 @@
                   'recommended_action': recommended_action
                 }]
               ) -%}
+          {%- set checks = [
+                {
+                  'capability': 'Dynatrace operator or chart context',
+                  'status': ('OK' if dynatrace_context_present else ('WARN' if (section.required | default(false)) else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Dynatrace operator and workload inventory',
+                  'detail': (
+                    'subscriptionPresent=' ~ (dynatrace_operator_subscription_present | string)
+                    ~ ' namespacePresent=' ~ (dynatrace_namespace_present | string)
+                    ~ ' crdPresent=' ~ (dynatrace_crd_present | string)
+                    ~ ' operatorWorkloadPresent=' ~ (dynatrace_operator_workload_present | string)
+                    ~ ' edgeconnects=' ~ ((((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) | string)
+                  )
+                },
+                {
+                  'capability': 'DynaKube custom resource configuration',
+                  'status': ('OK' if dynatrace_configuration_present else ('WARN' if (dynatrace_context_present or (section.required | default(false))) else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Dynatrace operator and workload inventory',
+                  'detail': 'dynakubes=' ~ ((((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) | string)
+                },
+                {
+                  'capability': 'Dynatrace managed workload footprint',
+                  'status': ('OK' if dynatrace_workload_present else ('WARN' if (dynatrace_context_present or (section.required | default(false))) else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'Dynatrace operator and workload inventory',
+                  'detail': 'observabilityWorkloadPresent=' ~ (dynatrace_workload_present | string)
+                }
+              ] -%}
           {%- set updated = section | combine({
                 'status': capability_status,
                 'accounting_state': 'assessed',
-                'check_count': 1,
+                'check_count': (checks | length),
                 'finding_count': (findings | length),
-                'checks': [{
-                  'capability': 'dynatrace_observability',
-                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
-                  'level': ('required' if (section.required | default(false)) else 'informational'),
-                  'source': 'Dynatrace operator and workload inventory',
-                  'detail': top_detail
-                }],
+                'checks': checks,
                 'findings': findings,
                 'top_detail': top_detail,
                 'recommended_action': recommended_action
@@ -2961,7 +2984,11 @@
           {%- set acs_workload_present = acs_workload.present -%}
           {%- set advanced_cluster_security_context_present = acs_operator_subscription_present or acs_namespace_present or acs_crd_present -%}
           {%- set advanced_cluster_security_present = acs_workload_present -%}
-          {%- set capability_status = ('OK' if advanced_cluster_security_present else ('WARNING' if (section.required | default(false)) else 'INFO')) -%}
+          {%- set capability_status = (
+                'OK'
+                if advanced_cluster_security_present
+                else ('WARNING' if (advanced_cluster_security_context_present or (section.required | default(false))) else 'INFO')
+              ) -%}
           {%- set top_detail = (
                 'subscriptionPresent=' ~ (acs_operator_subscription_present | string)
                 ~ ' acsNamespacePresent=' ~ (acs_namespace_present | string)
@@ -2972,7 +2999,11 @@
           {%- set recommended_action = (
                 'No RHACS footprint remediation is required for this capability.'
                 if advanced_cluster_security_present
-                else 'No RHACS Central, Scanner, Sensor, admission-control, or secured-cluster workload footprint was detected. If RHACS is the intended workload-security platform, review operator installation and secured-cluster rollout evidence. Operator, namespace, or CRD context alone is not treated as active ACS coverage.'
+                else (
+                  'RHACS operator or chart context was detected, but the required Central or SecuredCluster custom resource configuration could not be confirmed and no active RHACS workload footprint was found. Create and validate Central or SecuredCluster resources, then confirm Central, Scanner, Sensor, admission-control, and secured-cluster rollout.'
+                  if advanced_cluster_security_context_present
+                  else 'No RHACS operator or chart footprint was detected. If RHACS is the intended workload-security platform, install the operator, apply the required Central or SecuredCluster custom resource configuration, and confirm active workload rollout.'
+                )
               ) -%}
           {%- set findings = (
                 []
@@ -2980,7 +3011,7 @@
                 else [{
                   'severity': ('warning' if capability_status == 'WARNING' else 'info'),
                   'issue': (
-                    'Advanced Cluster Security context present but no active workload footprint detected'
+                    'Advanced Cluster Security context present but required Central or SecuredCluster configuration missing'
                     if advanced_cluster_security_context_present
                     else 'Advanced Cluster Security footprint missing'
                   ),
@@ -2988,18 +3019,39 @@
                   'recommended_action': recommended_action
                 }]
               ) -%}
+          {%- set checks = [
+                {
+                  'capability': 'RHACS operator or chart context',
+                  'status': ('OK' if advanced_cluster_security_context_present else ('WARN' if (section.required | default(false)) else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'RHACS operator and secured-cluster inventory',
+                  'detail': (
+                    'subscriptionPresent=' ~ (acs_operator_subscription_present | string)
+                    ~ ' acsNamespacePresent=' ~ (acs_namespace_present | string)
+                    ~ ' acsCrdPresent=' ~ (acs_crd_present | string)
+                  )
+                },
+                {
+                  'capability': 'RHACS custom resource configuration',
+                  'status': ('WARN' if (advanced_cluster_security_context_present or (section.required | default(false))) else 'INFO'),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'RHACS operator and secured-cluster inventory',
+                  'detail': 'required Central or SecuredCluster custom resource configuration could not be confirmed from current collected evidence'
+                },
+                {
+                  'capability': 'RHACS managed workload footprint',
+                  'status': ('OK' if acs_workload_present else ('WARN' if (advanced_cluster_security_context_present or (section.required | default(false))) else 'INFO')),
+                  'level': ('required' if (section.required | default(false)) else 'informational'),
+                  'source': 'RHACS operator and secured-cluster inventory',
+                  'detail': 'acsWorkloadPresent=' ~ (acs_workload_present | string)
+                }
+              ] -%}
           {%- set updated = section | combine({
                 'status': capability_status,
                 'accounting_state': 'assessed',
-                'check_count': 1,
+                'check_count': (checks | length),
                 'finding_count': (findings | length),
-                'checks': [{
-                  'capability': 'advanced_cluster_security',
-                  'status': ('OK' if capability_status == 'OK' else ('WARN' if capability_status == 'WARNING' else 'INFO')),
-                  'level': ('required' if (section.required | default(false)) else 'informational'),
-                  'source': 'RHACS operator and secured-cluster inventory',
-                  'detail': top_detail
-                }],
+                'checks': checks,
                 'findings': findings,
                 'top_detail': top_detail,
                 'recommended_action': recommended_action

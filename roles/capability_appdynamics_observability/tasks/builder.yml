@@ -20,6 +20,8 @@
     appdynamics_namespace_present_current: "{{ ('appdynamics' in (namespace_names | default([]))) | bool }}"
     clusteragent_count_current: "{{ (((analysis_graph.clusteragents | default({})).get('items', []) | length) | int) }}"
     infraviz_count_current: "{{ (((analysis_graph.infravizs | default({})).get('items', []) | length) | int) }}"
+    appdynamics_context_present_current: "{{ (appdynamics_subscription_present_current | bool) or (appdynamics_namespace_present_current | bool) or (appdynamics_crd_present_current | bool) }}"
+    appdynamics_configuration_present_current: "{{ ((clusteragent_count_current | int) > 0) or ((infraviz_count_current | int) > 0) }}"
     appdynamics_workload_present_current: >-
       {{
         (
@@ -31,10 +33,10 @@
           | length
         ) > 0
       }}
-    appdynamics_observability_present_current: "{{ (clusteragent_count_current | int) > 0 or (infraviz_count_current | int) > 0 or (appdynamics_workload_present_current | bool) }}"
-    appdynamics_missing_status_current: "{{ 'WARNING' if (day2_appdynamics_observability_section_current.required | default(false) | bool) else 'INFO' }}"
-    appdynamics_missing_check_status_current: "{{ 'WARN' if (day2_appdynamics_observability_section_current.required | default(false) | bool) else 'INFO' }}"
-    appdynamics_missing_severity_current: "{{ 'warning' if (day2_appdynamics_observability_section_current.required | default(false) | bool) else 'info' }}"
+    appdynamics_observability_present_current: "{{ (appdynamics_configuration_present_current | bool) or (appdynamics_workload_present_current | bool) }}"
+    appdynamics_missing_status_current: "{{ 'WARNING' if ((appdynamics_context_present_current | bool) or (day2_appdynamics_observability_section_current.required | default(false) | bool)) else 'INFO' }}"
+    appdynamics_missing_check_status_current: "{{ 'WARN' if ((appdynamics_context_present_current | bool) or (day2_appdynamics_observability_section_current.required | default(false) | bool)) else 'INFO' }}"
+    appdynamics_missing_severity_current: "{{ 'warning' if ((appdynamics_context_present_current | bool) or (day2_appdynamics_observability_section_current.required | default(false) | bool)) else 'info' }}"
     appdynamics_reason_summary_current: >-
       {{
         (
@@ -57,7 +59,11 @@
       {{
         'Validate that AppDynamics cluster metrics and topology data are reaching the intended AppDynamics path.'
         if (appdynamics_observability_present_current | bool)
-        else 'If AppDynamics cluster visibility is intended, confirm the ClusterAgent, InfraViz, and supporting workload footprint.'
+        else (
+          'AppDynamics operator or chart context was detected, but no ClusterAgent or InfraViz custom resource configuration was found. Create and validate clusteragents.appdynamics.com or infravizs.appdynamics.com resources, then confirm the supporting managed workload footprint.'
+          if (appdynamics_context_present_current | bool)
+          else 'If AppDynamics cluster visibility is intended, confirm the ClusterAgent or InfraViz custom resource configuration and supporting workload footprint.'
+        )
       }}
     appdynamics_findings_current: >-
       {{
@@ -69,9 +75,52 @@
             'issue': 'prod-day2-appdynamics-observability-missing',
             'severity': appdynamics_missing_severity_current,
             'source': 'AppDynamics cluster agent inventory',
-            'detail': 'no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected',
+            'detail': (
+              'AppDynamics operator or chart context was detected, but no ClusterAgent or InfraViz custom resource configuration was found and no AppDynamics-managed workload footprint was detected'
+              if (appdynamics_context_present_current | bool)
+              else 'no AppDynamics ClusterAgent or InfraViz custom resource configuration or AppDynamics-managed workload footprint was detected'
+            ),
             'recommended_action': appdynamics_recommended_action_current,
             'docs': ((day2_appdynamics_observability_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    appdynamics_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'AppDynamics operator or chart context',
+            'capability_key': 'appdynamics_observability',
+            'detail': (
+              'subscription_present=' ~ ((appdynamics_subscription_present_current | bool) | string)
+              ~ ' namespace_present=' ~ ((appdynamics_namespace_present_current | bool) | string)
+              ~ ' crd_present=' ~ ((appdynamics_crd_present_current | bool) | string)
+            ),
+            'level': ((day2_appdynamics_observability_section_current.criticality | default('low')) | string),
+            'scored': false,
+            'source': 'AppDynamics cluster agent inventory',
+            'status': ('OK' if (appdynamics_context_present_current | bool) else ('WARN' if (day2_appdynamics_observability_section_current.required | default(false) | bool) else 'INFO'))
+          },
+          {
+            'capability': 'AppDynamics custom resource configuration',
+            'capability_key': 'appdynamics_observability',
+            'detail': (
+              'clusteragents=' ~ ((clusteragent_count_current | int) | string)
+              ~ ' infravizs=' ~ ((infraviz_count_current | int) | string)
+            ),
+            'level': ((day2_appdynamics_observability_section_current.criticality | default('low')) | string),
+            'scored': false,
+            'source': 'AppDynamics cluster agent inventory',
+            'status': ('OK' if (appdynamics_configuration_present_current | bool) else appdynamics_missing_check_status_current)
+          },
+          {
+            'capability': 'AppDynamics managed workload footprint',
+            'capability_key': 'appdynamics_observability',
+            'detail': 'workload_present=' ~ ((appdynamics_workload_present_current | bool) | string),
+            'level': ((day2_appdynamics_observability_section_current.criticality | default('low')) | string),
+            'scored': false,
+            'source': 'AppDynamics cluster agent inventory',
+            'status': ('OK' if (appdynamics_workload_present_current | bool) else appdynamics_missing_check_status_current)
           }
         ]
       }}
@@ -81,25 +130,19 @@
         | combine(
             {
               'accounting_state': 'assessed',
-              'check_count': 1,
+              'check_count': (appdynamics_checks_current | length),
               'finding_count': (0 if (appdynamics_observability_present_current | bool) else 1),
-              'checks': [
-                {
-                  'capability': 'AppDynamics observability footprint',
-                  'capability_key': 'appdynamics_observability',
-                  'detail': appdynamics_reason_summary_current,
-                  'level': ((day2_appdynamics_observability_section_current.criticality | default('low')) | string),
-                  'scored': false,
-                  'source': 'AppDynamics cluster agent inventory',
-                  'status': ('OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_check_status_current)
-                }
-              ],
+              'checks': appdynamics_checks_current,
               'findings': appdynamics_findings_current,
               'status': ('OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_status_current),
               'top_detail': (
                 appdynamics_reason_summary_current
                 if (appdynamics_observability_present_current | bool)
-                else 'no AppDynamics ClusterAgent, InfraViz, or AppDynamics-managed workload footprint was detected'
+                else (
+                  'AppDynamics operator or chart context was detected, but no ClusterAgent or InfraViz custom resource configuration was found and no AppDynamics-managed workload footprint was detected'
+                  if (appdynamics_context_present_current | bool)
+                  else 'no AppDynamics ClusterAgent or InfraViz custom resource configuration or AppDynamics-managed workload footprint was detected'
+                )
               ),
               'recommended_action': appdynamics_recommended_action_current
             },
@@ -112,7 +155,7 @@
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
       accounting_state: assessed
-      check_count: 1
+      check_count: "{{ (appdynamics_checks_current | length) | int }}"
       finding_count: "{{ (0 if (appdynamics_observability_present_current | bool) else 1) | int }}"
       status: "{{ 'OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_status_current }}"
       status_summary: "{{ 'OK' if (appdynamics_observability_present_current | bool) else appdynamics_missing_status_current }}"
