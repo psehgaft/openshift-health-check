@@ -3,6 +3,7 @@
 
 import sys
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Set
 
 try:
@@ -77,6 +78,7 @@ FORBIDDEN_QUALITY_FRAGMENTS = (
     "if this capability is in scope",
     "if this posture is in scope",
 )
+POSTURE_BUILDER_DIR = Path("roles")
 
 
 def fail(message: str) -> None:
@@ -128,12 +130,26 @@ def validate_quality_list(values: List[str], path: str, *, min_words: int) -> No
         validate_quality_text(item, f"{path}[{idx}]", min_words=min_words)
 
 
+def discover_posture_builder_capability_references(repo_root: Path) -> Dict[str, Set[str]]:
+    references: Dict[str, Set[str]] = {}
+    posture_builder_pattern = re.compile(
+        r"day2_capability_sections_by_key\s*\|\s*default\(\{\}\)\)\.get\('([^']+)'"
+    )
+    for builder_path in sorted((repo_root / POSTURE_BUILDER_DIR).glob("posture_*/tasks/*.yml")):
+        posture_key = builder_path.parts[-3].replace("posture_", "", 1)
+        matches = set(posture_builder_pattern.findall(builder_path.read_text(encoding="utf-8")))
+        if matches:
+            references.setdefault(posture_key, set()).update(matches)
+    return references
+
+
 def validate_profile_mapping(
     path: Path,
     profile: Dict[str, Any],
     *,
     strict: bool,
     reference_capabilities: Optional[Set[str]] = None,
+    repo_root: Optional[Path] = None,
 ) -> Set[str]:
     if not isinstance(profile, dict):
         fail(f"{path}: cluster_health_profile must be a mapping")
@@ -156,6 +172,7 @@ def validate_profile_mapping(
     if reference_capabilities:
         known_capabilities |= set(reference_capabilities)
     assignments = {}  # type: Dict[str, List[str]]
+    posture_assignments: Dict[str, Set[str]] = {}
 
     for name, spec in sorted(postures.items()):
         if not isinstance(spec, dict):
@@ -196,6 +213,7 @@ def validate_profile_mapping(
             if strict:
                 for item in includes:
                     assignments.setdefault(item, []).append(f"{name}.includes")
+                    posture_assignments.setdefault(name, set()).add(item)
         if "satisfied_by_all" in spec:
             if not isinstance(spec["satisfied_by_all"], list):
                 fail(f"{path}: posture {name}.satisfied_by_all must be a list")
@@ -209,6 +227,7 @@ def validate_profile_mapping(
             if strict:
                 for item in alt_caps:
                     assignments.setdefault(item, []).append(f"{name}.satisfied_by_all")
+                    posture_assignments.setdefault(name, set()).add(item)
 
     for name, spec in sorted(capabilities.items()):
         if not isinstance(spec, dict):
@@ -265,6 +284,19 @@ def validate_profile_mapping(
         if duplicate_assignments:
             rendered = ", ".join(f"{key} -> {', '.join(value)}" for key, value in sorted(duplicate_assignments.items()))
             fail(f"{path}: capabilities may not be assigned to multiple posture paths: {rendered}")
+        if repo_root is not None:
+            builder_refs = discover_posture_builder_capability_references(repo_root)
+            mismatches = []
+            for posture_key, capability_keys in sorted(builder_refs.items()):
+                assigned_keys = posture_assignments.get(posture_key, set())
+                missing = sorted(capability_keys - assigned_keys)
+                if missing:
+                    mismatches.append(f"{posture_key} -> {', '.join(missing)}")
+            if mismatches:
+                fail(
+                    f"{path}: posture builder capability references must be owned by the same posture via includes or "
+                    f"satisfied_by_all: {'; '.join(mismatches)}"
+                )
     return set(capabilities)
 
 
@@ -273,6 +305,7 @@ def main() -> int:
         fail("usage: validate_cluster_health_profile.py <profile.yml> [<profile.yml> ...]")
 
     defaults_capabilities = None  # type: Optional[Set[str]]
+    repo_root = Path(__file__).resolve().parent.parent
     for index, raw_path in enumerate(sys.argv[1:], 1):
         path = Path(raw_path)
         payload = load_yaml(path)
@@ -285,6 +318,7 @@ def main() -> int:
             profile,
             strict=strict,
             reference_capabilities=defaults_capabilities,
+            repo_root=repo_root,
         )
         if strict:
             defaults_capabilities = returned_capabilities

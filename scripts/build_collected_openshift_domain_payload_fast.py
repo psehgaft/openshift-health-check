@@ -54,14 +54,54 @@ def load_posture_artifacts(postures_dir):
     return artifacts
 
 
+def load_capability_artifacts(capabilities_dir):
+    if not capabilities_dir:
+        return {}
+    root = Path(capabilities_dir).expanduser()
+    artifacts = {}
+    if not root.is_dir():
+        return artifacts
+    for artifact_path in sorted(root.glob("*.json")):
+        artifact = load_json(artifact_path)
+        key = artifact.get("key") or artifact_path.stem
+        if key:
+            artifacts[str(key)] = artifact
+    return artifacts
+
+
 def hydrate_artifact_inputs(data):
     hydrated = dict(data or {})
     artifacts = load_posture_artifacts(hydrated.get("postures_dir") or "")
+    capability_artifacts = load_capability_artifacts(
+        hydrated.get("capabilities_dir") or ""
+    )
+    day2_artifact = artifacts.get("day2_readiness") or {}
+    day2_render_inputs = dict(day2_artifact.get("render_inputs") or {})
+    day2_sections = (
+        day2_artifact.get("capability_sections")
+        or day2_render_inputs.get("capability_sections")
+        or []
+    )
+    resolved_day2_sections = []
+    for section in day2_sections:
+        section_key = section.get("key") if isinstance(section, dict) else ""
+        artifact = capability_artifacts.get(str(section_key or ""))
+        artifact_section = (artifact or {}).get("section") if isinstance(artifact, dict) else None
+        if isinstance(artifact_section, dict) and artifact_section:
+            resolved_day2_sections.append(artifact_section)
+        else:
+            resolved_day2_sections.append(section)
+    if resolved_day2_sections and isinstance(day2_artifact, dict):
+        day2_render_inputs["capability_sections"] = resolved_day2_sections
+        artifacts["day2_readiness"] = dict(day2_artifact)
+        artifacts["day2_readiness"]["capability_sections"] = resolved_day2_sections
+        artifacts["day2_readiness"]["render_inputs"] = day2_render_inputs
     for alias, artifact in artifacts.items():
         artifact_key = f"{alias}_posture_artifact"
         render_key = f"{alias}_posture_render_inputs"
         hydrated.setdefault(artifact_key, artifact)
         hydrated.setdefault(render_key, artifact.get("render_inputs") or {})
+    hydrated.setdefault("openshift_capability_artifacts", capability_artifacts)
     return hydrated
 
 

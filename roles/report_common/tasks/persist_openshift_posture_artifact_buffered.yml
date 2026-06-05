@@ -1,6 +1,20 @@
 ---
 - name: Build and buffer OpenShift posture artifact payload
   vars:
+    posture_profile_current: "{{ ((cluster_health_profile | default({})).get('postures', {})).get(posture_artifact_key, {}) }}"
+    posture_profile_includes_current: "{{ posture_profile_current.get('includes', []) if posture_profile_current is mapping else [] }}"
+    posture_profile_satisfied_by_all_current: "{{ posture_profile_current.get('satisfied_by_all', []) if posture_profile_current is mapping else [] }}"
+    posture_profile_capability_keys_current: "{{ (posture_profile_includes_current + posture_profile_satisfied_by_all_current) | unique }}"
+    posture_profile_capability_sections_current: >-
+      {%- set resolved = [] -%}
+      {%- set section_map = day2_capability_sections_by_key | default({}) -%}
+      {%- for capability_key in posture_profile_capability_keys_current -%}
+      {%- set section = section_map.get(capability_key, {}) -%}
+      {%- if section is mapping and (section | length) > 0 -%}
+      {%- set _ = resolved.append(section) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ resolved }}
     posture_artifact_dependency_keys_resolved: >-
       {{
         posture_artifact_dependency_keys
@@ -34,12 +48,31 @@
             },
             'enabled': (((cluster_health_profile | default({})).get('postures', {})).get(posture_artifact_key, {}).get('enabled', true)),
             'required': (((cluster_health_profile | default({})).get('postures', {})).get(posture_artifact_key, {}).get('required', false)),
+            'profile_capability_mapping': {
+              'includes': posture_profile_includes_current,
+              'satisfied_by_all': posture_profile_satisfied_by_all_current
+            },
+            'owned_capability_keys': posture_profile_capability_keys_current,
+            'owned_capability_sections': posture_profile_capability_sections_current,
             'generated_at': (report_generated_at | default(ansible_date_time.iso8601)),
             'status': 'render-ready',
             'errors': [],
             'analysis_summary': (posture_artifact_analysis_summary | default({})),
             'findings': (posture_artifact_findings | default({})),
-            'render_inputs': (posture_artifact_render_inputs | default({})),
+            'render_inputs': (
+              (posture_artifact_render_inputs | default({}))
+              | combine(
+                  {
+                    'profile_capability_mapping': {
+                      'includes': posture_profile_includes_current,
+                      'satisfied_by_all': posture_profile_satisfied_by_all_current
+                    },
+                    'owned_capability_keys': posture_profile_capability_keys_current,
+                    'owned_capability_sections': posture_profile_capability_sections_current
+                  },
+                  recursive=True
+                )
+            ),
             'collection_inputs': (posture_artifact_collection_inputs | default({}))
           }
           | combine((posture_artifact_section_fields | default({})), recursive=True)

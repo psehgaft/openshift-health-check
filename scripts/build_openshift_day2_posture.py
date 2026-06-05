@@ -411,6 +411,20 @@ def pod_spec_from(obj):
     spec = obj.get("spec") or {}
     return ((spec.get("template") or {}).get("spec") or spec)
 
+def normalized_image_tokens(image):
+    value = str(image or "").strip().lower()
+    if not value:
+        return []
+    image_no_digest = value.split("@", 1)[0]
+    leaf = image_no_digest.rsplit("/", 1)[-1]
+    image_no_tag = image_no_digest.rsplit(":", 1)[0] if ":" in leaf else image_no_digest
+    path_parts = [part for part in image_no_tag.split("/") if part]
+    tokens = {value, image_no_digest, image_no_tag}
+    if path_parts:
+        tokens.add(path_parts[-1])
+        tokens.update(path_parts)
+    return [token for token in tokens if token]
+
 def text_blob(obj):
     meta = obj.get("metadata") or {}
     labels = meta.get("labels") or {}
@@ -420,6 +434,7 @@ def text_blob(obj):
     parts.extend([str(v) for v in labels.values()])
     for container in (spec.get("containers") or []) + (spec.get("initContainers") or []):
         parts.extend([container.get("name") or "", container.get("image") or ""])
+        parts.extend(normalized_image_tokens(container.get("image")))
     return " ".join(parts).lower()
 
 def any_keyword(keywords, values):

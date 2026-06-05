@@ -1,6 +1,24 @@
 ---
 - name: Build advanced cluster security capability artifact facts
   vars:
+    day2_advanced_cluster_security_section_current: "{{ (day2_capability_sections_by_key | default({})).get('advanced_cluster_security', {}) }}"
+    acs_operator_subscription_present_current: "{{ ('container-security-operator' in (subscription_packages | default([]))) | bool }}"
+    acs_namespace_present_current: "{{ (('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([])))) | bool }}"
+    acs_crd_present_current: >-
+      {{
+        (
+          ((analysis_graph.crds | default({})).get('items', []) | default([]))
+          | map(attribute='metadata')
+          | map('default', {})
+          | map(attribute='name')
+          | map('default', '')
+          | map('string')
+          | map('lower')
+          | select('search', 'platform\\.stackrox\\.io|central\\.stackrox\\.io|securedcluster\\.stackrox\\.io|stackrox\\.io')
+          | list
+          | length
+        ) > 0
+      }}
     acs_workload_present_current: >-
       {{
         (
@@ -12,67 +30,148 @@
           | length
         ) > 0
       }}
-    acs_context_present_current: >-
+    acs_context_present_current: "{{ (acs_operator_subscription_present_current or acs_namespace_present_current or acs_crd_present_current) | bool }}"
+    acs_configuration_present_current: false
+    acs_present_current: "{{ acs_workload_present_current | bool }}"
+    acs_missing_status_current: "{{ 'WARNING' if ((acs_context_present_current | bool) or (day2_advanced_cluster_security_section_current.required | default(false) | bool)) else 'INFO' }}"
+    acs_missing_check_status_current: "{{ 'WARN' if ((acs_context_present_current | bool) or (day2_advanced_cluster_security_section_current.required | default(false) | bool)) else 'INFO' }}"
+    acs_missing_severity_current: "{{ 'warning' if ((acs_context_present_current | bool) or (day2_advanced_cluster_security_section_current.required | default(false) | bool)) else 'info' }}"
+    acs_reason_summary_current: >-
       {{
-        (
-          ('container-security-operator' in (subscription_packages | default([])))
-          or ('stackrox' in (namespace_names | default([])))
-          or ('rhacs-operator' in (namespace_names | default([])))
-          or (
-            (
-              ((analysis_graph.crds | default({})).get('items', []) | default([]))
-              | map(attribute='metadata')
-              | map('default', {})
-              | map(attribute='name')
-              | map('default', '')
-              | map('string')
-              | map('lower')
-              | select('search', 'platform\\.stackrox\\.io|central\\.stackrox\\.io|securedcluster\\.stackrox\\.io|stackrox\\.io')
-              | list
-              | length
-            ) > 0
+        'subscription_present=' ~ (acs_operator_subscription_present_current | string)
+        ~ ' namespace_present=' ~ (acs_namespace_present_current | string)
+        ~ ' crd_present=' ~ (acs_crd_present_current | string)
+        ~ ' workload_present=' ~ (acs_workload_present_current | string)
+      }}
+    acs_recommended_action_current: >-
+      {{
+        'Confirm the RHACS footprint is healthy and that the intended workload-security services remain in service.'
+        if acs_present_current
+        else (
+          'RHACS operator or chart context was detected, but the required Central or SecuredCluster custom resource configuration could not be confirmed and no active RHACS workload footprint was found. Create and validate Central or SecuredCluster resources, then confirm Central, Scanner, Sensor, admission-control, and secured-cluster rollout.'
+          if acs_context_present_current
+          else 'If RHACS is the intended workload-security platform, install the operator or chart, apply the required Central or SecuredCluster custom resource configuration, and confirm active workload rollout.'
+        )
+      }}
+    acs_findings_current: >-
+      {{
+        []
+        if acs_present_current
+        else [
+          {
+            'capability': 'advanced_cluster_security',
+            'issue': 'prod-day2-advanced-cluster-security-missing',
+            'severity': acs_missing_severity_current,
+            'source': 'RHACS operator and secured-cluster inventory',
+            'detail': (
+              'subscription_present=' ~ (acs_operator_subscription_present_current | string)
+              ~ ' namespace_present=' ~ (acs_namespace_present_current | string)
+              ~ ' crd_present=' ~ (acs_crd_present_current | string)
+              ~ '; required Central or SecuredCluster custom resource configuration could not be confirmed and no RHACS-managed workload footprint was detected'
+              if acs_context_present_current
+              else 'subscription_present=' ~ (acs_operator_subscription_present_current | string)
+              ~ ' namespace_present=' ~ (acs_namespace_present_current | string)
+              ~ ' crd_present=' ~ (acs_crd_present_current | string)
+              ~ '; no RHACS operator/chart footprint or RHACS-managed workload footprint was detected'
+            ),
+            'recommended_action': acs_recommended_action_current,
+            'docs': ((day2_advanced_cluster_security_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    acs_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'RHACS operator or chart context',
+            'capability_key': 'advanced_cluster_security',
+            'detail': (
+              'subscription_present=' ~ (acs_operator_subscription_present_current | string)
+              ~ ' namespace_present=' ~ (acs_namespace_present_current | string)
+              ~ ' crd_present=' ~ (acs_crd_present_current | string)
+            ),
+            'level': ((day2_advanced_cluster_security_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'RHACS operator and secured-cluster inventory',
+            'status': ('OK' if acs_context_present_current else ('WARN' if (day2_advanced_cluster_security_section_current.required | default(false) | bool) else 'INFO'))
+          },
+          {
+            'capability': 'RHACS custom resource configuration',
+            'capability_key': 'advanced_cluster_security',
+            'detail': 'required Central or SecuredCluster custom resource configuration could not be confirmed from current collected evidence',
+            'level': ((day2_advanced_cluster_security_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'RHACS operator and secured-cluster inventory',
+            'status': ('OK' if acs_configuration_present_current else acs_missing_check_status_current)
+          },
+          {
+            'capability': 'RHACS managed workload footprint',
+            'capability_key': 'advanced_cluster_security',
+            'detail': 'workload_present=' ~ (acs_workload_present_current | string),
+            'level': ((day2_advanced_cluster_security_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'RHACS operator and secured-cluster inventory',
+            'status': ('OK' if acs_workload_present_current else acs_missing_check_status_current)
+          }
+        ]
+      }}
+    acs_section_override_current: >-
+      {{
+        (day2_advanced_cluster_security_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': (acs_checks_current | length),
+              'finding_count': (0 if acs_present_current else 1),
+              'checks': acs_checks_current,
+              'findings': acs_findings_current,
+              'status': ('OK' if acs_present_current else acs_missing_status_current),
+              'top_detail': (
+                acs_reason_summary_current
+                if acs_present_current
+                else (
+                  'subscription_present=' ~ (acs_operator_subscription_present_current | string)
+                  ~ ' namespace_present=' ~ (acs_namespace_present_current | string)
+                  ~ ' crd_present=' ~ (acs_crd_present_current | string)
+                  ~ ' workload_present=' ~ (acs_workload_present_current | string)
+                  ~ '; required Central or SecuredCluster custom resource configuration could not be confirmed'
+                )
+              ),
+              'recommended_action': acs_recommended_action_current
+            },
+            recursive=True
           )
-        ) | bool
       }}
   ansible.builtin.set_fact:
     capability_artifact_key: advanced_cluster_security
+    capability_artifact_section_override: "{{ acs_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
+      accounting_state: assessed
+      check_count: "{{ (acs_checks_current | length) | int }}"
+      finding_count: "{{ (0 if acs_present_current else 1) | int }}"
+      subscription_present: "{{ acs_operator_subscription_present_current | bool }}"
+      namespace_present: "{{ acs_namespace_present_current | bool }}"
+      crd_present: "{{ acs_crd_present_current | bool }}"
+      configuration_present: "{{ acs_configuration_present_current | bool }}"
+      workload_present: "{{ acs_workload_present_current | bool }}"
+      status: "{{ 'OK' if acs_present_current else acs_missing_status_current }}"
+      status_summary: "{{ 'OK' if acs_present_current else acs_missing_status_current }}"
+      top_detail: "{{ acs_section_override_current.top_detail }}"
+      reason_summary: "{{ acs_section_override_current.top_detail }}"
       acs_workload_present: "{{ acs_workload_present_current | bool }}"
       advanced_cluster_security_present: "{{ acs_workload_present_current | bool }}"
       advanced_cluster_security_context_present: "{{ acs_context_present_current | bool }}"
-      acs_operator_subscription_present: "{{ ('container-security-operator' in (subscription_packages | default([]))) | bool }}"
-      acs_namespace_present: "{{ (('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([])))) | bool }}"
+      acs_operator_subscription_present: "{{ acs_operator_subscription_present_current | bool }}"
+      acs_namespace_present: "{{ acs_namespace_present_current | bool }}"
       acs_context_present: "{{ acs_context_present_current | bool }}"
     capability_artifact_render_inputs:
-      acs_operator_subscription_present: "{{ ('container-security-operator' in (subscription_packages | default([]))) | bool }}"
-      acs_namespace_present: "{{ (('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([])))) | bool }}"
+      day2_advanced_cluster_security_section: "{{ acs_section_override_current }}"
+      acs_operator_subscription_present: "{{ acs_operator_subscription_present_current | bool }}"
+      acs_namespace_present: "{{ acs_namespace_present_current | bool }}"
     capability_artifact_collection_inputs:
-      acs_operator_subscription_present: "{{ ('container-security-operator' in (subscription_packages | default([]))) | bool }}"
-      acs_namespace_present: "{{ (('stackrox' in (namespace_names | default([]))) or ('rhacs-operator' in (namespace_names | default([])))) | bool }}"
-      acs_crd_present: >-
-        {{
-          (
-            ((analysis_graph.crds | default({})).get('items', []) | default([]))
-            | map(attribute='metadata')
-            | map('default', {})
-            | map(attribute='name')
-            | map('default', '')
-            | map('string')
-            | map('lower')
-            | select('search', 'platform\\.stackrox\\.io|central\\.stackrox\\.io|securedcluster\\.stackrox\\.io|stackrox\\.io')
-            | list
-            | length
-          ) > 0
-        }}
-      acs_workload_present: >-
-        {{
-          (
-            (all_workload_blobs | default([]))
-            | map('string')
-            | map('lower')
-            | select('search', 'stackrox-central|central-db|stackrox-scanner|stackrox-scanner-db|secured-cluster-services|admission-control|stackrox-sensor')
-            | list
-            | length
-          ) > 0
-        }}
+      acs_operator_subscription_present: "{{ acs_operator_subscription_present_current | bool }}"
+      acs_namespace_present: "{{ acs_namespace_present_current | bool }}"
+      acs_crd_present: "{{ acs_crd_present_current | bool }}"
+      acs_configuration_present: "{{ acs_configuration_present_current | bool }}"
+      acs_workload_present: "{{ acs_workload_present_current | bool }}"

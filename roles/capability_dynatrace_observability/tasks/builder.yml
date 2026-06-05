@@ -1,134 +1,196 @@
 ---
 - name: Build Dynatrace observability capability artifact facts
+  vars:
+    day2_dynatrace_observability_section_current: "{{ (day2_capability_sections_by_key | default({})).get('dynatrace_observability', {}) }}"
+    dynatrace_crd_present_current: >-
+      {{
+        (
+          ((analysis_graph.crds | default({})).get('items', []) | default([]))
+          | selectattr('metadata', 'defined')
+          | selectattr('metadata.name', 'defined')
+          | map(attribute='metadata.name')
+          | map('string')
+          | map('lower')
+          | select('in', ['dynakubes.dynatrace.com', 'dynakube.dynatrace.com', 'edgeconnects.dynatrace.com', 'edgeconnect.dynatrace.com'])
+          | list
+          | length
+        ) > 0
+      }}
+    dynatrace_subscription_present_current: "{{ ('dynatrace-operator' in (subscription_packages | default([]))) | bool }}"
+    dynatrace_namespace_present_current: "{{ ('dynatrace' in (namespace_names | default([]))) | bool }}"
+    dynatrace_dynakube_count_current: "{{ (((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) }}"
+    dynatrace_edgeconnect_count_current: "{{ (((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) }}"
+    dynatrace_operator_workload_present_current: >-
+      {{
+        (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'dynatrace-operator|dynatrace-webhook')
+          | list
+          | length
+        ) > 0
+      }}
+    dynatrace_workload_present_current: >-
+      {{
+        (
+          (all_workload_blobs | default([]))
+          | map('string')
+          | map('lower')
+          | select('search', 'dynakube|oneagent|activegate|dynatrace-otel-collector|dynatrace-logmonitoring|dynatrace-extension-controller|dynatrace-extensions-collector|dynatrace-node-config-collector|dynatrace-oneagent-csi-driver')
+          | list
+          | length
+        ) > 0
+      }}
+    dynatrace_context_present_current: >-
+      {{
+        (dynatrace_subscription_present_current | bool)
+        or (dynatrace_namespace_present_current | bool)
+        or (dynatrace_crd_present_current | bool)
+        or (dynatrace_operator_workload_present_current | bool)
+        or ((dynatrace_edgeconnect_count_current | int) > 0)
+      }}
+    dynatrace_configuration_present_current: "{{ (dynatrace_dynakube_count_current | int) > 0 }}"
+    dynatrace_observability_present_current: "{{ (dynatrace_configuration_present_current | bool) or (dynatrace_workload_present_current | bool) }}"
+    dynatrace_missing_status_current: "{{ 'WARNING' if ((dynatrace_context_present_current | bool) or (day2_dynatrace_observability_section_current.required | default(false) | bool)) else 'INFO' }}"
+    dynatrace_missing_check_status_current: "{{ 'WARN' if ((dynatrace_context_present_current | bool) or (day2_dynatrace_observability_section_current.required | default(false) | bool)) else 'INFO' }}"
+    dynatrace_missing_severity_current: "{{ 'warning' if ((dynatrace_context_present_current | bool) or (day2_dynatrace_observability_section_current.required | default(false) | bool)) else 'info' }}"
+    dynatrace_reason_summary_current: >-
+      {{
+        (
+          'cluster meets criteria for Dynatrace-managed observability: '
+          ~ 'dynakubes=' ~ ((dynatrace_dynakube_count_current | int) | string)
+          ~ ' edgeconnects=' ~ ((dynatrace_edgeconnect_count_current | int) | string)
+          ~ ' workload_present=' ~ ((dynatrace_workload_present_current | bool) | string)
+        )
+        if (dynatrace_observability_present_current | bool)
+        else (
+          'subscription_present=' ~ ((dynatrace_subscription_present_current | bool) | string)
+          ~ ' namespace_present=' ~ ((dynatrace_namespace_present_current | bool) | string)
+          ~ ' crd_present=' ~ ((dynatrace_crd_present_current | bool) | string)
+          ~ ' dynakubes=' ~ ((dynatrace_dynakube_count_current | int) | string)
+          ~ ' edgeconnects=' ~ ((dynatrace_edgeconnect_count_current | int) | string)
+          ~ ' operator_workload_present=' ~ ((dynatrace_operator_workload_present_current | bool) | string)
+          ~ ' workload_present=' ~ ((dynatrace_workload_present_current | bool) | string)
+        )
+      }}
+    dynatrace_missing_detail_current: >-
+      {{
+        (
+          'Dynatrace operator or chart context was detected, but no DynaKube custom resource configuration was found and no Dynatrace-managed workload footprint was detected'
+          if (dynatrace_context_present_current | bool)
+          else 'no Dynatrace DynaKube custom resource configuration or Dynatrace-managed workload footprint was detected'
+        )
+      }}
+    dynatrace_recommended_action_current: >-
+      {{
+        'Validate that cluster metrics, logs, and alert routing reach Dynatrace through the intended telemetry path.'
+        if (dynatrace_observability_present_current | bool)
+        else (
+          'Dynatrace operator or chart context was detected, but no DynaKube custom resource configuration was found. Create and validate dynakubes.dynatrace.com resources, then confirm the OneAgent, ActiveGate, CSI driver, OpenTelemetry collector, log-monitoring, or other managed observability workload footprint.'
+          if (dynatrace_context_present_current | bool)
+          else 'If Dynatrace-managed observability is intended, confirm operator or chart installation, DynaKube custom resource configuration, and managed workload rollout.'
+        )
+      }}
+    dynatrace_findings_current: >-
+      {{
+        []
+        if (dynatrace_observability_present_current | bool)
+        else [
+          {
+            'capability': 'dynatrace_observability',
+            'issue': 'prod-day2-dynatrace-observability-missing',
+            'severity': dynatrace_missing_severity_current,
+            'source': 'Dynatrace operator and workload inventory',
+            'detail': dynatrace_missing_detail_current,
+            'recommended_action': dynatrace_recommended_action_current,
+            'docs': ((day2_dynatrace_observability_section_current.docs | default([])) | string)
+          }
+        ]
+      }}
+    dynatrace_checks_current: >-
+      {{
+        [
+          {
+            'capability': 'Dynatrace operator or chart context',
+            'capability_key': 'dynatrace_observability',
+            'detail': (
+              'subscription_present=' ~ ((dynatrace_subscription_present_current | bool) | string)
+              ~ ' namespace_present=' ~ ((dynatrace_namespace_present_current | bool) | string)
+              ~ ' crd_present=' ~ ((dynatrace_crd_present_current | bool) | string)
+              ~ ' operator_workload_present=' ~ ((dynatrace_operator_workload_present_current | bool) | string)
+              ~ ' edgeconnects=' ~ ((dynatrace_edgeconnect_count_current | int) | string)
+            ),
+            'level': ((day2_dynatrace_observability_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Dynatrace operator and workload inventory',
+            'status': ('OK' if (dynatrace_context_present_current | bool) else ('WARN' if (day2_dynatrace_observability_section_current.required | default(false) | bool) else 'INFO'))
+          },
+          {
+            'capability': 'DynaKube custom resource configuration',
+            'capability_key': 'dynatrace_observability',
+            'detail': 'dynakubes=' ~ ((dynatrace_dynakube_count_current | int) | string),
+            'level': ((day2_dynatrace_observability_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Dynatrace operator and workload inventory',
+            'status': ('OK' if (dynatrace_configuration_present_current | bool) else dynatrace_missing_check_status_current)
+          },
+          {
+            'capability': 'Dynatrace managed workload footprint',
+            'capability_key': 'dynatrace_observability',
+            'detail': 'workload_present=' ~ ((dynatrace_workload_present_current | bool) | string),
+            'level': ((day2_dynatrace_observability_section_current.criticality | default('medium')) | string),
+            'scored': false,
+            'source': 'Dynatrace operator and workload inventory',
+            'status': ('OK' if (dynatrace_workload_present_current | bool) else dynatrace_missing_check_status_current)
+          }
+        ]
+      }}
+    dynatrace_section_override_current: >-
+      {{
+        (day2_dynatrace_observability_section_current | default({}))
+        | combine(
+            {
+              'accounting_state': 'assessed',
+              'check_count': (dynatrace_checks_current | length),
+              'finding_count': (0 if (dynatrace_observability_present_current | bool) else 1),
+              'checks': dynatrace_checks_current,
+              'findings': dynatrace_findings_current,
+              'status': ('OK' if (dynatrace_observability_present_current | bool) else dynatrace_missing_status_current),
+              'top_detail': (
+                dynatrace_reason_summary_current
+                if (dynatrace_observability_present_current | bool)
+                else dynatrace_missing_detail_current
+              ),
+              'recommended_action': dynatrace_recommended_action_current
+            },
+            recursive=True
+          )
+      }}
   ansible.builtin.set_fact:
     capability_artifact_key: dynatrace_observability
+    capability_artifact_section_override: "{{ dynatrace_section_override_current }}"
     capability_artifact_analysis_summary:
       assessment_state: "{{ (day2_posture_summary | default({})).get('capability_assessment_state', 'unknown') }}"
-      dynatrace_context_present: >-
-        {{
-          (
-            ('dynatrace-operator' in (subscription_packages | default([])))
-            or ('dynatrace' in (namespace_names | default([])))
-            or (
-              (
-                ((analysis_graph.crds | default({})).get('items', []) | default([]))
-                | selectattr('metadata', 'defined')
-                | selectattr('metadata.name', 'defined')
-                | map(attribute='metadata.name')
-                | map('string')
-                | map('lower')
-                | select('in', ['dynakubes.dynatrace.com', 'dynakube.dynatrace.com', 'edgeconnects.dynatrace.com', 'edgeconnect.dynatrace.com'])
-                | list
-                | length
-              ) > 0
-            )
-            or ((((analysis_graph.edgeconnects | default({})).get('items', []) | length) > 0))
-            or (
-              (all_workload_blobs | default([]))
-              | map('string')
-              | map('lower')
-              | select('search', 'dynatrace-operator|dynatrace-webhook')
-              | list
-              | length
-            ) > 0
-          ) | bool
-        }}
-      dynatrace_observability_present: >-
-        {{
-          (
-            ((((analysis_graph.dynakubes | default({})).get('items', []) | length) > 0))
-            or (
-              (all_workload_blobs | default([]))
-              | map('string')
-              | map('lower')
-              | select('search', 'dynakube|oneagent|activegate|dynatrace-otel-collector|dynatrace-logmonitoring|dynatrace-extension-controller|dynatrace-extensions-collector|dynatrace-node-config-collector|dynatrace-oneagent-csi-driver')
-              | list
-              | length
-            ) > 0
-          ) | bool
-        }}
-      dynatrace_configuration_present: "{{ ((((analysis_graph.dynakubes | default({})).get('items', []) | length) > 0)) | bool }}"
-      dynatrace_dynakube_count: "{{ (((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) }}"
-      dynatrace_edgeconnect_count: "{{ (((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) }}"
+      accounting_state: assessed
+      check_count: "{{ (dynatrace_checks_current | length) | int }}"
+      finding_count: "{{ (0 if (dynatrace_observability_present_current | bool) else 1) | int }}"
+      status: "{{ 'OK' if (dynatrace_observability_present_current | bool) else dynatrace_missing_status_current }}"
+      status_summary: "{{ 'OK' if (dynatrace_observability_present_current | bool) else dynatrace_missing_status_current }}"
+      top_detail: "{{ dynatrace_section_override_current.top_detail }}"
+      reason_summary: "{{ dynatrace_section_override_current.top_detail }}"
+      dynatrace_context_present: "{{ dynatrace_context_present_current | bool }}"
+      dynatrace_configuration_present: "{{ dynatrace_configuration_present_current | bool }}"
+      dynatrace_observability_present: "{{ dynatrace_observability_present_current | bool }}"
+      dynatrace_dynakube_count: "{{ dynatrace_dynakube_count_current | int }}"
+      dynatrace_edgeconnect_count: "{{ dynatrace_edgeconnect_count_current | int }}"
     capability_artifact_render_inputs:
-      dynatrace_operator_subscription_present: "{{ ('dynatrace-operator' in (subscription_packages | default([]))) | bool }}"
-      dynatrace_namespace_present: "{{ ('dynatrace' in (namespace_names | default([]))) | bool }}"
-      dynatrace_crd_present: >-
-        {{
-          (
-            ((analysis_graph.crds | default({})).get('items', []) | default([]))
-            | selectattr('metadata', 'defined')
-            | selectattr('metadata.name', 'defined')
-                | map(attribute='metadata.name')
-                | map('string')
-                | map('lower')
-                | select('in', ['dynakubes.dynatrace.com', 'dynakube.dynatrace.com', 'edgeconnects.dynatrace.com', 'edgeconnect.dynatrace.com'])
-                | list
-                | length
-          ) > 0
-        }}
-      dynatrace_operator_workload_present: >-
-        {{
-          (
-            (all_workload_blobs | default([]))
-            | map('string')
-            | map('lower')
-            | select('search', 'dynatrace-operator|dynatrace-webhook')
-            | list
-            | length
-          ) > 0
-        }}
-      dynatrace_observability_workload_present: >-
-        {{
-          (
-            (all_workload_blobs | default([]))
-            | map('string')
-            | map('lower')
-            | select('search', 'dynakube|oneagent|activegate|dynatrace-otel-collector|dynatrace-logmonitoring|dynatrace-extension-controller|dynatrace-extensions-collector|dynatrace-node-config-collector|dynatrace-oneagent-csi-driver')
-            | list
-            | length
-          ) > 0
-        }}
-      dynatrace_dynakube_count: "{{ (((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) }}"
-      dynatrace_edgeconnect_count: "{{ (((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) }}"
+      day2_dynatrace_observability_section: "{{ dynatrace_section_override_current }}"
     capability_artifact_collection_inputs:
-      dynatrace_operator_subscription_present: "{{ ('dynatrace-operator' in (subscription_packages | default([]))) | bool }}"
-      dynatrace_namespace_present: "{{ ('dynatrace' in (namespace_names | default([]))) | bool }}"
-      dynatrace_crd_present: >-
-        {{
-          (
-            ((analysis_graph.crds | default({})).get('items', []) | default([]))
-            | selectattr('metadata', 'defined')
-            | selectattr('metadata.name', 'defined')
-                | map(attribute='metadata.name')
-                | map('string')
-                | map('lower')
-                | select('in', ['dynakubes.dynatrace.com', 'dynakube.dynatrace.com', 'edgeconnects.dynatrace.com', 'edgeconnect.dynatrace.com'])
-                | list
-                | length
-          ) > 0
-        }}
-      dynatrace_operator_workload_present: >-
-        {{
-          (
-            (all_workload_blobs | default([]))
-            | map('string')
-            | map('lower')
-            | select('search', 'dynatrace-operator|dynatrace-webhook')
-            | list
-            | length
-          ) > 0
-        }}
-      dynatrace_observability_workload_present: >-
-        {{
-          (
-            (all_workload_blobs | default([]))
-            | map('string')
-            | map('lower')
-            | select('search', 'dynakube|oneagent|activegate|dynatrace-otel-collector|dynatrace-logmonitoring|dynatrace-extension-controller|dynatrace-extensions-collector|dynatrace-node-config-collector|dynatrace-oneagent-csi-driver')
-            | list
-            | length
-          ) > 0
-        }}
-      dynatrace_dynakube_count: "{{ (((analysis_graph.dynakubes | default({})).get('items', []) | length) | int) }}"
-      dynatrace_edgeconnect_count: "{{ (((analysis_graph.edgeconnects | default({})).get('items', []) | length) | int) }}"
+      dynatrace_operator_subscription_present: "{{ dynatrace_subscription_present_current | bool }}"
+      dynatrace_namespace_present: "{{ dynatrace_namespace_present_current | bool }}"
+      dynatrace_crd_present: "{{ dynatrace_crd_present_current | bool }}"
+      dynatrace_operator_workload_present: "{{ dynatrace_operator_workload_present_current | bool }}"
+      dynatrace_observability_workload_present: "{{ dynatrace_workload_present_current | bool }}"
+      dynatrace_dynakube_count: "{{ dynatrace_dynakube_count_current | int }}"
+      dynatrace_edgeconnect_count: "{{ dynatrace_edgeconnect_count_current | int }}"
