@@ -192,7 +192,7 @@ The canonical repository validator, three integration unit tests, the complete s
 
 Validation also exposed a canonical audit-log capability that reported `OK` when its audit profile was missing. Its owning role now requires a configured audit profile before returning a healthy status, and the rendered report validator passes.
 
-No live OpenShift cluster execution, AI HLD/LLD generation, or PDF publishing was performed. Local Headlamp dependency installation did not finish, so its source build remains unverified locally; its dependency lockfile was repaired and a Node 22 build job is included in GitHub Actions. Use Node 22 for the imported plugin toolchain.
+No live OpenShift cluster execution, AI HLD/LLD generation, or PDF publishing was performed. Headlamp dependency installation and the source build passed in GitHub Actions with Node 22 after repairing the dependency lockfile and replacing internal registry URLs with public npm URLs. Use Node 22 for the imported plugin toolchain. The prepared virtual environment is placed on `PATH` by the CLI and runtime wrappers so Ansible's `python3` helpers can load their installed dependencies. The CI runner explicitly installs `ripgrep` for the existing fixture validator.
 
 ## References
 
