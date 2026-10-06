@@ -1,4 +1,14 @@
-# Kubernetes Cluster Health Check
+# OpenShift Health Check and Architecture Toolkit
+
+## Unified toolkit
+
+This repository now includes the shell/ACM/certificate/DNS/Headlamp toolkit from `psehgaft/openshift-healthcheck` and a pinned architecture generator from `stratus-ss/arch-design-doc-generator`. The existing Ansible report remains the canonical report engine.
+
+See [the integration guide](docs/three-repository-integration.md) for analysis, installation, the complete shell → canonical report → architecture workflow, module entry points, and license attribution.
+
+```bash
+python3 scripts/unified_healthcheck.py --help
+```
 
 This repo is an Ansible-based tool for building a health report for one cluster at a time.
 

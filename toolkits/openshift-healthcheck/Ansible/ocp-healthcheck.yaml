@@ -1,0 +1,54 @@
+# Run from node where Ansible is located [Bastion node].
+# $ ansible-playbook -i <INVENTORY> ocp-healthcheck.yml
+
+- name: OSCP Healt Check  
+  hosts: localhost
+  gather_facts: false
+ # remote_user: root
+
+  tasks:
+# Task for get OSCP access and env information 
+    - name: Include vars of main.yaml into the 'vars'.
+      include_vars:
+        file: vars/main.yml
+        name: vars_oscp
+      no_log: true
+
+# Task for health check and KPI report
+
+    - name: kpi_report_folder
+      include: tasks/kpi_report_folder.yaml
+
+# Tasks for OSCP get information
+
+    - name: oscp_login
+      include: tasks/oscp_login.yaml
+      no_log: true
+
+    - set_fact:
+        kpi_date: "{{ oscp_login_reg.start }}"
+        kpi_success: "{{ oscp_login_reg.stdout_lines[0] }}"
+        ocp_token: "{{ oscp_token_reg.stdout }}"
+       
+    - debug:
+        var: oscp_top_nodes_out
+
+#    - name: oscp_get_api
+#      include: tasks/oscp_get_api.yaml
+
+#    - set_fact:
+#        oscp_master_api: "{{ oscp_get_api_reg.stdout }}"
+
+    - name: oscp_get_nodes
+      include: tasks/oscp_get_nodes.yaml
+
+    - set_fact:
+        oscp_nodes: "{{ oscp_get_name_nodes_reg.stdout_lines }}"
+
+# Tasks for OSCP health ckeck
+
+    - name: oscp_top_node
+      include: tasks/oscp_top_node.yaml
+
+    - set_fact:
+        oscp_top_nodes_out: "{{ oscp_top_reg.stdout.split('\n') }}"

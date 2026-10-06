@@ -1,0 +1,42 @@
+name: Unified repository validation
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime
+        run: |
+          scripts/setup-ansible-venv.sh
+          .venv/bin/pip install pytest
+      - name: Integration tests
+        run: .venv/bin/python -m unittest discover -s tests -p test_unified_integration.py
+      - name: Canonical report validation
+        run: scripts/validate_repo.sh
+      - name: Unified suite fixture
+        run: .venv/bin/python tests/run_unified_integration_fixture.py
+      - name: Imported generator tests
+        working-directory: tools/arch-design-doc-generator
+        run: ../../.venv/bin/python -m pytest tests -q
+  headlamp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: toolkits/openshift-healthcheck/Shell/headlamp-openshift-rbac-html-report
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: toolkits/openshift-healthcheck/Shell/headlamp-openshift-rbac-html-report/package-lock.json
+      - run: npm ci
+      - run: npm run build
