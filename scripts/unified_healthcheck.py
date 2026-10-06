@@ -181,7 +181,9 @@ def ansible(extra):
     binary = ROOT / ".venv/bin/ansible-playbook"
     if not binary.is_file():
         raise ValueError("Run scripts/setup-ansible-venv.sh first")
-    run([binary, ROOT / "playbooks/openshift_cluster_health_report.yml", *extra])
+    env = os.environ.copy()
+    env["PATH"] = str(ROOT / ".venv/bin") + os.pathsep + env.get("PATH", "")
+    run([binary, ROOT / "playbooks/openshift_cluster_health_report.yml", *extra], env=env)
 
 
 def main():
