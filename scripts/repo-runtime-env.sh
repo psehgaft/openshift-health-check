@@ -19,6 +19,10 @@ mkdir -p \
   "${ROOT_DIR}/.logs"
 
 export ANSIBLE_CONFIG="${ROOT_DIR}/ansible.cfg"
+# Ansible helpers invoke python3 by name; keep them on the prepared runtime.
+if [[ -x "${ROOT_DIR}/.venv/bin/python3" ]]; then
+  export PATH="${ROOT_DIR}/.venv/bin:${PATH}"
+fi
 export TMPDIR="${REPO_TMP_ROOT}"
 export TMP="${REPO_TMP_ROOT}"
 export TEMP="${REPO_TMP_ROOT}"
