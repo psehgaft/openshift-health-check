@@ -1,62 +1,65 @@
 # OpenShift Health Check and Architecture Toolkit
 
-Ansible toolkit that builds a **cluster health report** for one cluster at a time.
-Live runs use your current `oc` / `kubectl` session; collected runs reprocess support artifacts (must-gather, inspect, case bundles). Output is Markdown (humans) and JSON (automation).
+Ansible toolkit that builds a **cluster health report** for one cluster at a time (Markdown + JSON). Live runs use your current `oc`/`kubectl` session; collected runs reprocess support artifacts.
 
-**Does not change cluster workload configuration.** Optional node diagnostics (`oc debug`, `sosreport`) may create temporary debug resources when enabled.
+> [!TIP]
+> **5-minute path:** see [docs/QUICKSTART.md](docs/QUICKSTART.md) for a production-safe first run (`report_performance_profile=standard`, `collect_live_sosreport=false`).
 
-> [!IMPORTANT]
-> This tool summarizes health signals and likely risks. Review findings before operational decisions.
-
-## 5-minute Quick Start (OpenShift live)
-
-```bash
-# 1. Clone and enter the repo
-git clone https://github.com/psehgaft/openshift-health-check.git
-cd openshift-health-check
-
-# 2. Create the Ansible virtualenv
-./scripts/setup-ansible-venv.sh
-source .venv/bin/activate
-
-# 3. Authenticate to the cluster
-oc login https://api.<cluster-name>.<domain>:6443
-oc whoami
-
-# 4. Run a production-safe live report (no node sosreport)
-ansible-playbook playbooks/openshift_cluster_health_report.yml \
-  -e report_mode=live \
-  -e report_performance_profile=standard \
-  -e collect_live_sosreport=false
-```
-
-Reports land under `reports/` (Markdown + JSON). For the shortest first run use `report_performance_profile=fast`. Full depth is the default when you omit the profile override.
-
-**More detail:** [docs/QUICKSTART.md](docs/QUICKSTART.md) · full options below under [Quick Start](#quick-start).
-
-## Supported platforms
-
-OpenShift · OpenShift SNO · ARO · ROSA · ROSA HCP · generic Kubernetes · AKS · EKS · GKE · Rancher-managed Kubernetes · Minikube
 
 ## Unified toolkit
 
-This repository includes the shell/ACM/certificate/DNS/Headlamp toolkit from `psehgaft/openshift-healthcheck` and a pinned architecture generator from `stratus-ss/arch-design-doc-generator`. The Ansible report remains the canonical report engine.
+This repository now includes the shell/ACM/certificate/DNS/Headlamp toolkit from `psehgaft/openshift-healthcheck` and a pinned architecture generator from `stratus-ss/arch-design-doc-generator`. The existing Ansible report remains the canonical report engine.
 
-See [the integration guide](docs/three-repository-integration.md) for the shell → report → architecture workflow.
+See [the integration guide](docs/three-repository-integration.md) for analysis, installation, the complete shell → canonical report → architecture workflow, module entry points, and license attribution.
 
 ```bash
 python3 scripts/unified_healthcheck.py --help
 ```
 
-## Start here (reading order)
+This repo is an Ansible-based tool for building a health report for one cluster at a time.
 
-1. This README — what the tool does and how to run it.
-2. [docs/QUICKSTART.md](docs/QUICKSTART.md) — shortest path and common variants.
-3. [docs/DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md) — why the report is structured the way it is.
+It supports:
 
-## Design notes
+- OpenShift
+- OpenShift SNO
+- ARO
+- ROSA
+- ROSA HCP
+- generic Kubernetes
+- AKS
+- EKS
+- GKE
+- Rancher-managed Kubernetes
+- Minikube
 
-The check set follows [DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md). Use this README to install and run; use the design notes to understand report structure and intent.
+For live runs, it uses your current `oc` or `kubectl` session. For collected runs, it reprocesses previously gathered support artifacts. In both cases it writes:
+
+- a Markdown report for people
+- a JSON report for automation
+
+Default report file names include the cluster type and cluster name. The CI wrapper writes stable `ci-cluster-report.*` filenames instead.
+
+It does not change cluster workload configuration. In live OpenShift runs, optional diagnostics such as `oc debug node/<node>` and `sosreport` can create temporary debug resources when that evidence path is enabled.
+
+By default, it collects data in parallel so the run finishes faster. It also tells you about collection failures and timeouts, because a health report is only useful when you can see whether the data set is complete. Optional collectors that target APIs or config objects which are not installed on the cluster are tracked separately as not applicable, rather than counted as hard collection failures.
+
+> [!IMPORTANT]
+> This tool summarizes cluster health signals and likely risks. Review the findings before making operational decisions.
+
+## Start Here
+
+If you are new to this repo, use this reading order:
+
+1. Stay in [README.md](README.md) to learn what the tool does and how to run it.
+2. Read [docs/QUICKSTART.md](docs/QUICKSTART.md) for the shortest production-safe path.
+3. Read [DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md) to understand why the report is structured the way it is.
+
+## Design Notes
+
+The check set in this repo follows the design in [DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md).
+
+Use this `README.md` when you want to install, run, or use the tool.
+Use the design notes when you want to understand why the checks exist and how the report is meant to be read.
 
 ## Quick Start
 
@@ -90,7 +93,14 @@ ansible-playbook playbooks/openshift_cluster_health_report.yml \
 
 The default OpenShift run uses `report_performance_profile=full`. For production clusters where node-level diagnostics are not approved, use the `collect_live_sosreport=false` variant below.
 
-> **Tip:** Prefer the [5-minute Quick Start](#5-minute-quick-start-openshift-live) above for a production-safe first run (`standard` profile + `collect_live_sosreport=false`). See also [docs/QUICKSTART.md](docs/QUICKSTART.md).
+**Recommended first production-safe run** (also documented in [docs/QUICKSTART.md](docs/QUICKSTART.md)):
+
+```bash
+ansible-playbook playbooks/openshift_cluster_health_report.yml \
+  -e report_mode=live \
+  -e report_performance_profile=standard \
+  -e collect_live_sosreport=false
+```
 
 ### Common Arguments
 
@@ -107,11 +117,3 @@ Most users only need the Quick Start command. These arguments cover the common a
 | `selected_postures` | comma-separated posture keys | Limit the rendered report to specific posture sections. |
 | `selected_capabilities` | comma-separated capability keys | Limit the rendered report to specific capability sections. |
 | `report_output_dir` | path | Write reports somewhere other than `reports/`. |
-
-The playbook still supports lower-level compatibility variables such as `case_bundle_path`, `must_gather_path`, `inspect_path`, `report_generate_html`, and `report_generate_pdf`, but they are no longer the preferred interface for routine runs.
-
-For the complete reference (bastion bootstrap, collected mode, resume, CI wrappers, report structure, and all checks), continue with the remainder of this README and [docs/DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md).
-
----
-
-_The sections below retain the full operational reference from the previous README layout (command variants, validate, report contract, checks, and advanced options)._
