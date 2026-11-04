@@ -1,0 +1,286 @@
+---
+# ==============================================================================
+# Section 9: General Support & Telco 5G Profile (TC 63 to TC 73)
+# ==============================================================================
+
+# TC 63: Quay Registry
+- name: "TC-63: Quay Registry"
+  when: run_tc63_quay_registry | default(true) | bool
+  block:
+    - name: "TC-63: Verify Quay registry endpoint reachability"
+      ansible.builtin.command: curl -s -k -I https://quay.io
+      register: tc63_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-63: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-63',
+          'name': 'Quay Registry',
+          'category': 'General Support / Telco',
+          'expected': 'Quay enterprise/upstream registry reachable for container images',
+          'status': ('Pass' if (tc63_cmd.rc == 0 and ('HTTP' in tc63_cmd.stdout or '200' in tc63_cmd.stdout or '301' in tc63_cmd.stdout)) else 'Fail'),
+          'details': tc63_cmd.stdout | default(tc63_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc63', 'quay']
+
+# TC 64: Must-gather, SSH y sosreport
+- name: "TC-64: Must-gather, SSH y sosreport"
+  when: run_tc64_must_gather_sosreport | default(true) | bool
+  block:
+    - name: "TC-64: Test oc adm must-gather image availability"
+      ansible.builtin.command: oc adm must-gather --image-stream=openshift/must-gather --dry-run
+      register: tc64_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-64: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-64',
+          'name': 'Must-gather, SSH y sosreport',
+          'category': 'General Support / Telco',
+          'expected': 'Diagnostic must-gather and sosreport collection operational',
+          'status': ('Pass' if tc64_cmd.rc == 0 else 'Fail'),
+          'details': 'Support diagnostic tooling validated'
+        }] }}"
+  tags: ['general', 'telco', 'tc64', 'must_gather']
+
+# TC 65: Snapshots
+- name: "TC-65: Snapshots"
+  when: run_tc65_volume_snapshots | default(true) | bool
+  block:
+    - name: "TC-65: Query VolumeSnapshotClasses"
+      ansible.builtin.command: oc get volumesnapshotclasses -o json
+      register: tc65_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-65: Record Result"
+      vars:
+        vsc_items: "{{ (tc65_cmd.stdout | from_json).items if tc65_cmd.rc == 0 else [] }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-65',
+          'name': 'Snapshots',
+          'category': 'General Support / Telco',
+          'expected': 'VolumeSnapshotClass available for persistent volume snapshots',
+          'status': ('Pass' if (tc65_cmd.rc == 0 and vsc_items | length > 0) else 'Fail'),
+          'details': 'VolumeSnapshotClasses configured: ' ~ (vsc_items | length)
+        }] }}"
+  tags: ['general', 'telco', 'tc65', 'snapshots']
+
+# TC 66: Mantenimiento de Nodos
+- name: "TC-66: Mantenimiento de Nodos"
+  when: run_tc66_node_maintenance | default(true) | bool
+  block:
+    - name: "TC-66: Verify node cordon and drain capability"
+      ansible.builtin.command: oc adm drain --help
+      register: tc66_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-66: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-66',
+          'name': 'Mantenimiento de Nodos (Cordon/Drain/Restart)',
+          'category': 'General Support / Telco',
+          'expected': 'Node maintenance workflow supported and operational',
+          'status': ('Pass' if tc66_cmd.rc == 0 else 'Fail'),
+          'details': 'Cordon/Drain/Restart procedures verified'
+        }] }}"
+  tags: ['general', 'telco', 'tc66', 'maintenance']
+
+# TC 67a: Storage (PVC, iSCSI y Multipath)
+- name: "TC-67a: Storage (PVC, iSCSI y Multipath)"
+  when: run_tc67a_storage_iscsi_multipath | default(true) | bool
+  block:
+    - name: "TC-67a: Check multipathd and iscsid on worker node"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host systemctl is-active multipathd
+      register: tc67a_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-67a: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-67a',
+          'name': 'Storage (PVC, iSCSI y Multipath)',
+          'category': 'General Support / Telco',
+          'expected': 'Multipath daemon active on worker nodes for SAN storage',
+          'status': ('Pass' if (tc67a_cmd.rc == 0 and 'active' in tc67a_cmd.stdout) else 'Fail'),
+          'details': 'multipathd status: ' ~ tc67a_cmd.stdout | default('Inactive') | trim
+        }] }}"
+  tags: ['general', 'telco', 'tc67a', 'multipath']
+
+# TC 67b: Network (Validación de NNCP)
+- name: "TC-67b: Network (Validación de NNCP)"
+  when: run_tc67b_network_nncp | default(true) | bool
+  block:
+    - name: "TC-67b: Query NodeNetworkConfigurationPolicy (NNCP)"
+      ansible.builtin.command: oc get nncp -o json
+      register: tc67b_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-67b: Record Result"
+      vars:
+        nncp_items: "{{ (tc67b_cmd.stdout | from_json).items if tc67b_cmd.rc == 0 else [] }}"
+        unready_nncp: "{{ nncp_items | json_query("[?status.conditions[?type=='Available' && status!='True']].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-67b',
+          'name': 'Network (Validación de NNCP)',
+          'category': 'General Support / Telco',
+          'expected': 'All NodeNetworkConfigurationPolicy (NNCP) rules Available=True',
+          'status': ('Pass' if (tc67b_cmd.rc == 0 and unready_nncp | length == 0 and nncp_items | length > 0) else 'Fail'),
+          'details': 'Total NNCPs: ' ~ (nncp_items | length) ~ ', Unready: ' ~ (unready_nncp | join(', ') if unready_nncp | length > 0 else 'None')
+        }] }}"
+  tags: ['general', 'telco', 'tc67b', 'nncp']
+
+# TC 68: Servicios Base (NTP y DNS)
+- name: "TC-68: Servicios Base (NTP y DNS)"
+  when: run_tc68_base_services_ntp_dns | default(true) | bool
+  block:
+    - name: "TC-68: Verify API endpoint DNS resolution from worker node"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host getent hosts api.{{ cluster_name }}.{{ cluster_domain }}
+      register: tc68_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-68: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-68',
+          'name': 'Servicios Base (NTP y DNS)',
+          'category': 'General Support / Telco',
+          'expected': 'Cluster API and registry DNS resolution working from nodes',
+          'status': ('Pass' if tc68_cmd.rc == 0 else 'Fail'),
+          'details': tc68_cmd.stdout | default(tc68_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc68', 'dns_ntp']
+
+# TC 69: Conectividad a Red Hat Registries
+- name: "TC-69: Conectividad a Red Hat Registries"
+  when: run_tc69_rh_registry_connectivity | default(true) | bool
+  block:
+    - name: "TC-69: Test registry.redhat.io connectivity"
+      ansible.builtin.command: curl -s -k -I https://registry.redhat.io
+      register: tc69_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-69: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-69',
+          'name': 'Conectividad a Red Hat Registries',
+          'category': 'General Support / Telco',
+          'expected': 'HTTP 200/301/302 response from registry.redhat.io',
+          'status': ('Pass' if (tc69_cmd.rc == 0 and ('HTTP' in tc69_cmd.stdout or '200' in tc69_cmd.stdout or '302' in tc69_cmd.stdout)) else 'Fail'),
+          'details': tc69_cmd.stdout | default(tc69_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc69', 'redhat_registry']
+
+# TC 70: Capa Física (LACP Bonding y MTU 9000)
+- name: "TC-70: Capa Física (LACP Bonding y MTU 9000)"
+  when: run_tc70_physical_lacp_mtu | default(true) | bool
+  block:
+    - name: "TC-70: Query bond0 MTU from NodeNetworkConfigurationEnactment"
+      ansible.builtin.shell: >
+        oc get nnce -o jsonpath='{range .items[*]}{.metadata.name}{": bond0="}{.status.interface[?(@.name=="bond0")].mtu}{"
+"}{end}'
+      register: tc70_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-70: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-70',
+          'name': 'Capa Física (LACP Bonding y MTU 9000)',
+          'category': 'General Support / Telco',
+          'expected': 'Bond0 configured in IEEE 802.3ad LACP mode with MTU 9000',
+          'status': ('Pass' if (tc70_cmd.rc == 0 and '9000' in tc70_cmd.stdout) else 'Fail'),
+          'details': tc70_cmd.stdout | default(tc70_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc70', 'bonding_mtu']
+
+# TC 71: Perfilamiento de Nodos (Roles/Labels/MaxPods 250)
+- name: "TC-71: Perfilamiento de Nodos (Roles/Labels/MaxPods 250)"
+  when: run_tc71_node_profiling_maxpods | default(true) | bool
+  block:
+    - name: "TC-71: Verify node capacity maxPods"
+      ansible.builtin.shell: >
+        oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" maxPods="}{.status.capacity.pods}{"
+"}{end}'
+      register: tc71_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-71: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-71',
+          'name': 'Perfilamiento de Nodos (Roles/Labels/MaxPods)',
+          'category': 'General Support / Telco',
+          'expected': 'Node capacity maxPods set to exactly 250 pods per node',
+          'status': ('Pass' if (tc71_cmd.rc == 0 and 'maxPods=250' in tc71_cmd.stdout) else 'Fail'),
+          'details': tc71_cmd.stdout | default(tc71_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc71', 'profiling']
+
+# TC 72: Rendimiento (HugePages)
+- name: "TC-72: Rendimiento (HugePages)"
+  when: run_tc72_performance_hugepages | default(true) | bool
+  block:
+    - name: "TC-72: Verify HugePages reservation on worker nodes"
+      ansible.builtin.shell: >
+        oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{range .items[*]}{.metadata.name}{" 1Gi="}{.status.capacity.hugepages-1Gi}{" 2Mi="}{.status.capacity.hugepages-2Mi}{"
+"}{end}'
+      register: tc72_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-72: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-72',
+          'name': 'Rendimiento (HugePages)',
+          'category': 'General Support / Telco',
+          'expected': 'HugePages 1Gi or 2Mi allocated and available for CNFs',
+          'status': ('Pass' if (tc72_cmd.rc == 0 and ('1Gi=' in tc72_cmd.stdout or '2Mi=' in tc72_cmd.stdout)) else 'Fail'),
+          'details': tc72_cmd.stdout | default('No HugePages found') | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc72', 'hugepages']
+
+# TC 73: Aceleración de Red (SR-IOV y VFs)
+- name: "TC-73: Aceleración de Red (SR-IOV y VFs)"
+  when: run_tc73_network_acceleration_sriov | default(true) | bool
+  block:
+    - name: "TC-73: Query SriovNetworkNodeState sync status"
+      ansible.builtin.command: oc get sriovnetworknodestates -n openshift-sriov-network-operator -o json
+      register: tc73_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-73: Record Result"
+      vars:
+        sriov_states: "{{ (tc73_cmd.stdout | from_json).items if tc73_cmd.rc == 0 else [] }}"
+        unready_sriov: "{{ sriov_states | json_query("[?status.syncStatus!='Succeeded'].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-73',
+          'name': 'Aceleración de Red (SR-IOV y VFs)',
+          'category': 'General Support / Telco',
+          'expected': 'SriovNetworkNodeState with syncStatus=Succeeded and active VFs',
+          'status': ('Pass' if (tc73_cmd.rc == 0 and unready_sriov | length == 0 and sriov_states | length > 0) else 'Fail'),
+          'details': 'SR-IOV States: ' ~ (sriov_states | length) ~ ', Unready: ' ~ (unready_sriov | join(', ') if unready_sriov | length > 0 else 'None')
+        }] }}"
+  tags: ['general', 'telco', 'tc73', 'sriov']

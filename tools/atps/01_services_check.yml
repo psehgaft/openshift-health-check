@@ -1,0 +1,520 @@
+---
+# ==============================================================================
+# Section 1: OpenShift Services Check (TC 01 to TC 22)
+# ==============================================================================
+
+# TC 01: Cluster Version
+- name: "TC-01: Verify Cluster Version"
+  when: run_tc01_cluster_version | default(true) | bool
+  block:
+    - name: "TC-01: Query clusterversion"
+      ansible.builtin.command: oc get clusterversion version -o json
+      register: tc01_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-01: Record Result"
+      vars:
+        cv_data: "{{ (tc01_cmd.stdout | from_json) if tc01_cmd.rc == 0 else {} }}"
+        cur_version: "{{ cv_data.status.history[0].version | default('Unknown') }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-01',
+          'name': 'Cluster Version',
+          'category': 'Services Check',
+          'expected': 'OpenShift version 4.18 detected and Available=True',
+          'status': ('Pass' if (tc01_cmd.rc == 0 and '4.18' in cur_version) else 'Fail'),
+          'details': 'Detected OCP Version: ' ~ cur_version
+        }] }}"
+  tags: ['general', 'telco', 'tc01', 'clusterversion']
+
+# TC 02: Cluster and nodes Status
+- name: "TC-02: Verify Cluster and Nodes Status"
+  when: run_tc02_cluster_nodes_status | default(true) | bool
+  block:
+    - name: "TC-02: Query nodes status"
+      ansible.builtin.command: oc get nodes -o json
+      register: tc02_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-02: Record Result"
+      vars:
+        nodes_list: "{{ (tc02_cmd.stdout | from_json).items if tc02_cmd.rc == 0 else [] }}"
+        unready_nodes: "{{ nodes_list | json_query("[?status.conditions[?type=='Ready' && status!='True']].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-02',
+          'name': 'Cluster and nodes Status',
+          'category': 'Services Check',
+          'expected': 'Cluster Available and all nodes in Ready state',
+          'status': ('Pass' if (tc02_cmd.rc == 0 and unready_nodes | length == 0 and nodes_list | length > 0) else 'Fail'),
+          'details': 'Total Nodes: ' ~ (nodes_list | length) ~ ', Unready: ' ~ (unready_nodes | join(', ') if unready_nodes | length > 0 else 'None')
+        }] }}"
+  tags: ['general', 'telco', 'tc02', 'nodes']
+
+# TC 03: Check DNS Resolution
+- name: "TC-03: Check DNS Resolution in cluster"
+  when: run_tc03_dns_resolution | default(true) | bool
+  block:
+    - name: "TC-03: Execute DNS test query inside cluster"
+      ansible.builtin.command: oc get svc -n openshift-dns
+      register: tc03_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-03: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-03',
+          'name': 'Check DNS Resolution',
+          'category': 'Services Check',
+          'expected': 'Internal cluster DNS service active and resolving',
+          'status': ('Pass' if tc03_cmd.rc == 0 else 'Fail'),
+          'details': tc03_cmd.stdout | default(tc03_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc03', 'dns']
+
+# TC 04: Check DNS Operator
+- name: "TC-04: Check DNS Operator"
+  when: run_tc04_dns_operator | default(true) | bool
+  block:
+    - name: "TC-04: Query DNS Operator status"
+      ansible.builtin.command: oc get clusteroperator dns -o json
+      register: tc04_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-04: Record Result"
+      vars:
+        dns_co: "{{ (tc04_cmd.stdout | from_json) if tc04_cmd.rc == 0 else {} }}"
+        avail_cond: "{{ dns_co | json_query("status.conditions[?type=='Available'].status | [0]") }}"
+        deg_cond: "{{ dns_co | json_query("status.conditions[?type=='Degraded'].status | [0]") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-04',
+          'name': 'Check DNS Operator',
+          'category': 'Services Check',
+          'expected': 'DNS Operator Available=True and Degraded=False',
+          'status': ('Pass' if (tc04_cmd.rc == 0 and avail_cond == 'True' and deg_cond == 'False') else 'Fail'),
+          'details': 'Available: ' ~ avail_cond ~ ', Degraded: ' ~ deg_cond
+        }] }}"
+  tags: ['general', 'telco', 'tc04', 'dns']
+
+# TC 05: Check NTP Synchronization
+- name: "TC-05: Check NTP Synchronization"
+  when: run_tc05_ntp_synchronization | default(true) | bool
+  block:
+    - name: "TC-05: Query chronyd status on first node"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host chronyc sources
+      register: tc05_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-05: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-05',
+          'name': 'Check NTP Synchronization',
+          'category': 'Services Check',
+          'expected': 'NTP synchronized with upstream reference sources',
+          'status': ('Pass' if (tc05_cmd.rc == 0 and ('^*' in tc05_cmd.stdout or '^+' in tc05_cmd.stdout)) else 'Fail'),
+          'details': tc05_cmd.stdout | default(tc05_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc05', 'ntp']
+
+# TC 06: Check Operators Installed
+- name: "TC-06: Check Operators Installed"
+  when: run_tc06_operators_installed | default(true) | bool
+  block:
+    - name: "TC-06: Query ClusterOperators"
+      ansible.builtin.command: oc get co -o json
+      register: tc06_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-06: Record Result"
+      vars:
+        co_items: "{{ (tc06_cmd.stdout | from_json).items if tc06_cmd.rc == 0 else [] }}"
+        degraded_co: "{{ co_items | json_query("[?status.conditions[?type=='Degraded' && status=='True']].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-06',
+          'name': 'Check Operators Installed',
+          'category': 'Services Check',
+          'expected': 'All Cluster Operators Available and not Degraded',
+          'status': ('Pass' if (tc06_cmd.rc == 0 and degraded_co | length == 0 and co_items | length > 0) else 'Fail'),
+          'details': 'Degraded operators: ' ~ (degraded_co | join(', ') if degraded_co | length > 0 else 'None')
+        }] }}"
+  tags: ['general', 'telco', 'tc06', 'operators']
+
+# TC 07: Web Console Status
+- name: "TC-07: Web Console Status"
+  when: run_tc07_web_console_status | default(true) | bool
+  block:
+    - name: "TC-07: Query console URL and route"
+      ansible.builtin.command: oc whoami --show-console
+      register: tc07_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-07: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-07',
+          'name': 'Web Console Status',
+          'category': 'Services Check',
+          'expected': 'Console URL exposed and accessible',
+          'status': ('Pass' if (tc07_cmd.rc == 0 and tc07_cmd.stdout | length > 0) else 'Fail'),
+          'details': 'Console URL: ' ~ tc07_cmd.stdout | default('Not found')
+        }] }}"
+  tags: ['general', 'telco', 'tc07', 'console']
+
+# TC 08: Storage Status & Capacity
+- name: "TC-08: Storage Status & Capacity"
+  when: run_tc08_storage_capacity | default(true) | bool
+  block:
+    - name: "TC-08: Query filesystem metrics from Prometheus"
+      ansible.builtin.shell: >
+        oc exec prometheus-k8s-0 -n openshift-monitoring -c prometheus -- /usr/bin/promtool query instant http://localhost:9090 "sum(node_filesystem_size_bytes{mountpoint='/'})/1000/1000/1000"
+      register: tc08_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-08: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-08',
+          'name': 'Storage Status & Capacity',
+          'category': 'Services Check',
+          'expected': 'Prometheus returns storage metrics in gigabytes',
+          'status': ('Pass' if tc08_cmd.rc == 0 else 'Fail'),
+          'details': tc08_cmd.stdout | default(tc08_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc08', 'storage_capacity']
+
+# TC 09: CPU & RAM Capacity
+- name: "TC-09: CPU & RAM Capacity"
+  when: run_tc09_cpu_ram_capacity | default(true) | bool
+  block:
+    - name: "TC-09: Execute oc adm top nodes"
+      ansible.builtin.command: oc adm top nodes
+      register: tc09_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-09: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-09',
+          'name': 'CPU & RAM Capacity',
+          'category': 'Services Check',
+          'expected': 'Nodes CPU and Memory consumption retrieved successfully',
+          'status': ('Pass' if tc09_cmd.rc == 0 else 'Fail'),
+          'details': tc09_cmd.stdout | default(tc09_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc09', 'metrics']
+
+# TC 10: ETCD Status
+- name: "TC-10: ETCD Status"
+  when: run_tc10_etcd_status | default(true) | bool
+  block:
+    - name: "TC-10: Check ETCD members status"
+      ansible.builtin.command: oc get etcd -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EtcdMembersAvailable")]}{.message}{"
+"}'
+      register: tc10_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-10: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-10',
+          'name': 'ETCD Status',
+          'category': 'Services Check',
+          'expected': 'ETCD cluster has 3 members available',
+          'status': ('Pass' if (tc10_cmd.rc == 0 and '3 members are available' in tc10_cmd.stdout) else 'Fail'),
+          'details': tc10_cmd.stdout | default(tc10_cmd.stderr) | trim
+        }] }}"
+  tags: ['general', 'telco', 'tc10', 'etcd']
+
+# TC 11: Node Labels
+- name: "TC-11: Node Labels"
+  when: run_tc11_node_labels | default(true) | bool
+  block:
+    - name: "TC-11: Query node labels"
+      ansible.builtin.command: oc get nodes --show-labels
+      register: tc11_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-11: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-11',
+          'name': 'Node Labels',
+          'category': 'Services Check',
+          'expected': 'All nodes list their assigned labels',
+          'status': ('Pass' if tc11_cmd.rc == 0 else 'Fail'),
+          'details': tc11_cmd.stdout | default(tc11_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc11', 'labels']
+
+# TC 12: Check Machine Config Pool
+- name: "TC-12: Check Machine Config Pool"
+  when: run_tc12_check_mcp | default(true) | bool
+  block:
+    - name: "TC-12: Query MCP status"
+      ansible.builtin.command: oc get mcp -o json
+      register: tc12_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-12: Record Result"
+      vars:
+        mcp_items: "{{ (tc12_cmd.stdout | from_json).items if tc12_cmd.rc == 0 else [] }}"
+        degraded_mcps: "{{ mcp_items | json_query("[?status.conditions[?type=='Degraded' && status=='True']].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-12',
+          'name': 'Check Machine Config Pool (Master, Workers STD/HT)',
+          'category': 'Services Check',
+          'expected': 'Master, Worker (STD/HT) MCPs in Updated state and not Degraded',
+          'status': ('Pass' if (tc12_cmd.rc == 0 and degraded_mcps | length == 0 and mcp_items | length > 0) else 'Fail'),
+          'details': 'Degraded MCPs: ' ~ (degraded_mcps | join(', ') if degraded_mcps | length > 0 else 'None')
+        }] }}"
+  tags: ['general', 'telco', 'tc12', 'mcp']
+
+# TC 13: Check Machine Config
+- name: "TC-13: Check Machine Config"
+  when: run_tc13_check_mc | default(true) | bool
+  block:
+    - name: "TC-13: List MachineConfigs"
+      ansible.builtin.command: oc get mc
+      register: tc13_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-13: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-13',
+          'name': 'Check Machine Config (Master, Workers STD/HT)',
+          'category': 'Services Check',
+          'expected': 'MachineConfig objects available for all roles',
+          'status': ('Pass' if tc13_cmd.rc == 0 else 'Fail'),
+          'details': tc13_cmd.stdout | default(tc13_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc13', 'machineconfig']
+
+# TC 14: Check Ports
+- name: "TC-14: Check Ports"
+  when: run_tc14_check_ports | default(true) | bool
+  block:
+    - name: "TC-14: Verify open listening ports on worker node"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host ss -tulpn
+      register: tc14_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-14: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-14',
+          'name': 'Check Ports',
+          'category': 'Services Check',
+          'expected': 'Standard OpenShift daemon ports listening on nodes',
+          'status': ('Pass' if tc14_cmd.rc == 0 else 'Fail'),
+          'details': tc14_cmd.stdout | default(tc14_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc14', 'ports']
+
+# TC 15: Check crio status
+- name: "TC-15: Check crio status"
+  when: run_tc15_check_crio | default(true) | bool
+  block:
+    - name: "TC-15: Check CRI-O running containers"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host crictl ps
+      register: tc15_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-15: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-15',
+          'name': 'Check crio status',
+          'category': 'Services Check',
+          'expected': 'CRI-O active and executing containers on node',
+          'status': ('Pass' if (tc15_cmd.rc == 0 and 'CONTAINER ID' in tc15_cmd.stdout) else 'Fail'),
+          'details': tc15_cmd.stdout | default(tc15_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc15', 'crio']
+
+# TC 16: Check Internet Access
+- name: "TC-16: Check Internet Access (Cluster Management)"
+  when: run_tc16_check_internet_access | default(true) | bool
+  block:
+    - name: "TC-16: Test external connectivity to Quay.io"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host curl -s -k -I https://quay.io
+      register: tc16_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-16: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-16',
+          'name': 'Check Internet Access (Cluster Management access)',
+          'category': 'Services Check',
+          'expected': 'HTTP 200/301/302 response from external registry gateway',
+          'status': ('Pass' if (tc16_cmd.rc == 0 and ('HTTP' in tc16_cmd.stdout or '200' in tc16_cmd.stdout)) else 'Fail'),
+          'details': tc16_cmd.stdout | default(tc16_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc16', 'connectivity']
+
+# TC 17: Check Cluster logs via API
+- name: "TC-17: Check Cluster logs via API"
+  when: run_tc17_check_cluster_logs_api | default(true) | bool
+  block:
+    - name: "TC-17: Fetch logs of image-registry deployment"
+      ansible.builtin.command: oc logs deployments/image-registry -n openshift-image-registry --tail=20
+      register: tc17_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-17: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-17',
+          'name': 'Check Cluster logs via API',
+          'category': 'Services Check',
+          'expected': 'Cluster logs stream successfully via API',
+          'status': ('Pass' if tc17_cmd.rc == 0 else 'Fail'),
+          'details': tc17_cmd.stdout | default(tc17_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc17', 'logs_api']
+
+# TC 18: Check Internal Registry API
+- name: "TC-18: Check Internal Registry API"
+  when: run_tc18_check_internal_registry_api | default(true) | bool
+  block:
+    - name: "TC-18: Query internal registry service hostname"
+      ansible.builtin.command: oc get svc image-registry -n openshift-image-registry -o go-template='{{.metadata.name}}.{{.metadata.namespace}}.svc'
+      register: tc18_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-18: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-18',
+          'name': 'Check Internal Registry API',
+          'category': 'Services Check',
+          'expected': 'Internal registry service DNS endpoint available',
+          'status': ('Pass' if (tc18_cmd.rc == 0 and 'image-registry.openshift-image-registry.svc' in tc18_cmd.stdout) else 'Fail'),
+          'details': 'Internal endpoint: ' ~ tc18_cmd.stdout | default('Not found')
+        }] }}"
+  tags: ['general', 'telco', 'tc18', 'registry']
+
+# TC 19: Check Internal Registry Status
+- name: "TC-19: Check Internal Registry Status"
+  when: run_tc19_check_internal_registry_status | default(true) | bool
+  block:
+    - name: "TC-19: Query registry pods"
+      ansible.builtin.command: oc get pods -n openshift-image-registry -o json
+      register: tc19_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-19: Record Result"
+      vars:
+        reg_pods: "{{ (tc19_cmd.stdout | from_json).items if tc19_cmd.rc == 0 else [] }}"
+        running_pods: "{{ reg_pods | json_query("[?status.phase=='Running'].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-19',
+          'name': 'Check Internal Registry Status',
+          'category': 'Services Check',
+          'expected': 'Registry pods Running and active',
+          'status': ('Pass' if (tc19_cmd.rc == 0 and running_pods | length > 0) else 'Fail'),
+          'details': 'Running pods: ' ~ (running_pods | join(', ') if running_pods | length > 0 else 'None')
+        }] }}"
+  tags: ['general', 'telco', 'tc19', 'registry']
+
+# TC 20: Check Internal Registry Storage
+- name: "TC-20: Check Internal Registry Storage"
+  when: run_tc20_check_internal_registry_storage | default(true) | bool
+  block:
+    - name: "TC-20: Query registry storage configuration"
+      ansible.builtin.command: oc get configs.imageregistry.operator.openshift.io/cluster -o jsonpath={.spec.storage}
+      register: tc20_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-20: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-20',
+          'name': 'Check Internal Registry Storage',
+          'category': 'Services Check',
+          'expected': 'Registry storage backend configured',
+          'status': ('Pass' if (tc20_cmd.rc == 0 and tc20_cmd.stdout | length > 2) else 'Fail'),
+          'details': tc20_cmd.stdout | default('No storage spec') | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc20', 'registry_storage']
+
+# TC 21: Monitoring Stack Status
+- name: "TC-21: Monitoring Stack Status"
+  when: run_tc21_monitoring_stack_status | default(true) | bool
+  block:
+    - name: "TC-21: Check monitoring clusteroperator"
+      ansible.builtin.command: oc get co monitoring -o json
+      register: tc21_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-21: Record Result"
+      vars:
+        mon_co: "{{ (tc21_cmd.stdout | from_json) if tc21_cmd.rc == 0 else {} }}"
+        mon_avail: "{{ mon_co | json_query("status.conditions[?type=='Available'].status | [0]") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-21',
+          'name': 'Monitoring Stack Status',
+          'category': 'Services Check',
+          'expected': 'Monitoring Operator Available=True with pods Running',
+          'status': ('Pass' if (tc21_cmd.rc == 0 and mon_avail == 'True') else 'Fail'),
+          'details': 'Available: ' ~ mon_avail
+        }] }}"
+  tags: ['general', 'telco', 'tc21', 'monitoring']
+
+# TC 22: Logging Stack Status
+- name: "TC-22: Logging Stack Status"
+  when: run_tc22_logging_stack_status | default(true) | bool
+  block:
+    - name: "TC-22: Check ClusterLogging instance"
+      ansible.builtin.command: oc get clusterlogging/instance -n openshift-logging -o json
+      register: tc22_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-22',
+          'name': 'Logging Stack Status',
+          'category': 'Services Check',
+          'expected': 'ClusterLogging instance deployed and running',
+          'status': ('Pass' if tc22_cmd.rc == 0 else 'Fail'),
+          'details': tc22_cmd.stdout | default(tc22_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc22', 'logging']

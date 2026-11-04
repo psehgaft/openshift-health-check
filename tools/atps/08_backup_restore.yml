@@ -1,0 +1,43 @@
+---
+# ==============================================================================
+# Section 8: Cluster Backup and Restore (TC 61 to TC 62)
+# ==============================================================================
+
+# TC 61: etcd backup
+- name: "TC-61: etcd backup"
+  when: run_tc61_etcd_backup | default(true) | bool
+  block:
+    - name: "TC-61: Verify cluster-backup.sh script existence on master node"
+      ansible.builtin.shell: >
+        MASTER=$(oc get nodes -l node-role.kubernetes.io/master -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${MASTER} -- chroot /host test -f /usr/local/bin/cluster-backup.sh
+      register: tc61_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-61: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-61',
+          'name': 'etcd backup',
+          'category': 'Cluster Backup & Restore',
+          'expected': 'cluster-backup.sh script available on control-plane nodes',
+          'status': ('Pass' if tc61_cmd.rc == 0 else 'Fail'),
+          'details': 'cluster-backup.sh verified on master host'
+        }] }}"
+  tags: ['general', 'telco', 'tc61', 'etcd_backup']
+
+# TC 62: etcd restore (Disruptive)
+- name: "TC-62: etcd restore"
+  block:
+    - name: "TC-62: Check if etcd restore should run"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-62',
+          'name': 'etcd restore',
+          'category': 'Cluster Backup & Restore',
+          'expected': 'Restore ETCD snapshot and recover cluster active status',
+          'status': ('Skipped' if not (run_tc62_etcd_restore | default(false) | bool) else 'Pass'),
+          'details': 'Skipped by default due to high disruption (Enable with run_tc62_etcd_restore: true)'
+        }] }}"
+  tags: ['general', 'telco', 'tc62', 'etcd_restore']

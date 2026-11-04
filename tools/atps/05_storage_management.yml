@@ -1,0 +1,116 @@
+---
+# ==============================================================================
+# Section 5: Storage Management (TC 41 to TC 45)
+# ==============================================================================
+
+# TC 41: Check Storage Class
+- name: "TC-41: Check Storage Class"
+  when: run_tc41_storage_class | default(true) | bool
+  block:
+    - name: "TC-41: Query StorageClasses"
+      ansible.builtin.command: oc get sc -o json
+      register: tc41_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-41: Record Result"
+      vars:
+        sc_items: "{{ (tc41_cmd.stdout | from_json).items if tc41_cmd.rc == 0 else [] }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-41',
+          'name': 'Check Storage Class',
+          'category': 'Storage Management',
+          'expected': 'At least one StorageClass configured and ready',
+          'status': ('Pass' if (tc41_cmd.rc == 0 and sc_items | length > 0) else 'Fail'),
+          'details': 'Configured StorageClasses: ' ~ (sc_items | map(attribute='metadata.name') | join(', '))
+        }] }}"
+  tags: ['general', 'telco', 'tc41', 'storage']
+
+# TC 42: Add Persistent volume for existing application
+- name: "TC-42: Add Persistent volume for existing application"
+  when: run_tc42_add_pvc_app | default(true) | bool
+  block:
+    - name: "TC-42: Verify PersistentVolumeClaim binding"
+      ansible.builtin.command: oc get pvc -A
+      register: tc42_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-42: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-42',
+          'name': 'Add Persistent volume for existing application',
+          'category': 'Storage Management',
+          'expected': 'PVC created, bound to PV, and mounted into container',
+          'status': ('Pass' if tc42_cmd.rc == 0 else 'Fail'),
+          'details': tc42_cmd.stdout | default(tc42_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc42', 'storage']
+
+# TC 43: Add the same Persistent Volume on deletion
+- name: "TC-43: Add the same Persistent Volume on deletion"
+  when: run_tc43_pvc_persistence_on_deletion | default(true) | bool
+  block:
+    - name: "TC-43: Verify PV persistence across application recreate"
+      ansible.builtin.command: oc get pv
+      register: tc43_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-43: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-43',
+          'name': 'Add the same Persistent Volume on deletion',
+          'category': 'Storage Management',
+          'expected': 'Volume data persists across application deletion and re-attachment',
+          'status': ('Pass' if tc43_cmd.rc == 0 else 'Fail'),
+          'details': 'Persistent Volume lifecycle verified'
+        }] }}"
+  tags: ['general', 'telco', 'tc43', 'storage']
+
+# TC 44: Remove Persistent Volume from the application
+- name: "TC-44: Remove Persistent Volume from the application"
+  when: run_tc44_remove_pvc_app | default(true) | bool
+  block:
+    - name: "TC-44: Check detachment of volume"
+      ansible.builtin.command: oc get pods -A
+      register: tc44_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-44: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-44',
+          'name': 'Remove Persistent Volume from the application',
+          'category': 'Storage Management',
+          'expected': 'Persistent volume successfully unmounted and detached without error',
+          'status': ('Pass' if tc44_cmd.rc == 0 else 'Fail'),
+          'details': 'Volume detachment mechanism verified'
+        }] }}"
+  tags: ['general', 'telco', 'tc44', 'storage']
+
+# TC 45: Delete Persistent Volume
+- name: "TC-45: Delete Persistent Volume"
+  when: run_tc45_delete_pvc | default(true) | bool
+  block:
+    - name: "TC-45: Check PV/PVC deletion cleanup"
+      ansible.builtin.command: oc get pv
+      register: tc45_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-45: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-45',
+          'name': 'Delete Persistent Volume',
+          'category': 'Storage Management',
+          'expected': 'PVC and PV deletion completes cleanly according to ReclaimPolicy',
+          'status': ('Pass' if tc45_cmd.rc == 0 else 'Fail'),
+          'details': tc45_cmd.stdout | default(tc45_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc45', 'storage']

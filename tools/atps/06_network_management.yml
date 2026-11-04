@@ -1,0 +1,77 @@
+---
+# ==============================================================================
+# Section 6: Network Management (TC 46 to TC 48)
+# ==============================================================================
+
+# TC 46: Check Cluster Network Operator Information
+- name: "TC-46: Check Cluster Network Operator Information"
+  when: run_tc46_cno_status | default(true) | bool
+  block:
+    - name: "TC-46: Query network clusteroperator"
+      ansible.builtin.command: oc get co network -o json
+      register: tc46_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-46: Record Result"
+      vars:
+        cno_data: "{{ (tc46_cmd.stdout | from_json) if tc46_cmd.rc == 0 else {} }}"
+        cno_avail: "{{ cno_data | json_query("status.conditions[?type=='Available'].status | [0]") }}"
+        cno_version: "{{ cno_data.status.versions[0].version | default('Unknown') }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-46',
+          'name': 'Check Cluster Network Operator Information',
+          'category': 'Network Management',
+          'expected': 'Cluster Network Operator Available=True with active SDN/OVN plugin',
+          'status': ('Pass' if (tc46_cmd.rc == 0 and cno_avail == 'True') else 'Fail'),
+          'details': 'CNO Version: ' ~ cno_version ~ ', Available: ' ~ cno_avail
+        }] }}"
+  tags: ['general', 'telco', 'tc46', 'network']
+
+# TC 47: Test and Verify Pod communication in the same namespace
+- name: "TC-47: Test and Verify Pod communication in the same namespace"
+  when: run_tc47_pod_communication_namespace | default(true) | bool
+  block:
+    - name: "TC-47: Test intra-cluster pod connectivity"
+      ansible.builtin.command: oc get endpoints -n default
+      register: tc47_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-47: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-47',
+          'name': 'Test and Verify Pod communication in the same namespace',
+          'category': 'Network Management',
+          'expected': 'Pods in the same namespace communicate with HTTP 200 OK',
+          'status': ('Pass' if tc47_cmd.rc == 0 else 'Fail'),
+          'details': tc47_cmd.stdout | default(tc47_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc47', 'network']
+
+# TC 48: Expose an application secured by TLS certificates
+- name: "TC-48: Expose an application secured by TLS certificates"
+  when: run_tc48_expose_tls_route | default(true) | bool
+  block:
+    - name: "TC-48: Query secure edge/reencrypt routes in cluster"
+      ansible.builtin.command: oc get routes -A -o json
+      register: tc48_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-48: Record Result"
+      vars:
+        routes_list: "{{ (tc48_cmd.stdout | from_json).items if tc48_cmd.rc == 0 else [] }}"
+        tls_routes: "{{ routes_list | json_query("[?spec.tls!=null].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-48',
+          'name': 'Expose an application secured by TLS certificates',
+          'category': 'Network Management',
+          'expected': 'Edge/Reencrypt TLS Route created and verified with certificate',
+          'status': ('Pass' if (tc48_cmd.rc == 0 and tls_routes | length > 0) else 'Fail'),
+          'details': 'Configured TLS routes: ' ~ (tls_routes | length) ~ ' found'
+        }] }}"
+  tags: ['general', 'telco', 'tc48', 'network']

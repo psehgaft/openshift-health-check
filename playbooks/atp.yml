@@ -1,0 +1,66 @@
+---
+- name: "Acceptance Test Plan (ATP) Execution - Red Hat OpenShift Container Platform 4.18"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../tools/atps/vars/main.yml"
+
+  pre_tasks:
+    - name: "Initialize ATP execution facts and results repository"
+      ansible.builtin.set_fact:
+        atp_results: []
+        atp_start_time: "{{ lookup('pipe', 'date -u +"%Y-%m-%dT%H:%M:%SZ"') }}"
+      tags: ['always', 'general', 'telco']
+
+    - name: "Ensure output reports directory exists"
+      ansible.builtin.file:
+        path: "{{ atp_report_dir }}"
+        state: directory
+        mode: '0755'
+      tags: ['always', 'general', 'telco']
+
+    - name: "Verify oc CLI and cluster connectivity"
+      ansible.builtin.command: oc whoami
+      register: oc_whoami_check
+      changed_when: false
+      failed_when: false
+      tags: ['always', 'general', 'telco']
+
+    - name: "Fail if oc CLI is not authenticated"
+      ansible.builtin.fail:
+        msg: "The oc CLI is not logged into any cluster. Please run 'oc login' with cluster-admin privileges before executing the ATP."
+      when: oc_whoami_check.rc != 0
+      tags: ['always', 'general', 'telco']
+
+  tasks:
+    - name: "Execute ATP Main Task Loader"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tools/atps/main.yml"
+      tags: ['general', 'telco', 'atp']
+
+  post_tasks:
+    - name: "Record completion timestamp"
+      ansible.builtin.set_fact:
+        atp_end_time: "{{ lookup('pipe', 'date -u +"%Y-%m-%dT%H:%M:%SZ"') }}"
+      tags: ['always', 'general', 'telco']
+
+    - name: "Render and generate final ATP Markdown Report"
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../tools/atps/templates/atp_report.md.j2"
+        dest: "{{ atp_report_file }}"
+        mode: '0644'
+      tags: ['always', 'general', 'telco']
+
+    - name: "Display Execution Summary"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================================="
+          - "               ATP EXECUTION COMPLETED                    "
+          - "=========================================================="
+          - "Total Test Cases Evaluated: {{ atp_results | length }}"
+          - "Pass: {{ atp_results | selectattr('status', 'equalto', 'Pass') | list | length }}"
+          - "Fail: {{ atp_results | selectattr('status', 'equalto', 'Fail') | list | length }}"
+          - "Skipped: {{ atp_results | selectattr('status', 'equalto', 'Skipped') | list | length }}"
+          - "Report Path: {{ atp_report_file }}"
+          - "=========================================================="
+      tags: ['always', 'general', 'telco']

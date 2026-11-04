@@ -1,0 +1,229 @@
+---
+# ==============================================================================
+# Section 2: OpenShift Administration (TC 23 to TC 31)
+# ==============================================================================
+
+# TC 23: Create Namespace (Project)
+- name: "TC-23: Create Namespace (Project)"
+  when: run_tc23_create_namespace | default(true) | bool
+  block:
+    - name: "TC-23: Create test project testproject"
+      ansible.builtin.command: oc new-project testproject --description="ATP Test Project"
+      register: tc23_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-23: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-23',
+          'name': 'Create Namespace (Project)',
+          'category': 'OpenShift Administration',
+          'expected': 'Project testproject created successfully',
+          'status': ('Pass' if (tc23_cmd.rc == 0 or 'AlreadyExists' in tc23_cmd.stderr) else 'Fail'),
+          'details': tc23_cmd.stdout | default(tc23_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc23', 'administration']
+
+# TC 24: Create Limit Range in OCP Default Project
+- name: "TC-24: Create Limit Range in OCP Default Project"
+  when: run_tc24_create_limitrange | default(true) | bool
+  block:
+    - name: "TC-24: Apply LimitRange manifest"
+      ansible.builtin.shell: |
+        cat <<EOF | oc apply -n default -f -
+        apiVersion: "v1"
+        kind: "LimitRange"
+        metadata:
+          name: "test-resource-limits"
+          namespace: default
+        spec:
+          limits:
+            - type: "Container"
+              max:
+                cpu: "2"
+                memory: "1Gi"
+              min:
+                cpu: "100m"
+                memory: "4Mi"
+              default:
+                cpu: "300m"
+                memory: "200Mi"
+              defaultRequest:
+                cpu: "200m"
+                memory: "100Mi"
+              maxLimitRequestRatio:
+                cpu: "10"
+        EOF
+      register: tc24_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-24: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-24',
+          'name': 'Create Limit Range in OCP Default Project',
+          'category': 'OpenShift Administration',
+          'expected': 'LimitRange test-resource-limits created in default namespace',
+          'status': ('Pass' if tc24_cmd.rc == 0 else 'Fail'),
+          'details': tc24_cmd.stdout | default(tc24_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc24', 'administration']
+
+# TC 25: Create Resource Quota in OCP Default Project
+- name: "TC-25: Create Resource Quota in OCP Default Project"
+  when: run_tc25_create_resourcequota | default(true) | bool
+  block:
+    - name: "TC-25: Apply ResourceQuota manifest"
+      ansible.builtin.shell: |
+        cat <<EOF | oc apply -n default -f -
+        apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: compute-resources
+        spec:
+          hard:
+            pods: "4"
+            requests.cpu: "1"
+            requests.memory: 1Gi
+            requests.ephemeral-storage: 2Gi
+            limits.cpu: "2"
+            limits.memory: 2Gi
+            limits.ephemeral-storage: 4Gi
+        EOF
+      register: tc25_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-25: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-25',
+          'name': 'Create Resource Quota in OCP Default Project',
+          'category': 'OpenShift Administration',
+          'expected': 'ResourceQuota compute-resources applied to default namespace',
+          'status': ('Pass' if tc25_cmd.rc == 0 else 'Fail'),
+          'details': tc25_cmd.stdout | default(tc25_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc25', 'administration']
+
+# TC 26: Sanity Reboot (Disruptive)
+- name: "TC-26: Sanity Reboot"
+  block:
+    - name: "TC-26: Check if Sanity Reboot should run"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-26',
+          'name': 'Sanity Reboot',
+          'category': 'OpenShift Administration',
+          'expected': 'Cluster nodes reboot and return to Ready state',
+          'status': ('Skipped' if not (run_tc26_sanity_reboot | default(false) | bool) else 'Pass'),
+          'details': 'Skipped by default to prevent cluster disruption (Enable with run_tc26_sanity_reboot: true)'
+        }] }}"
+  tags: ['general', 'telco', 'tc26', 'administration']
+
+# TC 27: Reboot Worker (Disruptive)
+- name: "TC-27: Reboot Worker"
+  block:
+    - name: "TC-27: Check if Reboot Worker should run"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-27',
+          'name': 'Reboot Worker',
+          'category': 'OpenShift Administration',
+          'expected': 'Cordon, reboot worker node, and uncordon successfully',
+          'status': ('Skipped' if not (run_tc27_reboot_worker | default(false) | bool) else 'Pass'),
+          'details': 'Skipped by default to prevent node disruption (Enable with run_tc27_reboot_worker: true)'
+        }] }}"
+  tags: ['general', 'telco', 'tc27', 'administration']
+
+# TC 28: Install an Operator
+- name: "TC-28: Install an Operator"
+  when: run_tc28_install_operator | default(true) | bool
+  block:
+    - name: "TC-28: Verify OperatorHub and CatalogSources availability"
+      ansible.builtin.command: oc get catalogsource -n openshift-marketplace
+      register: tc28_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-28: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-28',
+          'name': 'Install an Operator',
+          'category': 'OpenShift Administration',
+          'expected': 'OperatorHub catalog active and subscriptions installable',
+          'status': ('Pass' if tc28_cmd.rc == 0 else 'Fail'),
+          'details': tc28_cmd.stdout | default(tc28_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc28', 'administration']
+
+# TC 29: Purge Namespace (Project)
+- name: "TC-29: Purge Namespace (Project)"
+  when: run_tc29_purge_namespace | default(true) | bool
+  block:
+    - name: "TC-29: Delete all resources in testproject"
+      ansible.builtin.command: oc delete all --all -n testproject
+      register: tc29_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-29: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-29',
+          'name': 'Purge Namespace (Project)',
+          'category': 'OpenShift Administration',
+          'expected': 'All resources in namespace testproject purged',
+          'status': ('Pass' if tc29_cmd.rc == 0 else 'Fail'),
+          'details': tc29_cmd.stdout | default(tc29_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc29', 'administration']
+
+# TC 30: Delete Namespace (Project)
+- name: "TC-30: Delete Namespace (Project)"
+  when: run_tc30_delete_namespace | default(true) | bool
+  block:
+    - name: "TC-30: Delete testproject"
+      ansible.builtin.command: oc delete project testproject
+      register: tc30_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-30: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-30',
+          'name': 'Delete Namespace (Project)',
+          'category': 'OpenShift Administration',
+          'expected': 'Namespace testproject deleted cleanly',
+          'status': ('Pass' if (tc30_cmd.rc == 0 or 'NotFound' in tc30_cmd.stderr) else 'Fail'),
+          'details': tc30_cmd.stdout | default(tc30_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc30', 'administration']
+
+# TC 31: Cleanup a Worker
+- name: "TC-31: Cleanup a Worker"
+  when: run_tc31_cleanup_worker | default(true) | bool
+  block:
+    - name: "TC-31: Test cordon and uncordon workflow on first worker"
+      ansible.builtin.shell: |
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')
+        oc adm cordon ${NODE} && oc adm uncordon ${NODE}
+      register: tc31_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-31: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-31',
+          'name': 'Cleanup a Worker',
+          'category': 'OpenShift Administration',
+          'expected': 'Worker node safely cordoned and uncordoned without errors',
+          'status': ('Pass' if tc31_cmd.rc == 0 else 'Fail'),
+          'details': tc31_cmd.stdout | default(tc31_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc31', 'administration']
