@@ -17,14 +17,15 @@
       vars:
         cv_data: "{{ (tc01_cmd.stdout | from_json) if tc01_cmd.rc == 0 else {} }}"
         cur_version: "{{ cv_data.status.history[0].version | default('Unknown') }}"
+        target_version: "{{ expected_ocp_version | default('4.18') }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-01',
           'name': 'Cluster Version',
           'category': 'Services Check',
-          'expected': 'OpenShift version 4.18 detected and Available=True',
-          'status': ('Pass' if (tc01_cmd.rc == 0 and '4.18' in cur_version) else 'Fail'),
-          'details': 'Detected OCP Version: ' ~ cur_version
+          'expected': 'OpenShift version ' ~ target_version ~ ' detected and Available=True',
+          'status': ('Pass' if (tc01_cmd.rc == 0 and target_version in cur_version) else 'Fail'),
+          'details': 'Detected OCP Version: ' ~ cur_version ~ ' (Expected: ' ~ target_version ~ ')'
         }] }}"
   tags: ['general', 'telco', 'tc01', 'clusterversion']
 
