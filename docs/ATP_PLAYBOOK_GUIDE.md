@@ -1,7 +1,7 @@
 # Acceptance Test Plan (ATP) Playbook - User Guide
 
 ## Overview
-This Ansible playbook automates the acceptance verification procedures defined in the **ATP - Red Hat OpenShift Container Platform 4.18 5G-Core (Telcel)** specification. It covers **all 73 test cases** (including the two sub-cases for TC-67) spanning core OpenShift components, infrastructure governance, application scheduling, storage resilience, networking, and Telco 5G performance tuning (HugePages, LACP Bonding, MTU 9000, and SR-IOV VFs).
+This Ansible playbook automates the acceptance verification procedures defined in the **ATP - Red Hat OpenShift Container Platform 4.20** specification. It covers **all 73 test cases** (including the two sub-cases for TC-67) spanning core OpenShift components, infrastructure governance, application scheduling, storage resilience, networking, and Telco 5G performance tuning (HugePages, LACP Bonding, MTU 9000, and SR-IOV VFs).
 
 ## Directory Structure
 ```text
