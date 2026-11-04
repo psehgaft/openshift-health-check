@@ -51,8 +51,10 @@ ansible-playbook -i inventory.ini playbooks/atp.yml \
   -e "run_tc26_sanity_reboot=false run_tc27_reboot_worker=false run_tc62_etcd_restore=false"
 ```
 
-## Output Report
-The playbook automatically produces a consolidated report in Markdown format saved under:
-`reports/ATP-Report-OCP418-<timestamp>.md`
+## Output Reports
+The playbook writes a Markdown report and a self-contained HTML report to `reports/` by default. Set `atp_report_dir` to change the destination.
 
-The report includes an executive summary with pass/fail counts and a detailed matrix of all 73 test cases with captured evidence.
+- `ATP-Report-OCP<version>-<timestamp>.md`
+- `ATP-Report-OCP<version>-<timestamp>.html`
+
+Both formats contain a run summary and a per-test record. The HTML follows the supplied form layout and includes the procedure, expected result, captured command output, conclusion, and comments with remediation guidance for failures.
