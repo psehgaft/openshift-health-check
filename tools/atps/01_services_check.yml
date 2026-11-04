@@ -1,3 +1,4 @@
+---
 # ==============================================================================
 # Section 1: OpenShift Services Check (TC 01 to TC 22)
 # ==============================================================================
@@ -32,25 +33,24 @@
 - name: "TC-02: Verify Cluster and Nodes Status"
   when: run_tc02_cluster_nodes_status | default(true) | bool
   block:
-    - name: "TC-02: Query nodes status"
-      ansible.builtin.command: oc get nodes -o json
+    - name: "TC-02: Query unready nodes"
+      ansible.builtin.command: oc get nodes --no-headers
       register: tc02_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-02: Record Result"
       vars:
-        nodes_list: "{{ (tc02_cmd.stdout | from_json).items if tc02_cmd.rc == 0 else [] }}"
-        unready_nodes: >-
-          [{% for n in nodes_list %}{% for c in n.status.conditions | default([]) %}{% if c.type == 'Ready' and c.status != 'True' %}"{{ n.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
+        all_lines: "{{ tc02_cmd.stdout_lines | default([]) }}"
+        unready_lines: "{{ all_lines | reject('search', ' Ready') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-02',
           'name': 'Cluster and nodes Status',
           'category': 'Services Check',
           'expected': 'Cluster Available and all nodes in Ready state',
-          'status': ('Pass' if (tc02_cmd.rc == 0 and unready_nodes | length == 0 and nodes_list | length > 0) else 'Fail'),
-          'details': 'Total Nodes: ' ~ (nodes_list | length) ~ ', Unready: ' ~ (unready_nodes | join(', ') if unready_nodes | length > 0 else 'None')
+          'status': ('Pass' if (tc02_cmd.rc == 0 and unready_lines | length == 0 and all_lines | length > 0) else 'Fail'),
+          'details': 'Total Nodes: ' ~ (all_lines | length) ~ ', Unready: ' ~ (unready_lines | length)
         }] }}"
   tags: ['general', 'telco', 'tc02', 'nodes']
 
@@ -131,24 +131,22 @@
   when: run_tc06_operators_installed | default(true) | bool
   block:
     - name: "TC-06: Query ClusterOperators"
-      ansible.builtin.command: oc get co -o json
+      ansible.builtin.command: oc get co --no-headers
       register: tc06_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-06: Record Result"
       vars:
-        co_items: "{{ (tc06_cmd.stdout | from_json).items if tc06_cmd.rc == 0 else [] }}"
-        degraded_co: >-
-          [{% for co in co_items %}{% for c in co.status.conditions | default([]) %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ co.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
+        co_lines: "{{ tc06_cmd.stdout_lines | default([]) }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-06',
           'name': 'Check Operators Installed',
           'category': 'Services Check',
           'expected': 'All Cluster Operators Available and not Degraded',
-          'status': ('Pass' if (tc06_cmd.rc == 0 and degraded_co | length == 0 and co_items | length > 0) else 'Fail'),
-          'details': 'Degraded operators: ' ~ (degraded_co | join(', ') if degraded_co | length > 0 else 'None')
+          'status': ('Pass' if (tc06_cmd.rc == 0 and co_lines | length > 0 and not (tc06_cmd.stdout | regex_search('\\s+True\\s*$', multiline=True))) else 'Fail'),
+          'details': 'Total Operators: ' ~ (co_lines | length)
         }] }}"
   tags: ['general', 'telco', 'tc06', 'operators']
 
@@ -269,24 +267,23 @@
   when: run_tc12_check_mcp | default(true) | bool
   block:
     - name: "TC-12: Query MCP status"
-      ansible.builtin.command: oc get mcp -o json
+      ansible.builtin.command: oc get mcp --no-headers
       register: tc12_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-12: Record Result"
       vars:
-        mcp_items: "{{ (tc12_cmd.stdout | from_json).items if tc12_cmd.rc == 0 else [] }}"
-        degraded_mcps: >-
-          [{% for mcp in mcp_items %}{% for c in mcp.status.conditions | default([]) %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ mcp.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
+        mcp_lines: "{{ tc12_cmd.stdout_lines | default([]) }}"
+        degraded_mcps: "{{ mcp_lines | select('regex', '\\s+True\\s*$') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-12',
           'name': 'Check Machine Config Pool (Master, Workers STD/HT)',
           'category': 'Services Check',
           'expected': 'Master, Worker (STD/HT) MCPs in Updated state and not Degraded',
-          'status': ('Pass' if (tc12_cmd.rc == 0 and degraded_mcps | length == 0 and mcp_items | length > 0) else 'Fail'),
-          'details': 'Degraded MCPs: ' ~ (degraded_mcps | join(', ') if degraded_mcps | length > 0 else 'None')
+          'status': ('Pass' if (tc12_cmd.rc == 0 and degraded_mcps | length == 0 and mcp_lines | length > 0) else 'Fail'),
+          'details': 'Total MCPs: ' ~ (mcp_lines | length) ~ ', Degraded: ' ~ (degraded_mcps | length)
         }] }}"
   tags: ['general', 'telco', 'tc12', 'mcp']
 
@@ -411,7 +408,7 @@
   when: run_tc18_check_internal_registry_api | default(true) | bool
   block:
     - name: "TC-18: Query internal registry service hostname"
-      ansible.builtin.command: oc get svc image-registry -n openshift-image-registry -o go-template='{{.metadata.name}}.{{.metadata.namespace}}.svc'
+      ansible.builtin.command: oc get svc image-registry -n openshift-image-registry -o jsonpath='{.metadata.name}.{.metadata.namespace}.svc'
       register: tc18_cmd
       changed_when: false
       failed_when: false
@@ -440,7 +437,7 @@
 
     - name: "TC-19: Record Result"
       vars:
-        reg_pods: "{{ (tc19_cmd.stdout | from_json).items if tc19_cmd.rc == 0 else [] }}"
+        reg_pods: "{{ ((tc19_cmd.stdout | from_json)['items']) if tc19_cmd.rc == 0 else [] }}"
         running_pods: "{{ reg_pods | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
