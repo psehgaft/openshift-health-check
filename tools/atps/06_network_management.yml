@@ -15,9 +15,10 @@
 
     - name: "TC-46: Record Result"
       vars:
-        cno_data: "{{ (tc46_cmd.stdout | from_json) if tc46_cmd.rc == 0 else {} }}"
-        cno_avail: "{{ cno_data | json_query("status.conditions[?type=='Available'].status | [0]") }}"
-        cno_version: "{{ cno_data.status.versions[0].version | default('Unknown') }}"
+        cno_conditions: "{{ ((tc46_cmd.stdout | from_json).status.conditions) if tc46_cmd.rc == 0 else [] }}"
+        cno_avail: "{{ (cno_conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown') }}"
+        cno_versions: "{{ ((tc46_cmd.stdout | from_json).status.versions) if tc46_cmd.rc == 0 else [] }}"
+        cno_version: "{{ (cno_versions | first).version | default('Unknown') }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-46',
@@ -53,7 +54,7 @@
 
 # TC 48: Expose an application secured by TLS certificates
 - name: "TC-48: Expose an application secured by TLS certificates"
-  when: run_tc48_expose_tls_route | default(true) | bool
+  when: run_run_tc48_expose_tls_route | default(true) | bool
   block:
     - name: "TC-48: Query secure edge/reencrypt routes in cluster"
       ansible.builtin.command: oc get routes -A -o json
@@ -63,8 +64,8 @@
 
     - name: "TC-48: Record Result"
       vars:
-        routes_list: "{{ (tc48_cmd.stdout | from_json).items if tc48_cmd.rc == 0 else [] }}"
-        tls_routes: "{{ routes_list | json_query("[?spec.tls!=null].metadata.name") }}"
+        routes_list: "{{ ((tc48_cmd.stdout | from_json)['items']) if tc48_cmd.rc == 0 else [] }}"
+        tls_routes: "{{ routes_list | selectattr('spec.tls', 'defined') | map(attribute='metadata.name') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-48',
