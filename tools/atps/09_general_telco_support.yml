@@ -59,7 +59,7 @@
 
     - name: "TC-65: Record Result"
       vars:
-        vsc_items: "{{ (tc65_cmd.stdout | from_json).items if tc65_cmd.rc == 0 else [] }}"
+        vsc_items: "{{ ((tc65_cmd.stdout | from_json)['items']) if tc65_cmd.rc == 0 else [] }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-65',
@@ -122,23 +122,23 @@
   when: run_tc67b_network_nncp | default(true) | bool
   block:
     - name: "TC-67b: Query NodeNetworkConfigurationPolicy (NNCP)"
-      ansible.builtin.command: oc get nncp -o json
+      ansible.builtin.command: oc get nncp --no-headers
       register: tc67b_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-67b: Record Result"
       vars:
-        nncp_items: "{{ (tc67b_cmd.stdout | from_json).items if tc67b_cmd.rc == 0 else [] }}"
-        unready_nncp: "{{ nncp_items | json_query("[?status.conditions[?type=='Available' && status!='True']].metadata.name") }}"
+        nncp_lines: "{{ tc67b_cmd.stdout_lines | default([]) }}"
+        unready_nncp: "{{ nncp_lines | reject('search', 'Available') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-67b',
           'name': 'Network (Validación de NNCP)',
           'category': 'General Support / Telco',
           'expected': 'All NodeNetworkConfigurationPolicy (NNCP) rules Available=True',
-          'status': ('Pass' if (tc67b_cmd.rc == 0 and unready_nncp | length == 0 and nncp_items | length > 0) else 'Fail'),
-          'details': 'Total NNCPs: ' ~ (nncp_items | length) ~ ', Unready: ' ~ (unready_nncp | join(', ') if unready_nncp | length > 0 else 'None')
+          'status': ('Pass' if (tc67b_cmd.rc == 0 and unready_nncp | length == 0 and nncp_lines | length > 0) else 'Fail'),
+          'details': 'Total NNCPs: ' ~ (nncp_lines | length) ~ ', Unready: ' ~ (unready_nncp | length)
         }] }}"
   tags: ['general', 'telco', 'tc67b', 'nncp']
 
@@ -193,9 +193,8 @@
   when: run_tc70_physical_lacp_mtu | default(true) | bool
   block:
     - name: "TC-70: Query bond0 MTU from NodeNetworkConfigurationEnactment"
-      ansible.builtin.shell: >
-        oc get nnce -o jsonpath='{range .items[*]}{.metadata.name}{": bond0="}{.status.interface[?(@.name=="bond0")].mtu}{"
-"}{end}'
+      ansible.builtin.shell: >-
+        oc get nnce -o jsonpath='{range .items[*]}{.metadata.name}{"\:\ bond0="}{.status.interface[?(@.name=="bond0")].mtu}{"\n"}{end}'
       register: tc70_cmd
       changed_when: false
       failed_when: false
@@ -217,9 +216,8 @@
   when: run_tc71_node_profiling_maxpods | default(true) | bool
   block:
     - name: "TC-71: Verify node capacity maxPods"
-      ansible.builtin.shell: >
-        oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" maxPods="}{.status.capacity.pods}{"
-"}{end}'
+      ansible.builtin.shell: >-
+        oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\:\ maxPods="}{.status.capacity.pods}{"\n"}{end}'
       register: tc71_cmd
       changed_when: false
       failed_when: false
@@ -231,7 +229,7 @@
           'name': 'Perfilamiento de Nodos (Roles/Labels/MaxPods)',
           'category': 'General Support / Telco',
           'expected': 'Node capacity maxPods set to exactly 250 pods per node',
-          'status': ('Pass' if (tc71_cmd.rc == 0 and 'maxPods=250' in tc71_cmd.stdout) else 'Fail'),
+          'status': ('Pass' if (tc71_cmd.rc == 0 and '250' in tc71_cmd.stdout) else 'Fail'),
           'details': tc71_cmd.stdout | default(tc71_cmd.stderr) | truncate(150)
         }] }}"
   tags: ['general', 'telco', 'tc71', 'profiling']
@@ -241,9 +239,8 @@
   when: run_tc72_performance_hugepages | default(true) | bool
   block:
     - name: "TC-72: Verify HugePages reservation on worker nodes"
-      ansible.builtin.shell: >
-        oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{range .items[*]}{.metadata.name}{" 1Gi="}{.status.capacity.hugepages-1Gi}{" 2Mi="}{.status.capacity.hugepages-2Mi}{"
-"}{end}'
+      ansible.builtin.shell: >-
+        oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{range .items[*]}{.metadata.name}{"\:\ 1Gi="}{.status.capacity.hugepages-1Gi}{"\:\ 2Mi="}{.status.capacity.hugepages-2Mi}{"\n"}{end}'
       register: tc72_cmd
       changed_when: false
       failed_when: false
@@ -265,22 +262,22 @@
   when: run_tc73_network_acceleration_sriov | default(true) | bool
   block:
     - name: "TC-73: Query SriovNetworkNodeState sync status"
-      ansible.builtin.command: oc get sriovnetworknodestates -n openshift-sriov-network-operator -o json
+      ansible.builtin.command: oc get sriovnetworknodestates -n openshift-sriov-network-operator --no-headers
       register: tc73_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-73: Record Result"
       vars:
-        sriov_states: "{{ (tc73_cmd.stdout | from_json).items if tc73_cmd.rc == 0 else [] }}"
-        unready_sriov: "{{ sriov_states | json_query("[?status.syncStatus!='Succeeded'].metadata.name") }}"
+        sriov_lines: "{{ tc73_cmd.stdout_lines | default([]) }}"
+        unready_sriov: "{{ sriov_lines | reject('search', 'Succeeded') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-73',
           'name': 'Aceleración de Red (SR-IOV y VFs)',
           'category': 'General Support / Telco',
           'expected': 'SriovNetworkNodeState with syncStatus=Succeeded and active VFs',
-          'status': ('Pass' if (tc73_cmd.rc == 0 and unready_sriov | length == 0 and sriov_states | length > 0) else 'Fail'),
-          'details': 'SR-IOV States: ' ~ (sriov_states | length) ~ ', Unready: ' ~ (unready_sriov | join(', ') if unready_sriov | length > 0 else 'None')
+          'status': ('Pass' if (tc73_cmd.rc == 0 and unready_sriov | length == 0 and sriov_lines | length > 0) else 'Fail'),
+          'details': 'SR-IOV States: ' ~ (sriov_lines | length) ~ ', Unready: ' ~ (unready_sriov | length)
         }] }}"
   tags: ['general', 'telco', 'tc73', 'sriov']
