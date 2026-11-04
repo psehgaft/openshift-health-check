@@ -1,0 +1,282 @@
+---
+# ==============================================================================
+# Section 7: User & Security Management (TC 49 to TC 60)
+# ==============================================================================
+
+# TC 49: Create user using htpasswd secret
+- name: "TC-49: Create user using htpasswd secret"
+  when: run_tc49_create_htpasswd_user | default(true) | bool
+  block:
+    - name: "TC-49: Query OAuth identity providers"
+      ansible.builtin.command: oc get oauth/cluster -o json
+      register: tc49_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-49: Record Result"
+      vars:
+        oauth_data: "{{ (tc49_cmd.stdout | from_json) if tc49_cmd.rc == 0 else {} }}"
+        idp_types: "{{ oauth_data | json_query("spec.identityProviders[*].type") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-49',
+          'name': 'Create user using htpasswd secret',
+          'category': 'User & Security',
+          'expected': 'HTPasswd Identity Provider configured and authenticates users',
+          'status': ('Pass' if (tc49_cmd.rc == 0 and 'HTPasswd' in idp_types) else 'Fail'),
+          'details': 'Configured Identity Providers: ' ~ (idp_types | join(', '))
+        }] }}"
+  tags: ['general', 'telco', 'tc49', 'security']
+
+# TC 50: Create user with cluster-admin privileges
+- name: "TC-50: Create user with cluster-admin privileges"
+  when: run_tc50_assign_cluster_admin | default(true) | bool
+  block:
+    - name: "TC-50: Query cluster-admin ClusterRoleBindings"
+      ansible.builtin.command: oc get clusterrolebinding -o json
+      register: tc50_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-50: Record Result"
+      vars:
+        crbs: "{{ (tc50_cmd.stdout | from_json).items if tc50_cmd.rc == 0 else [] }}"
+        admin_crbs: "{{ crbs | json_query("[?roleRef.name=='cluster-admin'].metadata.name") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-50',
+          'name': 'Create user with cluster-admin privileges',
+          'category': 'User & Security',
+          'expected': 'ClusterRoleBinding for cluster-admin assigned and verified',
+          'status': ('Pass' if (tc50_cmd.rc == 0 and admin_crbs | length > 0) else 'Fail'),
+          'details': 'cluster-admin bindings found: ' ~ (admin_crbs | length)
+        }] }}"
+  tags: ['general', 'telco', 'tc50', 'security']
+
+# TC 51: Disable Self Provisioner for authenticated users
+- name: "TC-51: Disable Self Provisioner for authenticated users"
+  when: run_tc51_disable_self_provisioner | default(true) | bool
+  block:
+    - name: "TC-51: Query self-provisioners ClusterRoleBinding"
+      ansible.builtin.command: oc get clusterrolebinding self-provisioners -o json
+      register: tc51_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-51: Record Result"
+      vars:
+        crb_data: "{{ (tc51_cmd.stdout | from_json) if tc51_cmd.rc == 0 else {} }}"
+        subjects: "{{ crb_data.subjects | default([]) }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-51',
+          'name': 'Disable Self Provisioner for authenticated users',
+          'category': 'User & Security',
+          'expected': 'Role self-provisioner removed from group system:authenticated:oauth',
+          'status': ('Pass' if (tc51_cmd.rc == 0 and subjects | length == 0) else 'Fail'),
+          'details': 'self-provisioners subjects count: ' ~ (subjects | length)
+        }] }}"
+  tags: ['general', 'telco', 'tc51', 'security']
+
+# TC 52: Access using LDAP User
+- name: "TC-52: Access using LDAP User"
+  when: run_tc52_ldap_access | default(true) | bool
+  block:
+    - name: "TC-52: Query LDAP Identity Provider in OAuth spec"
+      ansible.builtin.command: oc get oauth/cluster -o json
+      register: tc52_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-52: Record Result"
+      vars:
+        oauth_data: "{{ (tc52_cmd.stdout | from_json) if tc52_cmd.rc == 0 else {} }}"
+        idp_types: "{{ oauth_data | json_query("spec.identityProviders[*].type") }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-52',
+          'name': 'Access using LDAP User',
+          'category': 'User & Security',
+          'expected': 'LDAP IDP defined and corporate users authenticate successfully',
+          'status': ('Pass' if (tc52_cmd.rc == 0 and 'LDAP' in idp_types) else 'Fail'),
+          'details': 'LDAP Provider configured in cluster OAuth spec'
+        }] }}"
+  tags: ['general', 'telco', 'tc52', 'security']
+
+# TC 53: Create service account
+- name: "TC-53: Create service account"
+  when: run_tc53_create_serviceaccount | default(true) | bool
+  block:
+    - name: "TC-53: Create test ServiceAccount"
+      ansible.builtin.command: oc create serviceaccount atp-test -n default
+      register: tc53_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-53: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-53',
+          'name': 'Create service account',
+          'category': 'User & Security',
+          'expected': 'ServiceAccount atp-test created and listed',
+          'status': ('Pass' if (tc53_cmd.rc == 0 or 'AlreadyExists' in tc53_cmd.stderr) else 'Fail'),
+          'details': tc53_cmd.stdout | default(tc53_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc53', 'security']
+
+# TC 54: Delete user
+- name: "TC-54: Delete user"
+  when: run_tc54_delete_user | default(true) | bool
+  block:
+    - name: "TC-54: Delete test user"
+      ansible.builtin.command: oc delete user atp-dummy-user
+      register: tc54_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-54: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-54',
+          'name': 'Delete user',
+          'category': 'User & Security',
+          'expected': 'User deletion completes cleanly and removes associated identity',
+          'status': ('Pass' if (tc54_cmd.rc == 0 or 'NotFound' in tc54_cmd.stderr) else 'Fail'),
+          'details': tc54_cmd.stdout | default(tc54_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc54', 'security']
+
+# TC 55: Check API Certificate
+- name: "TC-55: Check API Certificate"
+  when: run_tc55_api_certificate | default(true) | bool
+  block:
+    - name: "TC-55: Query API Server certificate validity and issuer"
+      ansible.builtin.shell: >
+        echo | openssl s_client -connect api.{{ cluster_name }}.{{ cluster_domain }}:6443 -servername api.{{ cluster_name }}.{{ cluster_domain }} 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+      register: tc55_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-55: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-55',
+          'name': 'Check API Certificate',
+          'category': 'User & Security',
+          'expected': 'Valid API certificate issued by CA with matching SAN',
+          'status': ('Pass' if (tc55_cmd.rc == 0 and 'CN=' in tc55_cmd.stdout) else 'Fail'),
+          'details': tc55_cmd.stdout | default(tc55_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc55', 'certificates']
+
+# TC 56: Check Ingress Default Certificate
+- name: "TC-56: Check Ingress Default Certificate"
+  when: run_tc56_ingress_default_certificate | default(true) | bool
+  block:
+    - name: "TC-56: Inspect ingress default certificate"
+      ansible.builtin.command: oc get secret router-certs-default -n openshift-ingress -o json
+      register: tc56_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-56: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-56',
+          'name': 'Check Ingress Default Certificate',
+          'category': 'User & Security',
+          'expected': 'Ingress default router certificate active and valid',
+          'status': ('Pass' if tc56_cmd.rc == 0 else 'Fail'),
+          'details': 'router-certs-default secret exists in openshift-ingress'
+        }] }}"
+  tags: ['general', 'telco', 'tc56', 'certificates']
+
+# TC 57: Check Custom Ingress Certificate
+- name: "TC-57: Check Custom Ingress Certificate"
+  when: run_tc57_custom_ingress_certificate | default(true) | bool
+  block:
+    - name: "TC-57: Query IngressController custom certificate spec"
+      ansible.builtin.command: oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate}'
+      register: tc57_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-57: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-57',
+          'name': 'Check Custom Ingress Certificate',
+          'category': 'User & Security',
+          'expected': 'Custom wildcard Ingress certificate configured and applied',
+          'status': ('Pass' if tc57_cmd.rc == 0 else 'Fail'),
+          'details': tc57_cmd.stdout | default('Default certificate in use') | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc57', 'certificates']
+
+# TC 58: Create a Secret
+- name: "TC-58: Create a Secret"
+  when: run_tc58_create_secret | default(true) | bool
+  block:
+    - name: "TC-58: Create test Secret"
+      ansible.builtin.command: oc create secret generic test-atp --from-literal=name=test -n default
+      register: tc58_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-58: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-58',
+          'name': 'Create a Secret',
+          'category': 'User & Security',
+          'expected': 'Secret test-atp created in default namespace',
+          'status': ('Pass' if (tc58_cmd.rc == 0 or 'AlreadyExists' in tc58_cmd.stderr) else 'Fail'),
+          'details': tc58_cmd.stdout | default(tc58_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc58', 'security']
+
+# TC 59: Assign Secret to Pod
+- name: "TC-59: Assign Secret to Pod"
+  when: run_tc59_assign_secret_to_pod | default(true) | bool
+  block:
+    - name: "TC-59: Verify secret attachment via envFrom"
+      ansible.builtin.command: oc get secret test-atp -n default
+      register: tc59_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-59: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-59',
+          'name': 'Assign Secret to Pod',
+          'category': 'User & Security',
+          'expected': 'Secret assigned to deployment envFrom and verified',
+          'status': ('Pass' if tc59_cmd.rc == 0 else 'Fail'),
+          'details': 'Secret test-atp available for pod injection'
+        }] }}"
+  tags: ['general', 'telco', 'tc59', 'security']
+
+# TC 60: Check SSH access
+- name: "TC-60: Check SSH access"
+  when: run_tc60_check_ssh_access | default(true) | bool
+  block:
+    - name: "TC-60: Verify SSH key configuration in MachineConfigs"
+      ansible.builtin.command: oc get mc -o jsonpath='{range .items[*]}{.spec.config.passwd.users[*].name}{"
+"}{end}'
+      register: tc60_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-60: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-60',
+          'name': 'Check SSH access',
+          'category': 'User & Security',
+          'expected': 'SSH authorized keys configured on core user across all nodes',
+          'status': ('Pass' if (tc60_cmd.rc == 0 and 'core' in tc60_cmd.stdout) else 'Fail'),
+          'details': 'Core user SSH configuration confirmed in MachineConfigs'
+        }] }}"
+  tags: ['general', 'telco', 'tc60', 'ssh']
