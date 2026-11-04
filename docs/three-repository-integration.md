@@ -10,7 +10,7 @@ Pinned source commits and exclusions are recorded in [sources.json](../integrati
 | --- | --- | --- | --- |
 | openshift-health-check | Ansible roles, profile-gated health scoring, live/collected evidence, checkpoint/resume, Markdown/JSON/HTML/PDF | Existing root layout | Canonical cluster health report |
 | [openshift-healthcheck](https://github.com/psehgaft/openshift-healthcheck) | Bash collection for OCP 4.18+, CSV findings/backlog, CER material, ACM, certificate and DNS audits, Headlamp plugin | `toolkits/openshift-healthcheck/` | Additional diagnostics and operational evidence |
-| [arch-design-doc-generator](https://github.com/stratus-ss/arch-design-doc-generator) | ADR-driven HLD/LLD, diagrams, PDF publishing, work items | `tools/arch-design-doc-generator/` | Architecture authoring and publishing |
+| [arch-design-doc-generator](https://github.com/stratus-ss/arch-design-doc-generator) | ADR-driven HLD/LLD, diagrams, PDF publishing, work items | `toolkits/arch-design-doc-generator/` | Architecture authoring and publishing |
 
 The orchestration interface is `scripts/unified_healthcheck.py`. It delegates to the existing engines and preserves the canonical OpenShift report shape, selectors, and resume behavior. It does not merge incompatible scores or silently deduplicate findings across engines. Every exported observation retains its source path.
 
@@ -159,7 +159,7 @@ Select `AI_TOOL=claude` or `AI_TOOL=cursor` if appropriate. Do not run `make cle
 | Original Ansible role | [Role README](../toolkits/openshift-healthcheck/Ansible/README.md) |
 | Headlamp | [Plugin build, installation, and RBAC](../toolkits/openshift-healthcheck/Shell/headlamp-openshift-rbac-html-report/README.md) |
 | Versioned shell diagnostics and CER | [Shell README](../toolkits/openshift-healthcheck/Shell/README.md) and [report guide](../toolkits/openshift-healthcheck/Shell/reports/README-reports.md) |
-| Native architecture tooling | [Generator README](../tools/arch-design-doc-generator/README.md) |
+| Native architecture tooling | [Generator README](../toolkits/arch-design-doc-generator/README.md) |
 
 These are available in the consolidated repository but are not all executed automatically by `suite`. ACM remediation, certificate audits, DNS validation, and Headlamp installation remain explicit specialist workflows.
 
@@ -171,14 +171,14 @@ scripts/validate_repo.sh
 .venv/bin/python tests/run_unified_integration_fixture.py
 # Optional upstream architecture tests:
 .venv/bin/pip install pytest
-(cd tools/arch-design-doc-generator && ../../.venv/bin/python -m pytest tests)
+(cd toolkits/arch-design-doc-generator && ../../.venv/bin/python -m pytest tests)
 ```
 
 When refreshing a source snapshot, preserve its license, update `integration/sources.json`, retain local fixes, and rerun integration tests. Tracked compiled Python bytecode and prebuilt Headlamp assets were deliberately excluded. Build the retained plugin source with `npm ci`, `npm run build`, and `npm run package` in its directory before following the installation instructions.
 
 ## License and provenance
 
-The original root code retains its [Apache-2.0 license](../LICENSE). The imported architecture module retains its [GPLv3 license](../tools/arch-design-doc-generator/LICENSE) and upstream notices; it is invoked as a separate program. Do not represent all consolidated contents as Apache-2.0 or remove third-party licensing. Any distribution combining or modifying GPL-covered code must account for the applicable GPL terms.
+The original root code retains its [Apache-2.0 license](../LICENSE). The imported architecture module retains its [GPLv3 license](../toolkits/arch-design-doc-generator/LICENSE) and upstream notices; it is invoked as a separate program. Do not represent all consolidated contents as Apache-2.0 or remove third-party licensing. Any distribution combining or modifying GPL-covered code must account for the applicable GPL terms.
 
 The shell source snapshot has no root LICENSE file. It belongs to the same GitHub owner as the destination, but this import does not invent a license grant for that source. Preserve ownership and clarify licensing before redistributing it under a different license. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for the pinned import boundaries and local modifications.
 
