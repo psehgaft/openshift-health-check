@@ -45,11 +45,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml --tags "telco,networking,sri
 ```
 
 ### 2. Using Feature Toggles in `toolkits/openshift-atp/vars/main.yml` or CLI Extra Vars
-```bash
-# Disable specific test cases dynamically:
-ansible-playbook -i inventory.ini playbooks/atp.yml \
-  -e "run_tc26_sanity_reboot=false run_tc27_reboot_worker=false run_tc62_etcd_restore=false"
-```
+Automated cases can be selectively run with the documented `run_tc*` variables. TC-26 (cluster reboot), TC-27 (worker reboot), and TC-62 (etcd restore) are manual-only and always remain `Skipped` in this playbook; it does not execute these disruptive operations or mark them as passed without evidence.
 
 ## Output Reports
 The playbook writes a Markdown report and a self-contained HTML report to `reports/` by default. Set `atp_report_dir` to change the destination.
