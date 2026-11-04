@@ -16,7 +16,7 @@
     - name: "TC-49: Record Result"
       vars:
         oauth_data: "{{ (tc49_cmd.stdout | from_json) if tc49_cmd.rc == 0 else {} }}"
-        idp_types: "{{ oauth_data | json_query("spec.identityProviders[*].type") }}"
+        idp_types: "{{ oauth_data.spec.identityProviders | default([]) | map(attribute='type') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-49',
@@ -40,8 +40,8 @@
 
     - name: "TC-50: Record Result"
       vars:
-        crbs: "{{ (tc50_cmd.stdout | from_json).items if tc50_cmd.rc == 0 else [] }}"
-        admin_crbs: "{{ crbs | json_query("[?roleRef.name=='cluster-admin'].metadata.name") }}"
+        crb_list: "{{ ((tc50_cmd.stdout | from_json)['items']) if tc50_cmd.rc == 0 else [] }}"
+        admin_crbs: "{{ crb_list | selectattr('roleRef.name', 'equalto', 'cluster-admin') | map(attribute='metadata.name') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-50',
@@ -91,7 +91,7 @@
     - name: "TC-52: Record Result"
       vars:
         oauth_data: "{{ (tc52_cmd.stdout | from_json) if tc52_cmd.rc == 0 else {} }}"
-        idp_types: "{{ oauth_data | json_query("spec.identityProviders[*].type") }}"
+        idp_types: "{{ oauth_data.spec.identityProviders | default([]) | map(attribute='type') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-52',
@@ -263,8 +263,8 @@
   when: run_tc60_check_ssh_access | default(true) | bool
   block:
     - name: "TC-60: Verify SSH key configuration in MachineConfigs"
-      ansible.builtin.command: oc get mc -o jsonpath='{range .items[*]}{.spec.config.passwd.users[*].name}{"
-"}{end}'
+      ansible.builtin.command: >
+        oc get mc -o jsonpath='{range .items[*]}{.spec.config.passwd.users[*].name}{"\n"}{end}'
       register: tc60_cmd
       changed_when: false
       failed_when: false
