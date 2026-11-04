@@ -1,7 +1,7 @@
 # Acceptance Test Plan (ATP) Playbook - User Guide
 
 ## Overview
-This Ansible playbook automates the acceptance verification procedures defined in the **ATP - Red Hat OpenShift Container Platform 4.20** specification. It covers **73 numbered test cases**; TC-67 is recorded as two independently reported sub-cases, producing 74 execution records spanning core OpenShift components, infrastructure governance, application scheduling, storage resilience, networking, and Telco 5G performance tuning (HugePages, LACP Bonding, MTU 9000, and SR-IOV VFs).
+This Ansible playbook automates the acceptance verification procedures defined in the **ATP - Red Hat OpenShift Container Platform 4.20** specification. It covers **73 numbered test cases**; TC-67 is recorded as two independently reported sub-cases, producing 74 execution records plus one startup project-setup record, for 75 report records. The testproject setup runs before the numbered cases; TC-58 recreates the project if TC-30 deletes it earlier. The cases span core OpenShift components, infrastructure governance, application scheduling, storage resilience, networking, and Telco 5G performance tuning (HugePages, LACP Bonding, MTU 9000, and SR-IOV VFs).
 
 ## Directory Structure
 ```text
@@ -53,4 +53,4 @@ The playbook writes a Markdown report and a self-contained HTML report to `repor
 - `ATP-Report-OCP<version>-<timestamp>.md`
 - `ATP-Report-OCP<version>-<timestamp>.html`
 
-Both formats contain a run summary and a per-test record. The HTML follows the supplied form layout and includes the procedure, expected result, captured command output, conclusion, and comments with remediation guidance for failures.
+Both formats contain a run summary, the startup project-setup record, and per-test records. TC-58 creates or updates `test-atp` in `testproject`, making reruns safe when the Secret already exists. TC-17 reads API server and control-plane logs through the Kubernetes API. TC-18 checks the internal registry service when present, otherwise it tests the configured external registry endpoint from a worker. TC-20 requires a persistent storage backend for the internal registry. For an external registry, it checks endpoint reachability but records that storage persistence still needs an authenticated push/pull validation or provider-side health check. The HTML follows the supplied form layout and includes the procedure, expected result, captured command output, conclusion, and comments with remediation guidance for failures.
