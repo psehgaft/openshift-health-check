@@ -4,7 +4,7 @@
   connection: local
   gather_facts: false
   vars_files:
-    - "{{ playbook_dir }}/../tools/atps/vars/main.yml"
+    - "{{ playbook_dir }}/../toolkits/openshift-atp/vars/main.yml"
 
   pre_tasks:
     - name: "Initialize ATP execution facts and results repository"
@@ -35,7 +35,7 @@
 
   tasks:
     - name: "Execute ATP Main Task Loader"
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tools/atps/main.yml"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../toolkits/openshift-atp/main.yml"
       tags: ['general', 'telco', 'atp']
 
   post_tasks:
@@ -44,10 +44,17 @@
         atp_end_time: '{{ lookup("pipe", "date -u +%Y-%m-%dT%H:%M:%SZ") }}'
       tags: ['always', 'general', 'telco']
 
-    - name: "Render and generate final ATP Markdown Report"
+    - name: "Render final ATP Markdown Report"
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/../tools/atps/templates/atp_report.md.j2"
+        src: "{{ playbook_dir }}/../toolkits/openshift-atp/templates/atp_report.md.j2"
         dest: "{{ atp_report_file }}"
+        mode: '0644'
+      tags: ['always', 'general', 'telco']
+
+    - name: "Render final ATP HTML Report"
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../toolkits/openshift-atp/templates/atp_report.html.j2"
+        dest: "{{ atp_report_html_file }}"
         mode: '0644'
       tags: ['always', 'general', 'telco']
 
@@ -61,6 +68,7 @@
           - "Pass: {{ atp_results | selectattr('status', 'equalto', 'Pass') | list | length }}"
           - "Fail: {{ atp_results | selectattr('status', 'equalto', 'Fail') | list | length }}"
           - "Skipped: {{ atp_results | selectattr('status', 'equalto', 'Skipped') | list | length }}"
-          - "Report Path: {{ atp_report_file }}"
+          - "Markdown Report: {{ atp_report_file }}"
+          - "HTML Report: {{ atp_report_html_file }}"
           - "=========================================================="
       tags: ['always', 'general', 'telco']

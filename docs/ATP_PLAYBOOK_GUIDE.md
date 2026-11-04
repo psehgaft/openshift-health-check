@@ -6,27 +6,24 @@ This Ansible playbook automates the acceptance verification procedures defined i
 ## Directory Structure
 ```text
 openshift-health-check/
-├── playbooks/
-│   └── atp.yml                      # Main orchestrator playbook
-├── tools/
-│   └── atps/
-│       ├── main.yml                 # Section task loader
-│       ├── vars/
-│       │   └── main.yml             # Global variables & test case toggle switches
-│       ├── templates/
-│       │   └── atp_report.md.j2     # Jinja2 template for the Markdown acceptance report
-│       ├── 01_services_check.yml    # Test Cases 01 to 22
-│       ├── 02_administration.yml    # Test Cases 23 to 31
-│       ├── 03_manage_application.yml# Test Cases 32 to 38
-│       ├── 04_logging_stack.yml     # Test Cases 39 to 40
-│       ├── 05_storage_management.yml# Test Cases 41 to 45
-│       ├── 06_network_management.yml# Test Cases 46 to 48
-│       ├── 07_user_security.yml     # Test Cases 49 to 60
-│       ├── 08_backup_restore.yml    # Test Cases 61 to 62
-│       └── 09_general_telco_support.yml # Test Cases 63 to 73
-└── docs/
-    └── ATP_PLAYBOOK_GUIDE.md        # Technical user guide
+├── playbooks/atp.yml
+├── toolkits/
+│   ├── openshift-atp/                 # ATP tasks, variables, and report templates
+│   ├── openshift-healthcheck/         # Specialist health-check tools
+│   └── arch-design-doc-generator/     # Architecture documentation generator
+└── docs/ATP_PLAYBOOK_GUIDE.md
 ```
+
+The ATP implementation is in [toolkits/openshift-atp](../toolkits/openshift-atp/). Each automated test stores the invoked command, full stdout/stderr, exit code, expected result, and conclusion. The playbook renders an ATP-specific Markdown and HTML report template alongside the existing health-check reporting system.
+
+## Reports
+
+Both files are generated in `reports/` unless `atp_report_dir` is overridden:
+
+- `ATP-Report-OCP<version>-<timestamp>.md`
+- `ATP-Report-OCP<version>-<timestamp>.html`
+
+The HTML uses a two-column procedure record matching the supplied form: date, time, description, topology, procedure, expected result and observed evidence, Pass/Fail/Skipped conclusion, and additional comments with remediation guidance for failures.
 
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
@@ -47,7 +44,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml --skip-tags "tc26,tc27,tc62"
 ansible-playbook -i inventory.ini playbooks/atp.yml --tags "telco,networking,sriov"
 ```
 
-### 2. Using Feature Toggles in `tools/atps/vars/main.yml` or CLI Extra Vars
+### 2. Using Feature Toggles in `toolkits/openshift-atp/vars/main.yml` or CLI Extra Vars
 ```bash
 # Disable specific test cases dynamically:
 ansible-playbook -i inventory.ini playbooks/atp.yml \

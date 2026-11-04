@@ -15,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLKIT = ROOT / "toolkits/openshift-healthcheck"
-GENERATOR = ROOT / "tools/arch-design-doc-generator"
+GENERATOR = ROOT / "toolkits/arch-design-doc-generator"
 
 
 def run(command, *, cwd=ROOT, env=None):

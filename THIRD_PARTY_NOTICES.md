@@ -14,8 +14,8 @@ See `integration/sources.json` for exact source commits.
 ## Architecture document generator
 
 - Source: https://github.com/stratus-ss/arch-design-doc-generator
-- Location: `tools/arch-design-doc-generator/`
-- License: GNU GPLv3; full license retained at `tools/arch-design-doc-generator/LICENSE`.
+- Location: `toolkits/arch-design-doc-generator/`
+- License: GNU GPLv3; full license retained at `toolkits/arch-design-doc-generator/LICENSE`.
 - Original notices, scripts, templates, test suite, container build, and documentation retained.
 - The integration invokes the generator as a separate process and keeps its files in a distinct source module. Root Apache-2.0 licensing must not be applied to this module.
 - No source modifications in this initial snapshot.
