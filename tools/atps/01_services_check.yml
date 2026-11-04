@@ -1,4 +1,3 @@
----
 # ==============================================================================
 # Section 1: OpenShift Services Check (TC 01 to TC 22)
 # ==============================================================================
@@ -43,10 +42,7 @@
       vars:
         nodes_list: "{{ (tc02_cmd.stdout | from_json).items if tc02_cmd.rc == 0 else [] }}"
         unready_nodes: >-
-          {{ nodes_list | rejectattr('status.conditions', 'defined') | list +
-             nodes_list | selectattr('status.conditions', 'defined')
-                        | reject('contains_attr_value', 'type', 'Ready', 'status', 'True')
-                        | map(attribute='metadata.name') | list }}
+          [{% for n in nodes_list %}{% for c in n.status.conditions | default([]) %}{% if c.type == 'Ready' and c.status != 'True' %}"{{ n.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-02',
@@ -144,7 +140,7 @@
       vars:
         co_items: "{{ (tc06_cmd.stdout | from_json).items if tc06_cmd.rc == 0 else [] }}"
         degraded_co: >-
-          [{% for co in co_items %}{% for c in co.status.conditions %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ co.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
+          [{% for co in co_items %}{% for c in co.status.conditions | default([]) %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ co.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-06',
@@ -282,7 +278,7 @@
       vars:
         mcp_items: "{{ (tc12_cmd.stdout | from_json).items if tc12_cmd.rc == 0 else [] }}"
         degraded_mcps: >-
-          [{% for mcp in mcp_items %}{% for c in mcp.status.conditions %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ mcp.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
+          [{% for mcp in mcp_items %}{% for c in mcp.status.conditions | default([]) %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ mcp.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-12',
