@@ -43,7 +43,10 @@
       vars:
         nodes_list: "{{ (tc02_cmd.stdout | from_json).items if tc02_cmd.rc == 0 else [] }}"
         unready_nodes: >-
-          {{ nodes_list | json_query("[?status.conditions[?type=='Ready' && status!='True']].metadata.name") }}
+          {{ nodes_list | rejectattr('status.conditions', 'defined') | list +
+             nodes_list | selectattr('status.conditions', 'defined')
+                        | reject('contains_attr_value', 'type', 'Ready', 'status', 'True')
+                        | map(attribute='metadata.name') | list }}
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-02',
@@ -89,11 +92,9 @@
 
     - name: "TC-04: Record Result"
       vars:
-        dns_co: "{{ (tc04_cmd.stdout | from_json) if tc04_cmd.rc == 0 else {} }}"
-        avail_cond: >-
-          {{ dns_co | json_query("status.conditions[?type=='Available'].status | [0]") }}
-        deg_cond: >-
-          {{ dns_co | json_query("status.conditions[?type=='Degraded'].status | [0]") }}
+        dns_conditions: "{{ ((tc04_cmd.stdout | from_json).status.conditions) if tc04_cmd.rc == 0 else [] }}"
+        avail_cond: "{{ (dns_conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown') }}"
+        deg_cond: "{{ (dns_conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown') }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-04',
@@ -141,10 +142,9 @@
 
     - name: "TC-06: Record Result"
       vars:
-        co_items: >-
-          {{ (tc06_cmd.stdout | from_json).items if tc06_cmd.rc == 0 else [] }}
+        co_items: "{{ (tc06_cmd.stdout | from_json).items if tc06_cmd.rc == 0 else [] }}"
         degraded_co: >-
-          {{ co_items | json_query("[?status.conditions[?type=='Degraded' && status=='True']].metadata.name") }}
+          [{% for co in co_items %}{% for c in co.status.conditions %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ co.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-06',
@@ -280,10 +280,9 @@
 
     - name: "TC-12: Record Result"
       vars:
-        mcp_items: >-
-          {{ (tc12_cmd.stdout | from_json).items if tc12_cmd.rc == 0 else [] }}
+        mcp_items: "{{ (tc12_cmd.stdout | from_json).items if tc12_cmd.rc == 0 else [] }}"
         degraded_mcps: >-
-          {{ mcp_items | json_query("[?status.conditions[?type=='Degraded' && status=='True']].metadata.name") }}
+          [{% for mcp in mcp_items %}{% for c in mcp.status.conditions %}{% if c.type == 'Degraded' and c.status == 'True' %}"{{ mcp.metadata.name }}",{% endif %}{% endfor %}{% endfor %}]
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-12',
@@ -445,10 +444,8 @@
 
     - name: "TC-19: Record Result"
       vars:
-        reg_pods: >-
-          {{ (tc19_cmd.stdout | from_json).items if tc19_cmd.rc == 0 else [] }}
-        running_pods: >-
-          {{ reg_pods | json_query("[?status.phase=='Running'].metadata.name") }}
+        reg_pods: "{{ (tc19_cmd.stdout | from_json).items if tc19_cmd.rc == 0 else [] }}"
+        running_pods: "{{ reg_pods | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-19',
@@ -494,10 +491,8 @@
 
     - name: "TC-21: Record Result"
       vars:
-        mon_co: >-
-          {{ (tc21_cmd.stdout | from_json) if tc21_cmd.rc == 0 else {} }}
-        mon_avail: >-
-          {{ mon_co | json_query("status.conditions[?type=='Available'].status | [0]") }}
+        mon_conditions: "{{ ((tc21_cmd.stdout | from_json).status.conditions) if tc21_cmd.rc == 0 else [] }}"
+        mon_avail: "{{ (mon_conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown') }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-21',
