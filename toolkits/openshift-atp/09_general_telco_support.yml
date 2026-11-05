@@ -618,9 +618,67 @@
 - name: "TC-72: Rendimiento (HugePages)"
   when: run_tc72_performance_hugepages | default(true) | bool
   block:
-    - name: "TC-72: Verify HugePages reservation on worker nodes"
-      ansible.builtin.shell: >-
-        oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{range .items[*]}{.metadata.name}{"\:\ 1Gi="}{.status.capacity.hugepages-1Gi}{"\:\ 2Mi="}{.status.capacity.hugepages-2Mi}{"\n"}{end}'
+    - name: "TC-72: Verify HugePages capacity and allocatable resources on target workers"
+      vars:
+        tc72_node_selector_value: "{{ tc72_node_selector | default('node-role.kubernetes.io/worker=') }}"
+      ansible.builtin.shell:
+        cmd: |
+          set -uo pipefail
+
+          node_selector={{ tc72_node_selector_value | quote }}
+          nodes_json="$(oc get nodes -l "$node_selector" -o json 2>&1)"
+          nodes_rc=$?
+          if [[ "$nodes_rc" -ne 0 ]]; then
+            echo "Could not query nodes with selector '$node_selector': $nodes_json" >&2
+            echo "TC72_RESULT=FAIL"
+            exit 1
+          fi
+          if ! jq -e '.items | length > 0' <<< "$nodes_json" >/dev/null; then
+            echo "No nodes matched selector '$node_selector' or the API returned invalid JSON." >&2
+            echo "TC72_RESULT=FAIL"
+            exit 1
+          fi
+
+          node_count="$(jq '.items | length' <<< "$nodes_json")"
+          node_failures=0
+          echo "Target node selector: $node_selector"
+          echo "== HugePages capacity and allocatable resources by node =="
+
+          while IFS=$'\t' read -r node cap_1gi alloc_1gi cap_2mi alloc_2mi; do
+            [[ -n "$node" ]] || continue
+            printf 'Node=%s capacity(1Gi)=%s allocatable(1Gi)=%s capacity(2Mi)=%s allocatable(2Mi)=%s\n' \
+              "$node" "${cap_1gi:-0}" "${alloc_1gi:-0}" "${cap_2mi:-0}" "${alloc_2mi:-0}"
+
+            has_available_hugepages=false
+            if [[ "${cap_1gi:-0}" =~ ^[1-9][0-9]*([EPTGMK]i?)?$ && "${alloc_1gi:-0}" =~ ^[1-9][0-9]*([EPTGMK]i?)?$ ]]; then
+              has_available_hugepages=true
+            fi
+            if [[ "${cap_2mi:-0}" =~ ^[1-9][0-9]*([EPTGMK]i?)?$ && "${alloc_2mi:-0}" =~ ^[1-9][0-9]*([EPTGMK]i?)?$ ]]; then
+              has_available_hugepages=true
+            fi
+
+            if [[ "$has_available_hugepages" != "true" ]]; then
+              echo "FAIL: $node has no positive HugePages resource in both capacity and allocatable for either 1Gi or 2Mi." >&2
+              node_failures=$((node_failures + 1))
+            fi
+          done < <(jq -r '
+            .items[] |
+            [
+              .metadata.name,
+              (.status.capacity["hugepages-1Gi"] // "0"),
+              (.status.allocatable["hugepages-1Gi"] // "0"),
+              (.status.capacity["hugepages-2Mi"] // "0"),
+              (.status.allocatable["hugepages-2Mi"] // "0")
+            ] | @tsv
+          ' <<< "$nodes_json")
+
+          echo "Target workers checked: $node_count; nodes without schedulable HugePages: $node_failures"
+          if [[ "$node_failures" -gt 0 ]]; then
+            echo "TC72_RESULT=FAIL: each target worker must expose positive capacity and allocatable HugePages for 1Gi or 2Mi."
+            exit 1
+          fi
+          echo "TC72_RESULT=PASS: every target worker exposes HugePages capacity and allocatable resources for at least one supported page size."
+        executable: /bin/bash
       register: tc72_cmd
       changed_when: false
       failed_when: false
@@ -631,11 +689,12 @@
           'id': 'TC-72',
           'name': 'Rendimiento (HugePages)',
           'category': 'General Support / Telco',
-          'expected': 'HugePages 1Gi or 2Mi allocated and available for CNFs',
-          'status': ('Pass' if (tc72_cmd.rc == 0 and ('1Gi=' in tc72_cmd.stdout or '2Mi=' in tc72_cmd.stdout)) else 'Fail'),
-          'procedure': (tc72_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'expected': 'Every node selected for CNF workloads has positive capacity and allocatable HugePages for 1Gi or 2Mi, matching the approved PerformanceProfile.',
+          'status': ('Pass' if (tc72_cmd.rc == 0 and 'TC72_RESULT=PASS' in (tc72_cmd.stdout | default(''))) else 'Fail'),
+          'procedure': 'Query each node matching tc72_node_selector (default: workers) as JSON; validate positive capacity and allocatable HugePages for at least one of 1Gi or 2Mi.',
           'evidence': ((tc72_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc72_cmd.stderr | default(''))) if (tc72_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc72_cmd.rc | string) if tc72_cmd.rc is defined else '')),
-          'details': tc72_cmd.stdout | default('No HugePages found') | truncate(150)
+          'details': tc72_cmd.stdout | default(tc72_cmd.stderr) | truncate(300),
+          'remediation': 'Use the Node Tuning Operator PerformanceProfile hugepages.pages configuration to pre-allocate the size and count required by the CNF on the intended nodes/NUMA nodes. Wait for the relevant MachineConfigPool rollout to finish, then verify oc describe node <node> reports positive hugepages capacity and allocatable resources. Configure tc72_node_selector to target the cluster nodes designed for CNFs; do not allocate pages on every worker unless the topology requires it.'
         }] }}"
   tags: ['general', 'telco', 'tc72', 'hugepages']
 
