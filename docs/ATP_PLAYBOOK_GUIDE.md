@@ -106,3 +106,10 @@ TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no 
 ## TC-55: API certificate validation
 
 TC-55 validates the API endpoint certificate against the active kubeconfig CA, checks that the API hostname matches a certificate SAN, and checks remaining validity against `atp_api_cert_min_validity_days` (default: 7 days). This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold in `toolkits/openshift-atp/vars/main.yml` or as an Ansible extra var when your policy requires a longer validity window.
+
+
+## TC-28: install and verify sample-operator
+
+TC-28 applies the supplied Subscription for package `sample-operator` from the `redhat-operators` CatalogSource, channel `stable`, in `openshift-operators`. Reapplying the Subscription is safe. The task waits up to ten minutes for `.status.installedCSV` to appear and that ClusterServiceVersion to reach `Succeeded`; catalog availability or a created Subscription alone does not count as Pass. The report captures the Subscription and CSV YAML on success, and diagnostic Subscription/CSV output on failure.
+
+This is the automated variant requested for the sample operator. The ATP source document’s 3scale OperatorHub procedure is retained in the report as a reference and is not evidence that 3scale was installed.
