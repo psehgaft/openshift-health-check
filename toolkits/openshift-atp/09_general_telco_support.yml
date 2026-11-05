@@ -241,6 +241,20 @@
           sc_json="$(oc get storageclass -o json 2>&1)"
           sc_rc=$?
 
+          # Detect SAN StorageClasses from common protocol naming and CSI metadata.
+          # Explicit tc67a_san_storage_class_names remains available for custom names.
+          auto_san_classes="$(printf '%s' "$sc_json" | jq -r '
+            .items[] |
+            select(
+              ((.metadata.name // "") | test("iscsi|fibre|fibrechannel|(^|[-_.])fc([-_.]|$)|(^|[-_.])san([-_.]|$)"; "i"))
+              or ((.provisioner // "") | test("iscsi|fibre|fibrechannel|netapp-san|pure-fc|powerstore"; "i"))
+              or ([ ((.parameters // {}) | to_entries[]?) | "\(.key)=\(.value)" ] | join(" ") | test("protocol[=: ]*(iscsi|fc|fibrechannel)|transport[=: ]*(iscsi|fc|fibrechannel)"; "i"))
+            ) | .metadata.name
+          ' | paste -sd, -)"
+          san_classes_all="$(printf '%s\n%s\n' "$san_classes" "$auto_san_classes" | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -)"
+          echo "Explicit SAN StorageClasses: $san_classes"
+          echo "Auto-detected SAN StorageClasses: $auto_san_classes"
+
           echo "== Bound PVC inventory =="
           if [[ "$pvc_rc" -eq 0 ]]; then
             printf '%s\n' "$pvc_json" | jq -r '.items[] | select(.status.phase == "Bound") | [.metadata.namespace, .metadata.name, .spec.storageClassName, .spec.volumeName] | @tsv'
@@ -263,8 +277,8 @@
             exit 1
           fi
 
-          san_pvs="$(printf '%s' "$pv_json" | jq -c --arg csv "$san_classes" '($csv | split(",")) as $classes | [.items[] | select((.spec.iscsi != null) or (.spec.fc != null) or (((.spec.csi.driver // "") | test("iscsi|fibre|fibrechannel|netapp-san|pure-fc"; "i"))) or ((.spec.storageClassName // "") as $sc | ($sc != "" and ($classes | index($sc)) != null))) | {name: .metadata.name, phase: .status.phase, storageClass: .spec.storageClassName, claimNamespace: .spec.claimRef.namespace, claimName: .spec.claimRef.name, iscsi: ((.spec.iscsi != null) or (((.spec.csi.driver // "") | test("iscsi"; "i"))))}]')"
-          san_sc_matches="$(printf '%s' "$sc_json" | jq -c --arg csv "$san_classes" '($csv | split(",")) as $classes | [.items[].metadata.name as $sc | select($sc != "" and ($classes | index($sc)) != null) | $sc]')"
+          san_pvs="$(printf '%s' "$pv_json" | jq -c --arg csv "$san_classes_all" '($csv | split(",")) as $classes | [.items[] | select((.spec.iscsi != null) or (.spec.fc != null) or (((.spec.csi.driver // "") | test("iscsi|fibre|fibrechannel|netapp-san|pure-fc|powerstore"; "i"))) or ((.spec.storageClassName // "") as $sc | ($sc != "" and ($classes | index($sc)) != null))) | {name: .metadata.name, phase: .status.phase, storageClass: .spec.storageClassName, claimNamespace: .spec.claimRef.namespace, claimName: .spec.claimRef.name, iscsi: ((.spec.iscsi != null) or (((.spec.csi.driver // "") | test("iscsi"; "i"))) or (((.spec.storageClassName // "") | test("iscsi"; "i"))))}]')"
+          san_sc_matches="$(printf '%s' "$sc_json" | jq -c --arg csv "$san_classes_all" '($csv | split(",")) as $classes | [.items[].metadata.name as $sc | select($sc != "" and ($classes | index($sc)) != null) | $sc]')"
           san_pv_count="$(printf '%s' "$san_pvs" | jq 'length')"
           san_sc_count="$(printf '%s' "$san_sc_matches" | jq 'length')"
           echo "Configured SAN storage classes: $san_sc_matches"
