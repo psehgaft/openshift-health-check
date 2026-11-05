@@ -128,42 +128,64 @@
         }] }}"
   tags: ['general', 'telco', 'tc27', 'administration']
 
-# TC 28: Install an Operator
-- name: "TC-28: Install sample-operator"
+# TC 28: Install Self Node Remediation Operator
+- name: "TC-28: Install Self Node Remediation Operator"
   when: run_tc28_install_operator | default(true) | bool
   block:
-    - name: "TC-28: Apply sample-operator Subscription and wait for Succeeded CSV"
+    - name: "TC-28: Install SNRO and verify its workloads"
       ansible.builtin.shell: |
         set -euo pipefail
-        oc apply -f - <<'SAMPLE_OPERATOR_SUBSCRIPTION'
+        cat <<'SNRO_RESOURCES' | oc apply -f -
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: openshift-workload-availability
+        ---
+        apiVersion: operators.coreos.com/v1
+        kind: OperatorGroup
+        metadata:
+          name: workload-availability-operator-group
+          namespace: openshift-workload-availability
+        ---
         apiVersion: operators.coreos.com/v1alpha1
         kind: Subscription
         metadata:
-          name: sample-operator
-          namespace: openshift-operators
+          name: self-node-remediation
+          namespace: openshift-workload-availability
         spec:
           channel: stable
-          name: sample-operator
+          installPlanApproval: Automatic
+          name: self-node-remediation
           source: redhat-operators
           sourceNamespace: openshift-marketplace
-        SAMPLE_OPERATOR_SUBSCRIPTION
+        SNRO_RESOURCES
 
-        echo "Subscription applied. Waiting up to 10 minutes for its CSV to reach Succeeded."
+        subscription="self-node-remediation"
+        operator_namespace="openshift-workload-availability"
+        echo "Subscription applied. Waiting up to 10 minutes for the SNRO CSV to reach Succeeded."
+
+        installed_csv=""
         for attempt in $(seq 1 60); do
-          installed_csv="$(oc get subscription sample-operator -n openshift-operators -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+          subscription_json="$(oc get subscription "$subscription" -n "$operator_namespace" -o json)"
+          installed_csv="$(jq -r '.status.installedCSV // empty' <<< "$subscription_json")"
+          resolution_error="$(jq -r '[.status.conditions[]? | select(.type == "ResolutionFailed" and .status == "True") | .message] | join("; ")' <<< "$subscription_json")"
+
+          if [[ -n "$resolution_error" ]]; then
+            echo "Subscription resolution failed: $resolution_error" >&2
+            oc describe subscription "$subscription" -n "$operator_namespace" >&2 || true
+            oc get packagemanifest self-node-remediation -n openshift-marketplace -o yaml >&2 || true
+            exit 1
+          fi
+
           if [[ -n "$installed_csv" ]]; then
-            phase="$(oc get csv "$installed_csv" -n openshift-operators -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            phase="$(oc get csv "$installed_csv" -n "$operator_namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
             echo "Attempt $attempt: CSV=$installed_csv phase=${phase:-Pending}"
             if [[ "$phase" == "Succeeded" ]]; then
-              echo "== Subscription =="
-              oc get subscription sample-operator -n openshift-operators -o yaml
-              echo "== Installed ClusterServiceVersion =="
-              oc get csv "$installed_csv" -n openshift-operators -o yaml
-              exit 0
+              break
             fi
             if [[ "$phase" == "Failed" ]]; then
               echo "ClusterServiceVersion $installed_csv entered Failed phase." >&2
-              oc get csv "$installed_csv" -n openshift-operators -o yaml >&2 || true
+              oc describe csv "$installed_csv" -n "$operator_namespace" >&2 || true
               exit 1
             fi
           else
@@ -172,10 +194,42 @@
           sleep 10
         done
 
-        echo "Timed out waiting for sample-operator CSV to reach Succeeded." >&2
-        oc get subscription sample-operator -n openshift-operators -o yaml >&2 || true
-        oc get csv -n openshift-operators >&2 || true
-        exit 1
+        if [[ -z "$installed_csv" || "$(oc get csv "$installed_csv" -n "$operator_namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)" != "Succeeded" ]]; then
+          echo "Timed out waiting for the SNRO CSV to reach Succeeded." >&2
+          oc describe subscription "$subscription" -n "$operator_namespace" >&2 || true
+          oc get installplan -n "$operator_namespace" >&2 || true
+          oc get csv -n "$operator_namespace" >&2 || true
+          exit 1
+        fi
+
+        echo "Waiting for SNRO controller Deployment and node-remediation DaemonSet rollout."
+        oc rollout status deployment/self-node-remediation-controller-manager -n "$operator_namespace" --timeout=10m
+        oc rollout status daemonset/self-node-remediation-ds -n "$operator_namespace" --timeout=10m
+
+        daemonset_json="$(oc get daemonset self-node-remediation-ds -n "$operator_namespace" -o json)"
+        desired="$(jq -r '.status.desiredNumberScheduled // 0' <<< "$daemonset_json")"
+        ready="$(jq -r '.status.numberReady // 0' <<< "$daemonset_json")"
+        if [[ "$desired" -lt 1 || "$ready" -ne "$desired" ]]; then
+          echo "SNRO DaemonSet is not ready on all targeted nodes: desired=$desired ready=$ready" >&2
+          oc get pods -n "$operator_namespace" -o wide >&2 || true
+          exit 1
+        fi
+
+        echo "== Subscription =="
+        oc get subscription "$subscription" -n "$operator_namespace" -o yaml
+        echo "== Installed ClusterServiceVersion =="
+        oc get csv "$installed_csv" -n "$operator_namespace" -o yaml
+        echo "== Controller Deployment =="
+        oc get deployment self-node-remediation-controller-manager -n "$operator_namespace" -o wide
+        echo "== Remediation DaemonSet =="
+        oc get daemonset self-node-remediation-ds -n "$operator_namespace" -o wide
+        echo "== Remediation configuration =="
+        oc get selfnoderemediationconfig self-node-remediation-config -n "$operator_namespace" -o yaml
+        echo "== Remediation strategy template =="
+        oc get selfnoderemediationtemplate self-node-remediation-automatic-strategy-template -n "$operator_namespace" -o yaml
+        echo "== SNRO pods =="
+        oc get pods -n "$operator_namespace" -o wide
+        echo "SNRO_RESULT=PASS csv=$installed_csv phase=Succeeded daemonset_ready=$ready/$desired"
       args:
         executable: /bin/bash
       register: tc28_cmd
@@ -184,17 +238,19 @@
 
     - name: "TC-28: Record Result"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-28',
-          'name': 'Install sample-operator',
-          'category': 'OpenShift Administration',
-          'expected': 'Subscription sample-operator in openshift-operators resolves successfully and its installed ClusterServiceVersion reaches Succeeded',
-          'status': ('Pass' if tc28_cmd.rc == 0 else 'Fail'),
-          'procedure': (tc28_cmd.cmd | default('Apply the sample-operator Subscription from redhat-operators/stable in openshift-operators and wait for the installed CSV to reach Succeeded')) ~ '\nAutomation scope: sample-operator Subscription as supplied; the source ATP procedure below remains the original 3scale manual UI reference.',
-          'evidence': ((tc28_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc28_cmd.stderr | default(''))) if (tc28_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc28_cmd.rc | string) if tc28_cmd.rc is defined else '')),
-          'details': tc28_cmd.stdout | default(tc28_cmd.stderr) | truncate(500),
-          'remediation': 'Check that the redhat-operators CatalogSource is healthy in openshift-marketplace, the stable channel/package exists, the Subscription has no resolution errors, and the ClusterServiceVersion or InstallPlan events identify no RBAC, pull-secret, or resource issue. Resolve the reported condition and rerun TC-28.'
-        }] }}"
+        tc28_result:
+          id: "TC-28"
+          name: "Install Self Node Remediation Operator"
+          category: "OpenShift Administration"
+          expected: "Self Node Remediation Operator installed from redhat-operators/stable in openshift-workload-availability; CSV Succeeded, controller available, configuration/template present, and DaemonSet ready on every targeted node"
+          status: "{{ 'Pass' if tc28_cmd.rc == 0 and 'SNRO_RESULT=PASS' in (tc28_cmd.stdout | default('')) else 'Fail' }}"
+          procedure: "{{ tc28_cmd.cmd | default('Install the self-node-remediation package from redhat-operators/stable in openshift-workload-availability, then verify its CSV and workloads') }}"
+          evidence: "{{ (tc28_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc28_cmd.stderr | default(''))) if (tc28_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc28_cmd.rc | string) if tc28_cmd.rc is defined else '') }}"
+          details: "{{ tc28_cmd.stdout | default(tc28_cmd.stderr, true) | truncate(700) }}"
+          remediation: "Confirm the self-node-remediation package and stable channel are available in the redhat-operators CatalogSource. Inspect Subscription ResolutionFailed conditions, InstallPlan, CSV events, and pods in openshift-workload-availability. Verify node scheduling, image pulls, RBAC, and watchdog/device prerequisites. Do not create a SelfNodeRemediation CR or simulate a node failure as part of this install check."
+    - name: "TC-28: Append Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc28_result] }}"
   tags: ['general', 'telco', 'tc28', 'administration']
 
 # TC 29: Purge Namespace (Project)
