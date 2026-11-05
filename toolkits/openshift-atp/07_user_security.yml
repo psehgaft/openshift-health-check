@@ -88,6 +88,7 @@
         authenticated_oauth_bindings: "{{ selfprovisioner_bindings | selectattr('grants_authenticated_oauth', 'equalto', true) | list }}"
         selfprovisioner_binding_names: "{{ selfprovisioner_bindings | map(attribute='name') | list }}"
         default_binding_autoupdate: "{{ (selfprovisioner_bindings | selectattr('name', 'equalto', 'self-provisioners') | map(attribute='autoupdate') | first) | default('unset') }}"
+        tc51_additional_comments: "{{ ('The authenticated OAuth group is currently not bound, so TC-51 passes. However, autoupdate=true may restore default subjects; persist this setting with: oc annotate clusterrolebinding self-provisioners rbac.authorization.kubernetes.io/autoupdate=false --overwrite.' if default_binding_autoupdate == 'true' else 'The authenticated OAuth group is currently not bound to the self-provisioner role.') if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else '' }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-51',
@@ -95,6 +96,7 @@
           'category': 'User & Security',
           'expected': 'No ClusterRoleBinding grants the self-provisioner role to group system:authenticated:oauth; unrelated bindings may remain',
           'status': ('Pass' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Fail'),
+          'additional_comments': tc51_additional_comments,
           'procedure': (tc51_cmd.cmd | default('Inspect all ClusterRoleBindings that reference the self-provisioner role and check for group system:authenticated:oauth')),
           'evidence': ((tc51_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc51_cmd.stderr | default(''))) if (tc51_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc51_cmd.rc | string) if tc51_cmd.rc is defined else '')),
           'details': 'self-provisioner bindings: ' ~ (selfprovisioner_binding_names | join(', ') if selfprovisioner_binding_names | length > 0 else 'none') ~ '; bindings granting system:authenticated:oauth: ' ~ (authenticated_oauth_bindings | map(attribute='name') | join(', ') if authenticated_oauth_bindings | length > 0 else 'none') ~ '; self-provisioners autoupdate: ' ~ default_binding_autoupdate,
