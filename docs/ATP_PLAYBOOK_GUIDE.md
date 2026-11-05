@@ -113,3 +113,7 @@ TC-55 validates the API endpoint certificate against the active kubeconfig CA, c
 TC-28 applies the supplied Subscription for package `sample-operator` from the `redhat-operators` CatalogSource, channel `stable`, in `openshift-operators`. Reapplying the Subscription is safe. The task waits up to ten minutes for `.status.installedCSV` to appear and that ClusterServiceVersion to reach `Succeeded`; catalog availability or a created Subscription alone does not count as Pass. The report captures the Subscription and CSV YAML on success, and diagnostic Subscription/CSV output on failure.
 
 This is the automated variant requested for the sample operator. The ATP source document’s 3scale OperatorHub procedure is retained in the report as a reference and is not evidence that 3scale was installed.
+
+## TC-51: self-provisioner security check
+
+TC-51 inspects all ClusterRoleBindings that reference the `self-provisioner` role and verifies that none includes the `system:authenticated:oauth` group. It allows a binding to remain for a different group, such as `self-provisioners`. The check is read-only: it does not modify RBAC. If the authenticated OAuth group is present, the report lists the affected binding and recommends removing that group with the documented `oc adm policy remove-cluster-role-from-group` command.
