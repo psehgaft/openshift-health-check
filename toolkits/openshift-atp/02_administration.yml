@@ -9,6 +9,7 @@
   block:
     - name: "TC-24: Apply LimitRange manifest"
       ansible.builtin.shell: |
+        set -euo pipefail
         cat <<EOF | oc apply -n default -f -
         apiVersion: "v1"
         kind: "LimitRange"
@@ -33,6 +34,7 @@
               maxLimitRequestRatio:
                 cpu: "10"
         EOF
+        oc get limits -n default
       register: tc24_cmd
       changed_when: false
       failed_when: false
@@ -57,6 +59,7 @@
   block:
     - name: "TC-25: Apply ResourceQuota manifest"
       ansible.builtin.shell: |
+        set -euo pipefail
         cat <<EOF | oc apply -n default -f -
         apiVersion: v1
         kind: ResourceQuota
@@ -72,6 +75,7 @@
             limits.memory: 2Gi
             limits.ephemeral-storage: 4Gi
         EOF
+        oc get resourcequotas -n default
       register: tc25_cmd
       changed_when: false
       failed_when: false
@@ -140,11 +144,11 @@
           'id': 'TC-28',
           'name': 'Install an Operator',
           'category': 'OpenShift Administration',
-          'expected': 'OperatorHub catalog active and subscriptions installable',
-          'status': ('Pass' if tc28_cmd.rc == 0 else 'Fail'),
-          'procedure': (tc28_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'expected': 'Install the 3scale operator into testproject and verify Succeeded in Installed Operators',
+          'status': ('Fail' if tc28_cmd.rc != 0 else 'Skipped'),
+          'procedure': (tc28_cmd.cmd | default('See ATP task source; command metadata unavailable')) ~ '\nManual UI procedure: Operators > OperatorHub; search for 3scale; install using “A specific namespace on the cluster” and select testproject; then verify Succeeded under Operators > Installed Operators.',
           'evidence': ((tc28_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc28_cmd.stderr | default(''))) if (tc28_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc28_cmd.rc | string) if tc28_cmd.rc is defined else '')),
-          'details': tc28_cmd.stdout | default(tc28_cmd.stderr) | truncate(150)
+          'details': (tc28_cmd.stdout | default(tc28_cmd.stderr) | truncate(150)) ~ '\nCatalog availability is a prerequisite; complete and record the documented OperatorHub installation manually.'
         }] }}"
   tags: ['general', 'telco', 'tc28', 'administration']
 
@@ -152,8 +156,24 @@
 - name: "TC-29: Purge Namespace (Project)"
   when: run_tc29_purge_namespace | default(true) | bool
   block:
-    - name: "TC-29: Delete all resources in testproject"
-      ansible.builtin.command: oc delete all --all -n testproject
+    - name: "TC-29: Inspect and purge resources in testproject"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc project testproject
+        echo "== Resources before cleanup =="
+        oc status
+        oc delete all --all -n testproject --wait=true
+        echo "== Resources after cleanup =="
+        oc status
+        remaining="$(oc get all --no-headers -n testproject)"
+        if [[ -n "$remaining" ]]; then
+          echo "Resources remain in testproject after cleanup:" >&2
+          echo "$remaining" >&2
+          exit 1
+        fi
+        echo "No resources remain in testproject."
+      args:
+        executable: /bin/bash
       register: tc29_cmd
       changed_when: false
       failed_when: false
@@ -178,8 +198,18 @@
   block:
     - name: "TC-31: Test cordon and uncordon workflow on first worker"
       ansible.builtin.shell: |
-        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')
-        oc adm cordon ${NODE} && oc adm uncordon ${NODE}
+        set -euo pipefail
+        NODE="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
+        if [[ -z "$NODE" ]]; then
+          echo "No worker node was found." >&2
+          exit 1
+        fi
+        oc adm cordon "$NODE"
+        echo "== Node after cordon =="
+        oc get node "$NODE" -o wide
+        oc adm uncordon "$NODE"
+        echo "== Node after uncordon =="
+        oc get node "$NODE" -o wide
       register: tc31_cmd
       changed_when: false
       failed_when: false
@@ -190,7 +220,7 @@
           'id': 'TC-31',
           'name': 'Cleanup a Worker',
           'category': 'OpenShift Administration',
-          'expected': 'Worker node safely cordoned and uncordoned without errors',
+          'expected': 'Worker is cordoned, inspected, and returned to schedulable state',
           'status': ('Pass' if tc31_cmd.rc == 0 else 'Fail'),
           'procedure': (tc31_cmd.cmd | default('See ATP task source; command metadata unavailable')),
           'evidence': ((tc31_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc31_cmd.stderr | default(''))) if (tc31_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc31_cmd.rc | string) if tc31_cmd.rc is defined else '')),
