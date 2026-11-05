@@ -27,7 +27,7 @@ The HTML uses a two-column procedure record matching the supplied form: date, ti
 
 ## External registry checks (TC-18 and TC-19)
 
-TC-18 and TC-19 validate the internal registry when present and additionally probe an external registry when its URL is configured or discovered. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
+TC-18 and TC-19 validate the internal registry when present and additionally probe an external registry when its URL is configured or discovered. A configured external endpoint is always evaluated; a failed connection is a Fail result with a transport/TLS diagnostic. If neither an internal nor external registry exists, these ATP cases report Fail rather than Skipped. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
 
 Configure the URL in `toolkits/openshift-atp/vars/main.yml` when the cluster has multiple mirror endpoints or the external registry is not represented in those resources:
 
@@ -47,7 +47,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml
 unset ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ```
 
-Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled when possible; install the registry CA instead of disabling certificate validation.
+Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled. For a private registry CA, set `atp_external_registry_ca_path` to a PEM bundle path accessible to the Ansible controller. Disabling certificate validation should be limited to a temporary diagnostic.
 
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
@@ -69,7 +69,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml --tags "telco,networking,sri
 ```
 
 ### 2. Using Feature Toggles in `toolkits/openshift-atp/vars/main.yml` or CLI Extra Vars
-Automated cases can be selectively run with the documented `run_tc*` variables. TC-26 (cluster reboot), TC-27 (worker reboot), and TC-62 (etcd restore) are manual-only and always remain `Skipped` in this playbook; it does not execute these disruptive operations or mark them as passed without evidence.
+Automated cases can be selectively run with the documented `run_tc*` variables. TC-26 and TC-27 remain manual-only. TC-62 is opt-in and remains `Skipped` by default; it executes only when the operator supplies the exact restore confirmation and all preflight gates pass.
 
 ## Output Reports
 The playbook writes a Markdown report and a self-contained HTML report to `reports/` by default. Set `atp_report_dir` to change the destination.
@@ -78,3 +78,27 @@ The playbook writes a Markdown report and a self-contained HTML report to `repor
 - `ATP-Report-OCP<version>-<timestamp>.html`
 
 Both formats contain a run summary and per-test records. TC-23 is the first case and ensures `testproject` exists. TC-58 creates or updates `test-atp` in `testproject`, making reruns safe when the Secret already exists. TC-30 runs after all other ATP cases and deletes `testproject` as the final cleanup action. TC-17 reads API server and control-plane logs through the Kubernetes API. TC-18 checks the internal registry service when present, otherwise it tests the configured external registry endpoint from a worker. TC-20 requires a persistent storage backend for the internal registry. For an external registry, it checks endpoint reachability but records that storage persistence still needs an authenticated push/pull validation or provider-side health check. The HTML follows the supplied form layout and includes the procedure, expected result, captured command output, conclusion, and comments with remediation guidance for failures.
+
+
+## TC-22: logging API version compatibility
+
+TC-22 no longer assumes that the legacy `ClusterLogging` custom resource exists. It queries both the Logging 5 APIs (`ClusterLogging` and `ClusterLogForwarder` in `logging.openshift.io`) and the Logging 6 `ClusterLogForwarder` API in `observability.openshift.io`. The case passes only when at least one supported configuration resource is returned and the logging pods in `openshift-logging` are all Running and ready. Missing API groups remain visible in the report evidence, while their absence alone does not fail a newer logging installation.
+
+If the case fails, inspect the API group available on the cluster, the matching resource status conditions, the Logging/Loki/Cluster Observability Operators, pod events, and container logs. Do not create a legacy CRD to satisfy the ATP.
+
+
+- **TC-53:** Creates or verifies ServiceAccount `atp-test` in `testproject`; an existing account is reported and left unchanged.
+
+
+## TC-64: must-gather and node sosreport
+
+TC-64 runs `oc adm must-gather` without the unsupported `--dry-run` option, packages its output, checks root access to a selected worker through `oc debug`, and runs a non-interactive `sos report` through `toolbox`. Both archives and their SHA-256 checksums are saved under the ATP report directory. Set `tc64_node_target` to choose a specific worker; otherwise the first worker is selected. These archives can contain sensitive cluster and host data, so protect the report directory and review it before sharing.
+
+## TC-67a: PVC, iSCSI, and multipath
+
+TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no SAN-backed volume or configured SAN class is found, the multipath-specific result is **Skipped / not applicable**; an inactive daemon by itself does not fail a cluster that does not use SAN. For SAN storage, it checks that a PVC is Bound, inspects `/etc/iscsi`, iSCSI sessions, `multipathd`, and `multipath -ll` on worker nodes, and requires active paths. Add vendor-specific SAN StorageClass names to `tc67a_san_storage_class_names` in `toolkits/openshift-atp/vars/main.yml` when PV type or CSI driver does not identify them.
+
+
+## TC-55: API certificate validation
+
+TC-55 validates the API endpoint certificate against the active kubeconfig CA, checks that the API hostname matches a certificate SAN, and checks remaining validity against `atp_api_cert_min_validity_days` (default: 7 days). This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold in `toolkits/openshift-atp/vars/main.yml` or as an Ansible extra var when your policy requires a longer validity window.
