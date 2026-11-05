@@ -58,6 +58,10 @@
             echo "Must-gather archive: $must_gather_archive"
             ls -lh "$must_gather_archive"
             sha256sum "$must_gather_archive"
+            if ! gzip -t "$must_gather_archive"; then
+              echo "Must-gather archive integrity check failed." >&2
+              must_gather_rc=1
+            fi
           else
             echo "Could not package the collected must-gather directory." >&2
             must_gather_rc=1
@@ -93,16 +97,23 @@
           if [[ -n "$archive_name" ]]; then
             echo "Node sosreport archive: /var/tmp/$archive_name"
             if oc debug -q "node/$node" -- cat "/host/var/tmp/$archive_name" > "$dest_dir/$archive_name" && [[ -s "$dest_dir/$archive_name" ]]; then
-              copy_rc=0
               echo "Copied sosreport: $dest_dir/$archive_name"
               ls -lh "$dest_dir/$archive_name"
               sha256sum "$dest_dir/$archive_name"
+              archive_valid=0
               case "$archive_name" in
-                *.tar.xz) xz -t "$dest_dir/$archive_name" ;;
-                *.tar.gz) gzip -t "$dest_dir/$archive_name" ;;
-                *.tar.bz2) bzip2 -t "$dest_dir/$archive_name" ;;
-                *.tar.zst) zstd -t "$dest_dir/$archive_name" ;;
+                *.tar.xz) xz -t "$dest_dir/$archive_name" || archive_valid=1 ;;
+                *.tar.gz) gzip -t "$dest_dir/$archive_name" || archive_valid=1 ;;
+                *.tar.bz2) bzip2 -t "$dest_dir/$archive_name" || archive_valid=1 ;;
+                *.tar.zst) zstd -t "$dest_dir/$archive_name" || archive_valid=1 ;;
+                *) echo "Unsupported sosreport archive format: $archive_name" >&2; archive_valid=1 ;;
               esac
+              if [[ "$archive_valid" -eq 0 ]]; then
+                copy_rc=0
+              else
+                echo "sosreport archive integrity check failed." >&2
+                copy_rc=1
+              fi
             else
               echo "Could not copy a non-empty sosreport archive from the node." >&2
             fi
