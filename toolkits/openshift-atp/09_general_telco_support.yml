@@ -31,20 +31,23 @@
 - name: "TC-64: Must-gather, SSH y sosreport"
   when: run_tc64_must_gather_sosreport | default(true) | bool
   block:
-    - name: "TC-64: Collect must-gather and sosreport artifacts"
+    - name: "TC-64: Collect and verify must-gather and sosreport archives"
       ansible.builtin.shell:
         cmd: |
           set -uo pipefail
           dest_dir="{{ atp_report_dir }}/{{ atp_report_basename }}-TC64-diagnostics"
           mkdir -p "$dest_dir"
+          dest_dir="$(cd "$dest_dir" && pwd -P)"
           must_gather_dir="$dest_dir/must-gather"
           must_gather_archive="$dest_dir/must-gather.tar.gz"
           must_gather_log="$dest_dir/must-gather.log"
-          must_gather_rc=0
+          sos_log="$dest_dir/sosreport.log"
+          must_gather_rc=1
           root_rc=1
           sos_rc=1
           copy_rc=1
           node="{{ tc64_node_target | default('') }}"
+          support_tools_image="{{ tc64_support_tools_image | default('registry.redhat.io/rhel9/support-tools:latest') }}"
 
           echo "== Collect OpenShift must-gather =="
           if timeout 45m oc adm must-gather --dest-dir="$must_gather_dir" --timeout=45m >"$must_gather_log" 2>&1; then
@@ -52,23 +55,26 @@
           else
             must_gather_rc=$?
           fi
-          cat "$must_gather_log"
+
           must_gather_files="$(find "$must_gather_dir" -type f 2>/dev/null | wc -l | tr -d ' ')"
           if [[ "$must_gather_rc" -eq 0 && "$must_gather_files" -gt 0 ]]; then
-            if tar -czf "$must_gather_archive" -C "$dest_dir" must-gather; then
+            if tar -czf "$must_gather_archive" -C "$dest_dir" must-gather >>"$must_gather_log" 2>&1 &&
+               [[ -s "$must_gather_archive" ]] &&
+               gzip -t "$must_gather_archive" >/dev/null 2>&1 &&
+               tar -tzf "$must_gather_archive" >/dev/null 2>&1; then
+              echo "MUST_GATHER_RESULT=PASS"
               echo "Must-gather archive: $must_gather_archive"
-              ls -lh "$must_gather_archive"
-              sha256sum "$must_gather_archive"
-              if ! gzip -t "$must_gather_archive"; then
-                echo "Must-gather archive integrity check failed." >&2
-                must_gather_rc=1
-              fi
             else
-              echo "Could not package the collected must-gather directory." >&2
+              echo "MUST_GATHER_RESULT=FAIL"
+              echo "Must-gather files were collected, but archive creation or integrity validation failed."
+              echo "Must-gather directory: $must_gather_dir"
+              echo "Must-gather command log: $must_gather_log"
               must_gather_rc=1
             fi
           else
-            echo "Must-gather did not produce files (command rc=$must_gather_rc, files=$must_gather_files)." >&2
+            echo "MUST_GATHER_RESULT=FAIL"
+            echo "Must-gather did not produce a successful non-empty collection (command rc=$must_gather_rc, files=$must_gather_files)."
+            echo "Must-gather command log: $must_gather_log"
             must_gather_rc=1
           fi
 
@@ -81,56 +87,69 @@
               node=""
             fi
           fi
+
           if [[ -n "$node" ]]; then
             echo "Selected node: $node"
             root_output="$(oc debug -q "node/$node" -- chroot /host id -u 2>&1)"
             root_rc=$?
-            echo "Host root check output: $root_output (exit code $root_rc)"
+            echo "Host root access: output=$root_output exit_code=$root_rc"
 
-            echo "== Generate sosreport through the node debug pod toolbox =="
-            sos_output="$(timeout 45m oc debug -q "node/$node" -- chroot /host toolbox run sos report --batch -k crio.all=on -k crio.logs=on -k podman.all=on -k podman.logs=on 2>&1)"
-            sos_rc=$?
-            echo "$sos_output"
-            archive_name="$(printf '%s\n' "$sos_output" | grep -Eo 'sosreport-[^/[:space:]]+\.tar\.(xz|gz|bz2|zst)' | tail -n 1)"
-            if [[ -z "$archive_name" ]]; then
-              archive_name="$(oc debug -q "node/$node" -- chroot /host find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar.*' -mmin -60 -printf '%f\n' 2>/dev/null | sort | tail -n 1)"
+            echo "== Generate sosreport using the support-tools image run label =="
+            toolbox_name="atp-sosreport-$(date +%s)-$$"
+            if timeout 45m oc debug -q "node/$node" -- chroot /host podman container runlabel --name "$toolbox_name" run "$support_tools_image" sos report -e openshift -e openshift_ovn -e openvswitch -e podman -e crio -k crio.all=on -k crio.logs=on -k podman.all=on -k podman.logs=on -k networking.ethtool-namespaces=off --batch --all-logs --plugin-timeout=600 >"$sos_log" 2>&1; then
+              sos_rc=0
+            else
+              sos_rc=$?
             fi
+            oc debug -q "node/$node" -- chroot /host podman rm "$toolbox_name" >/dev/null 2>&1 || true
+            archive_name="$(grep -Eo 'sosreport-[^/[:space:]]+\.tar\.(xz|gz|bz2|zst)' "$sos_log" | tail -n 1)"
+            if [[ -z "$archive_name" ]]; then
+              archive_name="$(oc debug -q "node/$node" -- chroot /host find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar.*' -mmin -90 -printf '%f\n' 2>/dev/null | sort | tail -n 1)"
+            fi
+
             if [[ -n "$archive_name" ]]; then
-              echo "Node sosreport archive: /var/tmp/$archive_name"
-              if oc debug -q "node/$node" -- cat "/host/var/tmp/$archive_name" > "$dest_dir/$archive_name" && [[ -s "$dest_dir/$archive_name" ]]; then
-                echo "Copied sosreport: $dest_dir/$archive_name"
-                ls -lh "$dest_dir/$archive_name"
-                sha256sum "$dest_dir/$archive_name"
+              node_sos_path="/var/tmp/$archive_name"
+              local_sos_path="$dest_dir/$archive_name"
+              if oc debug -q "node/$node" -- cat "/host$node_sos_path" >"$local_sos_path" 2>"$dest_dir/sosreport-copy.log" && [[ -s "$local_sos_path" ]]; then
                 archive_valid=0
                 case "$archive_name" in
-                  *.tar.xz) xz -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *.tar.gz) gzip -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *.tar.bz2) bzip2 -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *.tar.zst) zstd -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *) echo "Unsupported sosreport archive format: $archive_name" >&2; archive_valid=1 ;;
+                  *.tar.xz) xz -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *.tar.gz) gzip -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *.tar.bz2) bzip2 -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *.tar.zst) zstd -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *) archive_valid=1 ;;
                 esac
                 if [[ "$archive_valid" -eq 0 ]]; then
                   copy_rc=0
+                  echo "SOSREPORT_RESULT=PASS"
+                  echo "Node sosreport archive: $node_sos_path"
+                  echo "Saved sosreport archive: $local_sos_path"
+                  echo "sosreport archive size: $(du -h "$local_sos_path" | awk '{print $1}')"
+                  echo "sosreport SHA256: $(sha256sum "$local_sos_path" | awk '{print $1}')"
                 else
-                  echo "sosreport archive integrity check failed." >&2
-                  copy_rc=1
+                  echo "SOSREPORT_RESULT=FAIL"
+                  echo "Copied sosreport archive failed format/integrity validation: $local_sos_path"
                 fi
               else
-                echo "Could not copy a non-empty sosreport archive from the node." >&2
+                echo "SOSREPORT_RESULT=FAIL"
+                echo "Could not copy a non-empty sosreport archive from $node_sos_path."
               fi
             else
-              echo "sosreport archive was not found in the command output or host /var/tmp." >&2
+              echo "SOSREPORT_RESULT=FAIL"
+              echo "No sosreport archive was found in /var/tmp on node $node."
             fi
+            echo "sosreport command log: $sos_log"
           else
-            echo "No worker node was available for sosreport collection." >&2
+            echo "SOSREPORT_RESULT=FAIL"
+            echo "No worker node was available for sosreport collection."
           fi
 
-          echo "Artifacts directory: $dest_dir"
+          echo "TC64_ARTIFACTS_DIR=$dest_dir"
           if [[ "$must_gather_rc" -eq 0 && "$root_rc" -eq 0 && "$sos_rc" -eq 0 && "$copy_rc" -eq 0 ]]; then
             echo "TC64_RESULT=PASS"
             exit 0
           fi
-          echo "TC64_RESULT=FAIL (must-gather=$must_gather_rc root-access=$root_rc sosreport=$sos_rc archive-copy=$copy_rc)" >&2
+          echo "TC64_RESULT=FAIL (must-gather=$must_gather_rc root-access=$root_rc sosreport-command=$sos_rc sosreport-copy-and-validation=$copy_rc)" >&2
           exit 1
         executable: /bin/bash
       register: tc64_cmd
@@ -145,12 +164,12 @@
           'id': 'TC-64',
           'name': 'Must-gather, SSH y sosreport',
           'category': 'General Support / Telco',
-          'expected': 'A non-empty must-gather archive and a non-empty, valid sosreport archive are generated and saved under the ATP report directory; debug access reaches host root',
-          'status': ('Pass' if tc64_cmd.rc == 0 else 'Fail'),
-          'procedure': 'Run oc adm must-gather with the supported command and timeout; access a worker host through oc debug and chroot /host; run sos report non-interactively through toolbox; copy both diagnostic archives to the ATP report directory and record their SHA-256 checksums',
-          'evidence': ((tc64_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc64_cmd.stderr | default(''))) if (tc64_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc64_cmd.rc | string) if tc64_cmd.rc is defined else '')),
-          'details': 'Diagnostic artifacts are saved under ' ~ (atp_report_dir | string) ~ '; inspect the captured archive paths and checksums.',
-          'remediation': 'Review must-gather logs and the selected node debug output. Confirm cluster-admin permissions, image access for the default must-gather/toolbox images, sufficient disk space, and node scheduling. Resolve the failing stage and rerun; the playbook does not upload diagnostic archives.'
+          'expected': 'Must-gather and sosreport archives are successfully generated, integrity-checked, and saved in the TC-64 diagnostics directory; debug access reaches host root',
+          'status': ('Pass' if (tc64_cmd.rc == 0 and 'TC64_RESULT=PASS' in (tc64_cmd.stdout | default(''))) else 'Fail'),
+          'procedure': 'Generate and validate the must-gather archive; verify root access through oc debug; generate sosreport using the Red Hat support-tools image run label; copy and validate the sosreport archive.',
+          'evidence': ((tc64_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc64_cmd.stderr | default(''))) if (tc64_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc64_cmd.rc | string) if tc64_cmd.rc is defined else '')),
+          'details': 'Must-gather result and archive path, sosreport result and archive path, and the diagnostics directory are printed in the concise execution evidence.',
+          'remediation': 'For must-gather, verify oc authentication/RBAC, plugin image pull access, disk space, and the saved must-gather.log; Pass requires a successful command plus a non-empty archive that passes gzip and tar integrity checks. For sosreport, verify node debug access, access to registry.redhat.io/rhel9/support-tools (or a configured mirror), Podman run-label support, sufficient node/controller disk space, and the saved sosreport.log; Pass also requires host-root access and a copied, non-empty, valid sosreport archive.'
         }] }}"
   tags: ['general', 'telco', 'tc64', 'must_gather']
 
@@ -410,9 +429,79 @@
 - name: "TC-70: Capa Física (LACP Bonding y MTU 9000)"
   when: run_tc70_physical_lacp_mtu | default(true) | bool
   block:
-    - name: "TC-70: Query bond0 MTU from NodeNetworkConfigurationEnactment"
-      ansible.builtin.shell: >-
-        oc get nnce -o jsonpath='{range .items[*]}{.metadata.name}{"\:\ bond0="}{.status.interface[?(@.name=="bond0")].mtu}{"\n"}{end}'
+    - name: "TC-70: Verify runtime LACP mode, link state, and MTU on nodes with bond0"
+      ansible.builtin.shell:
+        cmd: |
+          set -uo pipefail
+
+          nodes="$(oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>&1)"
+          nodes_rc=$?
+          if [[ "$nodes_rc" -ne 0 ]]; then
+            echo "Could not list cluster nodes: $nodes" >&2
+            echo "TC70_RESULT=FAIL"
+            exit 1
+          fi
+          if [[ -z "$nodes" ]]; then
+            echo "No cluster nodes were returned by the API." >&2
+            echo "TC70_RESULT=FAIL"
+            exit 1
+          fi
+
+          nodes_checked=0
+          bonds_found=0
+          bonds_passed=0
+          bonds_failed=0
+
+          while IFS= read -r node; do
+            [[ -n "$node" ]] || continue
+            nodes_checked=$((nodes_checked + 1))
+            echo "== Node: $node =="
+
+            output="$(oc debug -q "node/$node" -- chroot /host bash -c 'if [ -r /proc/net/bonding/bond0 ]; then cat /proc/net/bonding/bond0; ip -o link show dev bond0; else echo TC70_BOND_ABSENT; fi' 2>&1)"
+            node_rc=$?
+            printf '%s\n' "$output"
+
+            if [[ "$node_rc" -ne 0 ]]; then
+              echo "Could not inspect host networking on $node (oc debug exit code $node_rc)." >&2
+              bonds_failed=$((bonds_failed + 1))
+              continue
+            fi
+
+            if grep -qF "TC70_BOND_ABSENT" <<< "$output"; then
+              echo "bond0 is not configured on $node; this node is outside this check."
+              continue
+            fi
+
+            bonds_found=$((bonds_found + 1))
+            mode_ok=false
+            mii_ok=false
+            mtu_ok=false
+            grep -qF "Bonding Mode: IEEE 802.3ad" <<< "$output" && mode_ok=true
+            grep -qiE '^MII Status:[[:space:]]*up([[:space:]]|$)' <<< "$output" && mii_ok=true
+            grep -qE '(^|[[:space:]])mtu 9000([[:space:]]|$)' <<< "$output" && mtu_ok=true
+
+            echo "LACP 802.3ad=$mode_ok; MII up=$mii_ok; MTU 9000=$mtu_ok"
+            if [[ "$mode_ok" == "true" && "$mii_ok" == "true" && "$mtu_ok" == "true" ]]; then
+              bonds_passed=$((bonds_passed + 1))
+            else
+              bonds_failed=$((bonds_failed + 1))
+              echo "bond0 on $node does not meet all ATP requirements." >&2
+            fi
+          done <<< "$nodes"
+
+          echo "Nodes inspected: $nodes_checked; bond0 interfaces found: $bonds_found; compliant bonds: $bonds_passed; failed inspections/interfaces: $bonds_failed"
+          if [[ "$bonds_found" -eq 0 ]]; then
+            echo "No bond0 interface was found on any node. Configure bond0 for this test or mark the case not applicable for this cluster profile." >&2
+            echo "TC70_RESULT=FAIL"
+            exit 1
+          fi
+          if [[ "$bonds_failed" -gt 0 || "$bonds_passed" -ne "$bonds_found" ]]; then
+            echo "TC70_RESULT=FAIL: every discovered bond0 must use IEEE 802.3ad, report MII Status up, and have MTU 9000."
+            exit 1
+          fi
+
+          echo "TC70_RESULT=PASS: every discovered bond0 uses IEEE 802.3ad, reports MII Status up, and has MTU 9000."
+        executable: /bin/bash
       register: tc70_cmd
       changed_when: false
       failed_when: false
@@ -423,11 +512,12 @@
           'id': 'TC-70',
           'name': 'Capa Física (LACP Bonding y MTU 9000)',
           'category': 'General Support / Telco',
-          'expected': 'Bond0 configured in IEEE 802.3ad LACP mode with MTU 9000',
-          'status': ('Pass' if (tc70_cmd.rc == 0 and '9000' in tc70_cmd.stdout) else 'Fail'),
-          'procedure': (tc70_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc70_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc70_cmd.stderr | default(''))) if (tc70_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc70_cmd.rc | string) if tc70_cmd.rc is defined else '')),
-          'details': tc70_cmd.stdout | default(tc70_cmd.stderr) | truncate(150)
+          'expected': 'Every node configured with bond0 reports IEEE 802.3ad mode, MII Status up, and MTU 9000; nodes without bond0 are reported as not applicable for that node.',
+          'status': ('Pass' if (tc70_cmd.rc == 0 and 'TC70_RESULT=PASS' in (tc70_cmd.stdout | default(''))) else 'Fail'),
+          'procedure': 'For each cluster node, inspect /proc/net/bonding/bond0 and ip -o link show dev bond0 using oc debug node/<node> -- chroot /host; validate 802.3ad, MII up, and MTU 9000.',
+          'evidence': ((tc70_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc70_cmd.stderr | default(''))) if (tc70_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc70_cmd.rc | string) if tc70_cmd.rc is defined else '')),
+          'details': tc70_cmd.stdout | default(tc70_cmd.stderr) | truncate(300),
+          'remediation': 'If no bond0 is found, verify whether the cluster network design requires LACP and configure the intended bond through a NodeNetworkConfigurationPolicy. For a failing node, verify the policy is successfully enacted, the switch ports are in the same LACP port-channel, member links are up, and MTU 9000 is configured end-to-end on the bond, physical switch ports, and network path. Confirm with /proc/net/bonding/bond0 and ip -d link show bond0, then rerun.'
         }] }}"
   tags: ['general', 'telco', 'tc70', 'bonding_mtu']
 

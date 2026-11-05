@@ -61,26 +61,46 @@
 - name: "TC-51: Disable Self Provisioner for authenticated users"
   when: run_tc51_disable_self_provisioner | default(true) | bool
   block:
-    - name: "TC-51: Query self-provisioners ClusterRoleBinding"
-      ansible.builtin.command: oc get clusterrolebinding self-provisioners -o json
+    - name: "TC-51: Inspect all bindings for the self-provisioner role"
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc get clusterrolebindings -o json | jq -c '
+          [
+            .items[]
+            | select(.roleRef.name == "self-provisioner")
+            | {
+                name: .metadata.name,
+                role: .roleRef.name,
+                subjects: (.subjects // []),
+                autoupdate: (.metadata.annotations["rbac.authorization.kubernetes.io/autoupdate"] // "unset"),
+                grants_authenticated_oauth: any((.subjects // [])[]; .kind == "Group" and .name == "system:authenticated:oauth")
+              }
+          ]'
+      args:
+        executable: /bin/bash
       register: tc51_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-51: Record Result"
       vars:
-        crb_data: "{{ (tc51_cmd.stdout | from_json) if tc51_cmd.rc == 0 else {} }}"
-        subjects: "{{ crb_data.subjects | default([]) }}"
+        selfprovisioner_bindings: "{{ (tc51_cmd.stdout | from_json) if tc51_cmd.rc == 0 else [] }}"
+        authenticated_oauth_bindings: "{{ selfprovisioner_bindings | selectattr('grants_authenticated_oauth', 'equalto', true) | list }}"
+        selfprovisioner_binding_names: "{{ selfprovisioner_bindings | map(attribute='name') | list }}"
+        default_binding_autoupdate: "{{ (selfprovisioner_bindings | selectattr('name', 'equalto', 'self-provisioners') | map(attribute='autoupdate') | first) | default('unset') }}"
+        tc51_additional_comments: "{{ ('The authenticated OAuth group is currently not bound, so TC-51 passes. However, autoupdate=true may restore default subjects; persist this setting with: oc annotate clusterrolebinding self-provisioners rbac.authorization.kubernetes.io/autoupdate=false --overwrite.' if default_binding_autoupdate == 'true' else 'The authenticated OAuth group is currently not bound to the self-provisioner role.') if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else '' }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-51',
           'name': 'Disable Self Provisioner for authenticated users',
           'category': 'User & Security',
-          'expected': 'Role self-provisioner removed from group system:authenticated:oauth',
-          'status': ('Pass' if (tc51_cmd.rc == 0 and subjects | length == 0) else 'Fail'),
-          'procedure': (tc51_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'expected': 'No ClusterRoleBinding grants the self-provisioner role to group system:authenticated:oauth; unrelated bindings may remain',
+          'status': ('Pass' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Fail'),
+          'additional_comments': tc51_additional_comments,
+          'procedure': (tc51_cmd.cmd | default('Inspect all ClusterRoleBindings that reference the self-provisioner role and check for group system:authenticated:oauth')),
           'evidence': ((tc51_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc51_cmd.stderr | default(''))) if (tc51_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc51_cmd.rc | string) if tc51_cmd.rc is defined else '')),
-          'details': 'self-provisioners subjects count: ' ~ (subjects | length)
+          'details': 'self-provisioner bindings: ' ~ (selfprovisioner_binding_names | join(', ') if selfprovisioner_binding_names | length > 0 else 'none') ~ '; bindings granting system:authenticated:oauth: ' ~ (authenticated_oauth_bindings | map(attribute='name') | join(', ') if authenticated_oauth_bindings | length > 0 else 'none') ~ '; self-provisioners autoupdate: ' ~ default_binding_autoupdate,
+          'remediation': ('The group is currently disabled. However, the self-provisioners binding has autoupdate=true and may be restored to defaults; make the setting persistent with: oc annotate clusterrolebinding self-provisioners rbac.authorization.kubernetes.io/autoupdate=false --overwrite.' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0 and default_binding_autoupdate == 'true') else 'No action required; system:authenticated:oauth is not bound to self-provisioner and the default binding autoupdate setting is ' ~ default_binding_autoupdate ~ '.' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Review the listed ClusterRoleBindings. Remove only the system:authenticated:oauth subject from bindings whose roleRef.name is self-provisioner, for example with: oc adm policy remove-cluster-role-from-group self-provisioner system:authenticated:oauth. Then rerun TC-51.')
         }] }}"
   tags: ['general', 'telco', 'tc51', 'security']
 
@@ -204,23 +224,63 @@
     - name: "TC-55: Validate API certificate trust, SAN, and expiration"
       ansible.builtin.shell: |
         set -uo pipefail
-        api_host="api.{{ cluster_name }}.{{ cluster_domain }}"
         min_validity_days="{{ atp_api_cert_min_validity_days | default(7) | int }}"
+        configured_ca_path={{ atp_api_cert_ca_path | default('') | quote }}
         work_dir="$(mktemp -d)"
         trap 'rm -rf "$work_dir"' EXIT
 
-        ca_data="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>&1)"
-        if [[ -z "$ca_data" ]]; then
-          echo "The active kubeconfig does not expose certificate-authority-data; cannot validate API certificate trust." >&2
+        if ! api_server_url="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}' 2>"$work_dir/kubeconfig-server.err")"; then
+          echo "Could not determine the API server URL from the active kubeconfig." >&2
+          cat "$work_dir/kubeconfig-server.err" >&2
           exit 1
         fi
-        if ! printf '%s' "$ca_data" | base64 --decode > "$work_dir/cluster-ca.pem"; then
-          echo "Could not decode certificate-authority-data from the active kubeconfig." >&2
+        if [[ "$api_server_url" != https://* ]]; then
+          echo "The active kubeconfig does not contain a valid HTTPS API server URL: ${api_server_url:-empty}" >&2
           exit 1
         fi
+        api_authority="${api_server_url#https://}"
+        api_authority="${api_authority%%/*}"
+        if [[ "$api_authority" == *:* ]]; then
+          api_port="${api_authority##*:}"
+          api_host="${api_authority%:*}"
+        else
+          api_host="$api_authority"
+          api_port=443
+        fi
+        if [[ -z "$api_host" || ! "$api_port" =~ ^[0-9]+$ ]]; then
+          echo "Could not parse API hostname and port from active kubeconfig URL: $api_server_url" >&2
+          exit 1
+        fi
+        echo "Active API endpoint: $api_server_url"
+
+        if [[ -n "$configured_ca_path" ]]; then
+          if [[ ! -r "$configured_ca_path" ]]; then
+            echo "atp_api_cert_ca_path is set but unreadable: $configured_ca_path" >&2
+            exit 1
+          fi
+          cp "$configured_ca_path" "$work_dir/cluster-ca.pem"
+          ca_source="configured atp_api_cert_ca_path"
+        else
+          if ! ca_data="$(oc config view --raw --flatten --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>"$work_dir/kubeconfig-view.err")"; then
+            echo "Could not resolve the active kubeconfig CA. The referenced certificate-authority file may be missing or unreadable." >&2
+            cat "$work_dir/kubeconfig-view.err" >&2
+            exit 1
+          fi
+          if [[ -z "$ca_data" ]]; then
+            ca_file="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}' 2>/dev/null || true)"
+            echo "The active kubeconfig has no CA data after flattening; certificate-authority path: ${ca_file:-not configured}. Set atp_api_cert_ca_path to a PEM CA bundle for the API endpoint; do not bypass TLS verification." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$ca_data" | base64 --decode > "$work_dir/cluster-ca.pem"; then
+            echo "Could not decode certificate-authority-data from the active kubeconfig." >&2
+            exit 1
+          fi
+          ca_source="active kubeconfig (flattened)"
+        fi
+        echo "CA source: $ca_source"
 
         set +e
-        openssl s_client -connect "${api_host}:6443" -servername "$api_host" \
+        openssl s_client -connect "${api_host}:${api_port}" -servername "$api_host" \
           -verify_return_error -CAfile "$work_dir/cluster-ca.pem" -showcerts \
           </dev/null > "$work_dir/handshake.txt" 2>&1
         tls_rc=$?
@@ -237,7 +297,7 @@
         echo "== API server leaf certificate =="
         openssl x509 -in "$work_dir/api-leaf.pem" -noout -subject -issuer -dates -ext subjectAltName
 
-        echo "== TLS chain verification using the active kubeconfig CA =="
+        echo "== TLS chain verification using CA source: $ca_source =="
         grep -E 'depth=|Verify return code:|verify error:' "$work_dir/handshake.txt" || true
         echo "TLS verification exit code: $tls_rc"
 
@@ -273,12 +333,12 @@
           'id': 'TC-55',
           'name': 'Check API Certificate',
           'category': 'User & Security',
-          'expected': 'API certificate chains to the active kubeconfig CA, contains a matching SAN for the API FQDN, and remains valid for at least ' ~ (atp_api_cert_min_validity_days | default(7) | string) ~ ' days',
+          'expected': 'API certificate chains to the active kubeconfig CA or configured API CA bundle, contains a matching SAN for the active API FQDN, and remains valid for at least ' ~ (atp_api_cert_min_validity_days | default(7) | string) ~ ' days',
           'status': ('Pass' if tc55_cmd.rc == 0 else 'Fail'),
-          'procedure': 'Validate the API TLS chain using the active oc kubeconfig CA, check the API FQDN SAN, and confirm the configured minimum remaining validity',
+          'procedure': 'Read the API endpoint from the active kubeconfig, validate its TLS chain using the kubeconfig CA or configured PEM CA bundle, check the endpoint hostname SAN, and confirm the configured minimum remaining validity',
           'evidence': ((tc55_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc55_cmd.stderr | default(''))) if (tc55_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc55_cmd.rc | string) if tc55_cmd.rc is defined else '')),
           'details': tc55_cmd.stdout | default(tc55_cmd.stderr) | truncate(250),
-          'remediation': 'Check DNS and API endpoint connectivity, then confirm the active kubeconfig CA trusts the presented certificate. If SAN or expiry fails, renew or replace the API server named certificate with a chain covering the API FQDN and rerun; confirm kube-apiserver operator health after a change.'
+          'remediation': 'Confirm the active KUBECONFIG/context points to the intended cluster. If the kubeconfig contains no CA data or readable certificate-authority file, set atp_api_cert_ca_path to the API issuing CA PEM bundle on the Ansible controller; do not disable TLS verification. If chain, SAN, or minimum-validity checks then fail, inspect DNS and the API serving certificate and renew/replace it as needed; confirm kube-apiserver operator health after any certificate change.'
         }] }}"
   tags: ['general', 'telco', 'tc55', 'certificates']
 

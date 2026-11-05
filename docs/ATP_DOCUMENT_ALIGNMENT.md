@@ -9,6 +9,7 @@ The report retains all source test cases. TC-23 runs first to ensure `testprojec
 ## Procedure corrections and added evidence
 
 - **TC-55:** Validates the API certificate chain against the active kubeconfig CA, verifies the endpoint SAN, and enforces a configurable minimum remaining validity. The prior CN substring check was incompatible with OpenSSL's spaced subject output.
+- **TC-51:** Evaluates every ClusterRoleBinding that references `self-provisioner` and fails only if a subject is the `system:authenticated:oauth` group. A binding to another group (such as `self-provisioners`) is not treated as a failure. This prevents the previous false negative caused by requiring the binding to have zero subjects. If the group is absent but the default `self-provisioners` binding still has `rbac.authorization.kubernetes.io/autoupdate=true`, the case remains Pass for the current state and reports the persistence risk plus the annotation command recommended by Red Hat.
 - **TC-53:** Creates or verifies ServiceAccount `atp-test` in `testproject`. If the account already exists, the task reports that state and does not modify it.
 
 - **TC-15:** Runs `crictl ps` through `oc debug -q`, matching the documented container-list check.

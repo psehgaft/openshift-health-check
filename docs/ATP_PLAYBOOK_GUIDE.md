@@ -96,7 +96,7 @@ If the case fails, inspect the API group available on the cluster, the matching 
 
 ## TC-64: must-gather and node sosreport
 
-TC-64 runs `oc adm must-gather` without the unsupported `--dry-run` option, packages its output, checks root access to a selected worker through `oc debug`, and runs a non-interactive `sos report` through `toolbox`. Both archives and their SHA-256 checksums are saved under the ATP report directory. Set `tc64_node_target` to choose a specific worker; otherwise the first worker is selected. These archives can contain sensitive cluster and host data, so protect the report directory and review it before sharing.
+TC-64 runs `oc adm must-gather`, packages and integrity-checks the result, verifies host-root access on a worker, and generates/copies an integrity-checked `sosreport`. The report output for must-gather is intentionally concise: it states whether generation succeeded and the archive path; the full collection log is saved as `must-gather.log` in the same diagnostics directory. The sosreport output similarly states status/path/checksum, with detailed command output saved in `sosreport.log`. For the sosreport, the task uses `podman container runlabel run` with the `registry.redhat.io/rhel9/support-tools` image; `toolbox run ...` is not the correct invocation and treats `run` as a command inside the container. TC-64 Pass requires all stages: a non-empty valid must-gather archive, successful host-root check, a successful sosreport command, and a non-empty valid sosreport copied to the ATP report directory. Set `tc64_node_target` to select a worker; otherwise the first worker is used. For disconnected clusters, mirror `registry.redhat.io/rhel9/support-tools:latest` and set `tc64_support_tools_image` in `toolkits/openshift-atp/vars/main.yml` to the mirror image. These archives can contain sensitive cluster and host data, so protect the diagnostics directory and review it before sharing.
 
 ## TC-67a: PVC, iSCSI, and multipath
 
@@ -105,7 +105,7 @@ TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no 
 
 ## TC-55: API certificate validation
 
-TC-55 validates the API endpoint certificate against the active kubeconfig CA, checks that the API hostname matches a certificate SAN, and checks remaining validity against `atp_api_cert_min_validity_days` (default: 7 days). This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold in `toolkits/openshift-atp/vars/main.yml` or as an Ansible extra var when your policy requires a longer validity window.
+TC-55 reads the API server URL from the active kubeconfig, then validates that endpoint’s TLS chain, hostname SAN, and remaining validity (`atp_api_cert_min_validity_days`, default: 7 days). It uses `oc config view --raw --flatten --minify` so both embedded `certificate-authority-data` and a kubeconfig `certificate-authority` file path can be used. If the flattened view has no CA, verify the active `KUBECONFIG` and context, or set `atp_api_cert_ca_path` to a PEM CA bundle on the Ansible controller. The task fails rather than skipping TLS trust validation. Keep TLS verification enabled; do not use an insecure bypass. This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold or optional CA path in `toolkits/openshift-atp/vars/main.yml` or as Ansible extra vars.
 
 
 ## TC-28: install and verify sample-operator
@@ -113,3 +113,7 @@ TC-55 validates the API endpoint certificate against the active kubeconfig CA, c
 TC-28 applies the supplied Subscription for package `sample-operator` from the `redhat-operators` CatalogSource, channel `stable`, in `openshift-operators`. Reapplying the Subscription is safe. The task waits up to ten minutes for `.status.installedCSV` to appear and that ClusterServiceVersion to reach `Succeeded`; catalog availability or a created Subscription alone does not count as Pass. The report captures the Subscription and CSV YAML on success, and diagnostic Subscription/CSV output on failure.
 
 This is the automated variant requested for the sample operator. The ATP source document’s 3scale OperatorHub procedure is retained in the report as a reference and is not evidence that 3scale was installed.
+
+## TC-51: self-provisioner security check
+
+TC-51 inspects all ClusterRoleBindings that reference the `self-provisioner` role and verifies that none includes the `system:authenticated:oauth` group. It allows a binding to remain for a different group, such as `self-provisioners`. The check is read-only: it does not modify RBAC. If the authenticated OAuth group is present, the report lists the affected binding and recommends removing that group with the documented `oc adm policy remove-cluster-role-from-group` command. If the group is absent but the default `self-provisioners` binding has `rbac.authorization.kubernetes.io/autoupdate=true`, the ATP remains Pass for the current state and adds a comment with the recommended `oc annotate ... autoupdate=false` command; Red Hat documents that default reconciliation can restore subjects.
