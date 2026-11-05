@@ -115,8 +115,45 @@
 - name: "TC-53: Create service account"
   when: run_tc53_create_serviceaccount | default(true) | bool
   block:
-    - name: "TC-53: Create test ServiceAccount"
-      ansible.builtin.command: oc create serviceaccount atp-test -n default
+    - name: "TC-53: Ensure atp-test ServiceAccount exists in testproject"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        namespace="testproject"
+        service_account="atp-test"
+
+        if ! project_output="$(oc get project "$namespace" -o name 2>&1)"; then
+          echo "Required project $namespace is unavailable or cannot be read:" >&2
+          echo "$project_output" >&2
+          exit 1
+        fi
+
+        if account_output="$(oc get serviceaccount "$service_account" -n "$namespace" -o name 2>&1)"; then
+          echo "ServiceAccount $service_account already exists in $namespace; leaving it unchanged."
+          oc get serviceaccount "$service_account" -n "$namespace" -o wide
+        else
+          account_error="$(printf '%s' "$account_output" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$account_error" != *"notfound"* && "$account_error" != *"not found"* ]]; then
+            echo "Unable to check ServiceAccount $service_account in $namespace:" >&2
+            echo "$account_output" >&2
+            exit 1
+          fi
+
+          if create_output="$(oc create serviceaccount "$service_account" -n "$namespace" 2>&1)"; then
+            echo "$create_output"
+            oc get serviceaccount "$service_account" -n "$namespace" -o wide
+          else
+            create_error="$(printf '%s' "$create_output" | tr '[:upper:]' '[:lower:]')"
+            if [[ "$create_error" == *"alreadyexists"* || "$create_error" == *"already exists"* ]]; then
+              echo "ServiceAccount $service_account already exists in $namespace (created concurrently); leaving it unchanged."
+              oc get serviceaccount "$service_account" -n "$namespace" -o wide
+            else
+              echo "$create_output" >&2
+              exit 1
+            fi
+          fi
+        fi
+      args:
+        executable: /bin/bash
       register: tc53_cmd
       changed_when: false
       failed_when: false
@@ -127,11 +164,12 @@
           'id': 'TC-53',
           'name': 'Create service account',
           'category': 'User & Security',
-          'expected': 'ServiceAccount atp-test created and listed',
-          'status': ('Pass' if (tc53_cmd.rc == 0 or 'AlreadyExists' in tc53_cmd.stderr) else 'Fail'),
-          'procedure': (tc53_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc53_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc53_cmd.stderr | default(''))) if (tc53_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc53_cmd.rc | string) if tc53_cmd.rc is defined else '')),
-          'details': tc53_cmd.stdout | default(tc53_cmd.stderr) | truncate(150)
+          'expected': 'ServiceAccount atp-test exists in testproject; if it already exists, it is reported and left unchanged',
+          'status': ('Pass' if tc53_cmd.rc == 0 else 'Fail'),
+          'procedure': 'Verify project testproject, create ServiceAccount atp-test only when it is absent, then list and verify the account',
+          'evidence': ((tc53_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc53_cmd.stderr | default(''))) if (tc53_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc53_cmd.rc | string) if tc53_cmd.rc is defined else '')),
+          'details': tc53_cmd.stdout | default(tc53_cmd.stderr) | truncate(200),
+          'remediation': 'Confirm TC-23 created testproject and the ATP identity has permission to get and create ServiceAccounts in that project. Review the captured API error and rerun.'
         }] }}"
   tags: ['general', 'telco', 'tc53', 'security']
 
