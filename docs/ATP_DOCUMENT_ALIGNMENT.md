@@ -8,6 +8,7 @@ The report retains all source test cases. TC-23 runs first to ensure `testprojec
 
 ## Procedure corrections and added evidence
 
+- **TC-55:** Validates the API certificate chain against the active kubeconfig CA, verifies the endpoint SAN, and enforces a configurable minimum remaining validity. The prior CN substring check was incompatible with OpenSSL's spaced subject output.
 - **TC-53:** Creates or verifies ServiceAccount `atp-test` in `testproject`. If the account already exists, the task reports that state and does not modify it.
 
 - **TC-15:** Runs `crictl ps` through `oc debug -q`, matching the documented container-list check.
@@ -22,7 +23,7 @@ The report retains all source test cases. TC-23 runs first to ensure `testprojec
 - **TC-30:** Waits for project deletion and verifies that `testproject` no longer appears in the project list.
 - **TC-31:** Captures node status after cordon and after uncordon.
 
-Manual UI steps remain documented as source procedures and are not silently represented as executed automation. TC-62 is destructive recovery automation but remains disabled unless an operator supplies its explicit confirmation and passes all preflight gates. Credentials, hashes, node names, and cluster-specific addresses from the source document are replaced with safe placeholders in the published reference map.
+Manual UI steps and disruptive operations remain documented as source procedures and are not silently represented as executed automation. Credentials, hashes, node names, and cluster-specific addresses from the source document are replaced with safe placeholders in the published reference map.
 
 ## Integration metadata
 
