@@ -226,23 +226,35 @@
         set -uo pipefail
         api_host="api.{{ cluster_name }}.{{ cluster_domain }}"
         min_validity_days="{{ atp_api_cert_min_validity_days | default(7) | int }}"
+        configured_ca_path={{ atp_api_cert_ca_path | default('') | quote }}
         work_dir="$(mktemp -d)"
         trap 'rm -rf "$work_dir"' EXIT
 
-        if ! ca_data="$(oc config view --raw --flatten --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>"$work_dir/kubeconfig-view.err")"; then
-          echo "Could not resolve the active kubeconfig CA. The referenced certificate-authority file may be missing or unreadable." >&2
-          cat "$work_dir/kubeconfig-view.err" >&2
-          exit 1
+        if [[ -n "$configured_ca_path" ]]; then
+          if [[ ! -r "$configured_ca_path" ]]; then
+            echo "atp_api_cert_ca_path is set but unreadable: $configured_ca_path" >&2
+            exit 1
+          fi
+          cp "$configured_ca_path" "$work_dir/cluster-ca.pem"
+          ca_source="configured atp_api_cert_ca_path"
+        else
+          if ! ca_data="$(oc config view --raw --flatten --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>"$work_dir/kubeconfig-view.err")"; then
+            echo "Could not resolve the active kubeconfig CA. The referenced certificate-authority file may be missing or unreadable." >&2
+            cat "$work_dir/kubeconfig-view.err" >&2
+            exit 1
+          fi
+          if [[ -z "$ca_data" ]]; then
+            ca_file="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}' 2>/dev/null || true)"
+            echo "The active kubeconfig has no CA data after flattening; certificate-authority path: ${ca_file:-not configured}. Set atp_api_cert_ca_path to a PEM CA bundle for the API endpoint; do not bypass TLS verification." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$ca_data" | base64 --decode > "$work_dir/cluster-ca.pem"; then
+            echo "Could not decode certificate-authority-data from the active kubeconfig." >&2
+            exit 1
+          fi
+          ca_source="active kubeconfig (flattened)"
         fi
-        if [[ -z "$ca_data" ]]; then
-          ca_file="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}' 2>/dev/null || true)"
-          echo "The active kubeconfig has no CA data after flattening; certificate-authority path: ${ca_file:-not configured}. Select a kubeconfig/context with the cluster CA; do not bypass TLS verification." >&2
-          exit 1
-        fi
-        if ! printf '%s' "$ca_data" | base64 --decode > "$work_dir/cluster-ca.pem"; then
-          echo "Could not decode certificate-authority-data from the active kubeconfig." >&2
-          exit 1
-        fi
+        echo "CA source: $ca_source"
 
         set +e
         openssl s_client -connect "${api_host}:6443" -servername "$api_host" \
