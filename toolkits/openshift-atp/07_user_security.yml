@@ -229,9 +229,14 @@
         work_dir="$(mktemp -d)"
         trap 'rm -rf "$work_dir"' EXIT
 
-        ca_data="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>&1)"
+        if ! ca_data="$(oc config view --raw --flatten --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>"$work_dir/kubeconfig-view.err")"; then
+          echo "Could not resolve the active kubeconfig CA. The referenced certificate-authority file may be missing or unreadable." >&2
+          cat "$work_dir/kubeconfig-view.err" >&2
+          exit 1
+        fi
         if [[ -z "$ca_data" ]]; then
-          echo "The active kubeconfig does not expose certificate-authority-data; cannot validate API certificate trust." >&2
+          ca_file="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}' 2>/dev/null || true)"
+          echo "The active kubeconfig has no CA data after flattening; certificate-authority path: ${ca_file:-not configured}. Select a kubeconfig/context with the cluster CA; do not bypass TLS verification." >&2
           exit 1
         fi
         if ! printf '%s' "$ca_data" | base64 --decode > "$work_dir/cluster-ca.pem"; then
