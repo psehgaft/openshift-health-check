@@ -105,7 +105,7 @@ TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no 
 
 ## TC-55: API certificate validation
 
-TC-55 validates the API endpoint certificate against the active kubeconfig CA, checks that the API hostname matches a certificate SAN, and checks remaining validity against `atp_api_cert_min_validity_days` (default: 7 days). This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold in `toolkits/openshift-atp/vars/main.yml` or as an Ansible extra var when your policy requires a longer validity window.
+TC-55 validates the API endpoint certificate against the active kubeconfig CA, checks that the API hostname matches a certificate SAN, and checks remaining validity against `atp_api_cert_min_validity_days` (default: 7 days). It uses `oc config view --raw --flatten --minify` so both embedded `certificate-authority-data` and a kubeconfig `certificate-authority` file path can be used. If the flattened view still has no CA, verify the active `KUBECONFIG` and context; the test fails rather than skipping TLS trust validation. This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold in `toolkits/openshift-atp/vars/main.yml` or as an Ansible extra var when your policy requires a longer validity window.
 
 
 ## TC-28: install and verify sample-operator
