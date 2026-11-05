@@ -8,6 +8,9 @@ The report retains all source test cases. TC-23 runs first to ensure `testprojec
 
 ## Procedure corrections and added evidence
 
+- **TC-64:** Collects a real `must-gather` archive, verifies host-root access through node debug, generates a non-interactive `sosreport`, and saves the artifacts and checksums in the report directory. The unsupported `--dry-run` flag is removed.
+- **TC-67a:** Determines whether SAN-backed storage is present before checking multipath. With no SAN storage it reports not applicable; with SAN storage it validates Bound PVC mapping, iSCSI/FC evidence, multipathd, and active paths across workers. Vendor-specific StorageClass names are configurable.
+
 - **TC-53:** Creates or verifies ServiceAccount `atp-test` in `testproject`. If the account already exists, the task reports that state and does not modify it.
 
 - **TC-15:** Runs `crictl ps` through `oc debug -q`, matching the documented container-list check.
