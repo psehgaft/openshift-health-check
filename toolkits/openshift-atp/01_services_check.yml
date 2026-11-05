@@ -679,17 +679,23 @@
       failed_when: false
 
     - name: "TC-22: Check legacy ClusterLogForwarder configuration"
-      ansible.builtin.command: set -euo pipefail
+      ansible.builtin.shell: |
+        set -euo pipefail
         oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
         oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o yaml
+      args:
+        executable: /bin/bash
       register: tc22_legacy_forwarder_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-22: Check current ClusterLogForwarder configuration"
-      ansible.builtin.command: set -euo pipefail
+      ansible.builtin.shell: |
+        set -euo pipefail
         oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
         oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o yaml
+      args:
+        executable: /bin/bash
       register: tc22_modern_forwarder_cmd
       changed_when: false
       failed_when: false
@@ -703,7 +709,7 @@
     - name: "TC-22: Verify all logging pods are Running and ready"
       ansible.builtin.shell: |
         set -euo pipefail
-        oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?.ready] | all))'
+        oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?] | length > 0) and ([.status.containerStatuses[]? | select(.ready == true)] | length == ([.status.containerStatuses[]?] | length)))'
       args:
         executable: /bin/bash
       register: tc22_ready_cmd
