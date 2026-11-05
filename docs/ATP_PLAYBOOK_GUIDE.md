@@ -27,7 +27,7 @@ The HTML uses a two-column procedure record matching the supplied form: date, ti
 
 ## External registry checks (TC-18 and TC-19)
 
-TC-18 and TC-19 validate the internal registry when present and additionally probe an external registry when its URL is configured or discovered. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
+TC-18 and TC-19 validate the internal registry when present and additionally probe an external registry when its URL is configured or discovered. A configured external endpoint is always evaluated; a failed connection is a Fail result with a transport/TLS diagnostic. If neither an internal nor external registry exists, these ATP cases report Fail rather than Skipped. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
 
 Configure the URL in `toolkits/openshift-atp/vars/main.yml` when the cluster has multiple mirror endpoints or the external registry is not represented in those resources:
 
@@ -47,7 +47,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml
 unset ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ```
 
-Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled when possible; install the registry CA instead of disabling certificate validation.
+Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled. For a private registry CA, set `atp_external_registry_ca_path` to a PEM bundle path accessible to the Ansible controller. Disabling certificate validation should be limited to a temporary diagnostic.
 
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
@@ -78,3 +78,10 @@ The playbook writes a Markdown report and a self-contained HTML report to `repor
 - `ATP-Report-OCP<version>-<timestamp>.html`
 
 Both formats contain a run summary and per-test records. TC-23 is the first case and ensures `testproject` exists. TC-58 creates or updates `test-atp` in `testproject`, making reruns safe when the Secret already exists. TC-30 runs after all other ATP cases and deletes `testproject` as the final cleanup action. TC-17 reads API server and control-plane logs through the Kubernetes API. TC-18 checks the internal registry service when present, otherwise it tests the configured external registry endpoint from a worker. TC-20 requires a persistent storage backend for the internal registry. For an external registry, it checks endpoint reachability but records that storage persistence still needs an authenticated push/pull validation or provider-side health check. The HTML follows the supplied form layout and includes the procedure, expected result, captured command output, conclusion, and comments with remediation guidance for failures.
+
+
+## TC-22: logging API version compatibility
+
+TC-22 no longer assumes that the legacy `ClusterLogging` custom resource exists. It queries both the Logging 5 APIs (`ClusterLogging` and `ClusterLogForwarder` in `logging.openshift.io`) and the Logging 6 `ClusterLogForwarder` API in `observability.openshift.io`. The case passes only when at least one supported configuration resource is returned and the logging pods in `openshift-logging` are all Running and ready. Missing API groups remain visible in the report evidence, while their absence alone does not fail a newer logging installation.
+
+If the case fails, inspect the API group available on the cluster, the matching resource status conditions, the Logging/Loki/Cluster Observability Operators, pod events, and container logs. Do not create a legacy CRD to satisfy the ATP.
