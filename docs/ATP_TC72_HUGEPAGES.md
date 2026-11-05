@@ -23,29 +23,19 @@ The old JSONPath included an invalid escape (`\\:`) and an escaped space in the 
 
 OpenShift 4.20 recommends pre-allocating HugePages at boot using the Node Tuning Operator and a `PerformanceProfile`. Configure the page size and count from the CNF vendor/application requirements and the node's NUMA design. Do not allocate the same HugePages pool to every worker unless the architecture requires that.
 
-Example profile fragment for a dedicated worker HugePages pool (replace selectors and count with approved values):
+Merge the following fields into the existing PerformanceProfile that targets the CNF nodes (or create a complete profile using the cluster's validated CPU, reserved/isolated CPU, and node-selector settings):
 
 ```yaml
-apiVersion: performance.openshift.io/v2
-kind: PerformanceProfile
-metadata:
-  name: worker-hp
 spec:
-  cpu:
-    # Preserve the cluster's validated reserved/isolated CPU configuration.
-    isolated: "<validated-isolated-cpu-list>"
-    reserved: "<validated-reserved-cpu-list>"
-  nodeSelector:
-    node-role.kubernetes.io/worker-hp: ""
   hugepages:
-    defaultHugepagesSize: 2M
+    defaultHugepagesSize: "2M"
     pages:
-      - size: 2M
+      - size: "2M"
         count: 1024
         node: 0
 ```
 
-This example reserves 1024 pages of 2 MiB (2 GiB) on NUMA node 0. Replace it with the amount, size, and NUMA placement required by your workload. Do not apply the placeholder CPU values as written; retain or generate CPU settings from the validated PerformanceProfile for the cluster.
+This example reserves 1024 pages of 2 MiB (2 GiB) on NUMA node 0. Replace the size, count, and NUMA placement with the amount required by your workload and hardware design. It is a fragment, not a complete PerformanceProfile manifest.
 
 If a PerformanceProfile already exists for the CNF nodes, update that profile rather than creating a competing profile for the same nodes.
 
