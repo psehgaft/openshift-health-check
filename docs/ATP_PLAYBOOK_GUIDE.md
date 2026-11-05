@@ -100,7 +100,7 @@ TC-64 runs `oc adm must-gather`, packages and integrity-checks the result, verif
 
 ## TC-67a: PVC, iSCSI, and multipath
 
-TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no SAN-backed volume or configured SAN class is found, the multipath-specific result is **Skipped / not applicable**; an inactive daemon by itself does not fail a cluster that does not use SAN. For SAN storage, it checks that a PVC is Bound, inspects `/etc/iscsi`, iSCSI sessions, `multipathd`, and `multipath -ll` on worker nodes, and requires active paths. Add vendor-specific SAN StorageClass names to `tc67a_san_storage_class_names` in `toolkits/openshift-atp/vars/main.yml` when PV type or CSI driver does not identify them.
+TC-67a inventories Bound PVCs, PV volume types, and StorageClasses. It auto-detects SAN classes from common names (such as `iscsi`, `fibre`, `fc`, or `san`), CSI provisioner metadata, and protocol parameters, then correlates the classes with PVs and PVCs. If no SAN-backed PV or SAN StorageClass is found, the multipath-specific result is **Skipped / not applicable**; an inactive daemon by itself does not fail a cluster that does not use SAN. For detected SAN storage, it checks that a PVC is Bound and inspects `/etc/iscsi`, iSCSI sessions, `multipathd`, and `multipath -ll` on workers. A Pass requires accessible host diagnostics, active multipathd, and active/ready paths (plus an active iSCSI session for iSCSI-backed storage). Custom StorageClass names whose CSI metadata does not identify SAN must be listed explicitly in `tc67a_san_storage_class_names` in `toolkits/openshift-atp/vars/main.yml`; for example, `tc67a_san_storage_class_names: ["custom-san-sc"]`.
 
 
 ## TC-55: API certificate validation
