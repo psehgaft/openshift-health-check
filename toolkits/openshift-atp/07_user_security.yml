@@ -61,26 +61,42 @@
 - name: "TC-51: Disable Self Provisioner for authenticated users"
   when: run_tc51_disable_self_provisioner | default(true) | bool
   block:
-    - name: "TC-51: Query self-provisioners ClusterRoleBinding"
-      ansible.builtin.command: oc get clusterrolebinding self-provisioners -o json
+    - name: "TC-51: Inspect all bindings for the self-provisioner role"
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc get clusterrolebindings -o json | jq -c '
+          [
+            .items[]
+            | select(.roleRef.name == "self-provisioner")
+            | {
+                name: .metadata.name,
+                role: .roleRef.name,
+                subjects: (.subjects // []),
+                grants_authenticated_oauth: any((.subjects // [])[]; .kind == "Group" and .name == "system:authenticated:oauth")
+              }
+          ]'
+      args:
+        executable: /bin/bash
       register: tc51_cmd
       changed_when: false
       failed_when: false
 
     - name: "TC-51: Record Result"
       vars:
-        crb_data: "{{ (tc51_cmd.stdout | from_json) if tc51_cmd.rc == 0 else {} }}"
-        subjects: "{{ crb_data.subjects | default([]) }}"
+        selfprovisioner_bindings: "{{ (tc51_cmd.stdout | from_json) if tc51_cmd.rc == 0 else [] }}"
+        authenticated_oauth_bindings: "{{ selfprovisioner_bindings | selectattr('grants_authenticated_oauth', 'equalto', true) | list }}"
+        selfprovisioner_binding_names: "{{ selfprovisioner_bindings | map(attribute='name') | list }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-51',
           'name': 'Disable Self Provisioner for authenticated users',
           'category': 'User & Security',
-          'expected': 'Role self-provisioner removed from group system:authenticated:oauth',
-          'status': ('Pass' if (tc51_cmd.rc == 0 and subjects | length == 0) else 'Fail'),
-          'procedure': (tc51_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'expected': 'No ClusterRoleBinding grants the self-provisioner role to group system:authenticated:oauth; unrelated bindings may remain',
+          'status': ('Pass' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Fail'),
+          'procedure': (tc51_cmd.cmd | default('Inspect all ClusterRoleBindings that reference the self-provisioner role and check for group system:authenticated:oauth')),
           'evidence': ((tc51_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc51_cmd.stderr | default(''))) if (tc51_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc51_cmd.rc | string) if tc51_cmd.rc is defined else '')),
-          'details': 'self-provisioners subjects count: ' ~ (subjects | length)
+          'details': 'self-provisioner bindings: ' ~ (selfprovisioner_binding_names | join(', ') if selfprovisioner_binding_names | length > 0 else 'none') ~ '; bindings granting system:authenticated:oauth: ' ~ (authenticated_oauth_bindings | map(attribute='name') | join(', ') if authenticated_oauth_bindings | length > 0 else 'none'),
+          'remediation': ('No action required; the authenticated OAuth group is not bound to self-provisioner.' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Review the listed ClusterRoleBindings. Remove only the system:authenticated:oauth subject from bindings whose roleRef.name is self-provisioner, for example with: oc adm policy remove-cluster-role-from-group self-provisioner system:authenticated:oauth. Then rerun TC-51.')
         }] }}"
   tags: ['general', 'telco', 'tc51', 'security']
 
