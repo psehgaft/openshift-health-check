@@ -719,90 +719,16 @@
     - name: "TC-22: Classify OpenShift logging API policy"
       ansible.builtin.set_fact:
         tc22_detected_ocp_version: "{{ tc22_version_cmd.stdout | default('') | trim }}"
-        tc22_ocp_version_valid: "{{ (tc22_version_cmd.rc | default(1) | int == 0) and ((tc22_version_cmd.stdout | default('') | trim) is match('^[0-9]+[.][0-9]+[.][0-9]+([+-].*)?
+        tc22_ocp_version_valid: "{{ (tc22_version_cmd.rc | default(1) | int == 0) and ((tc22_version_cmd.stdout | default('') | trim) is match('^[0-9]+[.][0-9]+[.][0-9]+([+-].*)?$')) }}"
+        tc22_use_modern_logging_api: false
+        tc22_logging_api_policy: "Unknown: unable to detect a valid OpenShift version"
       when: tc22_version_cmd is defined
-
 
     - name: "TC-22: Select logging API generation from detected release"
       ansible.builtin.set_fact:
         tc22_use_modern_logging_api: "{{ tc22_detected_ocp_version is version('4.19.0', '>=') }}"
         tc22_logging_api_policy: "{{ 'OCP 4.19+: validate only ClusterLogForwarder (observability.openshift.io)' if (tc22_detected_ocp_version is version('4.19.0', '>=')) else 'OCP before 4.19: validate legacy Logging APIs with ClusterLogForwarder fallback' }}"
       when: tc22_ocp_version_valid | bool
-
-    - name: "TC-22: Check legacy ClusterLogging configuration (pre-4.19 only)"
-      ansible.builtin.command: oc get clusterloggings.logging.openshift.io/instance -n openshift-logging -o yaml
-      register: tc22_legacy_cmd
-      changed_when: false
-      failed_when: false
-      when:
-        - tc22_ocp_version_valid | bool
-        - not (tc22_use_modern_logging_api | bool)
-
-    - name: "TC-22: Check legacy ClusterLogForwarder configuration (pre-4.19 only)"
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
-          oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o yaml
-        executable: /bin/bash
-      register: tc22_legacy_forwarder_cmd
-      changed_when: false
-      failed_when: false
-      when:
-        - tc22_ocp_version_valid | bool
-        - not (tc22_use_modern_logging_api | bool)
-
-    - name: "TC-22: Check ClusterLogForwarder observability API (4.19+)"
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
-          oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o yaml
-        executable: /bin/bash
-      register: tc22_modern_forwarder_cmd
-      changed_when: false
-      failed_when: false
-      when:
-        - tc22_ocp_version_valid | bool
-        - tc22_use_modern_logging_api | bool
-
-    - name: "TC-22: List logging pods and node placement"
-      ansible.builtin.command: oc get pods -n openshift-logging -o wide
-      register: tc22_pods_cmd
-      changed_when: false
-      failed_when: false
-
-    - name: "TC-22: Verify all logging pods are Running and ready"
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?] | length > 0) and ([.status.containerStatuses[]? | select(.ready == true)] | length == ([.status.containerStatuses[]?] | length)))'
-        executable: /bin/bash
-      register: tc22_ready_cmd
-      changed_when: false
-      failed_when: false
-
-    - name: "TC-22: Evaluate selected logging API"
-      ansible.builtin.set_fact:
-        tc22_supported_api_available: "{{ ((tc22_modern_forwarder_cmd.rc | default(1) | int) == 0) if (tc22_use_modern_logging_api | bool) else (((tc22_legacy_cmd.rc | default(1) | int) == 0) or ((tc22_legacy_forwarder_cmd.rc | default(1) | int) == 0) or ((tc22_modern_forwarder_cmd.rc | default(1) | int) == 0)) }}"
-
-    - name: "TC-22: Record Result"
-      ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-22',
-          'name': 'Logging Stack Status',
-          'category': 'Services Check',
-          'expected': 'OCP 4.19 and later: a configured ClusterLogForwarder in observability.openshift.io is available. Earlier releases: a supported legacy Logging API or ClusterLogForwarder is available. Logging pods are Running and ready.',
-          'status': ('Pass' if (tc22_ocp_version_valid | default(false) | bool and tc22_supported_api_available | default(false) | bool and tc22_pods_cmd.rc == 0 and tc22_ready_cmd.rc == 0) else 'Fail'),
-          'procedure': (tc22_version_cmd.cmd | default('OpenShift release query unavailable')) ~ '\nDetected release: ' ~ (tc22_detected_ocp_version | default('unknown')) ~ '\nSelected API policy: ' ~ (tc22_logging_api_policy | default('unknown')) ~ '\nQuery the API selected for the detected release and verify logging pod readiness.',
-          'evidence': ('== OpenShift version ==\n' ~ (tc22_version_cmd.stdout | default('')) ~ '\nSelected API policy: ' ~ (tc22_logging_api_policy | default('unknown')) ~ '\n== Legacy ClusterLogging ==\n' ~ (tc22_legacy_cmd.stdout | default('Not queried')) ~ '\n== Legacy ClusterLogForwarder ==\n' ~ (tc22_legacy_forwarder_cmd.stdout | default('Not queried')) ~ '\n== Observability ClusterLogForwarder ==\n' ~ (tc22_modern_forwarder_cmd.stdout | default('Not queried')) ~ '\n== Logging pods and placement ==\n' ~ (tc22_pods_cmd.stdout | default(tc22_pods_cmd.stderr | default(''))) ~ '\n== Pod readiness check ==\n' ~ (tc22_ready_cmd.stdout | default(tc22_ready_cmd.stderr | default(''))) ~ ('\nExit code: ' ~ (tc22_ready_cmd.rc | string) if tc22_ready_cmd.rc is defined else ''),
-          'details': 'OCP=' ~ (tc22_detected_ocp_version | default('unknown')) ~ '; selected policy=' ~ (tc22_logging_api_policy | default('unknown')) ~ '; supported logging API=' ~ (tc22_supported_api_available | default(false) | string) ~ '; readiness rc=' ~ (tc22_ready_cmd.rc | default('unknown') | string),
-          'remediation': 'Confirm the detected OpenShift release and configure the supported logging API for that release. For OCP 4.19+, use ClusterLogForwarder in observability.openshift.io; do not require the legacy ClusterLogging API. For earlier releases, inspect legacy Logging APIs or the Logging 6 ClusterLogForwarder fallback. Verify the Logging Operator and that all logging pods are Running and Ready.'
-        }] }}"
-  tags: ['general', 'telco', 'tc22', 'logging'])) }}"
-        tc22_use_modern_logging_api: false
-        tc22_logging_api_policy: "Unknown: unable to detect a valid OpenShift version"
-      when: tc22_version_cmd is defined
 
     - name: "TC-22: Check legacy ClusterLogging configuration (pre-4.19 only)"
       ansible.builtin.command: oc get clusterloggings.logging.openshift.io/instance -n openshift-logging -o yaml
