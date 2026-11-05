@@ -44,13 +44,14 @@
         backup_release={{ tc62_backup_release | default('') | quote }}
         restore_timeout={{ tc62_restore_timeout_seconds | default(5400) }}
         two_node_fencing={{ tc62_two_node_fencing | default(false) | bool | ternary('true','false') | quote }}
+        ha_topology_confirmed={{ tc62_standard_ha_topology_confirmed | default(false) | bool | ternary('true','false') | quote }}
         read -r -a cp_hosts <<< "$cp_list"
 
         echo "== Destructive-operation preflight =="
         echo "This test will disable etcd on all configured control-plane nodes and restore the selected snapshot."
         echo "No cluster changes are made unless all preflight gates below pass."
-        if [[ "$two_node_fencing" == "true" ]]; then
-          echo "Automatic quorum-guard handling is not supported for two-node-with-fencing clusters; aborting before changes." >&2
+        if [[ "$two_node_fencing" == "true" || "$ha_topology_confirmed" != "true" ]]; then
+          echo "Confirm a standard three-or-more-node HA control plane and confirm this is not a two-node-with-fencing topology; aborting before changes." >&2
           exit 1
         fi
         if [[ "${#cp_hosts[@]}" -lt 3 ]]; then
