@@ -27,13 +27,15 @@ The HTML uses a two-column procedure record matching the supplied form: date, ti
 
 ## External registry checks (TC-18 and TC-19)
 
-TC-18 and TC-19 validate the internal registry when present and additionally probe an external registry when its URL is configured or discovered. A configured external endpoint is always evaluated; a failed connection is a Fail result with a transport/TLS diagnostic. If neither an internal nor external registry exists, these ATP cases report Fail rather than Skipped. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
+TC-18 probes both available endpoint types and passes when at least one registry API is usable. If only the external registry is configured and reachable, the case passes and the report notes that the cluster is using the external registry only. If both endpoints are configured but one fails, the case still passes when the other is usable and adds a comment describing the failed endpoint. TC-19 separately checks internal registry pod placement and logs, so it has additional internal-registry conditions. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
 
 Configure the URL in `toolkits/openshift-atp/vars/main.yml` when the cluster has multiple mirror endpoints or the external registry is not represented in those resources:
 
 ```yaml
 atp_external_registry_url: "https://quay.example.com"
 atp_external_registry_validate_certs: true
+# Absolute PEM CA bundle path on the Ansible controller for private/self-signed CA
+atp_external_registry_ca_path: "/etc/pki/ca-trust/source/anchors/quay-issuing-ca.pem"
 ```
 
 A registry robot token cannot be obtained safely or reliably from cluster mirror settings. Supply the robot username and token from the bastion environment. The token is used as the robot account's HTTP Basic password and is excluded from task output and reports:
@@ -47,7 +49,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml
 unset ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ```
 
-Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled. For a private registry CA, set `atp_external_registry_ca_path` to a PEM bundle path accessible to the Ansible controller. Disabling certificate validation should be limited to a temporary diagnostic.
+Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, the external API probe requires HTTP 200. Keep TLS verification enabled. For a private registry CA, set `atp_external_registry_ca_path` to the issuing CA PEM bundle on the Ansible controller. The CA must validate the certificate chain presented by the configured registry hostname. Disabling certificate validation should be limited to a temporary diagnostic; do not use it as the permanent acceptance configuration.
 
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
@@ -82,7 +84,9 @@ Both formats contain a run summary and per-test records. TC-23 is the first case
 
 ## TC-22: logging API version compatibility
 
-TC-22 no longer assumes that the legacy `ClusterLogging` custom resource exists. It queries both the Logging 5 APIs (`ClusterLogging` and `ClusterLogForwarder` in `logging.openshift.io`) and the Logging 6 `ClusterLogForwarder` API in `observability.openshift.io`. The case passes only when at least one supported configuration resource is returned and the logging pods in `openshift-logging` are all Running and ready. Missing API groups remain visible in the report evidence, while their absence alone does not fail a newer logging installation.
+TC-22 reads the actual release from `oc get clusterversion version` and selects the API checks by OpenShift version. On OCP 4.19 and later, it queries only `ClusterLogForwarder` in `observability.openshift.io`; it does not query legacy `ClusterLogging` or `logging.openshift.io` APIs. On earlier releases, it checks the legacy APIs and retains the modern `ClusterLogForwarder` as a compatibility fallback. All versions also require logging pods in `openshift-logging` to be Running and ready. If release detection fails, TC-22 fails with the version query evidence instead of guessing which API to use.
+
+The API removal is associated with Red Hat OpenShift Logging 6, whose API group is `observability.openshift.io`; the Logging operator has a release/support cadence distinct from the OpenShift Container Platform release. The ATP applies the requested 4.19 version threshold to select the API policy.
 
 If the case fails, inspect the API group available on the cluster, the matching resource status conditions, the Logging/Loki/Cluster Observability Operators, pod events, and container logs. Do not create a legacy CRD to satisfy the ATP.
 
@@ -102,3 +106,10 @@ TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no 
 ## TC-55: API certificate validation
 
 TC-55 validates the API endpoint certificate against the active kubeconfig CA, checks that the API hostname matches a certificate SAN, and checks remaining validity against `atp_api_cert_min_validity_days` (default: 7 days). This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold in `toolkits/openshift-atp/vars/main.yml` or as an Ansible extra var when your policy requires a longer validity window.
+
+
+## TC-28: install and verify sample-operator
+
+TC-28 applies the supplied Subscription for package `sample-operator` from the `redhat-operators` CatalogSource, channel `stable`, in `openshift-operators`. Reapplying the Subscription is safe. The task waits up to ten minutes for `.status.installedCSV` to appear and that ClusterServiceVersion to reach `Succeeded`; catalog availability or a created Subscription alone does not count as Pass. The report captures the Subscription and CSV YAML on success, and diagnostic Subscription/CSV output on failure.
+
+This is the automated variant requested for the sample operator. The ATP source document’s 3scale OperatorHub procedure is retained in the report as a reference and is not evidence that 3scale was installed.

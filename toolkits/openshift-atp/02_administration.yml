@@ -129,11 +129,55 @@
   tags: ['general', 'telco', 'tc27', 'administration']
 
 # TC 28: Install an Operator
-- name: "TC-28: Install an Operator"
+- name: "TC-28: Install sample-operator"
   when: run_tc28_install_operator | default(true) | bool
   block:
-    - name: "TC-28: Verify OperatorHub and CatalogSources availability"
-      ansible.builtin.command: oc get catalogsource -n openshift-marketplace
+    - name: "TC-28: Apply sample-operator Subscription and wait for Succeeded CSV"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc apply -f - <<'SAMPLE_OPERATOR_SUBSCRIPTION'
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: sample-operator
+          namespace: openshift-operators
+        spec:
+          channel: stable
+          name: sample-operator
+          source: redhat-operators
+          sourceNamespace: openshift-marketplace
+        SAMPLE_OPERATOR_SUBSCRIPTION
+
+        echo "Subscription applied. Waiting up to 10 minutes for its CSV to reach Succeeded."
+        for attempt in $(seq 1 60); do
+          installed_csv="$(oc get subscription sample-operator -n openshift-operators -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+          if [[ -n "$installed_csv" ]]; then
+            phase="$(oc get csv "$installed_csv" -n openshift-operators -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            echo "Attempt $attempt: CSV=$installed_csv phase=${phase:-Pending}"
+            if [[ "$phase" == "Succeeded" ]]; then
+              echo "== Subscription =="
+              oc get subscription sample-operator -n openshift-operators -o yaml
+              echo "== Installed ClusterServiceVersion =="
+              oc get csv "$installed_csv" -n openshift-operators -o yaml
+              exit 0
+            fi
+            if [[ "$phase" == "Failed" ]]; then
+              echo "ClusterServiceVersion $installed_csv entered Failed phase." >&2
+              oc get csv "$installed_csv" -n openshift-operators -o yaml >&2 || true
+              exit 1
+            fi
+          else
+            echo "Attempt $attempt: waiting for Subscription to resolve an installed CSV."
+          fi
+          sleep 10
+        done
+
+        echo "Timed out waiting for sample-operator CSV to reach Succeeded." >&2
+        oc get subscription sample-operator -n openshift-operators -o yaml >&2 || true
+        oc get csv -n openshift-operators >&2 || true
+        exit 1
+      args:
+        executable: /bin/bash
       register: tc28_cmd
       changed_when: false
       failed_when: false
@@ -142,13 +186,14 @@
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-28',
-          'name': 'Install an Operator',
+          'name': 'Install sample-operator',
           'category': 'OpenShift Administration',
-          'expected': 'Install the 3scale operator into testproject and verify Succeeded in Installed Operators',
-          'status': ('Fail' if tc28_cmd.rc != 0 else 'Skipped'),
-          'procedure': (tc28_cmd.cmd | default('See ATP task source; command metadata unavailable')) ~ '\nManual UI procedure: Operators > OperatorHub; search for 3scale; install using “A specific namespace on the cluster” and select testproject; then verify Succeeded under Operators > Installed Operators.',
+          'expected': 'Subscription sample-operator in openshift-operators resolves successfully and its installed ClusterServiceVersion reaches Succeeded',
+          'status': ('Pass' if tc28_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc28_cmd.cmd | default('Apply the sample-operator Subscription from redhat-operators/stable in openshift-operators and wait for the installed CSV to reach Succeeded')) ~ '\nAutomation scope: sample-operator Subscription as supplied; the source ATP procedure below remains the original 3scale manual UI reference.',
           'evidence': ((tc28_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc28_cmd.stderr | default(''))) if (tc28_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc28_cmd.rc | string) if tc28_cmd.rc is defined else '')),
-          'details': (tc28_cmd.stdout | default(tc28_cmd.stderr) | truncate(150)) ~ '\nCatalog availability is a prerequisite; complete and record the documented OperatorHub installation manually.'
+          'details': tc28_cmd.stdout | default(tc28_cmd.stderr) | truncate(500),
+          'remediation': 'Check that the redhat-operators CatalogSource is healthy in openshift-marketplace, the stable channel/package exists, the Subscription has no resolution errors, and the ClusterServiceVersion or InstallPlan events identify no RBAC, pull-secret, or resource issue. Resolve the reported condition and rerun TC-28.'
         }] }}"
   tags: ['general', 'telco', 'tc28', 'administration']
 

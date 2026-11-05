@@ -482,9 +482,45 @@
     - name: "TC-18: Probe optional external registry API"
       ansible.builtin.include_tasks: external_registry_probe.yml
 
-    - name: "TC-18: Classify registry API checks"
+    - name: "TC-18: Classify available registry endpoints"
       ansible.builtin.set_fact:
-        tc18_status: "{{ 'Pass' if (tc18_cmd.rc == 0 or (atp_external_registry_probe_ok | bool)) and (atp_external_registry_effective_url | length == 0 or (atp_external_registry_probe_ok | bool)) else 'Fail' }}"
+        tc18_internal_available: "{{ (tc18_cmd.rc | default(1) | int) == 0 }}"
+        tc18_external_configured: "{{ atp_external_registry_effective_url | default('') | length > 0 }}"
+        tc18_external_available: "{{ atp_external_registry_probe_ok | default(false) | bool }}"
+
+    - name: "TC-18: Determine pass status and report endpoint notes"
+      ansible.builtin.set_fact:
+        tc18_status: "{{ 'Pass' if (tc18_internal_available | bool or tc18_external_available | bool) else 'Fail' }}"
+        tc18_registry_mode: >-
+          {% if tc18_internal_available | bool and tc18_external_available | bool %}
+          Internal and external registry APIs are reachable
+          {% elif tc18_internal_available | bool %}
+          Internal registry only is available
+          {% elif tc18_external_available | bool %}
+          External registry only is available
+          {% else %}
+          No registry API is available
+          {% endif %}
+        tc18_registry_notes: >-
+          {% if tc18_internal_available | bool and tc18_external_available | bool %}
+          Both internal and external registry APIs are reachable.
+          {% elif tc18_external_available | bool %}
+          Only the external registry is available and reachable; the internal image-registry service is not configured or available. This satisfies TC-18 because at least one configured registry is usable.
+          {% elif tc18_internal_available | bool and tc18_external_configured | bool %}
+          The internal registry is available and satisfies TC-18. The configured external registry did not pass its API probe: {{ atp_external_registry_probe_summary }}.
+          {% elif tc18_internal_available | bool %}
+          Only the internal registry is available; no external registry endpoint was configured or discovered.
+          {% else %}
+          Neither configured registry passed the API check. Internal result: {{ tc18_cmd.stdout | default(tc18_cmd.stderr | default('no output')) | trim }}. External result: {{ atp_external_registry_probe_summary }}.
+          {% endif %}
+        tc18_remediation: >-
+          {% if not (tc18_internal_available | bool or tc18_external_available | bool) %}
+          Configure at least one usable registry. For a private/self-signed external TLS chain, install the issuing CA as a PEM file on the Ansible controller and set atp_external_registry_ca_path; keep atp_external_registry_validate_certs=true. If robot credentials are supplied, verify both ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME and ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN and confirm the robot can access the registry API.
+          {% elif tc18_external_configured | bool and not (tc18_external_available | bool) %}
+          TC-18 passes through the available endpoint, but the configured external endpoint still needs attention: {{ atp_external_registry_probe_summary }}. For certificate verification failures, configure atp_external_registry_ca_path with the issuing CA PEM rather than disabling TLS validation.
+          {% else %}
+          No remediation is required for the ATP pass condition; retain the endpoint and credential configuration used for this run.
+          {% endif %}
 
     - name: "TC-18: Record Result"
       ansible.builtin.set_fact:
@@ -492,11 +528,13 @@
           'id': 'TC-18',
           'name': 'Check Configured Registry API',
           'category': 'Services Check',
-          'expected': 'At least one configured registry is available: the internal registry service, the external OCI API, or both when both are configured; supplied robot credentials authenticate successfully',
+          'expected': 'Pass when the internal registry API or the external registry OCI v2 API is reachable; both may be configured, and at least one must be usable. Supplied robot credentials must authenticate successfully to the external registry.',
           'status': tc18_status | trim,
-          'procedure': 'Query the internal registry service and, when configured or discovered, request the external registry OCI v2 API endpoint',
-          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExternal registry discovery: ' ~ atp_external_registry_discovery_source) ~ ('\\nExternal registry: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry URL: ' ~ atp_external_registry_effective_url if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
-          'details': 'Internal service exit code: ' ~ (tc18_cmd.rc | default('unknown') | string) ~ '; external registry discovery: ' ~ atp_external_registry_discovery_source ~ '; probe: ' ~ atp_external_registry_probe_summary
+          'procedure': 'Query the internal image-registry service through the API. If an external endpoint is configured or discovered, request its OCI v2 API and verify robot authentication when credentials are supplied.',
+          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\\nRegistry evaluation: ' ~ (tc18_registry_mode | trim)) ~ ('\\nExternal registry probe: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry endpoint: ' ~ (atp_external_registry_effective_url | regex_replace('^https?://', '')) if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
+          'details': tc18_registry_notes | trim,
+          'additional_comments': tc18_registry_notes | trim,
+          'remediation': tc18_remediation | trim
         }] }}"
   tags: ['general', 'telco', 'tc18', 'registry']
 
@@ -672,33 +710,60 @@
 - name: "TC-22: Logging Stack Status"
   when: run_tc22_logging_stack_status | default(true) | bool
   block:
-    - name: "TC-22: Check legacy ClusterLogging configuration"
+    - name: "TC-22: Detect OpenShift release"
+      ansible.builtin.command: oc get clusterversion version -o jsonpath='{.status.desired.version}'
+      register: tc22_version_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Classify OpenShift logging API policy"
+      ansible.builtin.set_fact:
+        tc22_detected_ocp_version: "{{ tc22_version_cmd.stdout | default('') | trim }}"
+        tc22_ocp_version_valid: "{{ tc22_version_cmd.rc == 0 and (tc22_version_cmd.stdout | default('') | trim is match('^[0-9]+\\.[0-9]+\\.[0-9]+([+-].*)?$')) }}"
+        tc22_use_modern_logging_api: false
+        tc22_logging_api_policy: "Unknown: unable to detect a valid OpenShift version"
+      when: tc22_version_cmd is defined
+
+    - name: "TC-22: Select logging API generation from detected version"
+      ansible.builtin.set_fact:
+        tc22_use_modern_logging_api: "{{ tc22_detected_ocp_version is version('4.19.0', '>=') }}"
+        tc22_logging_api_policy: "{{ 'OCP 4.19+: validate only ClusterLogForwarder (observability.openshift.io)' if (tc22_detected_ocp_version is version('4.19.0', '>=')) else 'OCP before 4.19: validate legacy logging APIs and allow ClusterLogForwarder compatibility fallback' }}"
+      when: tc22_ocp_version_valid | bool
+
+    - name: "TC-22: Check legacy ClusterLogging configuration (pre-4.19 only)"
       ansible.builtin.command: oc get clusterloggings.logging.openshift.io/instance -n openshift-logging -o yaml
       register: tc22_legacy_cmd
       changed_when: false
       failed_when: false
+      when:
+        - tc22_ocp_version_valid | bool
+        - not (tc22_use_modern_logging_api | bool)
 
-    - name: "TC-22: Check legacy ClusterLogForwarder configuration"
-      ansible.builtin.shell: |
-        set -euo pipefail
-        oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
-        oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o yaml
-      args:
+    - name: "TC-22: Check legacy ClusterLogForwarder configuration (pre-4.19 only)"
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
+          oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o yaml
         executable: /bin/bash
       register: tc22_legacy_forwarder_cmd
       changed_when: false
       failed_when: false
+      when:
+        - tc22_ocp_version_valid | bool
+        - not (tc22_use_modern_logging_api | bool)
 
-    - name: "TC-22: Check current ClusterLogForwarder configuration"
-      ansible.builtin.shell: |
-        set -euo pipefail
-        oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
-        oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o yaml
-      args:
+    - name: "TC-22: Check ClusterLogForwarder observability API"
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
+          oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o yaml
         executable: /bin/bash
       register: tc22_modern_forwarder_cmd
       changed_when: false
       failed_when: false
+      when: tc22_ocp_version_valid | bool
 
     - name: "TC-22: List logging pods and node placement"
       ansible.builtin.command: oc get pods -n openshift-logging -o wide
@@ -707,14 +772,18 @@
       failed_when: false
 
     - name: "TC-22: Verify all logging pods are Running and ready"
-      ansible.builtin.shell: |
-        set -euo pipefail
-        oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?] | length > 0) and ([.status.containerStatuses[]? | select(.ready == true)] | length == ([.status.containerStatuses[]?] | length)))'
-      args:
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?] | length > 0) and ([.status.containerStatuses[]? | select(.ready == true)] | length == ([.status.containerStatuses[]?] | length)))'
         executable: /bin/bash
       register: tc22_ready_cmd
       changed_when: false
       failed_when: false
+
+    - name: "TC-22: Evaluate selected logging API"
+      ansible.builtin.set_fact:
+        tc22_supported_api_available: "{{ ((tc22_modern_forwarder_cmd.rc | default(1) | int) == 0) if (tc22_use_modern_logging_api | bool) else (((tc22_legacy_cmd.rc | default(1) | int) == 0) or ((tc22_legacy_forwarder_cmd.rc | default(1) | int) == 0) or ((tc22_modern_forwarder_cmd.rc | default(1) | int) == 0)) }}"
 
     - name: "TC-22: Record Result"
       ansible.builtin.set_fact:
@@ -722,11 +791,90 @@
           'id': 'TC-22',
           'name': 'Logging Stack Status',
           'category': 'Services Check',
-          'expected': 'At least one supported logging configuration API is available and logging pods are Running and ready',
-          'status': ('Pass' if (tc22_pods_cmd.rc == 0 and tc22_ready_cmd.rc == 0 and (tc22_legacy_cmd.rc == 0 or tc22_legacy_forwarder_cmd.rc == 0 or tc22_modern_forwarder_cmd.rc == 0)) else 'Fail'),
-          'procedure': (tc22_legacy_cmd.cmd | default('Legacy ClusterLogging API query unavailable')) ~ '\n' ~ (tc22_legacy_forwarder_cmd.cmd | default('Legacy ClusterLogForwarder API query unavailable')) ~ '\n' ~ (tc22_modern_forwarder_cmd.cmd | default('Modern ClusterLogForwarder API query unavailable')) ~ '\n' ~ (tc22_pods_cmd.cmd | default('Pod placement command unavailable')) ~ '\n' ~ (tc22_ready_cmd.cmd | default('Pod readiness command unavailable')),
-          'evidence': ('== Legacy ClusterLogging (logging.openshift.io) ==\n' ~ (tc22_legacy_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_legacy_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_cmd.rc | string)) if tc22_legacy_cmd.rc != 0 else '') ~ '\n== Legacy ClusterLogForwarder (logging.openshift.io) ==\n' ~ (tc22_legacy_forwarder_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_legacy_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_forwarder_cmd.rc | string)) if tc22_legacy_forwarder_cmd.rc != 0 else '') ~ '\n== Current ClusterLogForwarder (observability.openshift.io) ==\n' ~ (tc22_modern_forwarder_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_modern_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_modern_forwarder_cmd.rc | string)) if tc22_modern_forwarder_cmd.rc != 0 else '') ~ '\n== Logging pods and placement ==\n' ~ (tc22_pods_cmd.stdout | default(tc22_pods_cmd.stderr)) ~ '\n== Pod readiness check ==\n' ~ (tc22_ready_cmd.stdout | default(tc22_ready_cmd.stderr)) ~ ('\nExit code: ' ~ (tc22_ready_cmd.rc | string) if tc22_ready_cmd.rc is defined else '')),
-          'details': 'Legacy ClusterLogging rc=' ~ (tc22_legacy_cmd.rc | string) ~ ', legacy ClusterLogForwarder rc=' ~ (tc22_legacy_forwarder_cmd.rc | string) ~ ', current ClusterLogForwarder rc=' ~ (tc22_modern_forwarder_cmd.rc | string) ~ ', pods ready check rc=' ~ (tc22_ready_cmd.rc | string),
-          'remediation': 'Identify the installed OpenShift Logging generation. Check the matching ClusterLogging or ClusterLogForwarder API and its status conditions, then inspect Logging/Loki/Observability operator health, pod events, and container logs. Restore the supported configuration and rerun; do not create a legacy CRD manually.'
+          'expected': 'OCP 4.19 and later: ClusterLogForwarder in observability.openshift.io is available. Earlier OCP releases: a supported legacy logging API or ClusterLogForwarder is available. In all cases, logging pods are Running and ready.',
+          'status': ('Pass' if (tc22_ocp_version_valid | bool and tc22_supported_api_available | bool and tc22_pods_cmd.rc == 0 and tc22_ready_cmd.rc == 0) else 'Fail'),
+          'procedure': (tc22_version_cmd.cmd | default('OpenShift release query unavailable')) ~ '\nDetected release: ' ~ (tc22_detected_ocp_version | default('unknown')) ~ '\nSelected API policy: ' ~ (tc22_logging_api_policy | default('unknown')) ~ '\nQuery the selected ClusterLogForwarder API and verify all logging pods are Running and ready.',
+          'evidence': ('== OpenShift version ==\n' ~ (tc22_version_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_version_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_version_cmd.rc | string)) if tc22_version_cmd.rc != 0 else '') ~ '\nSelected API policy: ' ~ (tc22_logging_api_policy | default('unknown')) ~ '\n== Legacy ClusterLogging (logging.openshift.io) ==\n' ~ (tc22_legacy_cmd.stdout | default('Not queried by the selected OCP version policy')) ~ (('\nSTDERR: ' ~ (tc22_legacy_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_cmd.rc | string)) if tc22_legacy_cmd.rc is defined and tc22_legacy_cmd.rc != 0 else '') ~ '\n== Legacy ClusterLogForwarder (logging.openshift.io) ==\n' ~ (tc22_legacy_forwarder_cmd.stdout | default('Not queried by the selected OCP version policy')) ~ (('\nSTDERR: ' ~ (tc22_legacy_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_forwarder_cmd.rc | string)) if tc22_legacy_forwarder_cmd.rc is defined and tc22_legacy_forwarder_cmd.rc != 0 else '') ~ '\n== ClusterLogForwarder (observability.openshift.io) ==\n' ~ (tc22_modern_forwarder_cmd.stdout | default('Not queried: OpenShift version could not be classified')) ~ (('\nSTDERR: ' ~ (tc22_modern_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_modern_forwarder_cmd.rc | string)) if tc22_modern_forwarder_cmd.rc is defined and tc22_modern_forwarder_cmd.rc != 0 else '') ~ '\n== Logging pods and placement ==\n' ~ (tc22_pods_cmd.stdout | default(tc22_pods_cmd.stderr | default(''))) ~ '\n== Pod readiness check ==\n' ~ (tc22_ready_cmd.stdout | default(tc22_ready_cmd.stderr | default(''))) ~ ('\nExit code: ' ~ (tc22_ready_cmd.rc | string) if tc22_ready_cmd.rc is defined else ''),
+          'details': 'OCP=' ~ (tc22_detected_ocp_version | default('unknown')) ~ '; selected policy=' ~ (tc22_logging_api_policy | default('unknown')) ~ '; supported logging API rc=' ~ (tc22_supported_api_available | string) ~ '; pods readiness rc=' ~ (tc22_ready_cmd.rc | default('unknown') | string),
+          'remediation': 'Confirm the detected OpenShift release and use the corresponding supported Logging API. For OCP 4.19+, configure and verify ClusterLogForwarder in observability.openshift.io; do not create or require the legacy ClusterLogging API. For older releases, inspect the legacy Logging APIs or the Logging 6 ClusterLogForwarder fallback. In all versions, check the Logging Operator, pod events, and readiness.'
+        }] }}"
+)) }}"
+        tc22_use_modern_logging_api: false
+        tc22_logging_api_policy: "Unknown: unable to detect a valid OpenShift version"
+      when: tc22_version_cmd is defined
+
+    - name: "TC-22: Select logging API generation from detected version"
+      ansible.builtin.set_fact:
+        tc22_use_modern_logging_api: "{{ tc22_detected_ocp_version is version('4.19.0', '>=') }}"
+        tc22_logging_api_policy: "{{ 'OCP 4.19+: validate only ClusterLogForwarder (observability.openshift.io)' if (tc22_detected_ocp_version is version('4.19.0', '>=')) else 'OCP before 4.19: validate legacy logging APIs and allow ClusterLogForwarder compatibility fallback' }}"
+      when: tc22_ocp_version_valid | bool
+
+    - name: "TC-22: Check legacy ClusterLogging configuration (pre-4.19 only)"
+      ansible.builtin.command: oc get clusterloggings.logging.openshift.io/instance -n openshift-logging -o yaml
+      register: tc22_legacy_cmd
+      changed_when: false
+      failed_when: false
+      when:
+        - tc22_ocp_version_valid | bool
+        - not (tc22_use_modern_logging_api | bool)
+
+    - name: "TC-22: Check legacy ClusterLogForwarder configuration (pre-4.19 only)"
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
+          oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o yaml
+        executable: /bin/bash
+      register: tc22_legacy_forwarder_cmd
+      changed_when: false
+      failed_when: false
+      when:
+        - tc22_ocp_version_valid | bool
+        - not (tc22_use_modern_logging_api | bool)
+
+    - name: "TC-22: Check ClusterLogForwarder observability API"
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
+          oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o yaml
+        executable: /bin/bash
+      register: tc22_modern_forwarder_cmd
+      changed_when: false
+      failed_when: false
+      when: tc22_ocp_version_valid | bool
+
+    - name: "TC-22: List logging pods and node placement"
+      ansible.builtin.command: oc get pods -n openshift-logging -o wide
+      register: tc22_pods_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Verify all logging pods are Running and ready"
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?] | length > 0) and ([.status.containerStatuses[]? | select(.ready == true)] | length == ([.status.containerStatuses[]?] | length)))'
+        executable: /bin/bash
+      register: tc22_ready_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Evaluate selected logging API"
+      ansible.builtin.set_fact:
+        tc22_supported_api_available: "{{ ((tc22_modern_forwarder_cmd.rc | default(1) | int) == 0) if (tc22_use_modern_logging_api | bool) else (((tc22_legacy_cmd.rc | default(1) | int) == 0) or ((tc22_legacy_forwarder_cmd.rc | default(1) | int) == 0) or ((tc22_modern_forwarder_cmd.rc | default(1) | int) == 0)) }}"
+
+    - name: "TC-22: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-22',
+          'name': 'Logging Stack Status',
+          'category': 'Services Check',
+          'expected': 'OCP 4.19 and later: ClusterLogForwarder in observability.openshift.io is available. Earlier OCP releases: a supported legacy logging API or ClusterLogForwarder is available. In all cases, logging pods are Running and ready.',
+          'status': ('Pass' if (tc22_ocp_version_valid | bool and tc22_supported_api_available | bool and tc22_pods_cmd.rc == 0 and tc22_ready_cmd.rc == 0) else 'Fail'),
+          'procedure': (tc22_version_cmd.cmd | default('OpenShift release query unavailable')) ~ '\nDetected release: ' ~ (tc22_detected_ocp_version | default('unknown')) ~ '\nSelected API policy: ' ~ (tc22_logging_api_policy | default('unknown')) ~ '\nQuery the selected ClusterLogForwarder API and verify all logging pods are Running and ready.',
+          'evidence': ('== OpenShift version ==\n' ~ (tc22_version_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_version_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_version_cmd.rc | string)) if tc22_version_cmd.rc != 0 else '') ~ '\nSelected API policy: ' ~ (tc22_logging_api_policy | default('unknown')) ~ '\n== Legacy ClusterLogging (logging.openshift.io) ==\n' ~ (tc22_legacy_cmd.stdout | default('Not queried by the selected OCP version policy')) ~ (('\nSTDERR: ' ~ (tc22_legacy_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_cmd.rc | string)) if tc22_legacy_cmd.rc is defined and tc22_legacy_cmd.rc != 0 else '') ~ '\n== Legacy ClusterLogForwarder (logging.openshift.io) ==\n' ~ (tc22_legacy_forwarder_cmd.stdout | default('Not queried by the selected OCP version policy')) ~ (('\nSTDERR: ' ~ (tc22_legacy_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_forwarder_cmd.rc | string)) if tc22_legacy_forwarder_cmd.rc is defined and tc22_legacy_forwarder_cmd.rc != 0 else '') ~ '\n== ClusterLogForwarder (observability.openshift.io) ==\n' ~ (tc22_modern_forwarder_cmd.stdout | default('Not queried: OpenShift version could not be classified')) ~ (('\nSTDERR: ' ~ (tc22_modern_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_modern_forwarder_cmd.rc | string)) if tc22_modern_forwarder_cmd.rc is defined and tc22_modern_forwarder_cmd.rc != 0 else '') ~ '\n== Logging pods and placement ==\n' ~ (tc22_pods_cmd.stdout | default(tc22_pods_cmd.stderr | default(''))) ~ '\n== Pod readiness check ==\n' ~ (tc22_ready_cmd.stdout | default(tc22_ready_cmd.stderr | default(''))) ~ ('\nExit code: ' ~ (tc22_ready_cmd.rc | string) if tc22_ready_cmd.rc is defined else ''),
+          'details': 'OCP=' ~ (tc22_detected_ocp_version | default('unknown')) ~ '; selected policy=' ~ (tc22_logging_api_policy | default('unknown')) ~ '; supported logging API rc=' ~ (tc22_supported_api_available | string) ~ '; pods readiness rc=' ~ (tc22_ready_cmd.rc | default('unknown') | string),
+          'remediation': 'Confirm the detected OpenShift release and use the corresponding supported Logging API. For OCP 4.19+, configure and verify ClusterLogForwarder in observability.openshift.io; do not create or require the legacy ClusterLogging API. For older releases, inspect the legacy Logging APIs or the Logging 6 ClusterLogForwarder fallback. In all versions, check the Logging Operator, pod events, and readiness.'
         }] }}"
   tags: ['general', 'telco', 'tc22', 'logging']
