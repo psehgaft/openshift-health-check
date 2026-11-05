@@ -557,7 +557,7 @@
             [[ -n "$node" ]] || continue
             printf 'Node=%s roles=%s capacity.pods=%s allocatable.pods=%s\n' "$node" "${roles:-none}" "${capacity:-missing}" "${allocatable:-missing}"
 
-            if [[ -z "$roles" ]]; then
+            if [[ -z "$roles" || "$roles" == "NONE" ]]; then
               echo "FAIL: $node has no node-role.kubernetes.io/* label." >&2
               node_failures=$((node_failures + 1))
             fi
@@ -573,7 +573,7 @@
             .items[] |
             [
               .metadata.name,
-              ([((.metadata.labels // {}) | keys[]) | select(startswith("node-role.kubernetes.io/")) | sub("^node-role.kubernetes.io/"; "")] | unique | join(",")),
+              ([((.metadata.labels // {}) | keys[]) | select(startswith("node-role.kubernetes.io/")) | sub("^node-role.kubernetes.io/"; "")] | unique | if length == 0 then "NONE" else join(",") end),
               (.status.capacity.pods // ""),
               (.status.allocatable.pods // "")
             ] | @tsv
