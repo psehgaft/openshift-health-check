@@ -126,7 +126,7 @@
         fi
 
         echo "== Guard: refuse restore while the Kubernetes API is ready =="
-        if oc get --raw=/readyz >/dev/null 2>&1; then
+        if oc get --raw=/version >/dev/null 2>&1; then
           echo "The API is responding. etcd restore is a last resort and will not run against a responsive cluster." >&2
           exit 1
         fi
@@ -207,7 +207,8 @@
         etcd_rc=$?
         oc get pods -n openshift-etcd -o wide
         echo "etcd pod readiness check exit code: $etcd_rc"
-        csr_pending="$(oc get csr -o json 2>&1 | jq -r '[.items[] | select(([.status.conditions[]?.type] | index("Approved")) == null and ([.status.conditions[]?.type] | index("Denied")) == null) | .metadata.name] | join(",")' 2>/dev/null)"
+        csr_json="$(oc get csr -o json 2>&1)" || { echo "$csr_json"; exit 1; }
+        csr_pending="$(printf '%s\n' "$csr_json" | jq -r '[.items[] | select(([.status.conditions[]?.type] | index("Approved")) == null and ([.status.conditions[]?.type] | index("Denied")) == null) | .metadata.name] | join(",")')" || { echo "Could not parse CSR inventory."; exit 1; }
         echo "Pending CSRs requiring administrator review (not auto-approved): ${csr_pending:-none}"
         if [[ "$nodes_rc" -ne 0 || "$co_rc" -ne 0 || "$etcd_rc" -ne 0 || -n "$csr_pending" ]]; then
           echo "Post-restore verification failed. Review node readiness, operators, etcd pods, and pending CSRs before declaring recovery complete." >&2
