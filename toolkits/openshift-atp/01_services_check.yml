@@ -588,18 +588,21 @@
       ansible.builtin.set_fact:
         tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default('')) else 'Skipped' if tc20_cmd.rc == 0 and 'External registry API availability does not expose its storage backend' in (tc20_cmd.stdout | default('')) else 'Fail' }}"
 
+    - name: "TC-20: Build Result Record"
+      ansible.builtin.set_fact:
+        tc20_result_record:
+          id: "TC-20"
+          name: "Check Configured Registry Storage"
+          category: "Services Check"
+          expected: "The registry storage configuration is returned as JSON; internal storage is persistent, while external storage persistence requires verification by its owner"
+          status: "{{ tc20_status | trim }}"
+          procedure: "{{ tc20_cmd.cmd | default('See ATP task source; command metadata unavailable') }}"
+          evidence: "{{ (tc20_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc20_cmd.stderr | default(''))) if (tc20_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc20_cmd.rc | string) if tc20_cmd.rc is defined else '') }}"
+          details: "{{ tc20_cmd.stdout | default(tc20_cmd.stderr) | truncate(150) }}"
+
     - name: "TC-20: Record Result"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-20',
-          'name': 'Check Configured Registry Storage',
-          'category': 'Services Check',
-          'expected': 'The registry storage configuration is returned as JSON; internal storage is persistent, while external storage persistence requires verification by its owner',
-          'status': tc20_status | trim,
-          'procedure': (tc20_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc20_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc20_cmd.stderr | default(''))) if (tc20_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc20_cmd.rc | string) if tc20_cmd.rc is defined else '')),
-          'details': tc20_cmd.stdout | default(tc20_cmd.stderr) | truncate(150)
-        }] }}"
+        atp_results: "{{ atp_results + [tc20_result_record] }}"
   tags: ['general', 'telco', 'tc20', 'registry_storage']
 
 # TC 21: Monitoring Stack Status
