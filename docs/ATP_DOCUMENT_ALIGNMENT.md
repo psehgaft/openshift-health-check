@@ -19,7 +19,7 @@ The report retains all source test cases. TC-23 runs first to ensure `testprojec
 - **TC-21:** Adds pod lists and node placement to the operator status evidence.
 - **TC-22:** Detects the OpenShift release from ClusterVersion. OCP 4.19+ checks only ClusterLogForwarder in the observability API group; earlier releases check legacy logging APIs with a modern ClusterLogForwarder fallback. Every version also requires logging pods to be Running and ready. Failed version detection fails the case with evidence rather than falling back to a guessed API.
 - **TC-24 and TC-25:** Add the documented post-create queries for LimitRange and ResourceQuota.
-- **TC-28:** A CatalogSource check is only a prerequisite. OperatorHub installation and the Succeeded status remain a manual case and are reported as Skipped until performed.
+- **TC-28:** The automated procedure applies the supplied `sample-operator` Subscription (`stable`, `redhat-operators`, namespace `openshift-operators`) and waits up to ten minutes for its installed ClusterServiceVersion (CSV) to reach `Succeeded`. It passes only on that phase; catalog availability alone is insufficient. The source ATP’s original 3scale OperatorHub procedure remains visible as a reference, while the report identifies the automated sample-operator scope.
 - **TC-29:** Captures status before and after resource cleanup and verifies that no `oc get all` resources remain.
 - **TC-30:** Waits for project deletion and verifies that `testproject` no longer appears in the project list.
 - **TC-31:** Captures node status after cordon and after uncordon.
