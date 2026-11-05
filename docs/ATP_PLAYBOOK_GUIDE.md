@@ -97,3 +97,20 @@ TC-64 runs `oc adm must-gather` without the unsupported `--dry-run` option, pack
 ## TC-67a: PVC, iSCSI, and multipath
 
 TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no SAN-backed volume or configured SAN class is found, the multipath-specific result is **Skipped / not applicable**; an inactive daemon by itself does not fail a cluster that does not use SAN. For SAN storage, it checks that a PVC is Bound, inspects `/etc/iscsi`, iSCSI sessions, `multipathd`, and `multipath -ll` on worker nodes, and requires active paths. Add vendor-specific SAN StorageClass names to `tc67a_san_storage_class_names` in `toolkits/openshift-atp/vars/main.yml` when PV type or CSI driver does not identify them.
+
+
+## TC-62: opt-in etcd disaster recovery
+
+TC-62 is disabled by default. Run it only during an approved, controlled recovery exercise after reviewing the current OpenShift 4.20 etcd restore runbook. Configure the following in `toolkits/openshift-atp/vars/main.yml` or pass equivalent Ansible extra vars:
+
+- `tc62_restore_enabled: true`
+- `tc62_restore_confirmation: RESTORE-ETCD-<cluster_name>` (exact string required)
+- `tc62_control_plane_hosts`: every control-plane SSH host, at least three
+- `tc62_recovery_host`: one host from that list
+- `tc62_backup_dir`: backup directory on the recovery host under `/home/core/`
+- `tc62_ssh_user` and readable `tc62_ssh_key_path`
+- `tc62_expected_release` and `tc62_backup_release`: exact same z-stream version, verified by the operator from the backup records
+
+The task refuses to proceed if the Kubernetes API is ready, the confirmation is wrong, SSH/script checks fail, the snapshot and `static_kuberesources` timestamps do not match, or the release values differ. When enabled, it runs the documented `disable-etcd.sh` and `cluster-restore.sh` scripts, waits for recovery, restores the etcd quorum guard, and checks nodes, ClusterOperators, etcd pods, and pending CSRs. Pending CSRs are reported for administrator review and are never approved automatically. A failure after a restore command starts requires the approved recovery runbook; do not blindly rerun the ATP.
+
+The automation deliberately does not simulate etcd failure or delete etcd data. For two-node-with-fencing clusters, automatic quorum-guard handling is unsupported and the task aborts before changes.
