@@ -84,7 +84,9 @@ Both formats contain a run summary and per-test records. TC-23 is the first case
 
 ## TC-22: logging API version compatibility
 
-TC-22 no longer assumes that the legacy `ClusterLogging` custom resource exists. It queries both the Logging 5 APIs (`ClusterLogging` and `ClusterLogForwarder` in `logging.openshift.io`) and the Logging 6 `ClusterLogForwarder` API in `observability.openshift.io`. The case passes only when at least one supported configuration resource is returned and the logging pods in `openshift-logging` are all Running and ready. Missing API groups remain visible in the report evidence, while their absence alone does not fail a newer logging installation.
+TC-22 reads the actual release from `oc get clusterversion version` and selects the API checks by OpenShift version. On OCP 4.19 and later, it queries only `ClusterLogForwarder` in `observability.openshift.io`; it does not query legacy `ClusterLogging` or `logging.openshift.io` APIs. On earlier releases, it checks the legacy APIs and retains the modern `ClusterLogForwarder` as a compatibility fallback. All versions also require logging pods in `openshift-logging` to be Running and ready. If release detection fails, TC-22 fails with the version query evidence instead of guessing which API to use.
+
+The API removal is associated with Red Hat OpenShift Logging 6, whose API group is `observability.openshift.io`; the Logging operator has a release/support cadence distinct from the OpenShift Container Platform release. The ATP applies the requested 4.19 version threshold to select the API policy.
 
 If the case fails, inspect the API group available on the cluster, the matching resource status conditions, the Logging/Loki/Cluster Observability Operators, pod events, and container logs. Do not create a legacy CRD to satisfy the ATP.
 
