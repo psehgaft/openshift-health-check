@@ -69,7 +69,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml --tags "telco,networking,sri
 ```
 
 ### 2. Using Feature Toggles in `toolkits/openshift-atp/vars/main.yml` or CLI Extra Vars
-Automated cases can be selectively run with the documented `run_tc*` variables. TC-26 (cluster reboot), TC-27 (worker reboot), and TC-62 (etcd restore) are manual-only and always remain `Skipped` in this playbook; it does not execute these disruptive operations or mark them as passed without evidence.
+Automated cases can be selectively run with the documented `run_tc*` variables. TC-26 and TC-27 remain manual-only. TC-62 is opt-in and remains `Skipped` by default; it executes only when the operator supplies the exact restore confirmation and all preflight gates pass.
 
 ## Output Reports
 The playbook writes a Markdown report and a self-contained HTML report to `reports/` by default. Set `atp_report_dir` to change the destination.
@@ -88,3 +88,12 @@ If the case fails, inspect the API group available on the cluster, the matching 
 
 
 - **TC-53:** Creates or verifies ServiceAccount `atp-test` in `testproject`; an existing account is reported and left unchanged.
+
+
+## TC-64: must-gather and node sosreport
+
+TC-64 runs `oc adm must-gather` without the unsupported `--dry-run` option, packages its output, checks root access to a selected worker through `oc debug`, and runs a non-interactive `sos report` through `toolbox`. Both archives and their SHA-256 checksums are saved under the ATP report directory. Set `tc64_node_target` to choose a specific worker; otherwise the first worker is selected. These archives can contain sensitive cluster and host data, so protect the report directory and review it before sharing.
+
+## TC-67a: PVC, iSCSI, and multipath
+
+TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no SAN-backed volume or configured SAN class is found, the multipath-specific result is **Skipped / not applicable**; an inactive daemon by itself does not fail a cluster that does not use SAN. For SAN storage, it checks that a PVC is Bound, inspects `/etc/iscsi`, iSCSI sessions, `multipathd`, and `multipath -ll` on worker nodes, and requires active paths. Add vendor-specific SAN StorageClass names to `tc67a_san_storage_class_names` in `toolkits/openshift-atp/vars/main.yml` when PV type or CSI driver does not identify them.
