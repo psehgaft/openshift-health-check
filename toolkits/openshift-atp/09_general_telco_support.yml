@@ -31,20 +31,23 @@
 - name: "TC-64: Must-gather, SSH y sosreport"
   when: run_tc64_must_gather_sosreport | default(true) | bool
   block:
-    - name: "TC-64: Collect must-gather and sosreport artifacts"
+    - name: "TC-64: Collect and verify must-gather and sosreport archives"
       ansible.builtin.shell:
         cmd: |
           set -uo pipefail
           dest_dir="{{ atp_report_dir }}/{{ atp_report_basename }}-TC64-diagnostics"
           mkdir -p "$dest_dir"
+          dest_dir="$(cd "$dest_dir" && pwd -P)"
           must_gather_dir="$dest_dir/must-gather"
           must_gather_archive="$dest_dir/must-gather.tar.gz"
           must_gather_log="$dest_dir/must-gather.log"
-          must_gather_rc=0
+          sos_log="$dest_dir/sosreport.log"
+          must_gather_rc=1
           root_rc=1
           sos_rc=1
           copy_rc=1
           node="{{ tc64_node_target | default('') }}"
+          support_tools_image="{{ tc64_support_tools_image | default('registry.redhat.io/rhel9/support-tools:latest') }}"
 
           echo "== Collect OpenShift must-gather =="
           if timeout 45m oc adm must-gather --dest-dir="$must_gather_dir" --timeout=45m >"$must_gather_log" 2>&1; then
@@ -52,23 +55,32 @@
           else
             must_gather_rc=$?
           fi
-          cat "$must_gather_log"
+
           must_gather_files="$(find "$must_gather_dir" -type f 2>/dev/null | wc -l | tr -d ' ')"
           if [[ "$must_gather_rc" -eq 0 && "$must_gather_files" -gt 0 ]]; then
-            if tar -czf "$must_gather_archive" -C "$dest_dir" must-gather; then
+            if tar -czf "$must_gather_archive" -C "$dest_dir" must-gather >>"$must_gather_log" 2>&1 &&
+               [[ -s "$must_gather_archive" ]] &&
+               gzip -t "$must_gather_archive" >/dev/null 2>&1 &&
+               tar -tzf "$must_gather_archive" >/dev/null 2>&1; then
+              must_gather_size="$(du -h "$must_gather_archive" | awk '{print $1}')"
+              must_gather_sha="$(sha256sum "$must_gather_archive" | awk '{print $1}')"
+              echo "MUST_GATHER_RESULT=PASS"
               echo "Must-gather archive: $must_gather_archive"
-              ls -lh "$must_gather_archive"
-              sha256sum "$must_gather_archive"
-              if ! gzip -t "$must_gather_archive"; then
-                echo "Must-gather archive integrity check failed." >&2
-                must_gather_rc=1
-              fi
+              echo "Must-gather archive size: $must_gather_size"
+              echo "Must-gather SHA256: $must_gather_sha"
+              echo "Must-gather collected files: $must_gather_files"
+              echo "Must-gather command log: $must_gather_log"
             else
-              echo "Could not package the collected must-gather directory." >&2
+              echo "MUST_GATHER_RESULT=FAIL"
+              echo "Must-gather files were collected, but archive creation or integrity validation failed."
+              echo "Must-gather directory: $must_gather_dir"
+              echo "Must-gather command log: $must_gather_log"
               must_gather_rc=1
             fi
           else
-            echo "Must-gather did not produce files (command rc=$must_gather_rc, files=$must_gather_files)." >&2
+            echo "MUST_GATHER_RESULT=FAIL"
+            echo "Must-gather did not produce a successful non-empty collection (command rc=$must_gather_rc, files=$must_gather_files)."
+            echo "Must-gather command log: $must_gather_log"
             must_gather_rc=1
           fi
 
@@ -81,56 +93,68 @@
               node=""
             fi
           fi
+
           if [[ -n "$node" ]]; then
             echo "Selected node: $node"
             root_output="$(oc debug -q "node/$node" -- chroot /host id -u 2>&1)"
             root_rc=$?
-            echo "Host root check output: $root_output (exit code $root_rc)"
+            echo "Host root access: output=$root_output exit_code=$root_rc"
 
-            echo "== Generate sosreport through the node debug pod toolbox =="
-            sos_output="$(timeout 45m oc debug -q "node/$node" -- chroot /host toolbox run sos report --batch -k crio.all=on -k crio.logs=on -k podman.all=on -k podman.logs=on 2>&1)"
-            sos_rc=$?
-            echo "$sos_output"
-            archive_name="$(printf '%s\n' "$sos_output" | grep -Eo 'sosreport-[^/[:space:]]+\.tar\.(xz|gz|bz2|zst)' | tail -n 1)"
-            if [[ -z "$archive_name" ]]; then
-              archive_name="$(oc debug -q "node/$node" -- chroot /host find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar.*' -mmin -60 -printf '%f\n' 2>/dev/null | sort | tail -n 1)"
+            echo "== Generate sosreport using the support-tools image run label =="
+            toolbox_name="atp-sosreport-$(date +%s)-$$"
+            if timeout 45m oc debug -q "node/$node" -- chroot /host podman container runlabel --name "$toolbox_name" run "$support_tools_image" sos report -e openshift -e openshift_ovn -e openvswitch -e podman -e crio -k crio.all=on -k crio.logs=on -k podman.all=on -k podman.logs=on -k networking.ethtool-namespaces=off --batch --all-logs --plugin-timeout=600 >"$sos_log" 2>&1; then
+              sos_rc=0
+            else
+              sos_rc=$?
             fi
+            archive_name="$(grep -Eo 'sosreport-[^/[:space:]]+\.tar\.(xz|gz|bz2|zst)' "$sos_log" | tail -n 1)"
+            if [[ -z "$archive_name" ]]; then
+              archive_name="$(oc debug -q "node/$node" -- chroot /host find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar.*' -mmin -90 -printf '%f\n' 2>/dev/null | sort | tail -n 1)"
+            fi
+
             if [[ -n "$archive_name" ]]; then
-              echo "Node sosreport archive: /var/tmp/$archive_name"
-              if oc debug -q "node/$node" -- cat "/host/var/tmp/$archive_name" > "$dest_dir/$archive_name" && [[ -s "$dest_dir/$archive_name" ]]; then
-                echo "Copied sosreport: $dest_dir/$archive_name"
-                ls -lh "$dest_dir/$archive_name"
-                sha256sum "$dest_dir/$archive_name"
+              node_sos_path="/var/tmp/$archive_name"
+              local_sos_path="$dest_dir/$archive_name"
+              if oc debug -q "node/$node" -- cat "/host$node_sos_path" >"$local_sos_path" 2>"$dest_dir/sosreport-copy.log" && [[ -s "$local_sos_path" ]]; then
                 archive_valid=0
                 case "$archive_name" in
-                  *.tar.xz) xz -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *.tar.gz) gzip -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *.tar.bz2) bzip2 -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *.tar.zst) zstd -t "$dest_dir/$archive_name" || archive_valid=1 ;;
-                  *) echo "Unsupported sosreport archive format: $archive_name" >&2; archive_valid=1 ;;
+                  *.tar.xz) xz -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *.tar.gz) gzip -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *.tar.bz2) bzip2 -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *.tar.zst) zstd -t "$local_sos_path" >/dev/null 2>&1 || archive_valid=1 ;;
+                  *) archive_valid=1 ;;
                 esac
                 if [[ "$archive_valid" -eq 0 ]]; then
                   copy_rc=0
+                  echo "SOSREPORT_RESULT=PASS"
+                  echo "Node sosreport archive: $node_sos_path"
+                  echo "Saved sosreport archive: $local_sos_path"
+                  echo "sosreport archive size: $(du -h "$local_sos_path" | awk '{print $1}')"
+                  echo "sosreport SHA256: $(sha256sum "$local_sos_path" | awk '{print $1}')"
                 else
-                  echo "sosreport archive integrity check failed." >&2
-                  copy_rc=1
+                  echo "SOSREPORT_RESULT=FAIL"
+                  echo "Copied sosreport archive failed format/integrity validation: $local_sos_path"
                 fi
               else
-                echo "Could not copy a non-empty sosreport archive from the node." >&2
+                echo "SOSREPORT_RESULT=FAIL"
+                echo "Could not copy a non-empty sosreport archive from $node_sos_path."
               fi
             else
-              echo "sosreport archive was not found in the command output or host /var/tmp." >&2
+              echo "SOSREPORT_RESULT=FAIL"
+              echo "No sosreport archive was found in /var/tmp on node $node."
             fi
+            echo "sosreport command log: $sos_log"
           else
-            echo "No worker node was available for sosreport collection." >&2
+            echo "SOSREPORT_RESULT=FAIL"
+            echo "No worker node was available for sosreport collection."
           fi
 
-          echo "Artifacts directory: $dest_dir"
+          echo "TC64_ARTIFACTS_DIR=$dest_dir"
           if [[ "$must_gather_rc" -eq 0 && "$root_rc" -eq 0 && "$sos_rc" -eq 0 && "$copy_rc" -eq 0 ]]; then
             echo "TC64_RESULT=PASS"
             exit 0
           fi
-          echo "TC64_RESULT=FAIL (must-gather=$must_gather_rc root-access=$root_rc sosreport=$sos_rc archive-copy=$copy_rc)" >&2
+          echo "TC64_RESULT=FAIL (must-gather=$must_gather_rc root-access=$root_rc sosreport-command=$sos_rc sosreport-copy-and-validation=$copy_rc)" >&2
           exit 1
         executable: /bin/bash
       register: tc64_cmd
@@ -145,12 +169,12 @@
           'id': 'TC-64',
           'name': 'Must-gather, SSH y sosreport',
           'category': 'General Support / Telco',
-          'expected': 'A non-empty must-gather archive and a non-empty, valid sosreport archive are generated and saved under the ATP report directory; debug access reaches host root',
-          'status': ('Pass' if tc64_cmd.rc == 0 else 'Fail'),
-          'procedure': 'Run oc adm must-gather with the supported command and timeout; access a worker host through oc debug and chroot /host; run sos report non-interactively through toolbox; copy both diagnostic archives to the ATP report directory and record their SHA-256 checksums',
-          'evidence': ((tc64_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc64_cmd.stderr | default(''))) if (tc64_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc64_cmd.rc | string) if tc64_cmd.rc is defined else '')),
-          'details': 'Diagnostic artifacts are saved under ' ~ (atp_report_dir | string) ~ '; inspect the captured archive paths and checksums.',
-          'remediation': 'Review must-gather logs and the selected node debug output. Confirm cluster-admin permissions, image access for the default must-gather/toolbox images, sufficient disk space, and node scheduling. Resolve the failing stage and rerun; the playbook does not upload diagnostic archives.'
+          'expected': 'Must-gather and sosreport archives are successfully generated, integrity-checked, and saved in the TC-64 diagnostics directory; debug access reaches host root',
+          'status': ('Pass' if (tc64_cmd.rc == 0 and 'TC64_RESULT=PASS' in (tc64_cmd.stdout | default(''))) else 'Fail'),
+          'procedure': 'Generate and validate the must-gather archive; verify root access through oc debug; generate sosreport using the Red Hat support-tools image run label; copy and validate the sosreport archive.',
+          'evidence': ((tc64_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc64_cmd.stderr | default(''))) if (tc64_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc64_cmd.rc | string) if tc64_cmd.rc is defined else '')),
+          'details': 'Must-gather result and archive path, sosreport result and archive path, and the diagnostics directory are printed in the concise execution evidence.',
+          'remediation': 'For must-gather, verify oc authentication/RBAC, plugin image pull access, disk space, and the saved must-gather.log; Pass requires a successful command plus a non-empty archive that passes gzip and tar integrity checks. For sosreport, verify node debug access, access to registry.redhat.io/rhel9/support-tools (or a configured mirror), Podman run-label support, sufficient node/controller disk space, and the saved sosreport.log; Pass also requires host-root access and a copied, non-empty, valid sosreport archive.'
         }] }}"
   tags: ['general', 'telco', 'tc64', 'must_gather']
 
