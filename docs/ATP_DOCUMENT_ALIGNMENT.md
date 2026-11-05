@@ -8,6 +8,8 @@ The report retains all source test cases. TC-23 runs first to ensure `testprojec
 
 ## Procedure corrections and added evidence
 
+- **TC-53:** Creates or verifies ServiceAccount `atp-test` in `testproject`. If the account already exists, the task reports that state and does not modify it.
+
 - **TC-15:** Runs `crictl ps` through `oc debug -q`, matching the documented container-list check.
 - **TC-17:** Captures the last hour of logs through the Kubernetes API for the API server, controller manager, and scheduler.
 - **TC-18:** Records the internal registry's `.svc` DNS name and also probes a configured or discovered external registry API, including robot authentication when credentials are supplied.
