@@ -108,11 +108,25 @@ TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no 
 TC-55 reads the API server URL from the active kubeconfig, then validates that endpoint’s TLS chain, hostname SAN, and remaining validity (`atp_api_cert_min_validity_days`, default: 7 days). It uses `oc config view --raw --flatten --minify` so both embedded `certificate-authority-data` and a kubeconfig `certificate-authority` file path can be used. If the flattened view has no CA, verify the active `KUBECONFIG` and context, or set `atp_api_cert_ca_path` to a PEM CA bundle on the Ansible controller. The task fails rather than skipping TLS trust validation. Keep TLS verification enabled; do not use an insecure bypass. This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold or optional CA path in `toolkits/openshift-atp/vars/main.yml` or as Ansible extra vars.
 
 
-## TC-28: install and verify sample-operator
+## TC-28: install and verify the Self Node Remediation Operator
 
-TC-28 applies the supplied Subscription for package `sample-operator` from the `redhat-operators` CatalogSource, channel `stable`, in `openshift-operators`. Reapplying the Subscription is safe. The task waits up to ten minutes for `.status.installedCSV` to appear and that ClusterServiceVersion to reach `Succeeded`; catalog availability or a created Subscription alone does not count as Pass. The report captures the Subscription and CSV YAML on success, and diagnostic Subscription/CSV output on failure.
+The previous test subscribed to package `sample-operator`, which is not present in the healthy `redhat-operators` catalog. That is why OLM reported `ConstraintsNotSatisfiable` and never populated `.status.installedCSV`.
 
-This is the automated variant requested for the sample operator. The ATP source document’s 3scale OperatorHub procedure is retained in the report as a reference and is not evidence that 3scale was installed.
+TC-28 now installs package `self-node-remediation` from the `redhat-operators` CatalogSource, channel `stable`, in the dedicated `openshift-workload-availability` namespace. The playbook applies the Namespace, OperatorGroup, and Subscription declaratively, waits up to ten minutes for the installed ClusterServiceVersion (CSV) to reach `Succeeded`, then waits for the controller Deployment and remediation DaemonSet rollout. It also confirms the default `SelfNodeRemediationConfig` and `SelfNodeRemediationTemplate` exist, and checks that the DaemonSet is Ready on every targeted node.
+
+The case is a deployment and readiness check only. It does not create a remediation request or simulate a node failure, because those actions can reboot nodes. Catalog health or a created Subscription alone does not count as Pass. On failure, the task reports Subscription resolution conditions, CSV/InstallPlan diagnostics, and workload status.
+
+Run these read-only commands to inspect the same resources manually:
+
+```bash
+oc get subscription self-node-remediation -n openshift-workload-availability
+oc get csv -n openshift-workload-availability
+oc get deployment,selfnoderemediationconfig,selfnoderemediationtemplate,daemonset,pods -n openshift-workload-availability
+```
+
+The original ATP source referenced 3scale. TC-28's implemented target is now Self Node Remediation Operator, as requested; the test report states that automated scope explicitly.
+
+Reference: [Red Hat Workload Availability for OpenShift — Installing Self Node Remediation Operator](https://docs.redhat.com/en/documentation/workload_availability_for_red_hat_openshift/26.2/html/remediation_fencing_and_maintenance/self-node-remediation-operator-remediate-nodes).
 
 ## TC-51: self-provisioner security check
 
