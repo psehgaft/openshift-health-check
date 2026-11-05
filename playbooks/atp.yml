@@ -33,38 +33,10 @@
       when: oc_whoami_check.rc != 0
       tags: ['always', 'general', 'telco']
 
-    - name: "Check for the ATP test project"
-      ansible.builtin.command: oc get project testproject -o name
-      register: atp_testproject_check
-      changed_when: false
-      failed_when: false
-      tags: ['always', 'general', 'telco']
-
-    - name: "Create testproject before ATP cases when it is absent"
-      ansible.builtin.command: oc new-project testproject --description="ATP Test Project"
-      register: atp_testproject_create
-      when: atp_testproject_check.rc != 0
-      changed_when: atp_testproject_create.rc == 0
-      tags: ['always', 'general', 'telco']
-
-    - name: "Record ATP test project setup evidence"
-      ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'ATP-SETUP-01',
-          'name': 'Ensure ATP test project exists',
-          'category': 'ATP Setup',
-          'expected': 'Project testproject exists before ATP test cases start',
-          'status': 'Pass',
-          'procedure': 'oc get project testproject -o name; if absent, oc new-project testproject --description="ATP Test Project"',
-          'evidence': (('Existing project: ' ~ atp_testproject_check.stdout) if atp_testproject_check.rc == 0 else (atp_testproject_create.stdout | default('Project testproject created'))),
-          'details': ('Project already existed: ' ~ atp_testproject_check.stdout) if atp_testproject_check.rc == 0 else 'Project created before ATP test cases.'
-        }] }}"
-      tags: ['always', 'general', 'telco']
-
   tasks:
     - name: "Execute ATP Main Task Loader"
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../toolkits/openshift-atp/main.yml"
-      tags: ['general', 'telco', 'atp']
+      tags: ['general', 'telco', 'atp', 'tc23']
 
   post_tasks:
     - name: "Record completion timestamp"
