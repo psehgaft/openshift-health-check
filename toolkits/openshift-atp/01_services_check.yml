@@ -621,20 +621,8 @@
           fi
           echo "Internal registry storage backend: $storage"
         else
-          if [[ -z "{{ atp_external_registry_effective_url }}" ]]; then
-            echo "Internal storage is not configured and no external registry URL was configured or discovered. Set atp_external_registry_url to check an external registry."
-            exit 2
-          fi
-          node="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
-          if [[ -z "$node" ]]; then
-            echo "No worker node found to check the configured external registry" >&2
-            exit 1
-          fi
-          echo "Internal registry is absent; checking {{ atp_external_registry_effective_url }} from worker $node."
-          echo "External registry API availability does not expose its storage backend. Verify persistence with an authenticated push and pull or the registry provider's storage health check."
-          status="$(oc debug -q "node/$node" -- chroot /host curl --connect-timeout 10 --max-time 20 -sS -o /dev/null -w '%{http_code}' "{{ atp_external_registry_effective_url }}/v2/")"
-          echo "External registry API HTTP status: $status"
-          [[ "$status" == "200" || "$status" == "401" ]]
+          echo "TC20_RESULT=SKIPPED_EXTERNAL_ONLY: No internal image-registry service is configured; internal registry storage validation is not applicable. External registry storage is managed by its provider and cannot be inspected through the OpenShift Image Registry Operator. Validate persistence with the registry owner's storage health checks or an authenticated push/pull test."
+          exit 0
         fi
       args:
         executable: /bin/bash
@@ -644,7 +632,7 @@
 
     - name: "TC-20: Classify registry storage result"
       ansible.builtin.set_fact:
-        tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default('')) else 'Skipped' if (tc20_cmd.rc == 0 and 'External registry API availability does not expose its storage backend' in (tc20_cmd.stdout | default(''))) or (tc20_cmd.rc == 2 and 'no external registry URL' in (tc20_cmd.stdout | default('') | lower)) else 'Fail' }}"
+        tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default('')) else 'Skipped' if (tc20_cmd.rc == 0 and 'TC20_RESULT=SKIPPED_EXTERNAL_ONLY' in (tc20_cmd.stdout | default(''))) or (tc20_cmd.rc == 2 and 'no external registry URL' in (tc20_cmd.stdout | default('') | lower)) else 'Fail' }}"
 
     - name: "TC-20: Build Result Record"
       ansible.builtin.set_fact:
@@ -777,7 +765,28 @@
       ansible.builtin.shell:
         cmd: |
           set -euo pipefail
-          oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?] | length > 0) and ([.status.containerStatuses[]? | select(.ready == true)] | length == ([.status.containerStatuses[]?] | length)))'
+          oc get pods -n openshift-logging -o json | python3 -c '
+          import json
+          import sys
+          data = json.load(sys.stdin)
+          pods = data.get("items") or []
+          failures = []
+          for pod in pods:
+            metadata = pod.get("metadata") or {}
+            status = pod.get("status") or {}
+            containers = status.get("containerStatuses") or []
+            unready = [container.get("name", "<unknown>") for container in containers if container.get("ready") is not True]
+            if status.get("phase") != "Running" or not containers or unready:
+              failures.append((metadata.get("name", "<unknown>"), status.get("phase", "Unknown"), unready))
+          if not pods:
+            print("FAIL: no pods found in openshift-logging.", file=sys.stderr)
+            sys.exit(1)
+          if failures:
+            for name, phase, unready in failures:
+              print("NOT_READY pod=%s phase=%s unready_containers=%s" % (name, phase, ",".join(unready) or "none"), file=sys.stderr)
+            sys.exit(1)
+          print("PASS: all %s pods in openshift-logging are Running and every container is ready." % len(pods))
+          '
         executable: /bin/bash
       register: tc22_ready_cmd
       changed_when: false
