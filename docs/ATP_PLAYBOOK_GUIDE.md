@@ -100,7 +100,7 @@ TC-64 runs `oc adm must-gather`, packages and integrity-checks the result, verif
 
 ## TC-67a: PVC, iSCSI, and multipath
 
-TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no SAN-backed volume or configured SAN class is found, the multipath-specific result is **Skipped / not applicable**; an inactive daemon by itself does not fail a cluster that does not use SAN. For SAN storage, it checks that a PVC is Bound, inspects `/etc/iscsi`, iSCSI sessions, `multipathd`, and `multipath -ll` on worker nodes, and requires active paths. Add vendor-specific SAN StorageClass names to `tc67a_san_storage_class_names` in `toolkits/openshift-atp/vars/main.yml` when PV type or CSI driver does not identify them.
+TC-67a inventories Bound PVCs, PV volume types, and StorageClasses. It auto-detects SAN classes from common names (such as `iscsi`, `fibre`, `fc`, or `san`), CSI provisioner metadata, and protocol parameters, then correlates the classes with PVs and PVCs. If no SAN-backed PV or SAN StorageClass is found, the multipath-specific result is **Skipped / not applicable**; an inactive daemon by itself does not fail a cluster that does not use SAN. For detected SAN storage, it checks that a PVC is Bound and inspects `/etc/iscsi`, iSCSI sessions, `multipathd`, and `multipath -ll` on workers. A Pass requires accessible host diagnostics, active multipathd, and active/ready paths (plus an active iSCSI session for iSCSI-backed storage). Custom StorageClass names whose CSI metadata does not identify SAN must be listed explicitly in `tc67a_san_storage_class_names` in `toolkits/openshift-atp/vars/main.yml`; for example, `tc67a_san_storage_class_names: ["custom-san-sc"]`.
 
 
 ## TC-55: API certificate validation
@@ -108,12 +108,37 @@ TC-67a first inventories Bound PVCs, PV volume types, and StorageClasses. If no 
 TC-55 reads the API server URL from the active kubeconfig, then validates that endpoint’s TLS chain, hostname SAN, and remaining validity (`atp_api_cert_min_validity_days`, default: 7 days). It uses `oc config view --raw --flatten --minify` so both embedded `certificate-authority-data` and a kubeconfig `certificate-authority` file path can be used. If the flattened view has no CA, verify the active `KUBECONFIG` and context, or set `atp_api_cert_ca_path` to a PEM CA bundle on the Ansible controller. The task fails rather than skipping TLS trust validation. Keep TLS verification enabled; do not use an insecure bypass. This replaces a brittle subject-string search that failed on normal OpenSSL output formatting. Set the threshold or optional CA path in `toolkits/openshift-atp/vars/main.yml` or as Ansible extra vars.
 
 
-## TC-28: install and verify sample-operator
+## TC-28: install and verify the Self Node Remediation Operator
 
-TC-28 applies the supplied Subscription for package `sample-operator` from the `redhat-operators` CatalogSource, channel `stable`, in `openshift-operators`. Reapplying the Subscription is safe. The task waits up to ten minutes for `.status.installedCSV` to appear and that ClusterServiceVersion to reach `Succeeded`; catalog availability or a created Subscription alone does not count as Pass. The report captures the Subscription and CSV YAML on success, and diagnostic Subscription/CSV output on failure.
+The previous test subscribed to package `sample-operator`, which is not present in the healthy `redhat-operators` catalog. That is why OLM reported `ConstraintsNotSatisfiable` and never populated `.status.installedCSV`.
 
-This is the automated variant requested for the sample operator. The ATP source document’s 3scale OperatorHub procedure is retained in the report as a reference and is not evidence that 3scale was installed.
+TC-28 now installs package `self-node-remediation` from the `redhat-operators` CatalogSource, channel `stable`, in the dedicated `openshift-workload-availability` namespace. The playbook applies the Namespace, OperatorGroup, and Subscription declaratively, waits up to ten minutes for the installed ClusterServiceVersion (CSV) to reach `Succeeded`, then waits for the controller Deployment and remediation DaemonSet rollout. It also confirms the default `SelfNodeRemediationConfig` and `SelfNodeRemediationTemplate` exist, and checks that the DaemonSet is Ready on every targeted node.
+
+The case is a deployment and readiness check only. It does not create a remediation request or simulate a node failure, because those actions can reboot nodes. Catalog health or a created Subscription alone does not count as Pass. On failure, the task reports Subscription resolution conditions, CSV/InstallPlan diagnostics, and workload status.
+
+Run these read-only commands to inspect the same resources manually:
+
+```bash
+oc get subscription self-node-remediation -n openshift-workload-availability
+oc get csv -n openshift-workload-availability
+oc get deployment,selfnoderemediationconfig,selfnoderemediationtemplate,daemonset,pods -n openshift-workload-availability
+```
+
+The original ATP source referenced 3scale. TC-28's implemented target is now Self Node Remediation Operator, as requested; the test report states that automated scope explicitly.
+
+Reference: [Red Hat Workload Availability for OpenShift — Installing Self Node Remediation Operator](https://docs.redhat.com/en/documentation/workload_availability_for_red_hat_openshift/26.2/html/remediation_fencing_and_maintenance/self-node-remediation-operator-remediate-nodes).
 
 ## TC-51: self-provisioner security check
 
 TC-51 inspects all ClusterRoleBindings that reference the `self-provisioner` role and verifies that none includes the `system:authenticated:oauth` group. It allows a binding to remain for a different group, such as `self-provisioners`. The check is read-only: it does not modify RBAC. If the authenticated OAuth group is present, the report lists the affected binding and recommends removing that group with the documented `oc adm policy remove-cluster-role-from-group` command. If the group is absent but the default `self-provisioners` binding has `rbac.authorization.kubernetes.io/autoupdate=true`, the ATP remains Pass for the current state and adds a comment with the recommended `oc annotate ... autoupdate=false` command; Red Hat documents that default reconciliation can restore subjects.
+
+## Cluster identity and DNS examples
+
+The ATP uses a generic `cluster_name: "cluster"` default. Certificate procedures use
+`<cluster_name>` and `<domain>` placeholders rather than environment-specific hostnames.
+When running the procedure, replace `<domain>` with the cluster's configured DNS base
+domain and use the same cluster name configured for its API and ingress endpoints.
+
+Keep shared case definitions environment-neutral. Store site-specific hostnames and DNS
+domains in the execution inventory or runtime variables rather than in the reusable ATP
+catalog.
