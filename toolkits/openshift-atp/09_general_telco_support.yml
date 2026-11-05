@@ -31,11 +31,102 @@
 - name: "TC-64: Must-gather, SSH y sosreport"
   when: run_tc64_must_gather_sosreport | default(true) | bool
   block:
-    - name: "TC-64: Test oc adm must-gather image availability"
-      ansible.builtin.command: oc adm must-gather --image-stream=openshift/must-gather --dry-run
+    - name: "TC-64: Collect must-gather and sosreport artifacts"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        dest_dir="{{ atp_report_dir }}/{{ atp_report_basename }}-TC64-diagnostics"
+        mkdir -p "$dest_dir"
+        must_gather_dir="$dest_dir/must-gather"
+        must_gather_archive="$dest_dir/must-gather.tar.gz"
+        must_gather_log="$dest_dir/must-gather.log"
+        must_gather_rc=0
+        root_rc=1
+        sos_rc=1
+        copy_rc=1
+        node="{{ tc64_node_target | default('') }}"
+
+        echo "== Collect OpenShift must-gather =="
+        if timeout 45m oc adm must-gather --dest-dir="$must_gather_dir" --timeout=45m >"$must_gather_log" 2>&1; then
+          must_gather_rc=0
+        else
+          must_gather_rc=$?
+        fi
+        cat "$must_gather_log"
+        must_gather_files="$(find "$must_gather_dir" -type f 2>/dev/null | wc -l | tr -d ' ')"
+        if [[ "$must_gather_rc" -eq 0 && "$must_gather_files" -gt 0 ]]; then
+          if tar -czf "$must_gather_archive" -C "$dest_dir" must-gather; then
+            echo "Must-gather archive: $must_gather_archive"
+            ls -lh "$must_gather_archive"
+            sha256sum "$must_gather_archive"
+          else
+            echo "Could not package the collected must-gather directory." >&2
+            must_gather_rc=1
+          fi
+        else
+          echo "Must-gather did not produce files (command rc=$must_gather_rc, files=$must_gather_files)." >&2
+          must_gather_rc=1
+        fi
+
+        echo "== Select a worker node for host diagnostics =="
+        if [[ -z "$node" ]]; then
+          node="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}' 2>&1)"
+          node_lookup_rc=$?
+          if [[ "$node_lookup_rc" -ne 0 || -z "$node" ]]; then
+            echo "Could not discover a worker node: $node" >&2
+            node=""
+          fi
+        fi
+        if [[ -n "$node" ]]; then
+          echo "Selected node: $node"
+          root_output="$(oc debug -q "node/$node" -- chroot /host id -u 2>&1)"
+          root_rc=$?
+          echo "Host root check output: $root_output (exit code $root_rc)"
+
+          echo "== Generate sosreport through the node debug pod toolbox =="
+          sos_output="$(timeout 45m oc debug -q "node/$node" -- chroot /host toolbox run sos report --batch -k crio.all=on -k crio.logs=on -k podman.all=on -k podman.logs=on 2>&1)"
+          sos_rc=$?
+          echo "$sos_output"
+          archive_name="$(printf '%s\n' "$sos_output" | grep -Eo 'sosreport-[^/[:space:]]+\.tar\.(xz|gz|bz2|zst)' | tail -n 1)"
+          if [[ -z "$archive_name" ]]; then
+            archive_name="$(oc debug -q "node/$node" -- chroot /host find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar.*' -mmin -60 -printf '%f\n' 2>/dev/null | sort | tail -n 1)"
+          fi
+          if [[ -n "$archive_name" ]]; then
+            echo "Node sosreport archive: /var/tmp/$archive_name"
+            if oc debug -q "node/$node" -- cat "/host/var/tmp/$archive_name" > "$dest_dir/$archive_name" && [[ -s "$dest_dir/$archive_name" ]]; then
+              copy_rc=0
+              echo "Copied sosreport: $dest_dir/$archive_name"
+              ls -lh "$dest_dir/$archive_name"
+              sha256sum "$dest_dir/$archive_name"
+              case "$archive_name" in
+                *.tar.xz) xz -t "$dest_dir/$archive_name" ;;
+                *.tar.gz) gzip -t "$dest_dir/$archive_name" ;;
+                *.tar.bz2) bzip2 -t "$dest_dir/$archive_name" ;;
+                *.tar.zst) zstd -t "$dest_dir/$archive_name" ;;
+              esac
+            else
+              echo "Could not copy a non-empty sosreport archive from the node." >&2
+            fi
+          else
+            echo "sosreport archive was not found in the command output or host /var/tmp." >&2
+          fi
+        else
+          echo "No worker node was available for sosreport collection." >&2
+        fi
+
+        echo "Artifacts directory: $dest_dir"
+        if [[ "$must_gather_rc" -eq 0 && "$root_rc" -eq 0 && "$sos_rc" -eq 0 && "$copy_rc" -eq 0 ]]; then
+          echo "TC64_RESULT=PASS"
+          exit 0
+        fi
+        echo "TC64_RESULT=FAIL (must-gather=$must_gather_rc root-access=$root_rc sosreport=$sos_rc archive-copy=$copy_rc)" >&2
+        exit 1
+      args:
+        executable: /bin/bash
       register: tc64_cmd
       changed_when: false
       failed_when: false
+      async: 5400
+      poll: 10
 
     - name: "TC-64: Record Result"
       ansible.builtin.set_fact:
@@ -43,11 +134,12 @@
           'id': 'TC-64',
           'name': 'Must-gather, SSH y sosreport',
           'category': 'General Support / Telco',
-          'expected': 'Diagnostic must-gather and sosreport collection operational',
+          'expected': 'A non-empty must-gather archive and a non-empty, valid sosreport archive are generated and saved under the ATP report directory; debug access reaches host root',
           'status': ('Pass' if tc64_cmd.rc == 0 else 'Fail'),
-          'procedure': (tc64_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc64_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc64_cmd.stderr | default(''))) if (tc64_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc64_cmd.rc | string) if tc64_cmd.rc is defined else '')),
-          'details': 'Support diagnostic tooling validated'
+          'procedure': 'Run oc adm must-gather with the supported command and timeout; access a worker host through oc debug and chroot /host; run sos report non-interactively through toolbox; copy both diagnostic archives to the ATP report directory and record their SHA-256 checksums',
+          'evidence': ((tc64_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc64_cmd.stderr | default(''))) if (tc64_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc64_cmd.rc | string) if tc64_cmd.rc is defined else '')),
+          'details': 'Diagnostic artifacts are saved under ' ~ (atp_report_dir | string) ~ '; inspect the captured archive paths and checksums.',
+          'remediation': 'Review must-gather logs and the selected node debug output. Confirm cluster-admin permissions, image access for the default must-gather/toolbox images, sufficient disk space, and node scheduling. Resolve the failing stage and rerun; the playbook does not upload diagnostic archives.'
         }] }}"
   tags: ['general', 'telco', 'tc64', 'must_gather']
 
@@ -105,10 +197,108 @@
 - name: "TC-67a: Storage (PVC, iSCSI y Multipath)"
   when: run_tc67a_storage_iscsi_multipath | default(true) | bool
   block:
-    - name: "TC-67a: Check multipathd and iscsid on worker node"
-      ansible.builtin.shell: >
-        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
-        oc debug node/${NODE} -- chroot /host systemctl is-active multipathd
+    - name: "TC-67a: Check bound PVCs, SAN configuration, and worker multipath paths"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        san_classes="{{ tc67a_san_storage_class_names | default([]) | join(',') }}"
+        worker_json="$(oc get nodes -l node-role.kubernetes.io/worker -o json 2>&1)"
+        worker_rc=$?
+        pv_json="$(oc get pv -o json 2>&1)"
+        pv_rc=$?
+        pvc_json="$(oc get pvc -A -o json 2>&1)"
+        pvc_rc=$?
+        sc_json="$(oc get storageclass -o json 2>&1)"
+        sc_rc=$?
+
+        echo "== Bound PVC inventory =="
+        if [[ "$pvc_rc" -eq 0 ]]; then
+          printf '%s\n' "$pvc_json" | jq -r '.items[] | select(.status.phase == "Bound") | [.metadata.namespace, .metadata.name, .spec.storageClassName, .spec.volumeName] | @tsv'
+          all_bound_pvc_count="$(printf '%s' "$pvc_json" | jq '[.items[] | select(.status.phase == "Bound")] | length')"
+        else
+          echo "$pvc_json" >&2
+          exit 1
+        fi
+
+        if [[ "$worker_rc" -ne 0 || "$pv_rc" -ne 0 || "$sc_rc" -ne 0 ]]; then
+          echo "Could not query workers, PVs, or StorageClasses."
+          echo "$worker_json"
+          echo "$pv_json"
+          echo "$sc_json"
+          exit 1
+        fi
+        worker_names="$(printf '%s' "$worker_json" | jq -r '.items[].metadata.name')"
+        if [[ -z "$worker_names" ]]; then
+          echo "No worker nodes were found."
+          exit 1
+        fi
+
+        san_pvs="$(printf '%s' "$pv_json" | jq -c --arg csv "$san_classes" '($csv | split(",")) as $classes | [.items[] | select((.spec.iscsi != null) or (.spec.fc != null) or (((.spec.csi.driver // "") | test("iscsi|fibre|fibrechannel|netapp-san|pure-fc"; "i"))) or ((.spec.storageClassName // "") as $sc | ($sc != "" and ($classes | index($sc)) != null))) | {name: .metadata.name, phase: .status.phase, storageClass: .spec.storageClassName, claimNamespace: .spec.claimRef.namespace, claimName: .spec.claimRef.name, iscsi: (.spec.iscsi != null)}]')"
+        san_sc_matches="$(printf '%s' "$sc_json" | jq -c --arg csv "$san_classes" '($csv | split(",")) as $classes | [.items[].metadata.name as $sc | select($sc != "" and ($classes | index($sc)) != null) | $sc]')"
+        san_pv_count="$(printf '%s' "$san_pvs" | jq 'length')"
+        san_sc_count="$(printf '%s' "$san_sc_matches" | jq 'length')"
+        echo "Configured SAN storage classes: $san_sc_matches"
+        echo "SAN-related PVs: $san_pvs"
+        if [[ "$san_pv_count" -eq 0 && "$san_sc_count" -eq 0 ]]; then
+          echo "TC67A_RESULT=NOT_APPLICABLE: no iSCSI/FC/SAN PV or configured SAN StorageClass was detected."
+          echo "Worker multipathd state is not a failure when this cluster has no SAN-backed storage."
+          exit 3
+        fi
+
+        san_pv_names="$(printf '%s' "$san_pvs" | jq -r '.[] | select(.phase == "Bound" and .claimName != null) | .name')"
+        san_bound_pvc_count=0
+        while IFS= read -r pv_name; do
+          [[ -n "$pv_name" ]] || continue
+          mapped_count="$(printf '%s' "$pvc_json" | jq --arg pv "$pv_name" '[.items[] | select(.status.phase == "Bound" and .spec.volumeName == $pv)] | length')"
+          san_bound_pvc_count=$((san_bound_pvc_count + mapped_count))
+        done <<< "$san_pv_names"
+        echo "Bound PVCs using SAN PVs: $san_bound_pvc_count (all Bound PVCs in cluster: $all_bound_pvc_count)"
+        if [[ "$san_bound_pvc_count" -eq 0 ]]; then
+          echo "SAN is configured but no bound PVC is using a SAN-backed PV."
+          exit 1
+        fi
+
+        worker_count=0
+        worker_failures=0
+        active_path_nodes=0
+        iscsi_session_nodes=0
+        iscsi_pv_count="$(printf '%s' "$san_pvs" | jq '[.[] | select(.iscsi == true)] | length')"
+        while IFS= read -r node; do
+          [[ -n "$node" ]] || continue
+          worker_count=$((worker_count + 1))
+          echo "== Worker $node: /etc/iscsi, multipathd, and multipath -ll =="
+          node_output="$(oc debug -q "node/$node" -- chroot /host bash -lc '
+            echo "multipathd: $(systemctl is-active multipathd 2>&1)"
+            systemctl is-active multipathd >/dev/null 2>&1 || exit 11
+            echo "-- /etc/iscsi --"
+            if [[ -d /etc/iscsi ]]; then ls -la /etc/iscsi; else echo "/etc/iscsi is absent"; fi
+            echo "-- iSCSI sessions --"
+            iscsiadm -m session 2>&1 || true
+            echo "-- multipath -ll --"
+            multipath -ll 2>&1
+          ' 2>&1)"
+          node_rc=$?
+          printf '%s\n' "$node_output"
+          if [[ "$node_rc" -ne 0 ]]; then
+            worker_failures=$((worker_failures + 1))
+          fi
+          if printf '%s' "$node_output" | grep -Eq 'active[[:space:]]+ready[[:space:]]+running'; then
+            active_path_nodes=$((active_path_nodes + 1))
+          fi
+          if printf '%s' "$node_output" | grep -Eq 'tcp:|iser:'; then
+            iscsi_session_nodes=$((iscsi_session_nodes + 1))
+          elif [[ "$iscsi_pv_count" -gt 0 ]]; then
+            echo "No iSCSI session evidence found on $node."
+          fi
+        done <<< "$worker_names"
+
+        echo "Workers inspected: $worker_count; workers with multipath paths active/ready/running: $active_path_nodes; workers with iSCSI sessions: $iscsi_session_nodes; worker command failures: $worker_failures"
+        if [[ "$worker_count" -eq 0 || "$worker_failures" -gt 0 || "$active_path_nodes" -eq 0 || ( "$iscsi_pv_count" -gt 0 && "$iscsi_session_nodes" -eq 0 ) ]]; then
+          echo "TC67A_RESULT=FAIL: configured SAN storage requires an active multipath daemon and at least one active/ready/running path."
+          exit 1
+        fi
+        echo "TC67A_RESULT=PASS"
+      args:
+        executable: /bin/bash
       register: tc67a_cmd
       changed_when: false
       failed_when: false
@@ -119,11 +309,12 @@
           'id': 'TC-67a',
           'name': 'Storage (PVC, iSCSI y Multipath)',
           'category': 'General Support / Telco',
-          'expected': 'Multipath daemon active on worker nodes for SAN storage',
-          'status': ('Pass' if (tc67a_cmd.rc == 0 and 'active' in tc67a_cmd.stdout) else 'Fail'),
-          'procedure': (tc67a_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc67a_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc67a_cmd.stderr | default(''))) if (tc67a_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc67a_cmd.rc | string) if tc67a_cmd.rc is defined else '')),
-          'details': 'multipathd status: ' ~ tc67a_cmd.stdout | default('Inactive') | trim
+          'expected': 'When SAN storage is configured, a SAN-backed PVC is Bound; worker nodes report multipathd active and at least one active/ready/running path. For iSCSI-backed PVs, an active iSCSI session is also detected. If no SAN storage is configured, the multipath-specific check is not applicable.',
+          'status': ('Skipped' if tc67a_cmd.rc == 3 else 'Pass' if tc67a_cmd.rc == 0 else 'Fail'),
+          'procedure': 'Query Bound PVCs, PV volume types and configured SAN StorageClasses; on every worker inspect /etc/iscsi, iscsid sessions, multipathd, and multipath -ll through oc debug node/<worker> -- chroot /host.',
+          'evidence': ((tc67a_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc67a_cmd.stderr | default(''))) if (tc67a_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc67a_cmd.rc | string) if tc67a_cmd.rc is defined else '')),
+          'details': tc67a_cmd.stdout | default(tc67a_cmd.stderr) | truncate(300),
+          'remediation': 'For SAN-backed storage, verify StorageClass/PVC/PV binding, iSCSI target sessions or FC connectivity, multipath configuration and daemon state on eligible workers, and active/ready paths. Check the SAN CSI driver documentation and node placement before changing host services. Do not enable multipathd when the cluster does not use SAN.'
         }] }}"
   tags: ['general', 'telco', 'tc67a', 'multipath']
 
