@@ -1,0 +1,49 @@
+---
+- name: "External registry probe: validate robot credential pair"
+  ansible.builtin.set_fact:
+    atp_external_registry_auth_configured: "{{ atp_external_registry_robot_username | default('') | length > 0 and atp_external_registry_robot_token | default('') | length > 0 }}"
+    atp_external_registry_auth_pair_valid: "{{ (atp_external_registry_robot_username | default('') | length == 0 and atp_external_registry_robot_token | default('') | length == 0) or (atp_external_registry_robot_username | default('') | length > 0 and atp_external_registry_robot_token | default('') | length > 0) }}"
+
+- name: "External registry probe: request OCI v2 API"
+  ansible.builtin.uri:
+    url: "{{ atp_external_registry_effective_url }}/v2/"
+    method: GET
+    url_username: "{{ atp_external_registry_robot_username | default('') }}"
+    url_password: "{{ atp_external_registry_robot_token | default('') }}"
+    force_basic_auth: "{{ atp_external_registry_auth_configured | bool }}"
+    validate_certs: "{{ atp_external_registry_validate_certs | default(true) | bool }}"
+    ca_path: "{{ atp_external_registry_ca_path | default(omit, true) }}"
+    status_code: [200, 401, 403, 404]
+    return_content: false
+    timeout: 20
+  register: atp_external_registry_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - atp_external_registry_effective_url | length > 0
+    - atp_external_registry_auth_pair_valid | bool
+
+- name: "External registry probe: summarize safe result"
+  ansible.builtin.set_fact:
+    atp_external_registry_probe_ok: "{{ atp_external_registry_effective_url | length > 0 and atp_external_registry_auth_pair_valid | bool and ((atp_external_registry_probe.status | default(0) | int) == 200 if atp_external_registry_auth_configured | bool else (atp_external_registry_probe.status | default(0) | int) in [200, 401]) }}"
+    atp_external_registry_probe_summary: >-
+      {% set probe_status = atp_external_registry_probe.status | default(-1) | int %}
+      {% if atp_external_registry_effective_url | length == 0 %}
+      Not configured or discovered
+      {% elif not (atp_external_registry_auth_pair_valid | bool) %}
+      Robot username and token must both be configured
+      {% elif probe_status == -1 %}
+      Connection/TLS failure (no HTTP response): {{ atp_external_registry_probe.msg | default('No transport detail returned') | truncate(300) }}
+      {% elif atp_external_registry_auth_configured | bool and probe_status == 200 %}
+      HTTP 200 (robot authentication passed)
+      {% elif atp_external_registry_auth_configured | bool and probe_status in [401, 403] %}
+      HTTP {{ probe_status }} (robot authentication rejected or lacks permission)
+      {% elif not (atp_external_registry_auth_configured | bool) and probe_status == 401 %}
+      HTTP 401 (API reachable; authentication was not tested)
+      {% elif not (atp_external_registry_auth_configured | bool) and probe_status == 200 %}
+      HTTP 200 (API reachable anonymously)
+      {% else %}
+      HTTP {{ probe_status }} (external registry API check failed)
+      {% endif %}
+  no_log: false

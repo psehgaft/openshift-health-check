@@ -1,0 +1,67 @@
+---
+# Resolve the external registry URL from an explicit variable or cluster mirror configuration.
+- name: "ATP registry discovery: initialize result"
+  ansible.builtin.set_fact:
+    atp_external_registry_effective_url: ""
+    atp_external_registry_discovery_source: "No external registry URL configured or discovered"
+
+- name: "ATP registry discovery: inspect OpenShift mirror configuration"
+  ansible.builtin.shell: |
+    set -u
+    for resource in \
+      imagedigestmirrorsets.config.openshift.io \
+      imagetagmirrorsets.config.openshift.io \
+      imagecontentsourcepolicies.operator.openshift.io; do
+      if data="$(oc get "$resource" -o json 2>/dev/null)"; then
+        jq -r '
+          .items[]?.spec.imageDigestMirrors[]?.mirrors[]?,
+          .items[]?.spec.imageTagMirrors[]?.mirrors[]?,
+          .items[]?.spec.repositoryDigestMirrors[]?.mirrors[]?
+        ' <<< "$data" 2>/dev/null || true
+      fi
+    done | sed -E 's#^https?://##; s#/.*$##' | awk 'NF' | sort -u
+  args:
+    executable: /bin/bash
+  register: atp_registry_mirror_discovery
+  changed_when: false
+  failed_when: false
+  when:
+    - atp_external_registry_url | default('') | trim | length == 0
+    - atp_external_registry_host | default('') | trim | length == 0
+    - atp_external_registry_auto_discover | default(true) | bool
+
+- name: "ATP registry discovery: normalize mirror list"
+  ansible.builtin.set_fact:
+    atp_external_registry_discovered_mirrors: "{{ atp_registry_mirror_discovery.stdout_lines | default([]) | map('trim') | reject('equalto', '') | unique | list }}"
+
+- name: "ATP registry discovery: use explicit URL"
+  ansible.builtin.set_fact:
+    atp_external_registry_effective_url: "{{ atp_external_registry_url | trim | regex_replace('/+$', '') }}"
+    atp_external_registry_discovery_source: "explicit atp_external_registry_url"
+  when: atp_external_registry_url | default('') | trim | length > 0
+
+- name: "ATP registry discovery: use legacy host setting"
+  ansible.builtin.set_fact:
+    atp_external_registry_effective_url: "{{ 'https://' ~ (atp_external_registry_host | trim) }}"
+    atp_external_registry_discovery_source: "legacy atp_external_registry_host"
+  when:
+    - atp_external_registry_url | default('') | trim | length == 0
+    - atp_external_registry_host | default('') | trim | length > 0
+
+- name: "ATP registry discovery: use the single cluster mirror"
+  ansible.builtin.set_fact:
+    atp_external_registry_effective_url: "{{ 'https://' ~ atp_external_registry_discovered_mirrors[0] }}"
+    atp_external_registry_discovery_source: "single mirror discovered from OpenShift cluster configuration"
+  when:
+    - atp_external_registry_url | default('') | trim | length == 0
+    - atp_external_registry_host | default('') | trim | length == 0
+    - atp_external_registry_auto_discover | default(true) | bool
+    - atp_external_registry_discovered_mirrors | length == 1
+
+- name: "ATP registry discovery: report ambiguous cluster mirrors"
+  ansible.builtin.set_fact:
+    atp_external_registry_discovery_source: "Multiple cluster mirror registries found; set atp_external_registry_url to select the target"
+  when:
+    - atp_external_registry_url | default('') | trim | length == 0
+    - atp_external_registry_host | default('') | trim | length == 0
+    - atp_external_registry_discovered_mirrors | length > 1

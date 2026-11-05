@@ -1,0 +1,158 @@
+---
+# ==============================================================================
+# Acceptance Test Plan (ATP) - Global Configuration & Feature Toggles
+# ==============================================================================
+# Cluster target version to validate in TC-01
+expected_ocp_version: "4.20"
+
+# Directory where generated reports will be stored
+atp_report_dir: "{{ playbook_dir }}/../reports"
+atp_report_basename: "ATP-Report-OCP{{ expected_ocp_version | default('4.20') }}-{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+atp_report_file: "{{ atp_report_dir }}/{{ atp_report_basename }}.md"
+atp_report_html_file: "{{ atp_report_dir }}/{{ atp_report_basename }}.html"
+
+# External OCI registry checks (TC-18 and TC-19).
+# When URL and legacy host are empty, the ATP discovers a single registry mirror
+# from ImageDigestMirrorSet, ImageTagMirrorSet, or ImageContentSourcePolicy.
+# Set a full URL here when the cluster has multiple mirrors or the registry is
+# not configured as an OpenShift mirror.
+atp_external_registry_url: ""
+atp_external_registry_host: "" # Deprecated compatibility setting; use the full URL above.
+atp_external_registry_auto_discover: true
+atp_external_registry_validate_certs: true
+# Optional PEM CA bundle path on the Ansible controller for a private registry CA.
+atp_external_registry_ca_path: ""
+
+# Supply robot-account credentials through environment variables or an encrypted vars file.
+# Do not commit credentials to this file or include them in report output.
+atp_external_registry_robot_username: "{{ lookup('env', 'ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME') }}"
+atp_external_registry_robot_token: "{{ lookup('env', 'ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN') }}"
+
+# Cluster parameters
+cluster_name: "cluster"
+cluster_domain: "openshift.com"
+bastion_fqdn: "psehgaft.fedora.com"
+custom_ingress_url: "apps.{{ cluster_name }}.{{ cluster_domain }}"
+
+# SSH access parameters for node inspection
+ssh_user: "core"
+ssh_key_path: "~/.ssh/id_rsa"
+
+# Master and Worker reference nodes (auto-discovered if not provided)
+app_node_target: ""
+master_node_target: ""
+
+# ------------------------------------------------------------------------------
+# API certificate expiry policy for TC-55 (minimum remaining validity in days).
+atp_api_cert_min_validity_days: 7
+
+# Test Case Execution Toggles (Allows selective skipping of automated tests)
+# Manual and disruptive TC-26, TC-27, and TC-62 are always reported as Skipped.
+# ------------------------------------------------------------------------------
+run_tc01_cluster_version: true
+run_tc02_cluster_nodes_status: true
+run_tc03_dns_resolution: true
+run_tc04_dns_operator: true
+run_tc05_ntp_synchronization: true
+run_tc06_operators_installed: true
+run_tc07_web_console_status: true
+run_tc08_storage_capacity: true
+run_tc09_cpu_ram_capacity: true
+run_tc10_etcd_status: true
+run_tc11_node_labels: true
+run_tc12_check_mcp: true
+run_tc13_check_mc: true
+run_tc14_check_ports: true
+run_tc15_check_crio: true
+run_tc16_check_internet_access: true
+run_tc17_check_cluster_logs_api: true
+run_tc18_check_internal_registry_api: true
+run_tc19_check_internal_registry_status: true
+run_tc20_check_internal_registry_storage: true
+run_tc21_monitoring_stack_status: true
+run_tc22_logging_stack_status: true
+
+# Administration
+run_tc23_create_namespace: true
+run_tc24_create_limitrange: true
+run_tc25_create_resourcequota: true
+run_tc28_install_operator: true
+run_tc29_purge_namespace: true
+run_tc30_delete_namespace: true
+run_tc31_cleanup_worker: true
+
+# Application Management
+run_tc32_app_labels: true
+run_tc33_app_taints: true
+run_tc34_app_affinity: true
+run_tc35_app_anti_affinity: true
+run_tc36_scale_pods: true
+run_tc37_pod_recreation: true
+run_tc38_infra_nodes_isolation: true
+
+# Logging Stack
+run_tc39_loki_stack_indices: true
+run_tc40_loki_stack_logs: true
+
+# Storage Management
+run_tc41_storage_class: true
+run_tc42_add_pvc_app: true
+run_tc43_pvc_persistence_on_deletion: true
+run_tc44_remove_pvc_app: true
+run_tc45_delete_pvc: true
+
+# Network Management
+run_tc46_cno_status: true
+run_tc47_pod_communication_namespace: true
+run_tc48_expose_tls_route: true
+
+# User Management
+run_tc49_create_htpasswd_user: true
+run_tc50_assign_cluster_admin: true
+run_tc51_disable_self_provisioner: true
+run_tc52_ldap_access: true
+run_tc53_create_serviceaccount: true
+run_tc54_delete_user: true
+
+# Security Management
+run_tc55_api_certificate: true
+run_tc56_ingress_default_certificate: true
+run_tc57_custom_ingress_certificate: true
+run_tc58_create_secret: true
+run_tc59_assign_secret_to_pod: true
+run_tc60_check_ssh_access: true
+
+# Cluster Backup & Restore
+run_tc61_etcd_backup: true
+# TC-62 is destructive and disabled by default. Configure all values only for
+# an approved recovery exercise. Confirmation must equal RESTORE-ETCD-<cluster_name>.
+tc62_restore_enabled: false
+tc62_restore_confirmation: ""
+tc62_control_plane_hosts: []
+tc62_recovery_host: ""
+tc62_backup_dir: ""
+tc62_ssh_user: core
+tc62_ssh_key_path: ""
+tc62_expected_release: "" # Exact OpenShift version, including z-stream (for example, 4.20.12)
+tc62_backup_release: "" # Must exactly match tc62_expected_release; verify from backup records
+tc62_restore_timeout_seconds: 5400
+tc62_two_node_fencing: false
+tc62_standard_ha_topology_confirmed: false # Set true only for standard 3+ control-plane HA, never TNF
+
+# General Support & Telco 5G
+# Optional SAN StorageClass names not identifiable by PV volume type or CSI driver.
+# Add vendor-specific classes (for example, a storage vendor's FC/iSCSI class).
+tc67a_san_storage_class_names: []
+tc64_node_target: ""
+run_tc63_quay_registry: true
+run_tc64_must_gather_sosreport: true
+run_tc65_volume_snapshots: true
+run_tc66_node_maintenance: true
+run_tc67a_storage_iscsi_multipath: true
+run_tc67b_network_nncp: true
+run_tc68_base_services_ntp_dns: true
+run_tc69_rh_registry_connectivity: true
+run_tc70_physical_lacp_mtu: true
+run_tc71_node_profiling_maxpods: true
+run_tc72_performance_hugepages: true
+run_tc73_network_acceleration_sriov: true

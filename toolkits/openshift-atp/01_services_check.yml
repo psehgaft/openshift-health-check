@@ -1,0 +1,732 @@
+---
+# ==============================================================================
+# Section 1: OpenShift Services Check (TC 01 to TC 22)
+# ==============================================================================
+
+# TC 01: Cluster Version
+- name: "TC-01: Verify Cluster Version"
+  when: run_tc01_cluster_version | default(true) | bool
+  block:
+    - name: "TC-01: Query clusterversion"
+      ansible.builtin.command: oc get clusterversion version -o json
+      register: tc01_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-01: Record Result"
+      vars:
+        cv_data: "{{ (tc01_cmd.stdout | from_json) if tc01_cmd.rc == 0 else {} }}"
+        cur_version: "{{ cv_data.status.history[0].version | default('Unknown') }}"
+        target_version: "{{ expected_ocp_version | default('4.20') }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-01',
+          'name': 'Cluster Version',
+          'category': 'Services Check',
+          'expected': 'OpenShift version ' ~ target_version ~ ' detected and Available=True',
+          'status': ('Pass' if (tc01_cmd.rc == 0 and target_version in cur_version) else 'Fail'),
+          'procedure': (tc01_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc01_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc01_cmd.stderr | default(''))) if (tc01_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc01_cmd.rc | string) if tc01_cmd.rc is defined else '')),
+          'details': 'Detected OCP Version: ' ~ cur_version ~ ' (Expected: ' ~ target_version ~ ')'
+        }] }}"
+  tags: ['general', 'telco', 'tc01', 'clusterversion']
+
+# TC 02: Cluster and nodes Status
+- name: "TC-02: Verify Cluster and Nodes Status"
+  when: run_tc02_cluster_nodes_status | default(true) | bool
+  block:
+    - name: "TC-02: Query unready nodes"
+      ansible.builtin.command: oc get nodes --no-headers
+      register: tc02_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-02: Record Result"
+      vars:
+        all_lines: "{{ tc02_cmd.stdout_lines | default([]) }}"
+        unready_lines: "{{ all_lines | reject('search', ' Ready') | list }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-02',
+          'name': 'Cluster and nodes Status',
+          'category': 'Services Check',
+          'expected': 'Cluster Available and all nodes in Ready state',
+          'status': ('Pass' if (tc02_cmd.rc == 0 and unready_lines | length == 0 and all_lines | length > 0) else 'Fail'),
+          'procedure': (tc02_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc02_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc02_cmd.stderr | default(''))) if (tc02_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc02_cmd.rc | string) if tc02_cmd.rc is defined else '')),
+          'details': 'Total Nodes: ' ~ (all_lines | length) ~ ', Unready: ' ~ (unready_lines | length)
+        }] }}"
+  tags: ['general', 'telco', 'tc02', 'nodes']
+
+# TC 03: Check DNS Resolution
+- name: "TC-03: Check DNS Resolution in cluster"
+  when: run_tc03_dns_resolution | default(true) | bool
+  block:
+    - name: "TC-03: Execute DNS test query inside cluster"
+      ansible.builtin.command: oc get svc -n openshift-dns
+      register: tc03_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-03: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-03',
+          'name': 'Check DNS Resolution',
+          'category': 'Services Check',
+          'expected': 'Internal cluster DNS service active and resolving',
+          'status': ('Pass' if tc03_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc03_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc03_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc03_cmd.stderr | default(''))) if (tc03_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc03_cmd.rc | string) if tc03_cmd.rc is defined else '')),
+          'details': tc03_cmd.stdout | default(tc03_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc03', 'dns']
+
+# TC 04: Check DNS Operator
+- name: "TC-04: Check DNS Operator"
+  when: run_tc04_dns_operator | default(true) | bool
+  block:
+    - name: "TC-04: Query DNS Operator status"
+      ansible.builtin.command: oc get clusteroperator dns -o json
+      register: tc04_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-04: Record Result"
+      vars:
+        dns_conditions: "{{ ((tc04_cmd.stdout | from_json).status.conditions) if tc04_cmd.rc == 0 else [] }}"
+        avail_cond: "{{ (dns_conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown') }}"
+        deg_cond: "{{ (dns_conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first) | default('Unknown') }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-04',
+          'name': 'Check DNS Operator',
+          'category': 'Services Check',
+          'expected': 'DNS Operator Available=True and Degraded=False',
+          'status': ('Pass' if (tc04_cmd.rc == 0 and avail_cond == 'True' and deg_cond == 'False') else 'Fail'),
+          'procedure': (tc04_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc04_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc04_cmd.stderr | default(''))) if (tc04_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc04_cmd.rc | string) if tc04_cmd.rc is defined else '')),
+          'details': 'Available: ' ~ avail_cond ~ ', Degraded: ' ~ deg_cond
+        }] }}"
+  tags: ['general', 'telco', 'tc04', 'dns']
+
+# TC 05: Check NTP Synchronization
+- name: "TC-05: Check NTP Synchronization"
+  when: run_tc05_ntp_synchronization | default(true) | bool
+  block:
+    - name: "TC-05: Query chronyd status on first node"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host chronyc sources
+      register: tc05_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-05: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-05',
+          'name': 'Check NTP Synchronization',
+          'category': 'Services Check',
+          'expected': 'NTP synchronized with upstream reference sources',
+          'status': ('Pass' if (tc05_cmd.rc == 0 and ('^*' in tc05_cmd.stdout or '^+' in tc05_cmd.stdout)) else 'Fail'),
+          'procedure': (tc05_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc05_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc05_cmd.stderr | default(''))) if (tc05_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc05_cmd.rc | string) if tc05_cmd.rc is defined else '')),
+          'details': tc05_cmd.stdout | default(tc05_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc05', 'ntp']
+
+# TC 06: Check Operators Installed
+- name: "TC-06: Check Operators Installed"
+  when: run_tc06_operators_installed | default(true) | bool
+  block:
+    - name: "TC-06: Query ClusterOperators"
+      ansible.builtin.command: oc get co --no-headers
+      register: tc06_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-06: Record Result"
+      vars:
+        co_lines: "{{ tc06_cmd.stdout_lines | default([]) }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-06',
+          'name': 'Check Operators Installed',
+          'category': 'Services Check',
+          'expected': 'All Cluster Operators Available and not Degraded',
+          'status': ('Pass' if (tc06_cmd.rc == 0 and co_lines | length > 0 and not (tc06_cmd.stdout | regex_search('\\s+True\\s*$', multiline=True))) else 'Fail'),
+          'procedure': (tc06_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc06_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc06_cmd.stderr | default(''))) if (tc06_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc06_cmd.rc | string) if tc06_cmd.rc is defined else '')),
+          'details': 'Total Operators: ' ~ (co_lines | length)
+        }] }}"
+  tags: ['general', 'telco', 'tc06', 'operators']
+
+# TC 07: Web Console Status
+- name: "TC-07: Web Console Status"
+  when: run_tc07_web_console_status | default(true) | bool
+  block:
+    - name: "TC-07: Query console URL and route"
+      ansible.builtin.command: oc whoami --show-console
+      register: tc07_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-07: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-07',
+          'name': 'Web Console Status',
+          'category': 'Services Check',
+          'expected': 'Console URL exposed and accessible',
+          'status': ('Pass' if (tc07_cmd.rc == 0 and tc07_cmd.stdout | length > 0) else 'Fail'),
+          'procedure': (tc07_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc07_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc07_cmd.stderr | default(''))) if (tc07_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc07_cmd.rc | string) if tc07_cmd.rc is defined else '')),
+          'details': 'Console URL: ' ~ tc07_cmd.stdout | default('Not found')
+        }] }}"
+  tags: ['general', 'telco', 'tc07', 'console']
+
+# TC 08: Storage Status & Capacity
+- name: "TC-08: Storage Status & Capacity"
+  when: run_tc08_storage_capacity | default(true) | bool
+  block:
+    - name: "TC-08: Query filesystem metrics from Prometheus"
+      ansible.builtin.shell: >
+        oc exec prometheus-k8s-0 -n openshift-monitoring -c prometheus -- /usr/bin/promtool query instant http://localhost:9090 "sum(node_filesystem_size_bytes{mountpoint='/'})/1000/1000/1000"
+      register: tc08_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-08: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-08',
+          'name': 'Storage Status & Capacity',
+          'category': 'Services Check',
+          'expected': 'Prometheus returns storage metrics in gigabytes',
+          'status': ('Pass' if tc08_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc08_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc08_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc08_cmd.stderr | default(''))) if (tc08_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc08_cmd.rc | string) if tc08_cmd.rc is defined else '')),
+          'details': tc08_cmd.stdout | default(tc08_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc08', 'storage_capacity']
+
+# TC 09: CPU & RAM Capacity
+- name: "TC-09: CPU & RAM Capacity"
+  when: run_tc09_cpu_ram_capacity | default(true) | bool
+  block:
+    - name: "TC-09: Execute oc adm top nodes"
+      ansible.builtin.command: oc adm top nodes
+      register: tc09_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-09: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-09',
+          'name': 'CPU & RAM Capacity',
+          'category': 'Services Check',
+          'expected': 'Nodes CPU and Memory consumption retrieved successfully',
+          'status': ('Pass' if tc09_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc09_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc09_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc09_cmd.stderr | default(''))) if (tc09_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc09_cmd.rc | string) if tc09_cmd.rc is defined else '')),
+          'details': tc09_cmd.stdout | default(tc09_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc09', 'metrics']
+
+# TC 10: ETCD Status
+- name: "TC-10: ETCD Status"
+  when: run_tc10_etcd_status | default(true) | bool
+  block:
+    - name: "TC-10: Check ETCD members status"
+      ansible.builtin.command: >
+        oc get etcd -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EtcdMembersAvailable")]}{.message}{"\n"}'
+      register: tc10_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-10: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-10',
+          'name': 'ETCD Status',
+          'category': 'Services Check',
+          'expected': 'ETCD cluster has 3 members available',
+          'status': ('Pass' if (tc10_cmd.rc == 0 and '3 members are available' in tc10_cmd.stdout) else 'Fail'),
+          'procedure': (tc10_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc10_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc10_cmd.stderr | default(''))) if (tc10_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc10_cmd.rc | string) if tc10_cmd.rc is defined else '')),
+          'details': tc10_cmd.stdout | default(tc10_cmd.stderr) | trim
+        }] }}"
+  tags: ['general', 'telco', 'tc10', 'etcd']
+
+# TC 11: Node Labels
+- name: "TC-11: Node Labels"
+  when: run_tc11_node_labels | default(true) | bool
+  block:
+    - name: "TC-11: Query node labels"
+      ansible.builtin.command: oc get nodes --show-labels
+      register: tc11_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-11: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-11',
+          'name': 'Node Labels',
+          'category': 'Services Check',
+          'expected': 'All nodes list their assigned labels',
+          'status': ('Pass' if tc11_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc11_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc11_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc11_cmd.stderr | default(''))) if (tc11_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc11_cmd.rc | string) if tc11_cmd.rc is defined else '')),
+          'details': tc11_cmd.stdout | default(tc11_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc11', 'labels']
+
+# TC 12: Check Machine Config Pool
+- name: "TC-12: Check Machine Config Pool"
+  when: run_tc12_check_mcp | default(true) | bool
+  block:
+    - name: "TC-12: Query MCP status"
+      ansible.builtin.command: oc get mcp --no-headers
+      register: tc12_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-12: Record Result"
+      vars:
+        mcp_lines: "{{ tc12_cmd.stdout_lines | default([]) }}"
+        degraded_mcps: "{{ mcp_lines | select('regex', '\\s+True\\s*$') | list }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-12',
+          'name': 'Check Machine Config Pool (Master, Workers STD/HT)',
+          'category': 'Services Check',
+          'expected': 'Master, Worker (STD/HT) MCPs in Updated state and not Degraded',
+          'status': ('Pass' if (tc12_cmd.rc == 0 and degraded_mcps | length == 0 and mcp_lines | length > 0) else 'Fail'),
+          'procedure': (tc12_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc12_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc12_cmd.stderr | default(''))) if (tc12_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc12_cmd.rc | string) if tc12_cmd.rc is defined else '')),
+          'details': 'Total MCPs: ' ~ (mcp_lines | length) ~ ', Degraded: ' ~ (degraded_mcps | length)
+        }] }}"
+  tags: ['general', 'telco', 'tc12', 'mcp']
+
+# TC 13: Check Machine Config
+- name: "TC-13: Check Machine Config"
+  when: run_tc13_check_mc | default(true) | bool
+  block:
+    - name: "TC-13: List MachineConfigs"
+      ansible.builtin.command: oc get mc
+      register: tc13_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-13: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-13',
+          'name': 'Check Machine Config (Master, Workers STD/HT)',
+          'category': 'Services Check',
+          'expected': 'MachineConfig objects available for all roles',
+          'status': ('Pass' if tc13_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc13_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc13_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc13_cmd.stderr | default(''))) if (tc13_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc13_cmd.rc | string) if tc13_cmd.rc is defined else '')),
+          'details': tc13_cmd.stdout | default(tc13_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc13', 'machineconfig']
+
+# TC 14: Check Ports
+- name: "TC-14: Check Ports"
+  when: run_tc14_check_ports | default(true) | bool
+  block:
+    - name: "TC-14: Verify open listening ports on worker node"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug node/${NODE} -- chroot /host ss -tulpn
+      register: tc14_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-14: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-14',
+          'name': 'Check Ports',
+          'category': 'Services Check',
+          'expected': 'Standard OpenShift daemon ports listening on nodes',
+          'status': ('Pass' if tc14_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc14_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc14_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc14_cmd.stderr | default(''))) if (tc14_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc14_cmd.rc | string) if tc14_cmd.rc is defined else '')),
+          'details': tc14_cmd.stdout | default(tc14_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc14', 'ports']
+
+# TC 15: Check crio status
+- name: "TC-15: Check crio status"
+  when: run_tc15_check_crio | default(true) | bool
+  block:
+    - name: "TC-15: Check CRI-O running containers"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug -q node/${NODE} -- chroot /host crictl ps
+      register: tc15_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-15: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-15',
+          'name': 'Check crio status',
+          'category': 'Services Check',
+          'expected': 'The worker node returns the running container list from CRI-O',
+          'status': ('Pass' if (tc15_cmd.rc == 0 and tc15_cmd.stdout | trim | length > 0) else 'Fail'),
+          'procedure': (tc15_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc15_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc15_cmd.stderr | default(''))) if (tc15_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc15_cmd.rc | string) if tc15_cmd.rc is defined else '')),
+          'details': tc15_cmd.stdout | default(tc15_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc15', 'crio']
+
+# TC 16: Check Internet Access
+- name: "TC-16: Check Internet Access (Cluster Management)"
+  when: run_tc16_check_internet_access | default(true) | bool
+  block:
+    - name: "TC-16: Test external connectivity to Quay.io"
+      ansible.builtin.shell: >
+        NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
+        oc debug -q node/${NODE} -- chroot /host curl -i -k --connect-timeout 10 --max-time 20 https://quay.io
+      register: tc16_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-16: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-16',
+          'name': 'Check Internet Access (Cluster Management access)',
+          'category': 'Services Check',
+          'expected': 'HTTP 200/301/302 response from external registry gateway',
+          'status': ('Pass' if (tc16_cmd.rc == 0 and ('HTTP' in tc16_cmd.stdout or '200' in tc16_cmd.stdout)) else 'Fail'),
+          'procedure': (tc16_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc16_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc16_cmd.stderr | default(''))) if (tc16_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc16_cmd.rc | string) if tc16_cmd.rc is defined else '')),
+          'details': tc16_cmd.stdout | default(tc16_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc16', 'connectivity']
+
+# TC 17: Check Cluster logs via API
+- name: "TC-17: Check Cluster logs via API"
+  when: run_tc17_check_cluster_logs_api | default(true) | bool
+  block:
+    - name: "TC-17: Fetch API server and control-plane logs through the API"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for component in \
+          "openshift-kube-apiserver kube-apiserver" \
+          "openshift-kube-controller-manager kube-controller-manager" \
+          "openshift-kube-scheduler openshift-kube-scheduler"; do
+          read -r namespace pod_prefix <<< "$component"
+          pod="$(oc get pods -n "$namespace" --field-selector=status.phase=Running \
+            -o custom-columns=NAME:.metadata.name --no-headers \
+            | awk -v prefix="$pod_prefix" 'index($1, prefix) == 1 { print $1; exit }')"
+          if [[ -z "$pod" ]]; then
+            echo "No running $pod_prefix control-plane pod found in $namespace" >&2
+            exit 1
+          fi
+          echo "===== $namespace/$pod ====="
+          oc logs -n "$namespace" "$pod" --all-containers=true --since=1h --tail=20
+        done
+      args:
+        executable: /bin/bash
+      register: tc17_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-17: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-17',
+          'name': 'Check Cluster logs via API',
+          'category': 'Services Check',
+          'expected': 'Logs from the last hour are retrievable through the Kubernetes API for the API server, controller manager, and scheduler',
+          'status': ('Pass' if tc17_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc17_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc17_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc17_cmd.stderr | default(''))) if (tc17_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc17_cmd.rc | string) if tc17_cmd.rc is defined else '')),
+          'details': tc17_cmd.stdout | default(tc17_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc17', 'logs_api']
+
+# TC 18: Check Internal Registry API
+- name: "TC-18: Check Internal Registry API"
+  when: run_tc18_check_internal_registry_api | default(true) | bool
+  block:
+    - name: "TC-18: Discover configured external registry"
+      ansible.builtin.include_tasks: registry_discovery.yml
+
+    - name: "TC-18: Check internal registry service through the API"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
+          echo "Selected registry: internal OpenShift image registry"
+          oc get svc image-registry -n openshift-image-registry -o jsonpath='{.metadata.name}.{.metadata.namespace}.svc{"\\n"}'
+          oc get svc image-registry -n openshift-image-registry -o wide
+        else
+          echo "Internal image-registry service is not configured."
+          exit 2
+        fi
+      args:
+        executable: /bin/bash
+      register: tc18_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-18: Probe optional external registry API"
+      ansible.builtin.include_tasks: external_registry_probe.yml
+
+    - name: "TC-18: Classify registry API checks"
+      ansible.builtin.set_fact:
+        tc18_status: "{{ 'Pass' if (tc18_cmd.rc == 0 or (atp_external_registry_probe_ok | bool)) and (atp_external_registry_effective_url | length == 0 or (atp_external_registry_probe_ok | bool)) else 'Fail' }}"
+
+    - name: "TC-18: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-18',
+          'name': 'Check Configured Registry API',
+          'category': 'Services Check',
+          'expected': 'At least one configured registry is available: the internal registry service, the external OCI API, or both when both are configured; supplied robot credentials authenticate successfully',
+          'status': tc18_status | trim,
+          'procedure': 'Query the internal registry service and, when configured or discovered, request the external registry OCI v2 API endpoint',
+          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExternal registry discovery: ' ~ atp_external_registry_discovery_source) ~ ('\\nExternal registry: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry URL: ' ~ atp_external_registry_effective_url if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
+          'details': 'Internal service exit code: ' ~ (tc18_cmd.rc | default('unknown') | string) ~ '; external registry discovery: ' ~ atp_external_registry_discovery_source ~ '; probe: ' ~ atp_external_registry_probe_summary
+        }] }}"
+  tags: ['general', 'telco', 'tc18', 'registry']
+
+
+
+# TC 19: Check Internal Registry Status
+- name: "TC-19: Check Internal Registry Status"
+  when: run_tc19_check_internal_registry_status | default(true) | bool
+  block:
+    - name: "TC-19: Discover configured external registry"
+      ansible.builtin.include_tasks: registry_discovery.yml
+
+    - name: "TC-19: Query internal registry pods"
+      ansible.builtin.command: oc get pods -n openshift-image-registry -o json
+      register: tc19_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-19: Capture internal registry pod placement and logs"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if ! oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
+          echo "Internal registry is not configured; internal pod placement and logs are not applicable."
+          exit 2
+        fi
+        echo "== Registry pod placement =="
+        oc get pods -n openshift-image-registry -o wide
+        echo "== Infra nodes =="
+        oc get nodes -l node-role.kubernetes.io/infra -o wide
+        echo "== Registry logs (last hour) =="
+        logs="$(oc logs deployments/image-registry -n openshift-image-registry --since=1h --tail=20)"
+        echo "$logs"
+        if ! grep -q 'level=info' <<< "$logs"; then
+          echo "No level=info registry activity was found in the last hour." >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: tc19_details_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-19: Probe optional external registry API"
+      ansible.builtin.include_tasks: external_registry_probe.yml
+
+    - name: "TC-19: Record Result"
+      vars:
+        reg_pods: "{{ ((tc19_cmd.stdout | from_json)['items']) if tc19_cmd.rc == 0 else [] }}"
+        running_pods: "{{ reg_pods | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-19',
+          'name': 'Check Internal and External Registry Status',
+          'category': 'Services Check',
+          'expected': 'At least one configured registry is healthy: internal registry pods are Running with placement and logs available, or the external OCI v2 API is reachable; when both exist, both checks pass and supplied robot credentials authenticate successfully',
+          'status': ('Fail' if tc19_details_cmd.rc == 2 and atp_external_registry_effective_url | length == 0 else 'Pass' if ((tc19_details_cmd.rc == 2 and atp_external_registry_effective_url | length > 0 and atp_external_registry_probe_ok | bool) or (tc19_cmd.rc == 0 and tc19_details_cmd.rc == 0 and running_pods | length > 0 and (atp_external_registry_effective_url | length == 0 or atp_external_registry_probe_ok | bool))) else 'Fail'),
+          'procedure': (tc19_cmd.cmd | default('Query internal registry pods')) ~ '\\n' ~ (tc19_details_cmd.cmd | default('Inspect internal registry placement and logs')) ~ '\\nProbe configured external registry OCI v2 endpoint when available',
+          'evidence': ((tc19_cmd.stdout | default('')) ~ '\\n' ~ (tc19_details_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc19_details_cmd.stderr | default(''))) if (tc19_details_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExternal registry: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry URL: ' ~ atp_external_registry_effective_url if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc19_details_cmd.rc | string) if tc19_details_cmd.rc is defined else '')),
+          'details': 'Running internal registry pods: ' ~ (running_pods | join(', ') if running_pods | length > 0 else 'None') ~ '; internal details exit code: ' ~ (tc19_details_cmd.rc | default('unknown') | string) ~ '; external registry discovery: ' ~ atp_external_registry_discovery_source ~ '; probe: ' ~ atp_external_registry_probe_summary
+        }] }}"
+  tags: ['general', 'telco', 'tc19', 'registry']
+
+
+
+# TC 20: Check Internal Registry Storage
+- name: "TC-20: Check Internal Registry Storage"
+  when: run_tc20_check_internal_registry_storage | default(true) | bool
+  block:
+    - name: "TC-20: Discover configured external registry"
+      ansible.builtin.include_tasks: registry_discovery.yml
+
+    - name: "TC-20: Query registry storage configuration"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
+          storage="$(oc get configs.imageregistry.operator.openshift.io/cluster -o jsonpath='{.spec.storage}' | jq .)"
+          if [[ -z "$storage" || "$storage" == "{}" || "$storage" == "null" ]]; then
+            echo "Internal registry service exists, but Image Registry Operator has no storage backend configured: $storage" >&2
+            exit 1
+          fi
+          if [[ "$storage" == *emptyDir* ]]; then
+            echo "Internal registry uses ephemeral emptyDir storage; persistent storage is not configured: $storage" >&2
+            exit 1
+          fi
+          echo "Internal registry storage backend: $storage"
+        else
+          if [[ -z "{{ atp_external_registry_effective_url }}" ]]; then
+            echo "Internal storage is not configured and no external registry URL was configured or discovered. Set atp_external_registry_url to check an external registry."
+            exit 2
+          fi
+          node="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
+          if [[ -z "$node" ]]; then
+            echo "No worker node found to check the configured external registry" >&2
+            exit 1
+          fi
+          echo "Internal registry is absent; checking {{ atp_external_registry_effective_url }} from worker $node."
+          echo "External registry API availability does not expose its storage backend. Verify persistence with an authenticated push and pull or the registry provider's storage health check."
+          status="$(oc debug -q "node/$node" -- chroot /host curl --connect-timeout 10 --max-time 20 -sS -o /dev/null -w '%{http_code}' "{{ atp_external_registry_effective_url }}/v2/")"
+          echo "External registry API HTTP status: $status"
+          [[ "$status" == "200" || "$status" == "401" ]]
+        fi
+      args:
+        executable: /bin/bash
+      register: tc20_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-20: Classify registry storage result"
+      ansible.builtin.set_fact:
+        tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default('')) else 'Skipped' if (tc20_cmd.rc == 0 and 'External registry API availability does not expose its storage backend' in (tc20_cmd.stdout | default(''))) or (tc20_cmd.rc == 2 and 'no external registry URL' in (tc20_cmd.stdout | default('') | lower)) else 'Fail' }}"
+
+    - name: "TC-20: Build Result Record"
+      ansible.builtin.set_fact:
+        tc20_result_record:
+          id: "TC-20"
+          name: "Check Configured Registry Storage"
+          category: "Services Check"
+          expected: "The registry storage configuration is returned as JSON; internal storage is persistent, while external storage persistence requires verification by its owner"
+          status: "{{ tc20_status | trim }}"
+          procedure: "{{ tc20_cmd.cmd | default('See ATP task source; command metadata unavailable') }}"
+          evidence: "{{ (tc20_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc20_cmd.stderr | default(''))) if (tc20_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc20_cmd.rc | string) if tc20_cmd.rc is defined else '') }}"
+          details: "{{ tc20_cmd.stdout | default(tc20_cmd.stderr) | truncate(150) }}"
+
+    - name: "TC-20: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc20_result_record] }}"
+  tags: ['general', 'telco', 'tc20', 'registry_storage']
+
+# TC 21: Monitoring Stack Status
+- name: "TC-21: Monitoring Stack Status"
+  when: run_tc21_monitoring_stack_status | default(true) | bool
+  block:
+    - name: "TC-21: Check monitoring clusteroperator"
+      ansible.builtin.command: oc get co monitoring -o json
+      register: tc21_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-21: List monitoring pods and node placement"
+      ansible.builtin.command: oc get pods -n openshift-monitoring -o wide
+      register: tc21_pods_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-21: Verify all monitoring pods are Running and ready"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc get pods -n openshift-monitoring -o json | jq -e '(.items | length > 0) and (.items | all(.[]; .status.phase == "Running" and (.status.containerStatuses | length > 0) and (.status.containerStatuses | all(.[]; .ready == true))))'
+      args:
+        executable: /bin/bash
+      register: tc21_ready_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-21: Record Result"
+      vars:
+        mon_conditions: "{{ ((tc21_cmd.stdout | from_json).status.conditions) if tc21_cmd.rc == 0 else [] }}"
+        mon_avail: "{{ (mon_conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first) | default('Unknown') }}"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-21',
+          'name': 'Monitoring Stack Status',
+          'category': 'Services Check',
+          'expected': 'Monitoring Operator Available=True with pods Running',
+          'status': ('Pass' if (tc21_cmd.rc == 0 and tc21_pods_cmd.rc == 0 and tc21_ready_cmd.rc == 0 and mon_avail == 'True') else 'Fail'),
+          'procedure': (tc21_cmd.cmd | default('See ATP task source; command metadata unavailable')) ~ '\n' ~ (tc21_pods_cmd.cmd | default('Pod placement command unavailable')) ~ '\n' ~ (tc21_ready_cmd.cmd | default('Pod readiness command unavailable')),
+          'evidence': ((tc21_cmd.stdout | default('')) ~ '\n' ~ (tc21_pods_cmd.stdout | default('')) ~ '\n' ~ (tc21_ready_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc21_cmd.stderr | default(''))) if (tc21_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc21_cmd.rc | string) if tc21_cmd.rc is defined else '')),
+          'details': 'Available: ' ~ mon_avail ~ '\nMonitoring pods and placement:\n' ~ (tc21_pods_cmd.stdout | default(tc21_pods_cmd.stderr) | truncate(250))
+        }] }}"
+  tags: ['general', 'telco', 'tc21', 'monitoring']
+
+# TC 22: Logging Stack Status
+- name: "TC-22: Logging Stack Status"
+  when: run_tc22_logging_stack_status | default(true) | bool
+  block:
+    - name: "TC-22: Check legacy ClusterLogging configuration"
+      ansible.builtin.command: oc get clusterloggings.logging.openshift.io/instance -n openshift-logging -o yaml
+      register: tc22_legacy_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Check legacy ClusterLogForwarder configuration"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
+        oc get clusterlogforwarders.logging.openshift.io -n openshift-logging -o yaml
+      args:
+        executable: /bin/bash
+      register: tc22_legacy_forwarder_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Check current ClusterLogForwarder configuration"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o json | jq -e '.items | length > 0' >/dev/null
+        oc get clusterlogforwarders.observability.openshift.io -n openshift-logging -o yaml
+      args:
+        executable: /bin/bash
+      register: tc22_modern_forwarder_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: List logging pods and node placement"
+      ansible.builtin.command: oc get pods -n openshift-logging -o wide
+      register: tc22_pods_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Verify all logging pods are Running and ready"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc get pods -n openshift-logging -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and ([.status.containerStatuses[]?] | length > 0) and ([.status.containerStatuses[]? | select(.ready == true)] | length == ([.status.containerStatuses[]?] | length)))'
+      args:
+        executable: /bin/bash
+      register: tc22_ready_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-22: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-22',
+          'name': 'Logging Stack Status',
+          'category': 'Services Check',
+          'expected': 'At least one supported logging configuration API is available and logging pods are Running and ready',
+          'status': ('Pass' if (tc22_pods_cmd.rc == 0 and tc22_ready_cmd.rc == 0 and (tc22_legacy_cmd.rc == 0 or tc22_legacy_forwarder_cmd.rc == 0 or tc22_modern_forwarder_cmd.rc == 0)) else 'Fail'),
+          'procedure': (tc22_legacy_cmd.cmd | default('Legacy ClusterLogging API query unavailable')) ~ '\n' ~ (tc22_legacy_forwarder_cmd.cmd | default('Legacy ClusterLogForwarder API query unavailable')) ~ '\n' ~ (tc22_modern_forwarder_cmd.cmd | default('Modern ClusterLogForwarder API query unavailable')) ~ '\n' ~ (tc22_pods_cmd.cmd | default('Pod placement command unavailable')) ~ '\n' ~ (tc22_ready_cmd.cmd | default('Pod readiness command unavailable')),
+          'evidence': ('== Legacy ClusterLogging (logging.openshift.io) ==\n' ~ (tc22_legacy_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_legacy_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_cmd.rc | string)) if tc22_legacy_cmd.rc != 0 else '') ~ '\n== Legacy ClusterLogForwarder (logging.openshift.io) ==\n' ~ (tc22_legacy_forwarder_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_legacy_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_legacy_forwarder_cmd.rc | string)) if tc22_legacy_forwarder_cmd.rc != 0 else '') ~ '\n== Current ClusterLogForwarder (observability.openshift.io) ==\n' ~ (tc22_modern_forwarder_cmd.stdout | default('')) ~ (('\nSTDERR: ' ~ (tc22_modern_forwarder_cmd.stderr | default('')) ~ ' Exit code: ' ~ (tc22_modern_forwarder_cmd.rc | string)) if tc22_modern_forwarder_cmd.rc != 0 else '') ~ '\n== Logging pods and placement ==\n' ~ (tc22_pods_cmd.stdout | default(tc22_pods_cmd.stderr)) ~ '\n== Pod readiness check ==\n' ~ (tc22_ready_cmd.stdout | default(tc22_ready_cmd.stderr)) ~ ('\nExit code: ' ~ (tc22_ready_cmd.rc | string) if tc22_ready_cmd.rc is defined else '')),
+          'details': 'Legacy ClusterLogging rc=' ~ (tc22_legacy_cmd.rc | string) ~ ', legacy ClusterLogForwarder rc=' ~ (tc22_legacy_forwarder_cmd.rc | string) ~ ', current ClusterLogForwarder rc=' ~ (tc22_modern_forwarder_cmd.rc | string) ~ ', pods ready check rc=' ~ (tc22_ready_cmd.rc | string),
+          'remediation': 'Identify the installed OpenShift Logging generation. Check the matching ClusterLogging or ClusterLogForwarder API and its status conditions, then inspect Logging/Loki/Observability operator health, pod events, and container logs. Restore the supported configuration and rerun; do not create a legacy CRD manually.'
+        }] }}"
+  tags: ['general', 'telco', 'tc22', 'logging']

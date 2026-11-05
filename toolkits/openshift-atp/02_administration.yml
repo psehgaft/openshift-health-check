@@ -1,0 +1,229 @@
+---
+# ==============================================================================
+# Section 2: OpenShift Administration (TC 24 to TC 29 and TC 31; TC-30 runs last)
+# ==============================================================================
+
+# TC 24: Create Limit Range in OCP Default Project
+- name: "TC-24: Create Limit Range in OCP Default Project"
+  when: run_tc24_create_limitrange | default(true) | bool
+  block:
+    - name: "TC-24: Apply LimitRange manifest"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat <<EOF | oc apply -n default -f -
+        apiVersion: "v1"
+        kind: "LimitRange"
+        metadata:
+          name: "test-resource-limits"
+          namespace: default
+        spec:
+          limits:
+            - type: "Container"
+              max:
+                cpu: "2"
+                memory: "1Gi"
+              min:
+                cpu: "100m"
+                memory: "4Mi"
+              default:
+                cpu: "300m"
+                memory: "200Mi"
+              defaultRequest:
+                cpu: "200m"
+                memory: "100Mi"
+              maxLimitRequestRatio:
+                cpu: "10"
+        EOF
+        oc get limits -n default
+      register: tc24_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-24: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-24',
+          'name': 'Create Limit Range in OCP Default Project',
+          'category': 'OpenShift Administration',
+          'expected': 'LimitRange test-resource-limits created in default namespace',
+          'status': ('Pass' if tc24_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc24_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc24_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc24_cmd.stderr | default(''))) if (tc24_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc24_cmd.rc | string) if tc24_cmd.rc is defined else '')),
+          'details': tc24_cmd.stdout | default(tc24_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc24', 'administration']
+
+# TC 25: Create Resource Quota in OCP Default Project
+- name: "TC-25: Create Resource Quota in OCP Default Project"
+  when: run_tc25_create_resourcequota | default(true) | bool
+  block:
+    - name: "TC-25: Apply ResourceQuota manifest"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat <<EOF | oc apply -n default -f -
+        apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: compute-resources
+        spec:
+          hard:
+            pods: "4"
+            requests.cpu: "1"
+            requests.memory: 1Gi
+            requests.ephemeral-storage: 2Gi
+            limits.cpu: "2"
+            limits.memory: 2Gi
+            limits.ephemeral-storage: 4Gi
+        EOF
+        oc get resourcequotas -n default
+      register: tc25_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-25: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-25',
+          'name': 'Create Resource Quota in OCP Default Project',
+          'category': 'OpenShift Administration',
+          'expected': 'ResourceQuota compute-resources applied to default namespace',
+          'status': ('Pass' if tc25_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc25_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc25_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc25_cmd.stderr | default(''))) if (tc25_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc25_cmd.rc | string) if tc25_cmd.rc is defined else '')),
+          'details': tc25_cmd.stdout | default(tc25_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc25', 'administration']
+
+# TC 26: Sanity Reboot (Disruptive)
+- name: "TC-26: Sanity Reboot"
+  block:
+    - name: "TC-26: Check if Sanity Reboot should run"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-26',
+          'name': 'Sanity Reboot',
+          'category': 'OpenShift Administration',
+          'expected': 'Cluster nodes reboot and return to Ready state',
+          'status': 'Skipped',
+          'procedure': 'Manual only: follow the approved cluster reboot runbook and record operator-run evidence.',
+          'evidence': 'No command executed by this playbook. Attach evidence from the approved manual procedure if performed.',
+          'details': 'Manual and disruptive; the ATP does not automate cluster-wide reboot.'
+        }] }}"
+  tags: ['general', 'telco', 'tc26', 'administration']
+
+# TC 27: Reboot Worker (Disruptive)
+- name: "TC-27: Reboot Worker"
+  block:
+    - name: "TC-27: Check if Reboot Worker should run"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-27',
+          'name': 'Reboot Worker',
+          'category': 'OpenShift Administration',
+          'expected': 'Cordon, reboot worker node, and uncordon successfully',
+          'status': 'Skipped',
+          'procedure': 'Manual only: follow the approved worker maintenance and reboot runbook, then verify the node returns Ready.',
+          'evidence': 'No command executed by this playbook. Attach evidence from the approved manual procedure if performed.',
+          'details': 'Manual and disruptive; the ATP does not automate worker reboot.'
+        }] }}"
+  tags: ['general', 'telco', 'tc27', 'administration']
+
+# TC 28: Install an Operator
+- name: "TC-28: Install an Operator"
+  when: run_tc28_install_operator | default(true) | bool
+  block:
+    - name: "TC-28: Verify OperatorHub and CatalogSources availability"
+      ansible.builtin.command: oc get catalogsource -n openshift-marketplace
+      register: tc28_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-28: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-28',
+          'name': 'Install an Operator',
+          'category': 'OpenShift Administration',
+          'expected': 'Install the 3scale operator into testproject and verify Succeeded in Installed Operators',
+          'status': ('Fail' if tc28_cmd.rc != 0 else 'Skipped'),
+          'procedure': (tc28_cmd.cmd | default('See ATP task source; command metadata unavailable')) ~ '\nManual UI procedure: Operators > OperatorHub; search for 3scale; install using “A specific namespace on the cluster” and select testproject; then verify Succeeded under Operators > Installed Operators.',
+          'evidence': ((tc28_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc28_cmd.stderr | default(''))) if (tc28_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc28_cmd.rc | string) if tc28_cmd.rc is defined else '')),
+          'details': (tc28_cmd.stdout | default(tc28_cmd.stderr) | truncate(150)) ~ '\nCatalog availability is a prerequisite; complete and record the documented OperatorHub installation manually.'
+        }] }}"
+  tags: ['general', 'telco', 'tc28', 'administration']
+
+# TC 29: Purge Namespace (Project)
+- name: "TC-29: Purge Namespace (Project)"
+  when: run_tc29_purge_namespace | default(true) | bool
+  block:
+    - name: "TC-29: Inspect and purge resources in testproject"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc project testproject
+        echo "== Resources before cleanup =="
+        oc status
+        oc delete all --all -n testproject --wait=true
+        echo "== Resources after cleanup =="
+        oc status
+        remaining="$(oc get all --no-headers -n testproject)"
+        if [[ -n "$remaining" ]]; then
+          echo "Resources remain in testproject after cleanup:" >&2
+          echo "$remaining" >&2
+          exit 1
+        fi
+        echo "No resources remain in testproject."
+      args:
+        executable: /bin/bash
+      register: tc29_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-29: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-29',
+          'name': 'Purge Namespace (Project)',
+          'category': 'OpenShift Administration',
+          'expected': 'All resources in namespace testproject purged',
+          'status': ('Pass' if tc29_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc29_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc29_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc29_cmd.stderr | default(''))) if (tc29_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc29_cmd.rc | string) if tc29_cmd.rc is defined else '')),
+          'details': tc29_cmd.stdout | default(tc29_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc29', 'administration']
+
+# TC 31: Cleanup a Worker
+- name: "TC-31: Cleanup a Worker"
+  when: run_tc31_cleanup_worker | default(true) | bool
+  block:
+    - name: "TC-31: Test cordon and uncordon workflow on first worker"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        NODE="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
+        if [[ -z "$NODE" ]]; then
+          echo "No worker node was found." >&2
+          exit 1
+        fi
+        oc adm cordon "$NODE"
+        echo "== Node after cordon =="
+        oc get node "$NODE" -o wide
+        oc adm uncordon "$NODE"
+        echo "== Node after uncordon =="
+        oc get node "$NODE" -o wide
+      register: tc31_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-31: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-31',
+          'name': 'Cleanup a Worker',
+          'category': 'OpenShift Administration',
+          'expected': 'Worker is cordoned, inspected, and returned to schedulable state',
+          'status': ('Pass' if tc31_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc31_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc31_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc31_cmd.stderr | default(''))) if (tc31_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc31_cmd.rc | string) if tc31_cmd.rc is defined else '')),
+          'details': tc31_cmd.stdout | default(tc31_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc31', 'administration']
