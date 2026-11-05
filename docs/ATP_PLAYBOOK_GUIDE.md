@@ -39,12 +39,12 @@ atp_external_registry_validate_certs: true
 A registry robot token cannot be obtained safely or reliably from cluster mirror settings. Supply the robot username and token from the bastion environment. The token is used as the robot account's HTTP Basic password and is excluded from task output and reports:
 
 ```bash
-export ATP_EXTERNAL_REGISTRY_USERNAME='robot$organization+account'
-read -rsp 'External registry robot token: ' ATP_EXTERNAL_REGISTRY_TOKEN
+export ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME='robot$organization+account'
+read -rsp 'External registry robot token: ' ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 printf '\n'
-export ATP_EXTERNAL_REGISTRY_TOKEN
+export ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ansible-playbook -i inventory.ini playbooks/atp.yml
-unset ATP_EXTERNAL_REGISTRY_USERNAME ATP_EXTERNAL_REGISTRY_TOKEN
+unset ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ```
 
 Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled when possible; install the registry CA instead of disabling certificate validation.

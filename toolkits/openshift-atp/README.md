@@ -27,12 +27,12 @@ The playbook checks the internal registry when its service exists and also check
 The cluster configuration does not contain a safe, reliable robot token to reuse. Supply the robot username and token at runtime through environment variables; the token is sent as the robot account's HTTP Basic password and is never included in the ATP report:
 
 ```bash
-export ATP_EXTERNAL_REGISTRY_USERNAME='robot$organization+account'
-read -rsp 'External registry robot token: ' ATP_EXTERNAL_REGISTRY_TOKEN
+export ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME='robot$organization+account'
+read -rsp 'External registry robot token: ' ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 printf '\n'
-export ATP_EXTERNAL_REGISTRY_TOKEN
+export ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ansible-playbook -i inventory.ini playbooks/atp.yml
-unset ATP_EXTERNAL_REGISTRY_USERNAME ATP_EXTERNAL_REGISTRY_TOKEN
+unset ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ```
 
 Set `atp_external_registry_validate_certs: false` only when the registry uses a certificate chain the bastion does not trust. Prefer installing the registry CA. Without credentials, HTTP 200 or 401 confirms API reachability; when robot credentials are configured, only HTTP 200 passes authentication. TC-19 validates internal registry pods, placement, and logs, plus the external API when configured.
