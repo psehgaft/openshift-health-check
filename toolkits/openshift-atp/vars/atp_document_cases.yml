@@ -1,0 +1,448 @@
+{
+  "atp_document_cases": {
+    "TC-01": {
+      "description": "Verificación de versión del cluster",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde máquina bastion, con login system:admin o rol cluster-admin ejecutar: ['oc', 'get', 'clusterversion', 'version', '-o', 'json']",
+      "expected": "Datos como: NAME      VERSION   AVAILABLE   PROGRESSING   SINCE   STATUS La columna  VERSION  mostrará la información requerida de OCP."
+    },
+    "TC-02": {
+      "description": "Verificación de estado del cluster y nodos",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde máquina bastion, con login system:admin o rol cluster-admin ejecutar: ~]#  oc get  clusterversion ~]#  oc get nodes RESULTADO: NAME      VERSION   AVAILABLE   PROGRESSING   SINCE   STATUS version   <cluster-version>   True        False         119d    Cluster version is <cluster-version> <node-name>   Ready   control-plane,master,worker   161d   v1.33.12 <node-name>   Ready   control-plane,master,worker   161d   v1.33.12 <node-name>   Ready   control-plane,master,worker   161d   v1.33.12 <node-name>   Ready   worker,worker-ht              161d   v1.33.12 <node-name>   Ready   worker,worker-ht              161d   v1.33.12 <node-name>   Ready   worker,worker-ht              161d   v1.33.12 <node-name>   Ready   worker,worker-std             161d   v1.33.12 <node-name>   Ready   worker,worker-std             161d   v1.33.12 <node-name>   Ready   worker,worker-std             161d   v1.33.12 <node-name>   Ready   worker,worker-std             161d   v1.33.12 <node-name>   Ready   worker,worker-std             161d   v1.33.12 <node-name>   Ready   worker,worker-std             161d   v1.33.12 <node-name>   Ready   worker,worker-std             161d   v1.33.12",
+      "expected": "El cluster debe mostrarse  como  “Available = True” Todos los nodos del clúster deben tener el status “Ready”"
+    },
+    "TC-03": {
+      "description": "Verificación de dns en cluster",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde máquina bastion, con login system:admin o rol cluster-admin. Implementar en proyecto pod de tools, para ello ejecutar: ~]# oc run rhel-tools -it --image=rhel7/rhel-tools Luego de ello ejecutar el siguiente comando desde el pod creado ~]# dig  <hostname_bastion>",
+      "expected": ""
+    },
+    "TC-04": {
+      "description": "Verificar el status del operador",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc get deployment/dns-operator -n openshift-dns-operator Con lo anterior se observará el estado del deployment, luego ejecutar el estado del operador: ~]# oc get clusteroperator/dns Para observar el dns por defecto ejecutar: ~]# oc describe dns.operator/default",
+      "expected": "Los comandos permitirán exponer información del estado del operador de dns y una descripción de este."
+    },
+    "TC-05": {
+      "description": "Verificar fecha y hora de uno de los nodos, comparar con la query al bastión.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En máquina bastión ejecutar comando: ~]# ssh core@<hostname_nodo_apps> Para uno de los nodos: Una vez en el nodo escribir : ~]$ chronyc sources ~]$ date",
+      "expected": "Evidenciará sincronía con el ntp configurado en bastión, este estará apuntando al ntp provisto"
+    },
+    "TC-06": {
+      "description": "Verificar operadores del cluster, estado y versión",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde máquina bastión ejecutar: ~]# oc get co",
+      "expected": "Evidenciará los operadores del cluster, versión, estado."
+    },
+    "TC-07": {
+      "description": "Acceder a la plataforma por medio de la consola web",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión podemos conocer la url de la consola web, para ello ejecutamos el siguiente comando: ~]# oc whoami --show-console El resultado es la url de la consola, podemos copiar la url y en un browser y con acceso a la vpn, trasladar el resultado obtenido, luego escribir el usuario y password correspondiente.",
+      "expected": "Acceso a openshift por medio de la consola web"
+    },
+    "TC-08": {
+      "description": "Se obtienen las métricas con la información de almacenamiento.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión podemos conocer los valores de las métricas desde prometheus, ejecutamos los siguientes comandos: Total Storage (Gigabytes) ~]# oc exec prometheus-k8s-0 -n openshift-monitoring -c prometheus -- /usr/bin/promtool query instant http://localhost:9090 \"sum(node_filesystem_size_bytes{mountpoint='/'})/1000/1000/1000\" Free Storage (Gigabytes) ~]# oc exec prometheus-k8s-0 -n openshift-monitoring -c prometheus -- /usr/bin/promtool query instant http://localhost:9090 \"sum(node_filesystem_avail_bytes{mountpoint='/'})/1000/1000/1000\" % Storage free ~]# oc exec prometheus-k8s-0 -n openshift-monitoring -c prometheus -- /usr/bin/promtool query instant http://localhost:9090 \"sum(node_filesystem_avail_bytes{mountpoint='/'})/sum(node_filesystem_size_bytes{mountpoint='/'})*100\"",
+      "expected": "Devuelven los valores en el siguiente formato: {} => 0000.0000000000000@[000000000000.000]"
+    },
+    "TC-09": {
+      "description": "Ver estado de consumo de cpu y memoria de los nodos",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastion ejecutar: ~]# oc adm top nodes",
+      "expected": "Se observará el listado de los nodos con los recursos consumidos en el momento de la ejecución"
+    },
+    "TC-10": {
+      "description": "Verificar que el clúster tiene las 3 instancias de ETCD (Control plane o nodos master) correctamente desplegadas",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina  bastion  ejecutar: ~]# oc get etcd -o=jsonpath='{range .items[0].status.conditions[?(@.type==\"EtcdMembersAvailable\")]}{.message}{\"\\n\"}'",
+      "expected": "El cluster ETCD debe estar integrado por 3 miembros."
+    },
+    "TC-11": {
+      "description": "Visualizar los labels de todos los nodos",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc get nodes --show-labels",
+      "expected": "Muestra la lista de los nodos del cluster con una columna adicional “LABELS” para visualización."
+    },
+    "TC-12": {
+      "description": "Verificar el estado de los Machine Config Pool (mcp)",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar este comando para listar los mcp: ~]# oc get mcp Para ver el status de cada mcp ejecutar: ~]# oc describe mcp <nombre-mcp>",
+      "expected": "Visualizar los Machine Config Pool (Master, Infra y Worker).  Visualizar el status de un mcp"
+    },
+    "TC-13": {
+      "description": "Verificar el estado de los Machine Config (mc)",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar el siguiente comando para listar los mc: ~]# oc get mc Para visualizar el contenido de un mc, ejecutar: ~]# oc describe machineconfigs <nombre-mc>",
+      "expected": "Visualizar los Machine Config existentes para (Master, Infra y Worker) Visualizar el contenido de un mc."
+    },
+    "TC-14": {
+      "description": "Verificar los puertos disponibles en los tipos de nodo",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En máquina bastión ejecutar comando: ~]# ssh core@<hostname_nodo_apps> Para cada uno de los tipos de nodos: Una vez en el nodo escribir : ~]$ sudo netstat -pltn",
+      "expected": "Visualizamos los puertos disponibles en los nodos por tipo de nodo"
+    },
+    "TC-15": {
+      "description": "Verificar el estatus del servicio cri-o en los nodos",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En máquina bastión ejecutar comando: ~]# ssh core@<hostname_nodo_apps> Para uno de los nodos: Una vez en el nodo escribir : ~]$ sudo crictl ps",
+      "expected": "El listado de los contenedores disponibles en el nodo"
+    },
+    "TC-16": {
+      "description": "Verificar la correcta configuración de conectividad",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En máquina bastión ejecutar comando: ~]# ssh core@<hostname_nodo_apps> Para uno de los nodos: Una vez en el nodo escribir : ~]$ curl -ik https://quay.io",
+      "expected": "HTTP/2 200"
+    },
+    "TC-17": {
+      "description": "Ejecutar comandos para ver logs por medio del api en consola",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecuta: ~]# oc logs -f deployments/image-registry -n openshift-image-registry --since=1h",
+      "expected": "Se observarán los logs en modo flush  de la última  hora."
+    },
+    "TC-18": {
+      "description": "Verificar informacion de conexion al registry, interna y externa",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Para obtener el hostname del registry interno, desde la máquina bastión ejecuta: ~]# oc get svc image-registry -n openshift-image-registry -o go-template --template='__ATP_JINJA_OPEN__.metadata.name__ATP_JINJA_CLOSE__.__ATP_JINJA_OPEN__.metadata.namespace__ATP_JINJA_CLOSE__.svc__ATP_JINJA_OPEN__println__ATP_JINJA_CLOSE__'",
+      "expected": "Hostname terminacion .svc para el registro interno."
+    },
+    "TC-19": {
+      "description": "Verificar el estado del registry y ubicación en máquinas tipo infra.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecuta: ~]# oc get pods - n openshift-image-registry  - o wide   Para ver los logs del registry ejecutar ~]# oc logs deployments/image-registry -n openshift-image-registry",
+      "expected": "El estado de los pods debe ser running, los logs deben evidenciar actividad level=info"
+    },
+    "TC-20": {
+      "description": "Verificar la configuración de storage del registry",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc get configs.imageregistry.operator.openshift.io/cluster -o jsonpath={.spec.storage} | jq .",
+      "expected": "Revisar la salida del comando en formato json, allí se identificará el storage utilizado"
+    },
+    "TC-21": {
+      "description": "Verificar pods de Monitoring, ubicación de los pods y verificación de cm",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc get pods - n openshift-monitorin g ~]# oc get co monitoring -o jsonpath='{range .status.conditions[2].*}{}{\"\\n\"}{end}'",
+      "expected": "Listado de pods en modo running corriendo, con sus ready 100% Status “Available“ del operador"
+    },
+    "TC-22": {
+      "description": "Verificación del status del clusterlogging",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc get pods - n openshift- logging ~]# oc get clusterlogging/instance -n openshift-logging -o yaml",
+      "expected": "Listado de pods en modo running corriendo, con sus ready 100% En la sección status (formato yaml) cada componente (collection, logStore, visualization) con todos los pods en “ready” y ningun pod en “failed” o “not ready”"
+    },
+    "TC-23": {
+      "description": "Ejecución de oc por línea de comandos para crear un proyecto",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc new-project testproject --description=\"descripción corta del proyecto\"",
+      "expected": "Creación del proyecto con nombre test project"
+    },
+    "TC-24": {
+      "description": "Crear Limit Range en proyecto default",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En la máquina bastión crear un archivo “test-resource-limits.yaml” con el siguiente contenido: apiVersion: \"v1\" kind: \"LimitRange\" metadata:   name: \"test-resource-limits\"   namespace: default spec:   limits:     - type: \"Container\"       max:         cpu: \"2\"         memory: \"1Gi\"       min:         cpu: \"100m\"         memory: \"4Mi\"       default:         cpu: \"300m\"         memory: \" 200Mi \"       defaultRequest:         cpu: \"200m\"         memory: \" 100Mi \"       maxLimitRequestRatio:         cpu: \"10\" Desde la máquina bastión ejecutar: ~]# oc create -f test-resource-limits.yaml -n default Obtener el resource limit creado ~]# oc get limits -n default",
+      "expected": "Crear un resource limit en proyecto “default”"
+    },
+    "TC-25": {
+      "description": "Crear un Resource Quota en el proyecto default",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En la máquina bastión crear un archivo “compute-resources.yaml” con el siguiente contenido: apiVersion: v1 kind: ResourceQuota metadata:   name: compute-resources spec:   hard:     pods: \"4\"      requests.cpu: \"1\"      requests.memory: 1Gi      requests.ephemeral-storage: 2Gi      limits.cpu: \"2\"      limits.memory: 2Gi      limits.ephemeral-storage: 4Gi  Crear el Resource Quota ~]# oc create -f compute-resources.yaml -n default Listar la quota creada en proyecto default ~]# oc get  resourcequotas  - n default",
+      "expected": "Resource quote creado en proyecto “default”"
+    },
+    "TC-26": {
+      "description": "Reiniciar el cluster completamente y verificar que vuelva a iniciarse sin problemas",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# for node in $(oc get nodes -o jsonpath='{.items[*].metadata.name}'); do oc debug node/${node} -- chroot /host shutdown -r 2; done Desde una consola adicional, conectarse nuevamente al bastión y ejecutar: ~]# watch -n 3 oc get nodes",
+      "expected": "Reiniciar todos los nodos del cluster y que vuelvan a estar en estado Ready"
+    },
+    "TC-27": {
+      "description": "Observar el correcto comportamiento de la plataforma en caso de reinicio de nodo.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En máquina bastión ejecutar comando para uno de los nodos worker: ~]# oc adm cordon <hostname_nodo_apps> ~]# oc get nodes Para el mismo nodo: ~]# ssh core@<hostname_nodo_apps> Una vez en el nodo escribir : ~]$ sudo reboot Nuevamente desde el nodo bastión observar cómo se recupera la configuración una vez que el nodo se reinicia. ~]$ watch oc get nodes Una vez que el nodo esté en modo “ready” aplicar el siguiente comando ~]# oc adm uncordon <hostname_nodo_apps>",
+      "expected": "Una vez que se aplica el  oc  cordon  los pods existentes en el nodo se re-programan en los demás nodos disponibles, colocando la bandera “no-schedule” en dicho nodo. Una vez que se reinicia el nodo y se quita la bandera, la carga debería volver a reasignarse"
+    },
+    "TC-28": {
+      "description": "Instalar un operador desde la consola web.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Acceder a la consola web de openshift e ir al menú “Operators/OperatorHub” desde la perspectiva Administrator. Colocar en el buscador el término “3scale”, elegir la siguiente opción: Dar clic en el botón install, desde el formulario seleccionar el installation mode “A specific namespace on the cluster” y seleccionamos el proyecto “testproject” que se creó en el test case 24. Damos clic en Install nuevamente",
+      "expected": "El operador se instala correctamente. Desde el menú “Operators/Installed Operators” debe verse el estatus   Succeeded  en el operador:"
+    },
+    "TC-29": {
+      "description": "Limpiar todos los recursos creados en un proyecto",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc project testproject Visualizar los recursos existentes en el proyecto ~]# oc status Eliminar todos los recursos del proyecto ~]# oc delete all --all -n testproject Verificar los recursos ~]# oc status Debe mostrar el mensaje:  You have no services, deployment configs, or build configs.",
+      "expected": "Eliminar los recursos creados dentro del proyecto"
+    },
+    "TC-30": {
+      "description": "Borrado de proyecto",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc delete project testproject Verificar que este ya no existe ~]# oc get projects |grep -i testproject",
+      "expected": "Borrado de proyecto y todos sus recursos"
+    },
+    "TC-31": {
+      "description": "Observar el correcto comportamiento de la plataforma cuando se requiere limpiar un worker.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "En máquina bastión ejecutar comando para uno de los nodos worker: ~]# oc adm cordon <hostname_nodo_apps> ~]# oc get nodes Una vez que el nodo esté en modo “ready” aplicar el siguiente comando ~]# oc adm uncordon <hostname_nodo_apps>",
+      "expected": "Una vez que se aplica el  oc  cordon  los pods existentes en el nodo se re-programan en los demás nodos disponibles, colocando la bandera “no-schedule” en dicho nodo."
+    },
+    "TC-32": {
+      "description": "Creación de una aplicación con label apps para correr sobre nodos con label APP=app",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Etiquetar un nodo ~]# oc label node <app_node> APP=app Crear aplicación ~]# oc new-app nginx~https://github.com/sclorg/nginx-container.git --context-dir=1.18/test/test-app/ Parchear aplicación ~]# oc patch deployment.apps/nginx-container  -p '{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"APP\": \"app\"__ATP_JINJA_CLOSE____ATP_JINJA_CLOSE__}' Para verificar que la aplicación corre sobre los nodos deseados, ejecutar el siguiente comando y verificar salida: ~]# oc get pods -o wide",
+      "expected": "Creación de aplicación en donde los pods de esta corren en nodos específicos"
+    },
+    "TC-33": {
+      "description": "Modificar la configuración de un despliegue/pod para generar una regla de toleration a Taint.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift y crear una aplicación de prueba. Desde la perspectiva administrador, ir al menú “Workloads/Deployments” y editar el deployment de la aplicación de prueba. Agregar lo siguiente bajo la sección “.spec.template.spec”:       tolerations:       - key: node.ocs.openshift.io/storage          effect: NoSchedule          value: true Ir al menú “Workloads/Pods” y observar los nodos en los que los pods están asignados.",
+      "expected": "Las aplicaciones corren en los nodos en los que los taint-tolerations están preconfigurados"
+    },
+    "TC-34": {
+      "description": "Modificar la configuración de un despliegue/pod para generar una regla de afinidad.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift y crear una aplicación de prueba. Desde la perspectiva administrador, ir al menú “Workloads/Deployments” y editar el deployment de la aplicación de prueba. Agregar lo siguiente bajo la sección “.spec.template.spec”:       affinity:         podAffinity:           preferredDuringSchedulingIgnoredDuringExecution:             - weight: 100               podAffinityTerm:                 labelSelector:                   matchLabels:                     app: php-sample2                 topologyKey: kubernetes.io/hostname Adicionalmente modificar las réplicas a 2. Nota: Observar el label Ir al menú “Workloads/Pods” y observar los nodos en los que los pods están asignados.",
+      "expected": "Se genera una aplicación con una regla de afinidad, observar que los dos pods coexisten en el mismo nodo."
+    },
+    "TC-35": {
+      "description": "Modificar la configuración de un despliegue/pod para generar una regla de anti-afinidad.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift y crear una aplicación de prueba. Desde la perspectiva administrador, ir al menú “Workloads/Deployments” y editar el deployment de la aplicación de prueba. Agregar lo siguiente bajo la sección “.spec.template.spec”:        affinity:         podAntiAffinity:           preferredDuringSchedulingIgnoredDuringExecution:             - weight: 100               podAffinityTerm:                 labelSelector:                   matchLabels:                     app: php-sample2                 topologyKey: kubernetes.io/hostname Adicionalmente modificar las réplicas a 2. Nota: Observar el label Ir al menú “Workloads/Pods” y observar los nodos en los que los pods están asignados.",
+      "expected": "Se genera una aplicación con una regla de afinidad, observar que los dos pods existen necesariamente en nodos distintos."
+    },
+    "TC-36": {
+      "description": "Aumentar el número de pods en aplicación de manera manual",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Crear aplicación y ejecutar ejecutar  comando de autoescalado: ~]# oc project default ~]# oc new-app nginx  Una vez creada la aplicación escalarla usando: ~]# oc scale deployment.apps/nginx-container --replicas=6 ~]# oc get pods -o wide Verificar que los pods aumentan a seis",
+      "expected": "La aplicación escala de uno a seis pods."
+    },
+    "TC-37": {
+      "description": "Listar los pods escalados en el test anterior, seleccionar uno y borrarlo:",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ejecutar comando para listar los pods ~]# oc get pods -o wide Seleccionar uno de los pods corriendo de la aplicación test-apache y borrarlo con el comando siguiente ~]# oc delete pod <nginx_pod_xxxxx> Listar los pods escalados en el test anterior, verificar que al borrar uno de estos se recrea con otra extensión, se mantiene el número de pods igual a seis. ~]# oc get pods -o wide",
+      "expected": "Se observa el borrado y creación automática de un nuevo pod"
+    },
+    "TC-38": {
+      "description": "Al crear y escalar la aplicación a un número considerable de pods estos no se crean en los nodos infra.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc project default ~]# oc new-app httpd-example –name test-infra   Una vez creada la aplicación escalarla usando: ~]# oc scale dc/test-infra –replicas 10 Verificar que los pods se crearon en los nodos de aplicación ~]# oc get pods -o wide",
+      "expected": "No se crean pods en nodos tipo infra"
+    },
+    "TC-39": {
+      "description": "Verificación de índices",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Acceder a consola de OCP y en la opción de  Observe , seleccionar  Logs . Luego seleccionar el tipo de Logs (Application, infrastructure, audit)",
+      "expected": "Verificación de existencia de índices tipo infrastructure, application y audit"
+    },
+    "TC-40": {
+      "description": "Verificación de logs de aplicación",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Acceder a OCP por medio de la consola web, ir a  Observe  ->   Logs  y validar el log objetivo.",
+      "expected": "Existencia de logs de aplicación en Loki y visualización en OCP"
+    },
+    "TC-41": {
+      "description": "Verificación que exista un storage class",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc get sc El resultado del comando evidenciará los storage Class configurados en la plataforma",
+      "expected": "El listado de al menos un storage class configurado"
+    },
+    "TC-42": {
+      "description": "Anexar un Volumen persistente a una aplicación (Usar Consola Web)",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Acceder a la consola web de openshift. Ir a la perspectiva de desarrollador al menú +Add Dar clic en el vínculo “View all samples” y seleccionar “PHP” Esperar a que se encuentre en status  ready : Crear un  persistent  volume claim para la aplicación. Ir al menú “ Storage / PersistentVolumeClaims ” desde la perspectiva administrator. Llenar el formulario con los siguiente campos: Una vez listo, ir al menú “ Workloads/Deployments ” y seleccionar php-sample. Desde el menú actions, dar clic a “ Add Storage ” Seleccionar el claim que generamos e indicamos cómo “ Mount path ” /tmp/test Ya desplegado, dar clic en la pestaña “Pods”, el primer pod y en la pestaña Terminal.` Desde la terminal del pod, ejecutar el siguiente comando : sh-4.4$ touch /tmp/test/file sh-4.4$ ls /tmp/test",
+      "expected": "Posibilidad de utilizar volúmenes persistentes para aplicaciones."
+    },
+    "TC-43": {
+      "description": "Verificar la persistencia del volumen.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Acceder a la consola web de openshift. Ir a la perspectiva de adminstrador. Ir al menú “ Workloads/Deployments ” y seleccionar php-sample. Desde el menu actions, dar clic a “ Delete deployment ”. Ir a la perspectiva de desarrollador y repetir los pasos de despliegue en el menú  +Add  y re-asignar el almacenamiento persistente. Desde la terminal del pod, ejecutar el siguiente comando : sh-4.4$ ls /tmp/test",
+      "expected": "El volumen se mantiene persistente aun cuando la aplicación se reinicia."
+    },
+    "TC-44": {
+      "description": "A tener en cuenta: los volúmenes persistentes permiten almacenar datos de manera persistente a una aplicación en especial, al removerlos los datos de estas no se almacenarán y quedarán efímeros, es decir si los pod se borran los datos de estos se borrarán sin posibilidad de recuperarse.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "A la aplicación de  cake php , editar deployment y retirar los datos del volumen persistente, estos datos estarán en la aplicación de mysql, una vez borrado se evidenciará que ya no hay un volumen montado en la aplicación y que los datos no se almacenarán en el volumen descrito. Antes de la eliminación: evidencia del volumen: Eliminación del volumen de la aplicación:  Después de la eliminación el volumen ya no está presente",
+      "expected": "Retiro sin errores de un volumen persistente de una aplicación, recreación inmediata de dicha aplicación"
+    },
+    "TC-45": {
+      "description": "Borrado del volumen persistente de la aplicación",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Para ver el pvc creado por la aplicación: en consola de máquina bastión ejecutar el siguiente comando: ~]# oc get pvc; oc get pv Para borrar el pvc ejecutar: ~]# oc delete pvc nombre_del_pv Para verificar el borrado ejecutar el siguiente comando: ~]# oc get pvc; oc get pv Así se observa que el pvc y el pv asignados originalmente por la aplicación ya no existen",
+      "expected": "Eliminación de Volúmenes sin errores."
+    },
+    "TC-46": {
+      "description": "Verificación de versión y estado del operador de red:",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Para ver la versión y el estado del operador: en consola de máquina bastión ejecutar el siguiente comando: ~]# oc get co network  Como resultado se observará la versión, el estado, progreso del operador",
+      "expected": "Versión de operador, y estatus del mismo"
+    },
+    "TC-47": {
+      "description": "Hacer ping entre pods del mismo namespace",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: Listar pods -o wide ~]# oc get pods -o wide  entrar a uno de ellos: ~]# oc rsh rhel-tools  Ejecutar curl a ip de uno de los pods y puerto de aplicación ~]# curl http:// <pod-ip> :8080 Ejecutar curl a ip del servicio ~]# curl http:// <service-ip> :8080",
+      "expected": "Resultado, del curl con estado 200 ok"
+    },
+    "TC-48": {
+      "description": "Para esta verificación se debe contar con un certificado tipo TLS y su respectiva llave, el resultado expondrá una ruta con el certificado definido para el test.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Contar con los certificados y respectiva llave sin password, en formato pem. Para exponer una ruta, puede utilizarse una app de los ejercicios anteriores así:  Ejecutar comando :  ~]# oc create route edge --service=nombre_del_svc --cert=tls.crt --key=tls.key --ca-cert=ca.crt --hostname=fqdn_o nombre_de_ruta",
+      "expected": "Exponer un servicio por medio de un certificado tipo tls"
+    },
+    "TC-49": {
+      "description": "Crear un nuevo usuario con el provider htpasswd",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift, desde la perspectiva de administrador dar clic al menu “ Administration/Cluster Settings ” Ir a la pesta ña “ Global configuration ” y dar clic en el link “ Oauth ” Desde la sección de Identity providers dar clic en el menú “ Add/HTPasswd ” En el recuadro htpasswdfile colocar el siguiente texto: admin:<generate-a-new-htpasswd-hash> Nota: observar que el nombre del “provider” no se repita. Iniciar sesión con los siguientes datos (seleccionando el nuevo provider): Use a unique username and securely managed password; do not use sample credentials.",
+      "expected": "Se puede iniciar sesión con el nuevo usuario."
+    },
+    "TC-50": {
+      "description": "Asignar el rol cluster-admin a un usuario",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift, desde la perspectiva de administrador dar clic al menu “ User Management/Users ” Seleccionar el usuario creado en el test case 51. Ir a la  pestaña  “ RoleBindings ” y dar clic al boton “ Create binding ”. Llenar el formulario con los siguientes campos: Volver a iniciar sesion con el usuario",
+      "expected": "El usuario ahora tiene permisos de cluster-admin."
+    },
+    "TC-51": {
+      "description": "Deshabilitar el rol “self-provisioner” por defecto",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# oc adm policy \\     remove-cluster-role-from-group self-provisioner \\     system:authenticated:oauth",
+      "expected": "Los nuevos usuarios no tendrán permisos de generar proyectos propios"
+    },
+    "TC-52": {
+      "description": "Verificar el acceso vía ldap",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift, desde la perspectiva de administrador dar clic al menu “ Administration/Cluster Settings ” Ir a la pesta ña “ Global configuration ” y dar clic en el link “ Oauth ” Ir a la vista YAML Verificar la configuración de LDAP: Desde otra ventana iniciar sesión utilizando usuarios de ldap.",
+      "expected": "Se realiza un inicio de sesión utilizando usuarios ldap."
+    },
+    "TC-53": {
+      "description": "Crear un usuario de servicio.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift, desde la perspectiva de administrador dar clic al menu “ User Management/ServiceAccounts ” Dar clic al boton “ Create ServiceAccount ”. Nota: Verificar nombre y namespace",
+      "expected": "En el listado de ServiceAccounts aparece una nueva."
+    },
+    "TC-54": {
+      "description": "Eliminar un usuario",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift, desde la perspectiva de administrador dar clic al menu “ User Management/Users ” Seleccionar el usuario creado en el test case 51. Dar clic al menu “ Actions/Delete User ”",
+      "expected": "El usuario ya no aparece en el listado."
+    },
+    "TC-55": {
+      "description": "Verificar el contenido del certificado del api.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]#  curl -vk https://api.<cluster_name>.<domain>:6443 En donde: <cluster_name>: Es el nombre del cluster OCP  (multicnfs o mgmtcnfs) <domain>: Es el nombre de dominio del cluster – Customercloud.dt Verificar el CN del certificado, el issuer y la vigencia  del certificado",
+      "expected": "El certificado configurado debe ser firmado por una autoridad válida, debe corresponder al dominio configurado y debe tener suficiente vigencia."
+    },
+    "TC-56": {
+      "description": "Verificar el contenido del certificado por defecto de ingress",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# curl -vk https://console-openshift-console.apps.<cluster_name>.<domain> En donde: <cluster_name>: Es el nombre del cluster OCP  (multicnfs o mgmtcnfs) <domain>: Es el nombre de dominio del cluster – Customercloud.dt Verificar el CN del certificado, el issuer y la vigencia  del certificado",
+      "expected": "El certificado configurado debe ser firmado por una autoridad válida, debe corresponder al dominio configurado y debe tener suficiente vigencia."
+    },
+    "TC-57": {
+      "description": "Verificar el contenido del certificado por defecto de ingress personalizado.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]# curl -vk https://test.<custom_ingress_url> NOTA:  Validar con el equipo el uso de ingress custom En donde: <custom_ingress_url>: Es el nombre de dominio wildcard para el ingress personalizado.  Verificar el CN del certificado, el issuer y la vigencia  del certificado",
+      "expected": "El certificado configurado debe ser firmado por una autoridad válida, debe corresponder al dominio configurado y debe tener suficiente vigencia."
+    },
+    "TC-58": {
+      "description": "",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift, desde la perspectiva de administrador dar clic al menu “ Workloads/Secrets ” Dar clic al menu “ Create ” “ Key/value secret ”. Llenar el formulario con los siguientes valores:",
+      "expected": "Se crea el nuevo secret"
+    },
+    "TC-59": {
+      "description": "Asignar el secret a un deployment",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ir a la consola web de openshift, desde la perspectiva de administrador dar clic al menu “ Workloads/Secrets ” Seleccionar un deployment. Ir a la  pestaña “ Environment ” Dar clic al link “ + Add all from ConfigMap or Secret ” y seleccionar el secret creado en el test case 60.",
+      "expected": "El secret se asigna correctamente"
+    },
+    "TC-60": {
+      "description": "Verificar el acceso a todos los nodos desde ssh.",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]#  for node in $(oc get nodes -o jsonpath='{.items[*].metadata.name}'); do ssh -i <private-key-path> core@${node} echo ${node}; done",
+      "expected": "Se realiza el acceso a cada nodo."
+    },
+    "TC-61": {
+      "description": "Generar un respaldo de etcd",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Desde la máquina bastión ejecutar: ~]#  oc debug node/<master_node_name> sh-4.2# chroot /host sh-4.2# /usr/local/bin/cluster-backup.sh <backup-directory> En donde: <master_node_name>: El nombre de un nodo master del plano de control Verificar la ejecución correcta del script de backup",
+      "expected": "Se deberán generar 2 archivos en el directorio <backup-directory>: snapshot_<datetimestamp>.db: Este es el snapshot de etcd static_kuberesources_<datetimestamp>.tar.gz: Contiene la definición de recursos de los pods estáticos."
+    },
+    "TC-62": {
+      "description": "Restaurar etcd",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Prerrequisitos: 1.- Seleccionar un nodo del plano de control como host recuperación.  2.- Ingresar desde bastión por protocolo ssh a los nodos del plano de control (masters) haciendo uso de la llave privada. 3.- Colocar el respaldo de etcd en el nodo de recuperación bajo una ruta. Se sugiere <backup-directory> En los nodos del plano de control que NO son host de recuperación, ejecutar: $ sudo mv /etc/kubernetes/manifests/etcd-pod.yaml /tmp # Verificar que los pods de etcd se detienen (la salida deberá estar vacia despues de unos minutos): $ sudo crictl ps | grep etcd | grep -v operator $ sudo mv /etc/kubernetes/manifests/kube-apiserver-pod.yaml /tmp # Verificar que los pods de API Server se detienen (la salida deberá estar vacia despues de unos minutos): $ sudo crictl ps | grep kube-apiserver | grep -v operator $ sudo mv /var/lib/etcd/ /tmp Repetir para el otro nodo del plano de control que no es nodo de recuperación. En el nodo de recuperación, ejecutar: $ sudo -E /usr/local/bin/cluster-restore.sh <backup-directory> En donde <backup-directory> corresponde al directorio donde fue depositado el respaldo de etcd En el nodo bastión, ejecutar: #Verificar que todos los nodos se encuentran en estado Ready (Esto puede tomar varios minutos) $ oc get nodes En todos los nodos del plano de control (iniciando por el nodo de recuperación), ejecutar: $ sudo systemctl restart kubelet.service En el nodo bastión, aprobar todos los certificados pendientes por aprobar y aprobarlos. $ oc get csr $ oc adm certificate approve <csr_name> En donde csr_name es el nombre del certificado a aprobar. Ejecutar este comando hasta que no existan más certificados por aprobar. En todos los nodos del plano de control (iniciando por el nodo de recuperación), ejecutar: #Debera existir un contenedor ejecutandose $ sudo crictl ps | grep etcd | grep -v operator $ oc get pods -n openshift-etcd | grep -v etcd-quorum-guard | grep etcd En bastión, ejecutar: $ oc patch etcd cluster -p='{\"spec\": {\"forceRedeploymentReason\": \"recovery-'\"$( date --rfc-3339=ns )\"'\"__ATP_JINJA_CLOSE__' --type=merge $ oc get etcd -o=jsonpath='{range .items[0].status.conditions[?(@.type==\"NodeInstallerProgressing\")]}{.reason}{\"\\n\"}{.message}{\"\\n\"}' $ oc patch etcd cluster -p='{\"spec\": {\"forceRedeploymentReason\": \"recovery-'\"$( date --rfc-3339=ns )\"'\"__ATP_JINJA_CLOSE__' --type=merge  $ oc get etcd -o=jsonpath='{range .items[0].status.conditions[?(@.type==\"NodeInstallerProgressing\")]}{.reason}{\"\\n\"}{.message}{\"\\n\"}' $ oc patch kubeapiserver cluster -p='{\"spec\": {\"forceRedeploymentReason\": \"recovery-'\"$( date --rfc-3339=ns )\"'\"__ATP_JINJA_CLOSE__' --type=merge $ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type==\"NodeInstallerProgressing\")]}{.reason}{\"\\n\"}{.message}{\"\\n\"}' $ oc patch kubecontrollermanager cluster -p='{\"spec\": {\"forceRedeploymentReason\": \"recovery-'\"$( date --rfc-3339=ns )\"'\"__ATP_JINJA_CLOSE__' --type=merge $ oc get kubecontrollermanager -o=jsonpath='{range .items[0].status.conditions[?(@.type==\"NodeInstallerProgressing\")]}{.reason}{\"\\n\"}{.message}{\"\\n\"}' $ oc patch kubescheduler cluster -p='{\"spec\": {\"forceRedeploymentReason\": \"recovery-'\"$( date --rfc-3339=ns )\"'\"__ATP_JINJA_CLOSE__' --type=merge $ oc get kubescheduler -o=jsonpath='{range .items[0].status.conditions[?(@.type==\"NodeInstallerProgressing\")]}{.reason}{\"\\n\"}{.message}{\"\\n\"}' $ oc get pods -n openshift-etcd | grep -v etcd-quorum-guard | grep etcd Verificar la ejecución correcta del script de backup",
+      "expected": "El cluster de etcd se encontrará activo después de una restauración."
+    },
+    "TC-63": {
+      "description": "Ejecutar login, tag y push de una imagen hacia el registro Quay local o externo.",
+      "topology": "Red Hat Openshift Container Platform + Quay",
+      "procedure": "Desde la máquina bastión ejecutar: Podman Login Podman tag (Imagen target) Podman Push",
+      "expected": "Login exitoso y disponibilidad de la imagen en el catálogo de Quay."
+    },
+    "TC-64": {
+      "description": "Obtener el must-gather y el sosreport para efectos de soporte y troubleshooting",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "1. Ejecutar oc adm must-gather.   2. Acceder a nodo: oc debug node/<nombre_nodo>.   3. Generar sosreport dentro del nodo.",
+      "expected": "Generación de tarball de diagnóstico y acceso root efectivo al sistema de archivos del host."
+    },
+    "TC-65": {
+      "description": "Gestión del Ciclo de vida",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Crear un VolumeSnapshot de un PVC existente y validar su estado.",
+      "expected": "READYTOUSE en true y creación del snapshot en el backend de storage."
+    },
+    "TC-66": {
+      "description": "(Cordon/Drain/Restart)",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "1. oc adm cordon <nodo>   2. oc adm drain <nodo> --ignore-daemonsets   3. Reinicio físico/virtual y oc adm uncordon.",
+      "expected": "Evacuación exitosa de pods, estado  SchedulingDisabled  y retorno a  Ready  tras reinicio."
+    },
+    "TC-67a": {
+      "description": "PVC, iSCSI y Multipath",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Verificar /etc/iscsi/ y ejecución de multipath -ll en los workers. Validar que el PVC esté Bound.",
+      "expected": "Rutas activas (Active/Ready) en multipath y persistencia de datos en el pod."
+    },
+    "TC-67b": {
+      "description": "Validación de NNCP",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Revisar el estado de las políticas de red: oc get nncp.",
+      "expected": "Status Available en todas las políticas aplicadas por el Node Network Configuration Policy."
+    },
+    "TC-68": {
+      "description": "NTP y DNS",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "1. chronyc sources en el nodo.   2. dig <api_cluster> y nslookup a registries.",
+      "expected": "Sincronización de tiempo (< 100ms offset) y resolución correcta de nombres internos/externos."
+    },
+    "TC-69": {
+      "description": "NTP y DNS",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Probar conexión a registry.redhat.io mediante curl -v o podman login.",
+      "expected": "HTTP 200/302 o Login Succeeded (Confirma salida a internet vía proxy/directo)."
+    },
+    "TC-70": {
+      "description": "LACP Bonding y MTU",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Verificar /proc/net/bonding/bond0 (y bond1 si aplica). Revisar MTU con ip link show..",
+      "expected": "Bonding Mode: IEEE 802.3ad, MII Status \"Up\" y MTU configurado a 9000 (Jumbo Frames) para las interfaces bond."
+    },
+    "TC-71": {
+      "description": "(Roles/Labels/MaxPods)",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ejecutar oc describe node <nodo> (verificando los perfiles master, worker, worker-std y worker-ht).",
+      "expected": "Validación de etiquetas node-role.kubernetes.io, roles correctos según diseño y capacidad máxima de pods configurada exactamente a 250 pods por nodo."
+    },
+    "TC-72": {
+      "description": "HugePages",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Ejecutar oc describe node y verificar hugepages-2Mi o hugepages-1Gi.",
+      "expected": "Capacidad asignada y disponible coincidente con el MachineConfig definido."
+    },
+    "TC-73": {
+      "description": "SR-IOV y VFs",
+      "topology": "Red Hat Openshift Container Platform",
+      "procedure": "Revisar SriovNetworkNodeState.  Comprobar VFs con lspci | grep -i ethernet.",
+      "expected": "Interfaces Virtual Functions (VFs) creadas y visibles en el sistema operativo del nodo."
+    }
+  }
+}

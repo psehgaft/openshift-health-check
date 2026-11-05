@@ -2,8 +2,18 @@
 - name: "TC-30: Delete Namespace (Project)"
   when: run_tc30_delete_namespace | default(true) | bool
   block:
-    - name: "TC-30: Delete testproject"
-      ansible.builtin.command: oc delete project testproject
+    - name: "TC-30: Delete and verify testproject"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        oc delete project testproject --ignore-not-found=true --wait=true
+        projects="$(oc get projects -o name)"
+        if grep -iq 'testproject' <<< "$projects"; then
+          echo "Project testproject still exists after deletion." >&2
+          exit 1
+        fi
+        echo "Verified: project testproject is absent."
+      args:
+        executable: /bin/bash
       register: tc30_cmd
       changed_when: false
       failed_when: false
@@ -14,8 +24,8 @@
           'id': 'TC-30',
           'name': 'Delete Namespace (Project)',
           'category': 'OpenShift Administration',
-          'expected': 'Namespace testproject deleted cleanly',
-          'status': ('Pass' if (tc30_cmd.rc == 0 or 'NotFound' in tc30_cmd.stderr) else 'Fail'),
+          'expected': 'Project testproject is deleted and absent from the project list',
+          'status': ('Pass' if tc30_cmd.rc == 0 else 'Fail'),
           'procedure': (tc30_cmd.cmd | default('See ATP task source; command metadata unavailable')),
           'evidence': ((tc30_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc30_cmd.stderr | default(''))) if (tc30_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc30_cmd.rc | string) if tc30_cmd.rc is defined else '')),
           'details': tc30_cmd.stdout | default(tc30_cmd.stderr) | truncate(150)

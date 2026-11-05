@@ -14,7 +14,7 @@ openshift-health-check/
 └── docs/ATP_PLAYBOOK_GUIDE.md
 ```
 
-The ATP implementation is in [toolkits/openshift-atp](../toolkits/openshift-atp/). Each automated test stores the invoked command, full stdout/stderr, exit code, expected result, and conclusion. The playbook renders an ATP-specific Markdown and HTML report template alongside the existing health-check reporting system.
+The ATP implementation is in [toolkits/openshift-atp](../toolkits/openshift-atp/). Each automated test stores the invoked command, full stdout/stderr, exit code, expected result, and conclusion. Reports also include the original procedure and expected result from the supplied ATP source document as a separate reference, so readers can distinguish documented steps from commands actually executed. The playbook renders an ATP-specific Markdown and HTML report template alongside the existing health-check reporting system.
 
 ## Reports
 
