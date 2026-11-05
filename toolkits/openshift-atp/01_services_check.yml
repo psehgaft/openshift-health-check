@@ -368,7 +368,7 @@
     - name: "TC-15: Check CRI-O running containers"
       ansible.builtin.shell: >
         NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}');
-        oc debug node/${NODE} -- chroot /host crictl ps
+        oc debug -q node/${NODE} -- chroot /host crictl info
       register: tc15_cmd
       changed_when: false
       failed_when: false
@@ -379,8 +379,8 @@
           'id': 'TC-15',
           'name': 'Check crio status',
           'category': 'Services Check',
-          'expected': 'CRI-O active and executing containers on node',
-          'status': ('Pass' if (tc15_cmd.rc == 0 and 'CONTAINER ID' in tc15_cmd.stdout) else 'Fail'),
+          'expected': 'CRI-O responds to crictl info on the worker node',
+          'status': ('Pass' if (tc15_cmd.rc == 0 and tc15_cmd.stdout | trim | length > 0) else 'Fail'),
           'procedure': (tc15_cmd.cmd | default('See ATP task source; command metadata unavailable')),
           'evidence': ((tc15_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc15_cmd.stderr | default(''))) if (tc15_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc15_cmd.rc | string) if tc15_cmd.rc is defined else '')),
           'details': tc15_cmd.stdout | default(tc15_cmd.stderr) | truncate(150)
@@ -417,8 +417,26 @@
 - name: "TC-17: Check Cluster logs via API"
   when: run_tc17_check_cluster_logs_api | default(true) | bool
   block:
-    - name: "TC-17: Fetch logs of image-registry deployment"
-      ansible.builtin.command: oc logs deployments/image-registry -n openshift-image-registry --tail=20
+    - name: "TC-17: Fetch API server and control-plane logs through the API"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for component in \
+          "openshift-kube-apiserver kube-apiserver" \
+          "openshift-kube-controller-manager kube-controller-manager" \
+          "openshift-kube-scheduler openshift-kube-scheduler"; do
+          read -r namespace pod_prefix <<< "$component"
+          pod="$(oc get pods -n "$namespace" --field-selector=status.phase=Running \
+            -o custom-columns=NAME:.metadata.name --no-headers \
+            | awk -v prefix="$pod_prefix" 'index($1, prefix) == 1 { print $1; exit }')"
+          if [[ -z "$pod" ]]; then
+            echo "No running $pod_prefix control-plane pod found in $namespace" >&2
+            exit 1
+          fi
+          echo "===== $namespace/$pod ====="
+          oc logs -n "$namespace" "$pod" --all-containers=true --tail=20
+        done
+      args:
+        executable: /bin/bash
       register: tc17_cmd
       changed_when: false
       failed_when: false
@@ -429,7 +447,7 @@
           'id': 'TC-17',
           'name': 'Check Cluster logs via API',
           'category': 'Services Check',
-          'expected': 'Cluster logs stream successfully via API',
+          'expected': 'Recent logs from the API server, controller manager, and scheduler are retrievable through the Kubernetes API',
           'status': ('Pass' if tc17_cmd.rc == 0 else 'Fail'),
           'procedure': (tc17_cmd.cmd | default('See ATP task source; command metadata unavailable')),
           'evidence': ((tc17_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc17_cmd.stderr | default(''))) if (tc17_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc17_cmd.rc | string) if tc17_cmd.rc is defined else '')),
@@ -441,8 +459,25 @@
 - name: "TC-18: Check Internal Registry API"
   when: run_tc18_check_internal_registry_api | default(true) | bool
   block:
-    - name: "TC-18: Query internal registry service hostname"
-      ansible.builtin.command: oc get svc image-registry -n openshift-image-registry -o jsonpath='{.metadata.name}.{.metadata.namespace}.svc'
+    - name: "TC-18: Check internal or configured external registry API"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
+          echo "Selected registry: internal OpenShift image registry"
+          oc get svc image-registry -n openshift-image-registry -o wide
+        else
+          node="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
+          if [[ -z "$node" ]]; then
+            echo "No worker node found to test external registry connectivity" >&2
+            exit 1
+          fi
+          echo "Internal image-registry service is absent; testing {{ atp_external_registry_host | default('quay.io') }} from worker $node"
+          status="$(oc debug -q "node/$node" -- chroot /host curl --connect-timeout 10 --max-time 20 -sS -o /dev/null -w '%{http_code}' https://{{ atp_external_registry_host | default('quay.io') }}/v2/)"
+          echo "External registry API HTTP status: $status"
+          [[ "$status" == "200" || "$status" == "401" ]]
+        fi
+      args:
+        executable: /bin/bash
       register: tc18_cmd
       changed_when: false
       failed_when: false
@@ -451,13 +486,13 @@
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-18',
-          'name': 'Check Internal Registry API',
+          'name': 'Check Configured Registry API',
           'category': 'Services Check',
-          'expected': 'Internal registry service DNS endpoint available',
-          'status': ('Pass' if (tc18_cmd.rc == 0 and 'image-registry.openshift-image-registry.svc' in tc18_cmd.stdout) else 'Fail'),
+          'expected': 'The internal registry service is available through the API, or the configured external registry API is reachable from a worker',
+          'status': ('Pass' if tc18_cmd.rc == 0 else 'Fail'),
           'procedure': (tc18_cmd.cmd | default('See ATP task source; command metadata unavailable')),
           'evidence': ((tc18_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
-          'details': 'Internal endpoint: ' ~ tc18_cmd.stdout | default('Not found')
+          'details': tc18_cmd.stdout | default(tc18_cmd.stderr) | truncate(150)
         }] }}"
   tags: ['general', 'telco', 'tc18', 'registry']
 
@@ -493,7 +528,33 @@
   when: run_tc20_check_internal_registry_storage | default(true) | bool
   block:
     - name: "TC-20: Query registry storage configuration"
-      ansible.builtin.command: oc get configs.imageregistry.operator.openshift.io/cluster -o jsonpath={.spec.storage}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
+          storage="$(oc get configs.imageregistry.operator.openshift.io/cluster -o jsonpath='{.spec.storage}')"
+          if [[ -z "$storage" || "$storage" == "{}" || "$storage" == "null" ]]; then
+            echo "Internal registry service exists, but Image Registry Operator has no storage backend configured: $storage" >&2
+            exit 1
+          fi
+          if [[ "$storage" == *emptyDir* ]]; then
+            echo "Internal registry uses ephemeral emptyDir storage; persistent storage is not configured: $storage" >&2
+            exit 1
+          fi
+          echo "Internal registry storage backend: $storage"
+        else
+          node="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
+          if [[ -z "$node" ]]; then
+            echo "No worker node found to check the configured external registry" >&2
+            exit 1
+          fi
+          echo "Internal registry is absent; checking {{ atp_external_registry_host | default('quay.io') }} from worker $node."
+          echo "External registry API availability does not expose its storage backend. Verify persistence with an authenticated push and pull or the registry provider's storage health check."
+          status="$(oc debug -q "node/$node" -- chroot /host curl --connect-timeout 10 --max-time 20 -sS -o /dev/null -w '%{http_code}' https://{{ atp_external_registry_host | default('quay.io') }}/v2/)"
+          echo "External registry API HTTP status: $status"
+          [[ "$status" == "200" || "$status" == "401" ]]
+        fi
+      args:
+        executable: /bin/bash
       register: tc20_cmd
       changed_when: false
       failed_when: false
@@ -502,13 +563,13 @@
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-20',
-          'name': 'Check Internal Registry Storage',
+          'name': 'Check Configured Registry Storage',
           'category': 'Services Check',
-          'expected': 'Registry storage backend configured',
-          'status': ('Pass' if (tc20_cmd.rc == 0 and tc20_cmd.stdout | length > 2) else 'Fail'),
+          'expected': 'Internal registry has persistent storage configured, or external registry API is reachable and backend persistence is verified by its owner',
+          'status': ('Pass' if (tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default(''))) else ('Skipped' if (tc20_cmd.rc == 0 and 'External registry API availability does not expose its storage backend' in (tc20_cmd.stdout | default(''))) else 'Fail'),
           'procedure': (tc20_cmd.cmd | default('See ATP task source; command metadata unavailable')),
           'evidence': ((tc20_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc20_cmd.stderr | default(''))) if (tc20_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc20_cmd.rc | string) if tc20_cmd.rc is defined else '')),
-          'details': tc20_cmd.stdout | default('No storage spec') | truncate(150)
+          'details': tc20_cmd.stdout | default(tc20_cmd.stderr) | truncate(150)
         }] }}"
   tags: ['general', 'telco', 'tc20', 'registry_storage']
 

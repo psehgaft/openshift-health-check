@@ -237,7 +237,14 @@
   when: run_tc58_create_secret | default(true) | bool
   block:
     - name: "TC-58: Create test Secret"
-      ansible.builtin.command: oc create secret generic test-atp --from-literal=name=test -n default
+      ansible.builtin.shell: |
+        set -o pipefail
+        if ! oc get project testproject -o name >/dev/null 2>&1; then
+          oc new-project testproject --description="ATP Test Project"
+        fi
+        oc create secret generic test-atp --from-literal=name=test -n testproject --dry-run=client -o yaml | oc apply -n testproject -f -
+      args:
+        executable: /bin/bash
       register: tc58_cmd
       changed_when: false
       failed_when: false
@@ -248,8 +255,8 @@
           'id': 'TC-58',
           'name': 'Create a Secret',
           'category': 'User & Security',
-          'expected': 'Secret test-atp created in default namespace',
-          'status': ('Pass' if (tc58_cmd.rc == 0 or 'AlreadyExists' in tc58_cmd.stderr) else 'Fail'),
+          'expected': 'Secret test-atp exists in testproject and is created or updated successfully',
+          'status': ('Pass' if tc58_cmd.rc == 0 else 'Fail'),
           'procedure': (tc58_cmd.cmd | default('See ATP task source; command metadata unavailable')),
           'evidence': ((tc58_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc58_cmd.stderr | default(''))) if (tc58_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc58_cmd.rc | string) if tc58_cmd.rc is defined else '')),
           'details': tc58_cmd.stdout | default(tc58_cmd.stderr) | truncate(150)
@@ -261,7 +268,7 @@
   when: run_tc59_assign_secret_to_pod | default(true) | bool
   block:
     - name: "TC-59: Verify secret attachment via envFrom"
-      ansible.builtin.command: oc get secret test-atp -n default
+      ansible.builtin.command: oc get secret test-atp -n testproject
       register: tc59_cmd
       changed_when: false
       failed_when: false

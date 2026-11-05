@@ -1,0 +1,32 @@
+# TC 23: Create Namespace (Project)
+- name: "TC-23: Create Namespace (Project)"
+  when: run_tc23_create_namespace | default(true) | bool
+  block:
+    - name: "TC-23: Ensure testproject exists for subsequent cases"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if oc get project testproject -o name >/dev/null 2>&1; then
+          echo "Project testproject already exists."
+        else
+          oc new-project testproject --description="ATP Test Project"
+        fi
+        oc get project testproject -o name
+      args:
+        executable: /bin/bash
+      register: tc23_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: "TC-23: Record Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [{
+          'id': 'TC-23',
+          'name': 'Create Namespace (Project)',
+          'category': 'OpenShift Administration',
+          'expected': 'Project testproject exists before the remaining ATP test cases run',
+          'status': ('Pass' if tc23_cmd.rc == 0 else 'Fail'),
+          'procedure': (tc23_cmd.cmd | default('See ATP task source; command metadata unavailable')),
+          'evidence': ((tc23_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc23_cmd.stderr | default(''))) if (tc23_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc23_cmd.rc | string) if tc23_cmd.rc is defined else '')),
+          'details': tc23_cmd.stdout | default(tc23_cmd.stderr) | truncate(150)
+        }] }}"
+  tags: ['general', 'telco', 'tc23', 'administration']
