@@ -27,13 +27,15 @@ The HTML uses a two-column procedure record matching the supplied form: date, ti
 
 ## External registry checks (TC-18 and TC-19)
 
-TC-18 and TC-19 validate the internal registry when present and additionally probe an external registry when its URL is configured or discovered. A configured external endpoint is always evaluated; a failed connection is a Fail result with a transport/TLS diagnostic. If neither an internal nor external registry exists, these ATP cases report Fail rather than Skipped. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
+TC-18 probes both available endpoint types and passes when at least one registry API is usable. If only the external registry is configured and reachable, the case passes and the report notes that the cluster is using the external registry only. If both endpoints are configured but one fails, the case still passes when the other is usable and adds a comment describing the failed endpoint. TC-19 separately checks internal registry pod placement and logs, so it has additional internal-registry conditions. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
 
 Configure the URL in `toolkits/openshift-atp/vars/main.yml` when the cluster has multiple mirror endpoints or the external registry is not represented in those resources:
 
 ```yaml
 atp_external_registry_url: "https://quay.example.com"
 atp_external_registry_validate_certs: true
+# Absolute PEM CA bundle path on the Ansible controller for private/self-signed CA
+atp_external_registry_ca_path: "/etc/pki/ca-trust/source/anchors/quay-issuing-ca.pem"
 ```
 
 A registry robot token cannot be obtained safely or reliably from cluster mirror settings. Supply the robot username and token from the bastion environment. The token is used as the robot account's HTTP Basic password and is excluded from task output and reports:
@@ -47,7 +49,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml
 unset ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 ```
 
-Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled. For a private registry CA, set `atp_external_registry_ca_path` to a PEM bundle path accessible to the Ansible controller. Disabling certificate validation should be limited to a temporary diagnostic.
+Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, the external API probe requires HTTP 200. Keep TLS verification enabled. For a private registry CA, set `atp_external_registry_ca_path` to the issuing CA PEM bundle on the Ansible controller. The CA must validate the certificate chain presented by the configured registry hostname. Disabling certificate validation should be limited to a temporary diagnostic; do not use it as the permanent acceptance configuration.
 
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
