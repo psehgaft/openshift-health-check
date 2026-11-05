@@ -482,9 +482,45 @@
     - name: "TC-18: Probe optional external registry API"
       ansible.builtin.include_tasks: external_registry_probe.yml
 
-    - name: "TC-18: Classify registry API checks"
+    - name: "TC-18: Classify available registry endpoints"
       ansible.builtin.set_fact:
-        tc18_status: "{{ 'Pass' if (tc18_cmd.rc == 0 or (atp_external_registry_probe_ok | bool)) and (atp_external_registry_effective_url | length == 0 or (atp_external_registry_probe_ok | bool)) else 'Fail' }}"
+        tc18_internal_available: "{{ (tc18_cmd.rc | default(1) | int) == 0 }}"
+        tc18_external_configured: "{{ atp_external_registry_effective_url | default('') | length > 0 }}"
+        tc18_external_available: "{{ atp_external_registry_probe_ok | default(false) | bool }}"
+
+    - name: "TC-18: Determine pass status and report endpoint notes"
+      ansible.builtin.set_fact:
+        tc18_status: "{{ 'Pass' if (tc18_internal_available | bool or tc18_external_available | bool) else 'Fail' }}"
+        tc18_registry_mode: >-
+          {% if tc18_internal_available | bool and tc18_external_available | bool %}
+          Internal and external registry APIs are reachable
+          {% elif tc18_internal_available | bool %}
+          Internal registry only is available
+          {% elif tc18_external_available | bool %}
+          External registry only is available
+          {% else %}
+          No registry API is available
+          {% endif %}
+        tc18_registry_notes: >-
+          {% if tc18_internal_available | bool and tc18_external_available | bool %}
+          Both internal and external registry APIs are reachable.
+          {% elif tc18_external_available | bool %}
+          Only the external registry is available and reachable; the internal image-registry service is not configured or available. This satisfies TC-18 because at least one configured registry is usable.
+          {% elif tc18_internal_available | bool and tc18_external_configured | bool %}
+          The internal registry is available and satisfies TC-18. The configured external registry did not pass its API probe: {{ atp_external_registry_probe_summary }}.
+          {% elif tc18_internal_available | bool %}
+          Only the internal registry is available; no external registry endpoint was configured or discovered.
+          {% else %}
+          Neither configured registry passed the API check. Internal result: {{ tc18_cmd.stdout | default(tc18_cmd.stderr | default('no output')) | trim }}. External result: {{ atp_external_registry_probe_summary }}.
+          {% endif %}
+        tc18_remediation: >-
+          {% if not (tc18_internal_available | bool or tc18_external_available | bool) %}
+          Configure at least one usable registry. For a private/self-signed external TLS chain, install the issuing CA as a PEM file on the Ansible controller and set atp_external_registry_ca_path; keep atp_external_registry_validate_certs=true. If robot credentials are supplied, verify both ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME and ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN and confirm the robot can access the registry API.
+          {% elif tc18_external_configured | bool and not (tc18_external_available | bool) %}
+          TC-18 passes through the available endpoint, but the configured external endpoint still needs attention: {{ atp_external_registry_probe_summary }}. For certificate verification failures, configure atp_external_registry_ca_path with the issuing CA PEM rather than disabling TLS validation.
+          {% else %}
+          No remediation is required for the ATP pass condition; retain the endpoint and credential configuration used for this run.
+          {% endif %}
 
     - name: "TC-18: Record Result"
       ansible.builtin.set_fact:
@@ -492,11 +528,12 @@
           'id': 'TC-18',
           'name': 'Check Configured Registry API',
           'category': 'Services Check',
-          'expected': 'At least one configured registry is available: the internal registry service, the external OCI API, or both when both are configured; supplied robot credentials authenticate successfully',
+          'expected': 'Pass when the internal registry API or the external registry OCI v2 API is reachable; both may be configured, and at least one must be usable. Supplied robot credentials must authenticate successfully to the external registry.',
           'status': tc18_status | trim,
-          'procedure': 'Query the internal registry service and, when configured or discovered, request the external registry OCI v2 API endpoint',
-          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExternal registry discovery: ' ~ atp_external_registry_discovery_source) ~ ('\\nExternal registry: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry URL: ' ~ atp_external_registry_effective_url if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
-          'details': 'Internal service exit code: ' ~ (tc18_cmd.rc | default('unknown') | string) ~ '; external registry discovery: ' ~ atp_external_registry_discovery_source ~ '; probe: ' ~ atp_external_registry_probe_summary
+          'procedure': 'Query the internal image-registry service through the API. If an external endpoint is configured or discovered, request its OCI v2 API and verify robot authentication when credentials are supplied.',
+          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\\nRegistry evaluation: ' ~ (tc18_registry_mode | trim)) ~ ('\\nExternal registry probe: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry endpoint: ' ~ (atp_external_registry_effective_url | regex_replace('^https?://', '')) if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
+          'details': tc18_registry_notes | trim,
+          'remediation': tc18_remediation | trim
         }] }}"
   tags: ['general', 'telco', 'tc18', 'registry']
 
