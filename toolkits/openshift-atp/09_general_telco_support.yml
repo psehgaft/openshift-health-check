@@ -429,9 +429,79 @@
 - name: "TC-70: Capa Física (LACP Bonding y MTU 9000)"
   when: run_tc70_physical_lacp_mtu | default(true) | bool
   block:
-    - name: "TC-70: Query bond0 MTU from NodeNetworkConfigurationEnactment"
-      ansible.builtin.shell: >-
-        oc get nnce -o jsonpath='{range .items[*]}{.metadata.name}{"\:\ bond0="}{.status.interface[?(@.name=="bond0")].mtu}{"\n"}{end}'
+    - name: "TC-70: Verify runtime LACP mode, link state, and MTU on nodes with bond0"
+      ansible.builtin.shell:
+        cmd: |
+          set -uo pipefail
+
+          nodes="$(oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\\n"}{end}' 2>&1)"
+          nodes_rc=$?
+          if [[ "$nodes_rc" -ne 0 ]]; then
+            echo "Could not list cluster nodes: $nodes" >&2
+            echo "TC70_RESULT=FAIL"
+            exit 1
+          fi
+          if [[ -z "$nodes" ]]; then
+            echo "No cluster nodes were returned by the API." >&2
+            echo "TC70_RESULT=FAIL"
+            exit 1
+          fi
+
+          nodes_checked=0
+          bonds_found=0
+          bonds_passed=0
+          bonds_failed=0
+
+          while IFS= read -r node; do
+            [[ -n "$node" ]] || continue
+            nodes_checked=$((nodes_checked + 1))
+            echo "== Node: $node =="
+
+            output="$(oc debug -q "node/$node" -- chroot /host bash -c 'if [ -r /proc/net/bonding/bond0 ]; then cat /proc/net/bonding/bond0; ip -o link show dev bond0; else echo TC70_BOND_ABSENT; fi' 2>&1)"
+            node_rc=$?
+            printf '%s\\n' "$output"
+
+            if [[ "$node_rc" -ne 0 ]]; then
+              echo "Could not inspect host networking on $node (oc debug exit code $node_rc)." >&2
+              bonds_failed=$((bonds_failed + 1))
+              continue
+            fi
+
+            if grep -qF "TC70_BOND_ABSENT" <<< "$output"; then
+              echo "bond0 is not configured on $node; this node is outside this check."
+              continue
+            fi
+
+            bonds_found=$((bonds_found + 1))
+            mode_ok=false
+            mii_ok=false
+            mtu_ok=false
+            grep -qF "Bonding Mode: IEEE 802.3ad" <<< "$output" && mode_ok=true
+            grep -qiE '^MII Status:[[:space:]]*up([[:space:]]|$)' <<< "$output" && mii_ok=true
+            grep -qE '(^|[[:space:]])mtu 9000([[:space:]]|$)' <<< "$output" && mtu_ok=true
+
+            echo "LACP 802.3ad=$mode_ok; MII up=$mii_ok; MTU 9000=$mtu_ok"
+            if [[ "$mode_ok" == "true" && "$mii_ok" == "true" && "$mtu_ok" == "true" ]]; then
+              bonds_passed=$((bonds_passed + 1))
+            else
+              bonds_failed=$((bonds_failed + 1))
+              echo "bond0 on $node does not meet all ATP requirements." >&2
+            fi
+          done <<< "$nodes"
+
+          echo "Nodes inspected: $nodes_checked; bond0 interfaces found: $bonds_found; compliant bonds: $bonds_passed; failed inspections/interfaces: $bonds_failed"
+          if [[ "$bonds_found" -eq 0 ]]; then
+            echo "No bond0 interface was found on any node. Configure bond0 for this test or mark the case not applicable for this cluster profile." >&2
+            echo "TC70_RESULT=FAIL"
+            exit 1
+          fi
+          if [[ "$bonds_failed" -gt 0 || "$bonds_passed" -ne "$bonds_found" ]]; then
+            echo "TC70_RESULT=FAIL: every discovered bond0 must use IEEE 802.3ad, report MII Status up, and have MTU 9000."
+            exit 1
+          fi
+
+          echo "TC70_RESULT=PASS: every discovered bond0 uses IEEE 802.3ad, reports MII Status up, and has MTU 9000."
+        executable: /bin/bash
       register: tc70_cmd
       changed_when: false
       failed_when: false
@@ -442,11 +512,12 @@
           'id': 'TC-70',
           'name': 'Capa Física (LACP Bonding y MTU 9000)',
           'category': 'General Support / Telco',
-          'expected': 'Bond0 configured in IEEE 802.3ad LACP mode with MTU 9000',
-          'status': ('Pass' if (tc70_cmd.rc == 0 and '9000' in tc70_cmd.stdout) else 'Fail'),
-          'procedure': (tc70_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc70_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc70_cmd.stderr | default(''))) if (tc70_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc70_cmd.rc | string) if tc70_cmd.rc is defined else '')),
-          'details': tc70_cmd.stdout | default(tc70_cmd.stderr) | truncate(150)
+          'expected': 'Every node configured with bond0 reports IEEE 802.3ad mode, MII Status up, and MTU 9000; nodes without bond0 are reported as not applicable for that node.',
+          'status': ('Pass' if (tc70_cmd.rc == 0 and 'TC70_RESULT=PASS' in (tc70_cmd.stdout | default(''))) else 'Fail'),
+          'procedure': 'For each cluster node, inspect /proc/net/bonding/bond0 and ip -o link show dev bond0 using oc debug node/<node> -- chroot /host; validate 802.3ad, MII up, and MTU 9000.',
+          'evidence': ((tc70_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc70_cmd.stderr | default(''))) if (tc70_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc70_cmd.rc | string) if tc70_cmd.rc is defined else '')),
+          'details': tc70_cmd.stdout | default(tc70_cmd.stderr) | truncate(300),
+          'remediation': 'If no bond0 is found, verify whether the cluster network design requires LACP and configure the intended bond through a NodeNetworkConfigurationPolicy. For a failing node, verify the policy is successfully enacted, the switch ports are in the same LACP port-channel, member links are up, and MTU 9000 is configured end-to-end on the bond, physical switch ports, and network path. Confirm with /proc/net/bonding/bond0 and ip -d link show bond0, then rerun.'
         }] }}"
   tags: ['general', 'telco', 'tc70', 'bonding_mtu']
 
