@@ -201,9 +201,68 @@
 - name: "TC-55: Check API Certificate"
   when: run_tc55_api_certificate | default(true) | bool
   block:
-    - name: "TC-55: Query API Server certificate validity and issuer"
-      ansible.builtin.shell: >
-        echo | openssl s_client -connect api.{{ cluster_name }}.{{ cluster_domain }}:6443 -servername api.{{ cluster_name }}.{{ cluster_domain }} 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+    - name: "TC-55: Validate API certificate trust, SAN, and expiration"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        api_host="api.{{ cluster_name }}.{{ cluster_domain }}"
+        min_validity_days="{{ atp_api_cert_min_validity_days | default(7) | int }}"
+        work_dir="$(mktemp -d)"
+        trap 'rm -rf "$work_dir"' EXIT
+
+        ca_data="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>&1)"
+        if [[ -z "$ca_data" ]]; then
+          echo "The active kubeconfig does not expose certificate-authority-data; cannot validate API certificate trust." >&2
+          exit 1
+        fi
+        if ! printf '%s' "$ca_data" | base64 --decode > "$work_dir/cluster-ca.pem"; then
+          echo "Could not decode certificate-authority-data from the active kubeconfig." >&2
+          exit 1
+        fi
+
+        set +e
+        openssl s_client -connect "${api_host}:6443" -servername "$api_host" \
+          -verify_return_error -CAfile "$work_dir/cluster-ca.pem" -showcerts \
+          </dev/null > "$work_dir/handshake.txt" 2>&1
+        tls_rc=$?
+        set -e
+
+        awk '/-----BEGIN CERTIFICATE-----/ { cert_count++ } cert_count == 1 { print } /-----END CERTIFICATE-----/ && cert_count == 1 { exit }' \
+          "$work_dir/handshake.txt" > "$work_dir/api-leaf.pem"
+        if [[ ! -s "$work_dir/api-leaf.pem" ]]; then
+          echo "Unable to extract the API server leaf certificate. TLS output follows:" >&2
+          cat "$work_dir/handshake.txt" >&2
+          exit 1
+        fi
+
+        echo "== API server leaf certificate =="
+        openssl x509 -in "$work_dir/api-leaf.pem" -noout -subject -issuer -dates -ext subjectAltName
+
+        echo "== TLS chain verification using the active kubeconfig CA =="
+        grep -E 'depth=|Verify return code:|verify error:' "$work_dir/handshake.txt" || true
+        echo "TLS verification exit code: $tls_rc"
+
+        echo "== SAN check for $api_host =="
+        if openssl x509 -in "$work_dir/api-leaf.pem" -noout -checkhost "$api_host"; then
+          san_rc=0
+        else
+          san_rc=$?
+        fi
+
+        echo "== Minimum remaining validity: ${min_validity_days} days =="
+        if openssl x509 -in "$work_dir/api-leaf.pem" -noout -checkend "$((min_validity_days * 86400))"; then
+          expiry_rc=0
+        else
+          expiry_rc=$?
+        fi
+
+        if [[ $tls_rc -eq 0 && $san_rc -eq 0 && $expiry_rc -eq 0 ]]; then
+          echo "API certificate passed trust, hostname, and expiration checks."
+          exit 0
+        fi
+        echo "API certificate validation failed (TLS=$tls_rc, SAN=$san_rc, expiration=$expiry_rc)." >&2
+        exit 1
+      args:
+        executable: /bin/bash
       register: tc55_cmd
       changed_when: false
       failed_when: false
@@ -214,11 +273,12 @@
           'id': 'TC-55',
           'name': 'Check API Certificate',
           'category': 'User & Security',
-          'expected': 'Valid API certificate issued by CA with matching SAN',
-          'status': ('Pass' if (tc55_cmd.rc == 0 and 'CN=' in tc55_cmd.stdout) else 'Fail'),
-          'procedure': (tc55_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc55_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc55_cmd.stderr | default(''))) if (tc55_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc55_cmd.rc | string) if tc55_cmd.rc is defined else '')),
-          'details': tc55_cmd.stdout | default(tc55_cmd.stderr) | truncate(150)
+          'expected': 'API certificate chains to the active kubeconfig CA, contains a matching SAN for the API FQDN, and remains valid for at least ' ~ (atp_api_cert_min_validity_days | default(7) | string) ~ ' days',
+          'status': ('Pass' if tc55_cmd.rc == 0 else 'Fail'),
+          'procedure': 'Validate the API TLS chain using the active oc kubeconfig CA, check the API FQDN SAN, and confirm the configured minimum remaining validity',
+          'evidence': ((tc55_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc55_cmd.stderr | default(''))) if (tc55_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc55_cmd.rc | string) if tc55_cmd.rc is defined else '')),
+          'details': tc55_cmd.stdout | default(tc55_cmd.stderr) | truncate(250),
+          'remediation': 'Check DNS and API endpoint connectivity, then confirm the active kubeconfig CA trusts the presented certificate. If SAN or expiry fails, renew or replace the API server named certificate with a chain covering the API FQDN and rerun; confirm kube-apiserver operator health after a change.'
         }] }}"
   tags: ['general', 'telco', 'tc55', 'certificates']
 
