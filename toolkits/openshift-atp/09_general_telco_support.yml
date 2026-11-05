@@ -232,7 +232,7 @@
           exit 1
         fi
 
-        san_pvs="$(printf '%s' "$pv_json" | jq -c --arg csv "$san_classes" '($csv | split(",")) as $classes | [.items[] | select((.spec.iscsi != null) or (.spec.fc != null) or (((.spec.csi.driver // "") | test("iscsi|fibre|fibrechannel|netapp-san|pure-fc"; "i"))) or ((.spec.storageClassName // "") as $sc | ($sc != "" and ($classes | index($sc)) != null))) | {name: .metadata.name, phase: .status.phase, storageClass: .spec.storageClassName, claimNamespace: .spec.claimRef.namespace, claimName: .spec.claimRef.name, iscsi: (.spec.iscsi != null)}]')"
+        san_pvs="$(printf '%s' "$pv_json" | jq -c --arg csv "$san_classes" '($csv | split(",")) as $classes | [.items[] | select((.spec.iscsi != null) or (.spec.fc != null) or (((.spec.csi.driver // "") | test("iscsi|fibre|fibrechannel|netapp-san|pure-fc"; "i"))) or ((.spec.storageClassName // "") as $sc | ($sc != "" and ($classes | index($sc)) != null))) | {name: .metadata.name, phase: .status.phase, storageClass: .spec.storageClassName, claimNamespace: .spec.claimRef.namespace, claimName: .spec.claimRef.name, iscsi: ((.spec.iscsi != null) or (((.spec.csi.driver // "") | test("iscsi"; "i"))))}]')"
         san_sc_matches="$(printf '%s' "$sc_json" | jq -c --arg csv "$san_classes" '($csv | split(",")) as $classes | [.items[].metadata.name as $sc | select($sc != "" and ($classes | index($sc)) != null) | $sc]')"
         san_pv_count="$(printf '%s' "$san_pvs" | jq 'length')"
         san_sc_count="$(printf '%s' "$san_sc_matches" | jq 'length')"
