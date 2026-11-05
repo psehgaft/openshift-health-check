@@ -72,6 +72,7 @@
                 name: .metadata.name,
                 role: .roleRef.name,
                 subjects: (.subjects // []),
+                autoupdate: (.metadata.annotations["rbac.authorization.kubernetes.io/autoupdate"] // "unset"),
                 grants_authenticated_oauth: any((.subjects // [])[]; .kind == "Group" and .name == "system:authenticated:oauth")
               }
           ]'
@@ -86,6 +87,7 @@
         selfprovisioner_bindings: "{{ (tc51_cmd.stdout | from_json) if tc51_cmd.rc == 0 else [] }}"
         authenticated_oauth_bindings: "{{ selfprovisioner_bindings | selectattr('grants_authenticated_oauth', 'equalto', true) | list }}"
         selfprovisioner_binding_names: "{{ selfprovisioner_bindings | map(attribute='name') | list }}"
+        default_binding_autoupdate: "{{ (selfprovisioner_bindings | selectattr('name', 'equalto', 'self-provisioners') | map(attribute='autoupdate') | first) | default('unset') }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-51',
@@ -95,8 +97,8 @@
           'status': ('Pass' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Fail'),
           'procedure': (tc51_cmd.cmd | default('Inspect all ClusterRoleBindings that reference the self-provisioner role and check for group system:authenticated:oauth')),
           'evidence': ((tc51_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc51_cmd.stderr | default(''))) if (tc51_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc51_cmd.rc | string) if tc51_cmd.rc is defined else '')),
-          'details': 'self-provisioner bindings: ' ~ (selfprovisioner_binding_names | join(', ') if selfprovisioner_binding_names | length > 0 else 'none') ~ '; bindings granting system:authenticated:oauth: ' ~ (authenticated_oauth_bindings | map(attribute='name') | join(', ') if authenticated_oauth_bindings | length > 0 else 'none'),
-          'remediation': ('No action required; the authenticated OAuth group is not bound to self-provisioner.' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Review the listed ClusterRoleBindings. Remove only the system:authenticated:oauth subject from bindings whose roleRef.name is self-provisioner, for example with: oc adm policy remove-cluster-role-from-group self-provisioner system:authenticated:oauth. Then rerun TC-51.')
+          'details': 'self-provisioner bindings: ' ~ (selfprovisioner_binding_names | join(', ') if selfprovisioner_binding_names | length > 0 else 'none') ~ '; bindings granting system:authenticated:oauth: ' ~ (authenticated_oauth_bindings | map(attribute='name') | join(', ') if authenticated_oauth_bindings | length > 0 else 'none') ~ '; self-provisioners autoupdate: ' ~ default_binding_autoupdate,
+          'remediation': ('The group is currently disabled. However, the self-provisioners binding has autoupdate=true and may be restored to defaults; make the setting persistent with: oc annotate clusterrolebinding self-provisioners rbac.authorization.kubernetes.io/autoupdate=false --overwrite.' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0 and default_binding_autoupdate == 'true') else 'No action required; system:authenticated:oauth is not bound to self-provisioner and the default binding autoupdate setting is ' ~ default_binding_autoupdate ~ '.' if (tc51_cmd.rc == 0 and authenticated_oauth_bindings | length == 0) else 'Review the listed ClusterRoleBindings. Remove only the system:authenticated:oauth subject from bindings whose roleRef.name is self-provisioner, for example with: oc adm policy remove-cluster-role-from-group self-provisioner system:authenticated:oauth. Then rerun TC-51.')
         }] }}"
   tags: ['general', 'telco', 'tc51', 'security']
 
