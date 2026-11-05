@@ -131,3 +131,14 @@ Reference: [Red Hat Workload Availability for OpenShift — Installing Self Node
 ## TC-51: self-provisioner security check
 
 TC-51 inspects all ClusterRoleBindings that reference the `self-provisioner` role and verifies that none includes the `system:authenticated:oauth` group. It allows a binding to remain for a different group, such as `self-provisioners`. The check is read-only: it does not modify RBAC. If the authenticated OAuth group is present, the report lists the affected binding and recommends removing that group with the documented `oc adm policy remove-cluster-role-from-group` command. If the group is absent but the default `self-provisioners` binding has `rbac.authorization.kubernetes.io/autoupdate=true`, the ATP remains Pass for the current state and adds a comment with the recommended `oc annotate ... autoupdate=false` command; Red Hat documents that default reconciliation can restore subjects.
+
+## Cluster identity and DNS examples
+
+The ATP uses a generic `cluster_name: "cluster"` default. Certificate procedures use
+`<cluster_name>` and `<domain>` placeholders rather than environment-specific hostnames.
+When running the procedure, replace `<domain>` with the cluster's configured DNS base
+domain and use the same cluster name configured for its API and ingress endpoints.
+
+Keep shared case definitions environment-neutral. Store site-specific hostnames and DNS
+domains in the execution inventory or runtime variables rather than in the reusable ATP
+catalog.
