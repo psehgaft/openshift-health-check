@@ -10,8 +10,8 @@ The report retains all source test cases. TC-23 runs first to ensure `testprojec
 
 - **TC-15:** Runs `crictl ps` through `oc debug -q`, matching the documented container-list check.
 - **TC-17:** Captures the last hour of logs through the Kubernetes API for the API server, controller manager, and scheduler.
-- **TC-18:** Records the internal registry's `.svc` DNS name; checks the configured external registry when the internal service is absent.
-- **TC-19:** Adds registry pod placement and last-hour log evidence. The case is Skipped when the cluster uses only an external registry.
+- **TC-18:** Records the internal registry's `.svc` DNS name and also probes a configured or discovered external registry API, including robot authentication when credentials are supplied.
+- **TC-19:** Adds internal registry pod placement and last-hour log evidence, and probes the external registry API when configured or discovered. It is Skipped only when neither an internal registry nor an external endpoint is available.
 - **TC-20:** Runs the documented JSONPath plus `jq .` query. Storage classification uses a separate Ansible fact task to avoid the Jinja syntax failure. External registry API reachability does not prove external storage durability, so that storage check remains Skipped pending owner-side verification.
 - **TC-21 and TC-22:** Add pod lists and node placement to operator/logging status evidence.
 - **TC-24 and TC-25:** Add the documented post-create queries for LimitRange and ResourceQuota.
@@ -25,3 +25,10 @@ Manual UI steps and disruptive operations remain documented as source procedures
 ## Integration metadata
 
 The `integration/` directory is retained. Its `sources.json` manifest is read by `scripts/unified_healthcheck.py` to include source repository/commit metadata in generated manifests. It is also referenced by the integration guide and `THIRD_PARTY_NOTICES.md`; deleting it would break provenance reporting and documentation links.
+
+
+## External registry validation
+
+TC-18 and TC-19 validate the internal registry when its service exists and additionally probe an external registry. Automatic discovery reads mirror endpoints from ImageDigestMirrorSet, ImageTagMirrorSet, and legacy ImageContentSourcePolicy objects, and selects a URL only when there is exactly one unique target. Inspect these settings with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
+
+Set `atp_external_registry_url` in `toolkits/openshift-atp/vars/main.yml` when there are multiple mirror targets or the external registry is not declared as a cluster mirror. Robot credentials cannot be safely inferred from those objects. Provide `ATP_EXTERNAL_REGISTRY_USERNAME` and `ATP_EXTERNAL_REGISTRY_TOKEN` through the execution environment; the probe task suppresses credential-bearing output and reports only the endpoint and HTTP status.

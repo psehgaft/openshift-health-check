@@ -25,6 +25,30 @@ Both files are generated in `reports/` unless `atp_report_dir` is overridden:
 
 The HTML uses a two-column procedure record matching the supplied form: date, time, description, topology, procedure, expected result and observed evidence, Pass/Fail/Skipped conclusion, and additional comments with remediation guidance for failures.
 
+## External registry checks (TC-18 and TC-19)
+
+TC-18 and TC-19 validate the internal registry when present and additionally probe an external registry when its URL is configured or discovered. Discovery reads cluster mirror definitions from ImageDigestMirrorSet, ImageTagMirrorSet, and ImageContentSourcePolicy resources. It selects the endpoint only when exactly one unique mirror is found. Inspect the source configuration with `oc get imagedigestmirrorsets,imagetagmirrorsets -o yaml` and, on clusters using the legacy API, `oc get imagecontentsourcepolicies.operator.openshift.io -o yaml`.
+
+Configure the URL in `toolkits/openshift-atp/vars/main.yml` when the cluster has multiple mirror endpoints or the external registry is not represented in those resources:
+
+```yaml
+atp_external_registry_url: "https://quay.example.com"
+atp_external_registry_validate_certs: true
+```
+
+A registry robot token cannot be obtained safely or reliably from cluster mirror settings. Supply the robot username and token from the bastion environment. The token is used as the robot account's HTTP Basic password and is excluded from task output and reports:
+
+```bash
+export ATP_EXTERNAL_REGISTRY_USERNAME='robot$organization+account'
+read -rsp 'External registry robot token: ' ATP_EXTERNAL_REGISTRY_TOKEN
+printf '\n'
+export ATP_EXTERNAL_REGISTRY_TOKEN
+ansible-playbook -i inventory.ini playbooks/atp.yml
+unset ATP_EXTERNAL_REGISTRY_USERNAME ATP_EXTERNAL_REGISTRY_TOKEN
+```
+
+Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, TC-18/19 require HTTP 200. Keep TLS verification enabled when possible; install the registry CA instead of disabling certificate validation.
+
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
 - `general`: Tests covering standard OpenShift Container Platform features.

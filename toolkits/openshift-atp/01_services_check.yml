@@ -459,23 +459,19 @@
 - name: "TC-18: Check Internal Registry API"
   when: run_tc18_check_internal_registry_api | default(true) | bool
   block:
-    - name: "TC-18: Check internal or configured external registry API"
+    - name: "TC-18: Discover configured external registry"
+      ansible.builtin.include_tasks: registry_discovery.yml
+
+    - name: "TC-18: Check internal registry service through the API"
       ansible.builtin.shell: |
         set -euo pipefail
         if oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
           echo "Selected registry: internal OpenShift image registry"
-          oc get svc image-registry -n openshift-image-registry -o jsonpath='{.metadata.name}.{.metadata.namespace}.svc{"\n"}'
+          oc get svc image-registry -n openshift-image-registry -o jsonpath='{.metadata.name}.{.metadata.namespace}.svc{"\\n"}'
           oc get svc image-registry -n openshift-image-registry -o wide
         else
-          node="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
-          if [[ -z "$node" ]]; then
-            echo "No worker node found to test external registry connectivity" >&2
-            exit 1
-          fi
-          echo "Internal image-registry service is absent; testing {{ atp_external_registry_host | default('quay.io') }} from worker $node"
-          status="$(oc debug -q "node/$node" -- chroot /host curl --connect-timeout 10 --max-time 20 -sS -o /dev/null -w '%{http_code}' https://{{ atp_external_registry_host | default('quay.io') }}/v2/)"
-          echo "External registry API HTTP status: $status"
-          [[ "$status" == "200" || "$status" == "401" ]]
+          echo "Internal image-registry service is not configured."
+          exit 2
         fi
       args:
         executable: /bin/bash
@@ -483,35 +479,47 @@
       changed_when: false
       failed_when: false
 
+    - name: "TC-18: Probe optional external registry API"
+      ansible.builtin.include_tasks: external_registry_probe.yml
+
+    - name: "TC-18: Classify registry API checks"
+      ansible.builtin.set_fact:
+        tc18_status: "{{ 'Skipped' if tc18_cmd.rc == 2 and atp_external_registry_effective_url | length == 0 else 'Pass' if (tc18_cmd.rc == 0 or (atp_external_registry_probe_ok | bool)) and (atp_external_registry_effective_url | length == 0 or (atp_external_registry_probe_ok | bool)) else 'Fail' }}"
+
     - name: "TC-18: Record Result"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-18',
           'name': 'Check Configured Registry API',
           'category': 'Services Check',
-          'expected': 'The internal registry service is available through the API, or the configured external registry API is reachable from a worker',
-          'status': ('Pass' if tc18_cmd.rc == 0 else 'Fail'),
-          'procedure': (tc18_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
-          'details': tc18_cmd.stdout | default(tc18_cmd.stderr) | truncate(150)
+          'expected': 'The internal registry service is available through the API, and the configured external registry API is reachable and authenticates when robot credentials are supplied',
+          'status': tc18_status | trim,
+          'procedure': 'Query the internal registry service and, when configured or discovered, request the external registry OCI v2 API endpoint',
+          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExternal registry discovery: ' ~ atp_external_registry_discovery_source) ~ ('\\nExternal registry: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry URL: ' ~ atp_external_registry_effective_url if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
+          'details': 'Internal service exit code: ' ~ (tc18_cmd.rc | default('unknown') | string) ~ '; external registry discovery: ' ~ atp_external_registry_discovery_source ~ '; probe: ' ~ atp_external_registry_probe_summary
         }] }}"
   tags: ['general', 'telco', 'tc18', 'registry']
+
+
 
 # TC 19: Check Internal Registry Status
 - name: "TC-19: Check Internal Registry Status"
   when: run_tc19_check_internal_registry_status | default(true) | bool
   block:
-    - name: "TC-19: Query registry pods"
+    - name: "TC-19: Discover configured external registry"
+      ansible.builtin.include_tasks: registry_discovery.yml
+
+    - name: "TC-19: Query internal registry pods"
       ansible.builtin.command: oc get pods -n openshift-image-registry -o json
       register: tc19_cmd
       changed_when: false
       failed_when: false
 
-    - name: "TC-19: Capture registry pod placement and logs"
+    - name: "TC-19: Capture internal registry pod placement and logs"
       ansible.builtin.shell: |
         set -euo pipefail
         if ! oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
-          echo "Internal registry is not configured; its pod placement and logs are not applicable. See TC-18 and TC-20 for the configured external registry."
+          echo "Internal registry is not configured; internal pod placement and logs are not applicable."
           exit 2
         fi
         echo "== Registry pod placement =="
@@ -531,6 +539,9 @@
       changed_when: false
       failed_when: false
 
+    - name: "TC-19: Probe optional external registry API"
+      ansible.builtin.include_tasks: external_registry_probe.yml
+
     - name: "TC-19: Record Result"
       vars:
         reg_pods: "{{ ((tc19_cmd.stdout | from_json)['items']) if tc19_cmd.rc == 0 else [] }}"
@@ -538,20 +549,25 @@
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-19',
-          'name': 'Check Internal Registry Status',
+          'name': 'Check Internal and External Registry Status',
           'category': 'Services Check',
-          'expected': 'Registry pods are Running, placed on the intended infrastructure nodes, and logs are available',
-          'status': ('Skipped' if tc19_details_cmd.rc == 2 else ('Pass' if (tc19_cmd.rc == 0 and tc19_details_cmd.rc == 0 and running_pods | length > 0) else 'Fail')),
-          'procedure': (tc19_cmd.cmd | default('See ATP task source; command metadata unavailable')) ~ '\n' ~ (tc19_details_cmd.cmd | default('Registry placement/log procedure unavailable')),
-          'evidence': ((tc19_cmd.stdout | default('')) ~ '\n' ~ (tc19_details_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc19_details_cmd.stderr | default(''))) if (tc19_details_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc19_details_cmd.rc | string) if tc19_details_cmd.rc is defined else '')),
-          'details': 'Running pods: ' ~ (running_pods | join(', ') if running_pods | length > 0 else 'None') ~ '\n' ~ (tc19_details_cmd.stdout | default(tc19_details_cmd.stderr) | truncate(250))
+          'expected': 'Internal registry pods are Running with placement and logs available; when an external registry is configured, its OCI v2 API is reachable and robot credentials authenticate successfully',
+          'status': ('Skipped' if tc19_details_cmd.rc == 2 and atp_external_registry_effective_url | length == 0 else 'Pass' if ((tc19_details_cmd.rc == 2 and atp_external_registry_effective_url | length > 0 and atp_external_registry_probe_ok | bool) or (tc19_cmd.rc == 0 and tc19_details_cmd.rc == 0 and running_pods | length > 0 and (atp_external_registry_effective_url | length == 0 or atp_external_registry_probe_ok | bool))) else 'Fail'),
+          'procedure': (tc19_cmd.cmd | default('Query internal registry pods')) ~ '\\n' ~ (tc19_details_cmd.cmd | default('Inspect internal registry placement and logs')) ~ '\\nProbe configured external registry OCI v2 endpoint when available',
+          'evidence': ((tc19_cmd.stdout | default('')) ~ '\\n' ~ (tc19_details_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc19_details_cmd.stderr | default(''))) if (tc19_details_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExternal registry: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry URL: ' ~ atp_external_registry_effective_url if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc19_details_cmd.rc | string) if tc19_details_cmd.rc is defined else '')),
+          'details': 'Running internal registry pods: ' ~ (running_pods | join(', ') if running_pods | length > 0 else 'None') ~ '; internal details exit code: ' ~ (tc19_details_cmd.rc | default('unknown') | string) ~ '; external registry discovery: ' ~ atp_external_registry_discovery_source ~ '; probe: ' ~ atp_external_registry_probe_summary
         }] }}"
   tags: ['general', 'telco', 'tc19', 'registry']
+
+
 
 # TC 20: Check Internal Registry Storage
 - name: "TC-20: Check Internal Registry Storage"
   when: run_tc20_check_internal_registry_storage | default(true) | bool
   block:
+    - name: "TC-20: Discover configured external registry"
+      ansible.builtin.include_tasks: registry_discovery.yml
+
     - name: "TC-20: Query registry storage configuration"
       ansible.builtin.shell: |
         set -euo pipefail
@@ -567,14 +583,18 @@
           fi
           echo "Internal registry storage backend: $storage"
         else
+          if [[ -z "{{ atp_external_registry_effective_url }}" ]]; then
+            echo "Internal storage is not configured and no external registry URL was configured or discovered. Set atp_external_registry_url to check an external registry."
+            exit 2
+          fi
           node="$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')"
           if [[ -z "$node" ]]; then
             echo "No worker node found to check the configured external registry" >&2
             exit 1
           fi
-          echo "Internal registry is absent; checking {{ atp_external_registry_host | default('quay.io') }} from worker $node."
+          echo "Internal registry is absent; checking {{ atp_external_registry_effective_url }} from worker $node."
           echo "External registry API availability does not expose its storage backend. Verify persistence with an authenticated push and pull or the registry provider's storage health check."
-          status="$(oc debug -q "node/$node" -- chroot /host curl --connect-timeout 10 --max-time 20 -sS -o /dev/null -w '%{http_code}' https://{{ atp_external_registry_host | default('quay.io') }}/v2/)"
+          status="$(oc debug -q "node/$node" -- chroot /host curl --connect-timeout 10 --max-time 20 -sS -o /dev/null -w '%{http_code}' "{{ atp_external_registry_effective_url }}/v2/")"
           echo "External registry API HTTP status: $status"
           [[ "$status" == "200" || "$status" == "401" ]]
         fi
@@ -586,7 +606,7 @@
 
     - name: "TC-20: Classify registry storage result"
       ansible.builtin.set_fact:
-        tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default('')) else 'Skipped' if tc20_cmd.rc == 0 and 'External registry API availability does not expose its storage backend' in (tc20_cmd.stdout | default('')) else 'Fail' }}"
+        tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default('')) else 'Skipped' if (tc20_cmd.rc == 0 and 'External registry API availability does not expose its storage backend' in (tc20_cmd.stdout | default(''))) or (tc20_cmd.rc == 2 and 'no external registry URL' in (tc20_cmd.stdout | default('') | lower)) else 'Fail' }}"
 
     - name: "TC-20: Build Result Record"
       ansible.builtin.set_fact:
