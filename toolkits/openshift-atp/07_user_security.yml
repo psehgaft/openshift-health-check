@@ -224,11 +224,34 @@
     - name: "TC-55: Validate API certificate trust, SAN, and expiration"
       ansible.builtin.shell: |
         set -uo pipefail
-        api_host="api.{{ cluster_name }}.{{ cluster_domain }}"
         min_validity_days="{{ atp_api_cert_min_validity_days | default(7) | int }}"
         configured_ca_path={{ atp_api_cert_ca_path | default('') | quote }}
         work_dir="$(mktemp -d)"
         trap 'rm -rf "$work_dir"' EXIT
+
+        if ! api_server_url="$(oc config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}' 2>"$work_dir/kubeconfig-server.err")"; then
+          echo "Could not determine the API server URL from the active kubeconfig." >&2
+          cat "$work_dir/kubeconfig-server.err" >&2
+          exit 1
+        fi
+        if [[ "$api_server_url" != https://* ]]; then
+          echo "The active kubeconfig does not contain a valid HTTPS API server URL: ${api_server_url:-empty}" >&2
+          exit 1
+        fi
+        api_authority="${api_server_url#https://}"
+        api_authority="${api_authority%%/*}"
+        if [[ "$api_authority" == *:* ]]; then
+          api_port="${api_authority##*:}"
+          api_host="${api_authority%:*}"
+        else
+          api_host="$api_authority"
+          api_port=443
+        fi
+        if [[ -z "$api_host" || ! "$api_port" =~ ^[0-9]+$ ]]; then
+          echo "Could not parse API hostname and port from active kubeconfig URL: $api_server_url" >&2
+          exit 1
+        fi
+        echo "Active API endpoint: $api_server_url"
 
         if [[ -n "$configured_ca_path" ]]; then
           if [[ ! -r "$configured_ca_path" ]]; then
@@ -257,7 +280,7 @@
         echo "CA source: $ca_source"
 
         set +e
-        openssl s_client -connect "${api_host}:6443" -servername "$api_host" \
+        openssl s_client -connect "${api_host}:${api_port}" -servername "$api_host" \
           -verify_return_error -CAfile "$work_dir/cluster-ca.pem" -showcerts \
           </dev/null > "$work_dir/handshake.txt" 2>&1
         tls_rc=$?
