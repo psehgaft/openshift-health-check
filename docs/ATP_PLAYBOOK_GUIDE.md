@@ -98,6 +98,40 @@ If the case fails, inspect the API group available on the cluster, the matching 
 - **TC-53:** Creates or verifies ServiceAccount `atp-test` in `testproject`; an existing account is reported and left unchanged.
 
 
+## TC-72: HugePages target nodes and PerformanceProfile
+
+TC-72 requires **every node matched by** `tc72_node_selector` to report positive HugePages capacity and allocatable resources for at least one size, `hugepages-1Gi` or `hugepages-2Mi`. In the 2026-11-06 evidence, 10 selected nodes already expose 1Gi HugePages; `carfzt5gclmt01`, `carfzt5gclmt02`, and `carfzt5gclmt03` report zero for both sizes. Decide from the approved CNF topology whether those three nodes are expected CNF hosts:
+
+- If they are not CNF targets, label only the designated CNF nodes through the cluster's normal node-label/GitOps process and set `tc72_node_selector` in `toolkits/openshift-atp/vars/main.yml` to that label selector. Example:
+  ```yaml
+  tc72_node_selector: "atp.openshift.io/cnf-hugepages=true"
+  ```
+  Do not narrow the selector just to hide a real HugePages gap on nodes that are intended to run CNFs.
+- If those nodes must host CNFs, update the existing Node Tuning Operator `PerformanceProfile` that targets their node pool. Add the HugePages page size and count from the CNF vendor/application sizing and NUMA design. Merge this into the existing profile; do not apply it as a standalone, incomplete PerformanceProfile:
+  ```yaml
+  spec:
+    hugepages:
+      defaultHugepagesSize: 1G
+      pages:
+      - size: 1G
+        count: <number-of-1Gi-pages-required-by-the-CNF>
+        node: <NUMA-node-id>
+  ```
+  Choose `1G` or `2M` according to the CNF requirements. The count is a number of pages, not a memory size. If the `node` field is omitted, the operator distributes the pages across NUMA nodes. Ensure the profile's node selector and MachineConfigPool selectors target only the intended nodes/pool. HugePages are preallocated and reduce memory available for regular workloads; do not copy the existing 40Gi/160Gi figures to other nodes without hardware and workload sizing.
+
+After applying a profile, wait until its MachineConfigPool rollout completes and the nodes return Ready. Check the pool and resource values:
+```bash
+oc get mcp
+oc get nodes -l 'atp.openshift.io/cnf-hugepages=true' -o json | jq -r '
+  .items[] |
+  [.metadata.name,
+   (.status.capacity["hugepages-1Gi"] // "0"),
+   (.status.allocatable["hugepages-1Gi"] // "0"),
+   (.status.capacity["hugepages-2Mi"] // "0"),
+   (.status.allocatable["hugepages-2Mi"] // "0")] | @tsv'
+```
+For every node selected by the configured selector, at least one size must be greater than zero in **both** capacity and allocatable. Then rerun TC-72. OpenShift 4.20 documents preallocation with the Node Tuning Operator PerformanceProfile and recommends waiting for the relevant MachineConfigPool update to finish. See [HugePages configuration](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/observability/scalability_and_performance/using-cpu-manager) and the [PerformanceProfile API](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/observability/node_apis/index).
+
 ## TC-64: must-gather and node sosreport
 
 TC-64 runs `oc adm must-gather`, packages and integrity-checks the collected directory, and verifies host-root access on a worker. It attempts to generate/copy an integrity-checked `sosreport` when the node and image prerequisites allow it. Must-gather collection logs are saved as `must-gather.log`; sosreport command/copy logs are saved alongside the artifacts. The sosreport uses `podman container runlabel run` with `registry.redhat.io/rhel9/support-tools` and directs output to `/host/var/tmp`, which maps to the node's `/var/tmp`. TC-64 Pass requires a non-empty must-gather archive that passes gzip/tar integrity checks and a successful host-root check. Sosreport is best-effort: it is validated and included when generated, but its absence is reported and does not fail TC-64. If must-gather times out but produced files, the playbook packages and validates those files and records a Pass-with-warning marker; review `must-gather.log` because the archive may be incomplete. Configure `tc64_must_gather_timeout_seconds` (60-18000, default 7200) and `tc64_sosreport_timeout_seconds` (60-3000, default 2700) in `toolkits/openshift-atp/vars/main.yml`; the first can be increased for large clusters. Set `tc64_node_target` to select a worker; otherwise the first worker is used. For disconnected clusters, mirror `registry.redhat.io/rhel9/support-tools:latest` and set `tc64_support_tools_image` to that mirror image. These archives can contain sensitive cluster and host data, so protect the diagnostics directory and review it before sharing.
