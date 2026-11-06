@@ -455,71 +455,63 @@
         }] }}"
   tags: ['general', 'telco', 'tc17', 'logs_api']
 
-# TC 18: Check Internal Registry API
-- name: "TC-18: Check Internal Registry API"
+# TC 18: Check Configured Registry API
+- name: "TC-18: Check Configured Registry API"
   when: run_tc18_check_internal_registry_api | default(true) | bool
   block:
     - name: "TC-18: Discover configured external registry"
       ansible.builtin.include_tasks: registry_discovery.yml
 
-    - name: "TC-18: Check internal registry service through the API"
-      ansible.builtin.shell: |
-        set -euo pipefail
-        if oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
-          echo "Selected registry: internal OpenShift image registry"
-          oc get svc image-registry -n openshift-image-registry -o jsonpath='{.metadata.name}.{.metadata.namespace}.svc{"\\n"}'
-          oc get svc image-registry -n openshift-image-registry -o wide
-        else
-          echo "Internal image-registry service is not configured."
-          exit 2
-        fi
-      args:
-        executable: /bin/bash
-      register: tc18_cmd
-      changed_when: false
-      failed_when: false
+    - name: "TC-18: Inspect internal registry operator, managementState, and service"
+      ansible.builtin.include_tasks: registry_control_state.yml
 
-    - name: "TC-18: Probe optional external registry API"
+    - name: "TC-18: Probe configured external registry only when internal is unavailable"
       ansible.builtin.include_tasks: external_registry_probe.yml
+      when: not (atp_registry_internal_available | bool)
+
+    - name: "TC-18: Decide whether pull-secret authentication fallback is required"
+      ansible.builtin.set_fact:
+        atp_registry_probe_pull_secret: "{{ not (atp_registry_internal_available | bool or atp_external_registry_probe_ok | default(false) | bool) }}"
+
+    - name: "TC-18: Discover and authenticate registries from the cluster pull-secret"
+      ansible.builtin.include_tasks: registry_pull_secret_probe.yml
 
     - name: "TC-18: Classify available registry endpoints"
       ansible.builtin.set_fact:
-        tc18_internal_available: "{{ (tc18_cmd.rc | default(1) | int) == 0 }}"
-        tc18_external_configured: "{{ atp_external_registry_effective_url | default('') | length > 0 }}"
-        tc18_external_available: "{{ atp_external_registry_probe_ok | default(false) | bool }}"
-
-    - name: "TC-18: Determine pass status and report endpoint notes"
-      ansible.builtin.set_fact:
-        tc18_status: "{{ 'Pass' if (tc18_internal_available | bool or tc18_external_available | bool) else 'Fail' }}"
+        tc18_internal_available: "{{ atp_registry_internal_available | bool }}"
+        tc18_pullsecret_external_available: "{{ atp_pullsecret_login_ok | default(false) | bool }}"
+        tc18_external_available: "{{ atp_external_registry_probe_ok | default(false) | bool or atp_pullsecret_login_ok | default(false) | bool }}"
+        tc18_external_configured: "{{ atp_external_registry_effective_url | default('') | length > 0 or atp_pullsecret_registry_hosts | default([]) | length > 0 }}"
+        tc18_status: "{{ 'Pass' if (atp_registry_internal_available | bool or atp_external_registry_probe_ok | default(false) | bool or atp_pullsecret_login_ok | default(false) | bool) else 'Fail' }}"
         tc18_registry_mode: >-
-          {% if tc18_internal_available | bool and tc18_external_available | bool %}
-          Internal and external registry APIs are reachable
-          {% elif tc18_internal_available | bool %}
-          Internal registry only is available
-          {% elif tc18_external_available | bool %}
-          External registry only is available
+          {% if atp_registry_internal_available | bool and (atp_external_registry_effective_url | default('') | length > 0 or atp_pullsecret_registry_hosts | default([]) | length > 0) %}
+          Internal registry passed; external registry references were also discovered
+          {% elif atp_registry_internal_available | bool %}
+          Internal registry only is available and passed
+          {% elif atp_external_registry_probe_ok | default(false) | bool %}
+          External registry passed the configured OCI API probe
+          {% elif atp_pullsecret_login_ok | default(false) | bool %}
+          External registry passed Podman login using pull-secret credentials
           {% else %}
-          No registry API is available
+          No usable registry API was validated
           {% endif %}
         tc18_registry_notes: >-
-          {% if tc18_internal_available | bool and tc18_external_available | bool %}
-          Both internal and external registry APIs are reachable.
-          {% elif tc18_external_available | bool %}
-          Only the external registry is available and reachable; the internal image-registry service is not configured or available. This satisfies TC-18 because at least one configured registry is usable.
-          {% elif tc18_internal_available | bool and tc18_external_configured | bool %}
-          The internal registry is available and satisfies TC-18. The configured external registry did not pass its API probe: {{ atp_external_registry_probe_summary }}.
-          {% elif tc18_internal_available | bool %}
-          Only the internal registry is available; no external registry endpoint was configured or discovered.
+          {% if atp_registry_internal_available | bool and (atp_external_registry_effective_url | default('') | length > 0 or atp_pullsecret_registry_hosts | default([]) | length > 0) %}
+          The internal registry is available: managementState={{ atp_registry_management_state }}, ClusterOperator Available={{ atp_registry_operator_available }}, and the image-registry service exists. External registry references were also discovered (configured endpoint: {{ atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'none' }}; pull-secret entries: {{ atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none' }}). External credentials were not tested because the internal registry passed.
+          {% elif atp_registry_internal_available | bool %}
+          The internal registry passed: managementState={{ atp_registry_management_state }}, ClusterOperator Available={{ atp_registry_operator_available }}, and the image-registry service exists. No external registry reference was discovered.
+          {% elif atp_pullsecret_login_ok | default(false) | bool %}
+          The internal registry is unavailable (managementState={{ atp_registry_management_state }}; service present={{ atp_registry_service_present }}). Podman authenticated successfully to pull-secret registry host(s): {{ atp_pullsecret_login_success_hosts | default([]) | join(', ') }}. This external registry satisfies TC-18.
+          {% elif atp_external_registry_probe_ok | default(false) | bool %}
+          The internal registry is unavailable (managementState={{ atp_registry_management_state }}; service present={{ atp_registry_service_present }}). The configured external registry passed its OCI API probe: {{ atp_external_registry_effective_url | regex_replace('^https?://', '') }}.
           {% else %}
-          Neither configured registry passed the API check. Internal result: {{ tc18_cmd.stdout | default(tc18_cmd.stderr | default('no output')) | trim }}. External result: {{ atp_external_registry_probe_summary }}.
+          No usable registry API was validated. Internal registry state: managementState={{ atp_registry_management_state }}, ClusterOperator Available={{ atp_registry_operator_available }}, service present={{ atp_registry_service_present }}. Configured external probe: {{ atp_external_registry_probe_summary | default('not successful') }}. Pull-secret fallback: {{ atp_pullsecret_login_summary | default('not successful') | trim }}.
           {% endif %}
         tc18_remediation: >-
-          {% if not (tc18_internal_available | bool or tc18_external_available | bool) %}
-          Configure at least one usable registry. For a private/self-signed external TLS chain, install the issuing CA as a PEM file on the Ansible controller and set atp_external_registry_ca_path; keep atp_external_registry_validate_certs=true. If robot credentials are supplied, verify both ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME and ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN and confirm the robot can access the registry API.
-          {% elif tc18_external_configured | bool and not (tc18_external_available | bool) %}
-          TC-18 passes through the available endpoint, but the configured external endpoint still needs attention: {{ atp_external_registry_probe_summary }}. For certificate verification failures, configure atp_external_registry_ca_path with the issuing CA PEM rather than disabling TLS validation.
+          {% if not (atp_registry_internal_available | bool or atp_external_registry_probe_ok | default(false) | bool or atp_pullsecret_login_ok | default(false) | bool) %}
+          Configure at least one usable registry. If managementState is Removed, ensure the OpenShift pull-secret contains credentials for a reachable external registry and install Podman on the Ansible execution host. For private registry TLS, set atp_external_registry_ca_path to the issuing PEM CA file and keep verification enabled. Never print or commit the pull-secret credentials.
           {% else %}
-          No remediation is required for the ATP pass condition; retain the endpoint and credential configuration used for this run.
+          No remediation is required for the TC-18 pass condition. The report notes whether an external endpoint was discovered but not probed because the internal registry passed.
           {% endif %}
 
     - name: "TC-18: Record Result"
@@ -528,38 +520,47 @@
           'id': 'TC-18',
           'name': 'Check Configured Registry API',
           'category': 'Services Check',
-          'expected': 'Pass when the internal registry API or the external registry OCI v2 API is reachable; both may be configured, and at least one must be usable. Supplied robot credentials must authenticate successfully to the external registry.',
+          'expected': 'Pass when the internal registry is healthy or an external registry authenticates successfully. If the internal registry is Removed/unavailable, discover registry hosts from openshift-config/pull-secret and verify credentials with Podman login.',
           'status': tc18_status | trim,
-          'procedure': 'Query the internal image-registry service through the API. If an external endpoint is configured or discovered, request its OCI v2 API and verify robot authentication when credentials are supplied.',
-          'evidence': ((tc18_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc18_cmd.stderr | default(''))) if (tc18_cmd.stderr | default('') | length > 0) else '') ~ ('\\nRegistry evaluation: ' ~ (tc18_registry_mode | trim)) ~ ('\\nExternal registry probe: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry endpoint: ' ~ (atp_external_registry_effective_url | regex_replace('^https?://', '')) if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc18_cmd.rc | string) if tc18_cmd.rc is defined else '')),
+          'procedure': 'Inspect clusteroperator image-registry, Image Registry Operator managementState, and the internal service. When internal is unavailable, probe the configured OCI endpoint and iterate pull-secret auth hosts with podman login.',
+          'evidence': ((atp_registry_control_state_cmd.stdout | default('')) ~ ('\nExternal endpoint: ' ~ (atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'not configured/discovered')) ~ ('\nExternal OCI probe: ' ~ (atp_external_registry_probe_summary | default('not run'))) ~ ('\nPull-secret registry hosts: ' ~ (atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none')) ~ ('\nPull-secret authentication: ' ~ (atp_pullsecret_login_summary | default('not run') | trim)) ~ ('\nRegistry evaluation: ' ~ (tc18_registry_mode | trim)),
           'details': tc18_registry_notes | trim,
           'additional_comments': tc18_registry_notes | trim,
           'remediation': tc18_remediation | trim
         }] }}"
   tags: ['general', 'telco', 'tc18', 'registry']
 
-
-
-# TC 19: Check Internal Registry Status
-- name: "TC-19: Check Internal Registry Status"
+# TC 19: Check Internal and External Registry Status
+- name: "TC-19: Check Internal and External Registry Status"
   when: run_tc19_check_internal_registry_status | default(true) | bool
   block:
     - name: "TC-19: Discover configured external registry"
       ansible.builtin.include_tasks: registry_discovery.yml
 
-    - name: "TC-19: Query internal registry pods"
+    - name: "TC-19: Inspect internal registry operator, managementState, and service"
+      ansible.builtin.include_tasks: registry_control_state.yml
+
+    - name: "TC-19: Query internal registry pods when the internal registry is available"
       ansible.builtin.command: oc get pods -n openshift-image-registry -o json
       register: tc19_cmd
       changed_when: false
       failed_when: false
+      when: atp_registry_internal_available | bool
 
-    - name: "TC-19: Capture internal registry pod placement and logs"
+    - name: "TC-19: Verify internal registry pods are Running and ready"
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc get pods -n openshift-image-registry -o json | jq -e '.items | length > 0 and all(.[]; .status.phase == "Running" and (.status.containerStatuses | length > 0) and (.status.containerStatuses | all(.[]; .ready == true)))'
+      args:
+        executable: /bin/bash
+      register: tc19_pods_ready_cmd
+      changed_when: false
+      failed_when: false
+      when: atp_registry_internal_available | bool
+
+    - name: "TC-19: Capture internal registry placement and logs"
       ansible.builtin.shell: |
         set -euo pipefail
-        if ! oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
-          echo "Internal registry is not configured; internal pod placement and logs are not applicable."
-          exit 2
-        fi
         echo "== Registry pod placement =="
         oc get pods -n openshift-image-registry -o wide
         echo "== Infra nodes =="
@@ -576,28 +577,59 @@
       register: tc19_details_cmd
       changed_when: false
       failed_when: false
+      when: atp_registry_internal_available | bool
 
-    - name: "TC-19: Probe optional external registry API"
+    - name: "TC-19: Classify internal registry test outcome"
+      ansible.builtin.set_fact:
+        tc19_reg_pods: "{{ ((tc19_cmd.stdout | from_json)['items']) if (tc19_cmd.rc | default(1) | int) == 0 else [] }}"
+        tc19_running_pods: "{{ tc19_reg_pods | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list }}"
+        tc19_internal_test_ok: "{{ atp_registry_internal_available | bool and (tc19_cmd.rc | default(1) | int) == 0 and (tc19_pods_ready_cmd.rc | default(1) | int) == 0 and (tc19_details_cmd.rc | default(1) | int) == 0 }}"
+
+    - name: "TC-19: Probe configured external registry if internal registry checks fail"
       ansible.builtin.include_tasks: external_registry_probe.yml
+      when: not (tc19_internal_test_ok | bool)
+
+    - name: "TC-19: Decide whether pull-secret authentication fallback is required"
+      ansible.builtin.set_fact:
+        atp_registry_probe_pull_secret: "{{ not (tc19_internal_test_ok | bool or atp_external_registry_probe_ok | default(false) | bool) }}"
+
+    - name: "TC-19: Discover and authenticate registries from the cluster pull-secret"
+      ansible.builtin.include_tasks: registry_pull_secret_probe.yml
+
+    - name: "TC-19: Classify result and registry notes"
+      ansible.builtin.set_fact:
+        tc19_external_available: "{{ atp_external_registry_probe_ok | default(false) | bool or atp_pullsecret_login_ok | default(false) | bool }}"
+        tc19_registry_status: "{{ 'Pass' if (tc19_internal_test_ok | bool or atp_external_registry_probe_ok | default(false) | bool or atp_pullsecret_login_ok | default(false) | bool) else 'Fail' }}"
+        tc19_registry_notes: >-
+          {% if tc19_internal_test_ok | bool and (atp_external_registry_effective_url | default('') | length > 0 or atp_pullsecret_registry_hosts | default([]) | length > 0) %}
+          Internal registry pod, readiness, and log checks passed. External registry references were also found (configured endpoint: {{ atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'none' }}; pull-secret entries: {{ atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none' }}). External login was not run because the internal registry passed.
+          {% elif tc19_internal_test_ok | bool %}
+          Internal registry pod, readiness, and log checks passed. No external registry reference was discovered.
+          {% elif atp_pullsecret_login_ok | default(false) | bool %}
+          The internal registry is Removed, absent, or unhealthy (managementState={{ atp_registry_management_state }}). Podman authenticated successfully to external pull-secret registry host(s): {{ atp_pullsecret_login_success_hosts | default([]) | join(', ') }}. This external registry satisfies TC-19.
+          {% elif atp_external_registry_probe_ok | default(false) | bool %}
+          The internal registry is Removed, absent, or unhealthy (managementState={{ atp_registry_management_state }}). The configured external registry passed its OCI API probe: {{ atp_external_registry_effective_url | regex_replace('^https?://', '') }}.
+          {% else %}
+          Neither registry passed its health/authentication check. Internal managementState={{ atp_registry_management_state }}, ClusterOperator Available={{ atp_registry_operator_available }}, internal service present={{ atp_registry_service_present }}. Internal command errors: {{ tc19_details_cmd.stderr | default('not run') | truncate(200) }}. External OCI probe: {{ atp_external_registry_probe_summary | default('not run') }}. Pull-secret probe: {{ atp_pullsecret_login_summary | default('not successful') | trim }}.
+          {% endif %}
 
     - name: "TC-19: Record Result"
       vars:
-        reg_pods: "{{ ((tc19_cmd.stdout | from_json)['items']) if tc19_cmd.rc == 0 else [] }}"
-        running_pods: "{{ reg_pods | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list }}"
+        tc19_internal_pod_json: "{{ (tc19_cmd.stdout | default('{}') | from_json) if (tc19_cmd.rc | default(1) | int) == 0 else {'items': []} }}"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-19',
           'name': 'Check Internal and External Registry Status',
           'category': 'Services Check',
-          'expected': 'At least one configured registry is healthy: internal registry pods are Running with placement and logs available, or the external OCI v2 API is reachable; when both exist, both checks pass and supplied robot credentials authenticate successfully',
-          'status': ('Fail' if tc19_details_cmd.rc == 2 and atp_external_registry_effective_url | length == 0 else 'Pass' if ((tc19_details_cmd.rc == 2 and atp_external_registry_effective_url | length > 0 and atp_external_registry_probe_ok | bool) or (tc19_cmd.rc == 0 and tc19_details_cmd.rc == 0 and running_pods | length > 0 and (atp_external_registry_effective_url | length == 0 or atp_external_registry_probe_ok | bool))) else 'Fail'),
-          'procedure': (tc19_cmd.cmd | default('Query internal registry pods')) ~ '\\n' ~ (tc19_details_cmd.cmd | default('Inspect internal registry placement and logs')) ~ '\\nProbe configured external registry OCI v2 endpoint when available',
-          'evidence': ((tc19_cmd.stdout | default('')) ~ '\\n' ~ (tc19_details_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc19_details_cmd.stderr | default(''))) if (tc19_details_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExternal registry: ' ~ atp_external_registry_probe_summary) ~ ('\\nExternal registry URL: ' ~ atp_external_registry_effective_url if atp_external_registry_effective_url | length > 0 else '') ~ ('\\nInternal command exit code: ' ~ (tc19_details_cmd.rc | string) if tc19_details_cmd.rc is defined else '')),
-          'details': 'Running internal registry pods: ' ~ (running_pods | join(', ') if running_pods | length > 0 else 'None') ~ '; internal details exit code: ' ~ (tc19_details_cmd.rc | default('unknown') | string) ~ '; external registry discovery: ' ~ atp_external_registry_discovery_source ~ '; probe: ' ~ atp_external_registry_probe_summary
+          'expected': 'Pass when internal registry pods are Running, ready, and emitting level=info logs, or when an external registry authenticates successfully. If both exist, run the internal checks and report the external registry references.',
+          'status': tc19_registry_status | trim,
+          'procedure': 'Inspect Image Registry Operator state. If internal registry is active, validate its pods, placement, readiness, and logs. If internal validation is unavailable or fails, probe the configured external OCI endpoint and authenticate candidate registries from the cluster pull-secret.',
+          'evidence': ((atp_registry_control_state_cmd.stdout | default('')) ~ ('\nInternal registry pods: ' ~ (tc19_cmd.stdout | default('not queried because internal registry is unavailable'))) ~ ('\nInternal pod readiness exit code: ' ~ (tc19_pods_ready_cmd.rc | default('not run') | string)) ~ ('\nInternal placement/log evidence: ' ~ (tc19_details_cmd.stdout | default(tc19_details_cmd.stderr | default('not run'))) ) ~ ('\nExternal endpoint: ' ~ (atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'not configured/discovered')) ~ ('\nExternal OCI probe: ' ~ (atp_external_registry_probe_summary | default('not run'))) ~ ('\nPull-secret registry hosts: ' ~ (atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none')) ~ ('\nPull-secret authentication: ' ~ (atp_pullsecret_login_summary | default('not run') | trim)),
+          'details': tc19_registry_notes | trim ~ '; Running internal registry pods: ' ~ ((tc19_internal_pod_json['items'] | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list | join(', ')) if (tc19_internal_pod_json['items'] | length > 0) else 'None'),
+          'additional_comments': tc19_registry_notes | trim,
+          'remediation': 'If neither internal validation nor external authentication passes, restore the Image Registry Operator or correct external pull-secret credentials, registry DNS/network reachability, and trusted CA configuration. Pull-secret values are never emitted in task output or reports.'
         }] }}"
   tags: ['general', 'telco', 'tc19', 'registry']
-
-
 
 # TC 20: Check Internal Registry Storage
 - name: "TC-20: Check Internal Registry Storage"
