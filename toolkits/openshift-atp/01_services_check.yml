@@ -635,22 +635,43 @@
           Neither registry passed its health/authentication check. Internal managementState={{ atp_registry_management_state }}, ClusterOperator Available={{ atp_registry_operator_available }}, internal service present={{ atp_registry_service_present }}. Internal command errors: {{ tc19_details_cmd.stderr | default('not run') | truncate(200) }}. External OCI probe: {{ atp_external_registry_probe_summary | default('not run') }}. Pull-secret probe: {{ atp_pullsecret_login_summary | default('not successful') | trim }}.
           {% endif %}
 
-    - name: "TC-19: Record Result"
-      vars:
-        tc19_internal_pod_json: "{{ (tc19_cmd.stdout | default('{}') | from_json) if (tc19_cmd.rc | default(1) | int) == 0 else {'items': []} }}"
+    - name: "TC-19: Parse internal registry pod names"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-19',
-          'name': 'Check Internal and External Registry Status',
-          'category': 'Services Check',
-          'expected': 'Pass when internal registry pods are Running, ready, and emitting level=info logs, or when an external registry authenticates successfully. If both exist, run the internal checks and report the external registry references.',
-          'status': tc19_registry_status | trim,
-          'procedure': 'Inspect Image Registry Operator state. If internal registry is active, validate its pods, placement, readiness, and logs. If internal validation is unavailable or fails, probe the configured external OCI endpoint and authenticate candidate registries from the cluster pull-secret.',
-          'evidence': ((atp_registry_control_state_cmd.stdout | default('')) ~ ('\nInternal registry pods: ' ~ (tc19_cmd.stdout | default('not queried because internal registry is unavailable'))) ~ ('\nInternal pod readiness exit code: ' ~ (tc19_pods_ready_cmd.rc | default('not run') | string)) ~ ('\nInternal placement/log evidence: ' ~ (tc19_details_cmd.stdout | default(tc19_details_cmd.stderr | default('not run'))) ) ~ ('\nExternal endpoint: ' ~ (atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'not configured/discovered')) ~ ('\nExternal OCI probe: ' ~ (atp_external_registry_probe_summary | default('not run'))) ~ ('\nPull-secret registry hosts: ' ~ (atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none')) ~ ('\nPull-secret authentication: ' ~ (atp_pullsecret_login_summary | default('not run') | trim)),
-          'details': tc19_registry_notes | trim ~ '; Running internal registry pods: ' ~ ((tc19_internal_pod_json['items'] | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list | join(', ')) if (tc19_internal_pod_json['items'] | length > 0) else 'None'),
-          'additional_comments': tc19_registry_notes | trim,
-          'remediation': 'If neither internal validation nor external authentication passes, restore the Image Registry Operator or correct external pull-secret credentials, registry DNS/network reachability, and trusted CA configuration. Pull-secret values are never emitted in task output or reports.'
-        }] }}"
+        tc19_running_pod_names: >-
+          {{ (tc19_cmd.stdout | default('{"items": []}') | from_json)['items']
+             | selectattr('status.phase', 'equalto', 'Running')
+             | map(attribute='metadata.name')
+             | list }}
+
+    - name: "TC-19: Build report result"
+      ansible.builtin.set_fact:
+        tc19_result:
+          id: "TC-19"
+          name: "Check Internal and External Registry Status"
+          category: "Services Check"
+          expected: "Pass when internal registry pods are Running, ready, and emitting level=info logs, or when an external registry authenticates successfully. If both exist, run the internal checks and report the external registry references."
+          status: "{{ tc19_registry_status | trim }}"
+          procedure: "Inspect Image Registry Operator state. If internal registry is active, validate its pods, placement, readiness, and logs. If internal validation is unavailable or fails, probe the configured external OCI endpoint and authenticate candidate registries from the cluster pull-secret."
+          evidence: |
+            {{ atp_registry_control_state_cmd.stdout | default('') }}
+            Internal registry pods:
+            {{ tc19_cmd.stdout | default('not queried because internal registry is unavailable') }}
+            Internal pod readiness exit code: {{ tc19_pods_ready_cmd.rc | default('not run') }}
+            Internal placement/log evidence:
+            {{ tc19_details_cmd.stdout | default(tc19_details_cmd.stderr | default('not run')) }}
+            External endpoint: {{ atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'not configured/discovered' }}
+            External OCI probe: {{ atp_external_registry_probe_summary | default('not run') }}
+            Pull-secret registry hosts: {{ atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none' }}
+            Pull-secret authentication: {{ atp_pullsecret_login_summary | default('not run') | trim }}
+          details: >-
+            {{ tc19_registry_notes | trim }}
+            Running internal registry pods: {{ tc19_running_pod_names | default([]) | join(', ') if tc19_running_pod_names | default([]) | length > 0 else 'None' }}
+          additional_comments: "{{ tc19_registry_notes | trim }}"
+          remediation: "If neither internal validation nor external authentication passes, restore the Image Registry Operator or correct external pull-secret credentials, registry DNS/network reachability, and trusted CA configuration. Pull-secret values are never emitted in task output or reports."
+
+    - name: "TC-19: Append Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc19_result] }}"
   tags: ['general', 'telco', 'tc19', 'registry']
 
 # TC 20: Check Internal Registry Storage
