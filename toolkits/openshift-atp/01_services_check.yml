@@ -465,6 +465,11 @@
     - name: "TC-18: Inspect internal registry operator, managementState, and service"
       ansible.builtin.include_tasks: registry_control_state.yml
 
+    - name: "TC-18: Reset external probe result for this case"
+      ansible.builtin.set_fact:
+        atp_external_registry_probe_ok: false
+        atp_external_registry_probe_summary: "Not run"
+
     - name: "TC-18: Probe configured external registry only when internal is unavailable"
       ansible.builtin.include_tasks: external_registry_probe.yml
       when: not (atp_registry_internal_available | bool)
@@ -579,11 +584,19 @@
       failed_when: false
       when: atp_registry_internal_available | bool
 
-    - name: "TC-19: Classify internal registry test outcome"
+    - name: "TC-19: Parse internal registry pod inventory"
       ansible.builtin.set_fact:
         tc19_reg_pods: "{{ ((tc19_cmd.stdout | from_json)['items']) if (tc19_cmd.rc | default(1) | int) == 0 else [] }}"
-        tc19_running_pods: "{{ tc19_reg_pods | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list }}"
+        tc19_running_pods: "{{ ((tc19_cmd.stdout | from_json)['items'] | selectattr('status.phase', 'equalto', 'Running') | map(attribute='metadata.name') | list) if (tc19_cmd.rc | default(1) | int) == 0 else [] }}"
+
+    - name: "TC-19: Classify internal registry test outcome"
+      ansible.builtin.set_fact:
         tc19_internal_test_ok: "{{ atp_registry_internal_available | bool and (tc19_cmd.rc | default(1) | int) == 0 and (tc19_pods_ready_cmd.rc | default(1) | int) == 0 and (tc19_details_cmd.rc | default(1) | int) == 0 }}"
+
+    - name: "TC-19: Reset external probe result for this case"
+      ansible.builtin.set_fact:
+        atp_external_registry_probe_ok: false
+        atp_external_registry_probe_summary: "Not run"
 
     - name: "TC-19: Probe configured external registry if internal registry checks fail"
       ansible.builtin.include_tasks: external_registry_probe.yml
