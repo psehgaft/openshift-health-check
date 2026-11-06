@@ -1,0 +1,55 @@
+---
+- name: "Registry state: inspect operator, configuration, and service through the API"
+  ansible.builtin.shell:
+    cmd: |
+      set -uo pipefail
+      co_yaml="$(oc get clusteroperator image-registry -o yaml 2>&1)"
+      co_yaml_rc=$?
+      co_json="$(oc get clusteroperator image-registry -o json 2>&1)"
+      co_json_rc=$?
+      management_state="$(oc get configs.imageregistry.operator.openshift.io cluster -o jsonpath='{.spec.managementState}' 2>&1)"
+      management_rc=$?
+      service_json="$(oc get svc image-registry -n openshift-image-registry -o json 2>&1)"
+      service_rc=$?
+
+      if [[ "$co_json_rc" -eq 0 ]]; then
+        co_available="$(jq -r '([.status.conditions[]? | select(.type=="Available")][0].status) // "Unknown"' <<< "$co_json" 2>/dev/null || echo Unknown)"
+      else
+        co_available="Unknown"
+      fi
+      if [[ "$service_rc" -eq 0 ]]; then
+        service_present="$(jq -r 'if .metadata.name == "image-registry" then "true" else "false" end' <<< "$service_json" 2>/dev/null || echo false)"
+      else
+        service_present="false"
+      fi
+      [[ "$management_rc" -eq 0 && -n "$management_state" ]] || management_state="Unknown"
+
+      echo "== oc get clusteroperator image-registry -o yaml =="
+      printf '%s\n' "$co_yaml"
+      echo "== Image Registry Operator configuration =="
+      echo "managementState=$management_state"
+      echo "== Internal registry service =="
+      if [[ "$service_rc" -eq 0 ]]; then
+        oc get svc image-registry -n openshift-image-registry -o wide
+      else
+        echo "Internal image-registry service is absent or not queryable: $service_json"
+      fi
+      echo "IMAGE_REGISTRY_MANAGEMENT_STATE=$management_state"
+      echo "IMAGE_REGISTRY_OPERATOR_AVAILABLE=$co_available"
+      echo "IMAGE_REGISTRY_SERVICE_PRESENT=$service_present"
+      if [[ "$management_state" != "Removed" && "$co_available" == "True" && "$service_present" == "true" ]]; then
+        echo "IMAGE_REGISTRY_INTERNAL_AVAILABLE=true"
+      else
+        echo "IMAGE_REGISTRY_INTERNAL_AVAILABLE=false"
+      fi
+    executable: /bin/bash
+  register: atp_registry_control_state_cmd
+  changed_when: false
+  failed_when: false
+
+- name: "Registry state: classify internal endpoint"
+  ansible.builtin.set_fact:
+    atp_registry_management_state: "{{ (atp_registry_control_state_cmd.stdout_lines | default([]) | select('match', '^IMAGE_REGISTRY_MANAGEMENT_STATE=') | list | first | default('IMAGE_REGISTRY_MANAGEMENT_STATE=Unknown') | regex_replace('^IMAGE_REGISTRY_MANAGEMENT_STATE=', '')) }}"
+    atp_registry_operator_available: "{{ (atp_registry_control_state_cmd.stdout_lines | default([]) | select('match', '^IMAGE_REGISTRY_OPERATOR_AVAILABLE=') | list | first | default('IMAGE_REGISTRY_OPERATOR_AVAILABLE=Unknown') | regex_replace('^IMAGE_REGISTRY_OPERATOR_AVAILABLE=', '')) }}"
+    atp_registry_service_present: "{{ ((atp_registry_control_state_cmd.stdout_lines | default([]) | select('match', '^IMAGE_REGISTRY_SERVICE_PRESENT=') | list | first | default('IMAGE_REGISTRY_SERVICE_PRESENT=false') | regex_replace('^IMAGE_REGISTRY_SERVICE_PRESENT=', '')) == 'true') }}"
+    atp_registry_internal_available: "{{ ((atp_registry_control_state_cmd.stdout_lines | default([]) | select('match', '^IMAGE_REGISTRY_INTERNAL_AVAILABLE=') | list | first | default('IMAGE_REGISTRY_INTERNAL_AVAILABLE=false') | regex_replace('^IMAGE_REGISTRY_INTERNAL_AVAILABLE=', '')) == 'true') }}"
