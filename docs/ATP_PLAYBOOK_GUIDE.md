@@ -53,6 +53,8 @@ Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, bu
 
 Before selecting the endpoint, TC-18/TC-19 query `oc get clusteroperator image-registry -o yaml`, the Image Registry Operator `spec.managementState`, and the internal `image-registry` Service. When the internal registry is Removed or fails its health check, the ATP enumerates registry host keys in `openshift-config/pull-secret` and tries `podman login` for each credential-bearing host. The decoded pull-secret and Podman output are hidden, credentials are read from stdin, and Podman writes only to a temporary auth file that is removed after the probe. If the internal registry passes, external pull-secret host keys are reported as discovered references but are not authenticated by that case. The pull-secret must contain a valid credential for the external Quay/registry domain; Podman must be installed on the Ansible execution host. For a private CA, `atp_external_registry_ca_path` supplies the PEM file used for the login probe.
 
+For TC-18, the report result is assembled into a dedicated `tc18_result` fact and appended to `atp_results` in a separate task. This avoids parsing the nested inline Jinja dictionary that caused `expected token ')', got ':'` during result finalization. If the syntax error reappears, confirm the playbook is using the latest `01_services_check.yml` from the ATP branch; this reporting refactor does not change the registry pass criteria.
+
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
 - `general`: Tests covering standard OpenShift Container Platform features.
