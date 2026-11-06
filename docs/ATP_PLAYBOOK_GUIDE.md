@@ -118,6 +118,8 @@ TC-28 installs package `self-node-remediation` from the `redhat-operators` Catal
 
 The case is a deployment and readiness check only. It does not create a remediation request or simulate a node failure, because those actions can reboot nodes. Catalog health or a created Subscription alone does not count as Pass. Pass requires CSV phase `Succeeded` and a fully available controller Deployment. On failure, the task reports Subscription resolution conditions, CSV/InstallPlan diagnostics, and workload status.
 
+The report result is assembled into a dedicated `tc18_result` fact and appended to `atp_results` in a separate task. This avoids parsing the nested inline Jinja dictionary that caused `expected token ')', got ':'` during TC-18 result finalization. If that syntax error reappears, confirm the playbook is using the latest `01_services_check.yml` from the ATP branch; the recorded test status is unchanged by this reporting refactor.
+
 Run these read-only commands to inspect the same resources manually:
 
 ```bash
