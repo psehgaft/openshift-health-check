@@ -519,20 +519,29 @@
           No remediation is required for the TC-18 pass condition. The report notes whether an external endpoint was discovered but not probed because the internal registry passed.
           {% endif %}
 
-    - name: "TC-18: Record Result"
+    - name: "TC-18: Build report result"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-18',
-          'name': 'Check Configured Registry API',
-          'category': 'Services Check',
-          'expected': 'Pass when the internal registry is healthy or an external registry authenticates successfully. If the internal registry is Removed/unavailable, discover registry hosts from openshift-config/pull-secret and verify credentials with Podman login.',
-          'status': tc18_status | trim,
-          'procedure': 'Inspect clusteroperator image-registry, Image Registry Operator managementState, and the internal service. When internal is unavailable, probe the configured OCI endpoint and iterate pull-secret auth hosts with podman login.',
-          'evidence': ((atp_registry_control_state_cmd.stdout | default('')) ~ ('\nExternal endpoint: ' ~ (atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'not configured/discovered')) ~ ('\nExternal OCI probe: ' ~ (atp_external_registry_probe_summary | default('not run'))) ~ ('\nPull-secret registry hosts: ' ~ (atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none')) ~ ('\nPull-secret authentication: ' ~ (atp_pullsecret_login_summary | default('not run') | trim)) ~ ('\nRegistry evaluation: ' ~ (tc18_registry_mode | trim)),
-          'details': tc18_registry_notes | trim,
-          'additional_comments': tc18_registry_notes | trim,
-          'remediation': tc18_remediation | trim
-        }] }}"
+        tc18_result:
+          id: "TC-18"
+          name: "Check Configured Registry API"
+          category: "Services Check"
+          expected: "Pass when the internal registry is healthy or an external registry authenticates successfully. If the internal registry is Removed/unavailable, discover registry hosts from openshift-config/pull-secret and verify credentials with Podman login."
+          status: "{{ tc18_status | trim }}"
+          procedure: "Inspect clusteroperator image-registry, Image Registry Operator managementState, and the internal service. When internal is unavailable, probe the configured OCI endpoint and iterate pull-secret auth hosts with podman login."
+          evidence: |
+            {{ atp_registry_control_state_cmd.stdout | default('') }}
+            External endpoint: {{ atp_external_registry_effective_url | regex_replace('^https?://', '') if atp_external_registry_effective_url | default('') | length > 0 else 'not configured/discovered' }}
+            External OCI probe: {{ atp_external_registry_probe_summary | default('not run') }}
+            Pull-secret registry hosts: {{ atp_pullsecret_registry_hosts | default([]) | join(', ') if atp_pullsecret_registry_hosts | default([]) | length > 0 else 'none' }}
+            Pull-secret authentication: {{ atp_pullsecret_login_summary | default('not run') | trim }}
+            Registry evaluation: {{ tc18_registry_mode | trim }}
+          details: "{{ tc18_registry_notes | trim }}"
+          additional_comments: "{{ tc18_registry_notes | trim }}"
+          remediation: "{{ tc18_remediation | trim }}"
+
+    - name: "TC-18: Append Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc18_result] }}"
   tags: ['general', 'telco', 'tc18', 'registry']
 
 # TC 19: Check Internal and External Registry Status
