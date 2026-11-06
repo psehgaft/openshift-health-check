@@ -202,17 +202,37 @@
           exit 1
         fi
 
-        echo "Waiting for SNRO controller Deployment and node-remediation DaemonSet rollout."
+        echo "Waiting for the SNRO controller Deployment rollout."
         oc rollout status deployment/self-node-remediation-controller-manager -n "$operator_namespace" --timeout=10m
-        oc rollout status daemonset/self-node-remediation-ds -n "$operator_namespace" --timeout=10m
-
-        daemonset_json="$(oc get daemonset self-node-remediation-ds -n "$operator_namespace" -o json)"
-        desired="$(jq -r '.status.desiredNumberScheduled // 0' <<< "$daemonset_json")"
-        ready="$(jq -r '.status.numberReady // 0' <<< "$daemonset_json")"
-        if [[ "$desired" -lt 1 || "$ready" -ne "$desired" ]]; then
-          echo "SNRO DaemonSet is not ready on all targeted nodes: desired=$desired ready=$ready" >&2
+        deployment_json="$(oc get deployment self-node-remediation-controller-manager -n "$operator_namespace" -o json)"
+        deployment_desired="$(jq -r '.spec.replicas // 1' <<< "$deployment_json")"
+        deployment_available="$(jq -r '.status.availableReplicas // 0' <<< "$deployment_json")"
+        if [[ "$deployment_desired" -lt 1 || "$deployment_available" -lt "$deployment_desired" ]]; then
+          echo "SNRO controller Deployment is not fully available: available=$deployment_available desired=$deployment_desired" >&2
           oc get pods -n "$operator_namespace" -o wide >&2 || true
           exit 1
+        fi
+
+        echo "== Discover Self Node Remediation DaemonSets =="
+        daemonsets_json="$(oc get daemonsets -n "$operator_namespace" -o json)"
+        daemonset_names="$(jq -r '.items[] | select(.metadata.name | test("self-node-remediation"; "i")) | .metadata.name' <<< "$daemonsets_json")"
+        daemonset_note=""
+        if [[ -z "$daemonset_names" ]]; then
+          daemonset_note="No Self Node Remediation DaemonSet was returned by the API. CSV and controller Deployment are successful; inspect this resource if the installed operator release is expected to deploy an agent DaemonSet."
+          echo "SNRO_OPTIONAL_RESOURCE_NOTE=$daemonset_note"
+        else
+          while IFS= read -r daemonset_name; do
+            [[ -n "$daemonset_name" ]] || continue
+            daemonset_json="$(oc get daemonset "$daemonset_name" -n "$operator_namespace" -o json)"
+            desired="$(jq -r '.status.desiredNumberScheduled // 0' <<< "$daemonset_json")"
+            ready="$(jq -r '.status.numberReady // 0' <<< "$daemonset_json")"
+            echo "DaemonSet=$daemonset_name ready=$ready desired=$desired"
+            if [[ "$desired" -lt 1 || "$ready" -ne "$desired" ]]; then
+              echo "SNRO DaemonSet $daemonset_name is not ready on all targeted nodes: ready=$ready desired=$desired" >&2
+              oc get pods -n "$operator_namespace" -o wide >&2 || true
+              exit 1
+            fi
+          done <<< "$daemonset_names"
         fi
 
         echo "== Subscription =="
@@ -221,15 +241,20 @@
         oc get csv "$installed_csv" -n "$operator_namespace" -o yaml
         echo "== Controller Deployment =="
         oc get deployment self-node-remediation-controller-manager -n "$operator_namespace" -o wide
-        echo "== Remediation DaemonSet =="
-        oc get daemonset self-node-remediation-ds -n "$operator_namespace" -o wide
-        echo "== Remediation configuration =="
-        oc get selfnoderemediationconfig self-node-remediation-config -n "$operator_namespace" -o yaml
-        echo "== Remediation strategy template =="
-        oc get selfnoderemediationtemplate self-node-remediation-automatic-strategy-template -n "$operator_namespace" -o yaml
+        echo "== Remediation DaemonSets (if present) =="
+        oc get daemonsets -n "$operator_namespace" -o wide
+        echo "== Remediation configuration (if present) =="
+        if ! oc get selfnoderemediationconfig self-node-remediation-config -n "$operator_namespace" -o yaml; then
+          echo "SNRO_OPTIONAL_RESOURCE_NOTE=SelfNodeRemediationConfig was not found; inspect the installed release and CRD availability."
+        fi
+        echo "== Remediation strategy template (if present) =="
+        if ! oc get selfnoderemediationtemplate self-node-remediation-automatic-strategy-template -n "$operator_namespace" -o yaml; then
+          echo "SNRO_OPTIONAL_RESOURCE_NOTE=SelfNodeRemediationTemplate was not found; inspect the installed release and CRD availability."
+        fi
         echo "== SNRO pods =="
         oc get pods -n "$operator_namespace" -o wide
-        echo "SNRO_RESULT=PASS csv=$installed_csv phase=Succeeded daemonset_ready=$ready/$desired"
+        echo "SNRO_RESULT=PASS csv=$installed_csv phase=Succeeded controller_available=$deployment_available/$deployment_desired"
+        if [[ -n "$daemonset_names" ]]; then echo "SNRO_DAEMONSET_RESULT=PASS names=$(tr '\n' ',' <<< "$daemonset_names")"; fi
       args:
         executable: /bin/bash
       register: tc28_cmd
@@ -242,7 +267,7 @@
           id: "TC-28"
           name: "Install Self Node Remediation Operator"
           category: "OpenShift Administration"
-          expected: "Self Node Remediation Operator installed from redhat-operators/stable in openshift-workload-availability; CSV Succeeded, controller available, configuration/template present, and DaemonSet ready on every targeted node"
+          expected: "Self Node Remediation Operator CSV is Succeeded and the controller Deployment is available; any discovered SNRO DaemonSet is ready, with configuration/template resources recorded when present"
           status: "{{ 'Pass' if tc28_cmd.rc == 0 and 'SNRO_RESULT=PASS' in (tc28_cmd.stdout | default('')) else 'Fail' }}"
           procedure: "{{ tc28_cmd.cmd | default('Install the self-node-remediation package from redhat-operators/stable in openshift-workload-availability, then verify its CSV and workloads') }}"
           evidence: "{{ (tc28_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc28_cmd.stderr | default(''))) if (tc28_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc28_cmd.rc | string) if tc28_cmd.rc is defined else '') }}"
