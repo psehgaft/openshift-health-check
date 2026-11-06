@@ -126,19 +126,38 @@
           Fail
           {% endif %}
 
-    - name: "TC-26: Record Result"
+    - name: "TC-26: Build report result"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-26',
-          'name': 'Sanity Reboot',
-          'category': 'OpenShift Administration',
-          'expected': 'Capture node status before and after; reboot nodes one at a time, wait for each boot ID to change and node to return Ready before proceeding; leave every node Ready and restore its schedulability.',
-          'status': tc26_status | trim,
-          'procedure': 'Opt-in guarded rolling reboot: verify cluster health, capture oc get nodes before, cordon and drain without bypassing PDBs, reboot workers before control-plane nodes, wait for the rebooted node to become Ready before continuing, uncordon, then capture oc get nodes after.',
-          'evidence': ((('No reboot command was executed. Enable run_tc26_sanity_reboot and provide tc26_reboot_confirmation=REBOOT-CLUSTER-' ~ cluster_name ~ '.' ) if tc26_status | trim == 'Skipped' else ((tc_reboot_before_cmd.stdout | default('')) ~ '\n' ~ (tc_reboot_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc_reboot_cmd.stderr | default(''))) if (tc_reboot_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc_reboot_cmd.rc | string) if tc_reboot_cmd.rc is defined else ''))),
-          'details': ('TC-26 was not executed; the default is disabled and an exact confirmation is required.' if tc26_status | trim == 'Skipped' else tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available')) | truncate(700)),
-          'remediation': 'If execution failed, use the captured per-node evidence to identify the blocked drain, reboot timeout, API/operator health issue, or uncordon failure. PDB protections are not bypassed. Resolve the blocker and rerun only after all nodes and ClusterOperators are healthy.'
-        }] }}"
+        tc26_result:
+          id: "TC-26"
+          name: "Sanity Reboot"
+          category: "OpenShift Administration"
+          expected: "Capture node status before and after; reboot nodes one at a time, wait for each boot ID to change and node to return Ready before proceeding; leave every node Ready and restore its schedulability."
+          status: "{{ tc26_status | trim }}"
+          procedure: "Opt-in guarded rolling reboot: verify cluster health, capture oc get nodes before, cordon and drain without bypassing PDBs, reboot workers before control-plane nodes, wait for the rebooted node to become Ready before continuing, uncordon, then capture oc get nodes after."
+          evidence: |
+            {% if tc26_status | trim == 'Skipped' %}
+            No reboot command was executed. Enable run_tc26_sanity_reboot and provide tc26_reboot_confirmation=REBOOT-CLUSTER-{{ cluster_name }}.
+            {% else %}
+            {{ tc_reboot_before_cmd.stdout | default('') }}
+            {{ tc_reboot_cmd.stdout | default('') }}
+            {% if tc_reboot_cmd.stderr | default('') | length > 0 %}
+            STDERR:
+            {{ tc_reboot_cmd.stderr }}
+            {% endif %}
+            Exit code: {{ tc_reboot_cmd.rc | default('unknown') }}
+            {% endif %}
+          details: |
+            {% if tc26_status | trim == 'Skipped' %}
+            TC-26 was not executed; the default is disabled and an exact confirmation is required.
+            {% else %}
+            {{ tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available'), true) | truncate(700) }}
+            {% endif %}
+          remediation: "If execution failed, use the captured per-node evidence to identify the blocked drain, reboot timeout, API/operator health issue, or uncordon failure. PDB protections are not bypassed. Resolve the blocker and rerun only after all nodes and ClusterOperators are healthy."
+
+    - name: "TC-26: Append Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc26_result] }}"
   tags: ['general', 'telco', 'tc26', 'administration']
 
 # TC 27: Reboot Worker (guarded; opt-in)
@@ -176,19 +195,38 @@
           Fail
           {% endif %}
 
-    - name: "TC-27: Record Result"
+    - name: "TC-27: Build report result"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-27',
-          'name': 'Reboot Worker',
-          'category': 'OpenShift Administration',
-          'expected': 'The explicitly selected worker is cordoned and drained; its boot ID changes, it returns Ready, then it is uncordoned; node evidence is captured before and after.',
-          'status': tc27_status | trim,
-          'procedure': 'Opt-in guarded single-worker reboot: capture oc get nodes before; cordon and drain the selected worker without bypassing PDBs; reboot it, wait for the boot ID to change and Ready status, uncordon, then capture oc get nodes after.',
-          'evidence': ((('No reboot command was executed. Enable run_tc27_reboot_worker, set tc27_worker_node, and provide tc27_reboot_confirmation=REBOOT-WORKER-<node>.' ) if tc27_status | trim == 'Skipped' else ((tc_reboot_before_cmd.stdout | default('')) ~ '\n' ~ (tc_reboot_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc_reboot_cmd.stderr | default(''))) if (tc_reboot_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc_reboot_cmd.rc | string) if tc_reboot_cmd.rc is defined else ''))),
-          'details': ('TC-27 was not executed; the default is disabled and an exact worker target and confirmation are required.' if tc27_status | trim == 'Skipped' else tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available')) | truncate(700)),
-          'remediation': 'If execution failed, use the evidence to inspect the selected worker, drain/PDB conditions, boot ID transition, Ready timeout, and schedulability. Do not bypass PDB protections. Resolve the cause and rerun after the cluster is healthy.'
-        }] }}"
+        tc27_result:
+          id: "TC-27"
+          name: "Reboot Worker"
+          category: "OpenShift Administration"
+          expected: "The explicitly selected worker is cordoned and drained; its boot ID changes, it returns Ready, then it is uncordoned; node evidence is captured before and after."
+          status: "{{ tc27_status | trim }}"
+          procedure: "Opt-in guarded single-worker reboot: capture oc get nodes before; cordon and drain the selected worker without bypassing PDBs; reboot it, wait for the boot ID to change and Ready status, uncordon, then capture oc get nodes after."
+          evidence: |
+            {% if tc27_status | trim == 'Skipped' %}
+            No reboot command was executed. Enable run_tc27_reboot_worker, set tc27_worker_node, and provide tc27_reboot_confirmation=REBOOT-WORKER-<node>.
+            {% else %}
+            {{ tc_reboot_before_cmd.stdout | default('') }}
+            {{ tc_reboot_cmd.stdout | default('') }}
+            {% if tc_reboot_cmd.stderr | default('') | length > 0 %}
+            STDERR:
+            {{ tc_reboot_cmd.stderr }}
+            {% endif %}
+            Exit code: {{ tc_reboot_cmd.rc | default('unknown') }}
+            {% endif %}
+          details: |
+            {% if tc27_status | trim == 'Skipped' %}
+            TC-27 was not executed; the default is disabled and an exact worker target and confirmation are required.
+            {% else %}
+            {{ tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available'), true) | truncate(700) }}
+            {% endif %}
+          remediation: "If execution failed, use the evidence to inspect the selected worker, drain/PDB conditions, boot ID transition, Ready timeout, and schedulability. Do not bypass PDB protections. Resolve the cause and rerun after the cluster is healthy."
+
+    - name: "TC-27: Append Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc27_result] }}"
   tags: ['general', 'telco', 'tc27', 'administration']
 
 # TC 28: Install Self Node Remediation Operator
