@@ -51,6 +51,8 @@ unset ATP_EXTERNAL_REGISTRY_ROBOT_USERNAME ATP_EXTERNAL_REGISTRY_ROBOT_TOKEN
 
 Without robot credentials, HTTP 200 or 401 means the OCI v2 API is reachable, but authentication is not verified. When credentials are supplied, the external API probe requires HTTP 200. Keep TLS verification enabled. For a private registry CA, set `atp_external_registry_ca_path` to the issuing CA PEM bundle on the Ansible controller. The CA must validate the certificate chain presented by the configured registry hostname. Disabling certificate validation should be limited to a temporary diagnostic; do not use it as the permanent acceptance configuration.
 
+Before selecting the endpoint, TC-18/TC-19 query `oc get clusteroperator image-registry -o yaml`, the Image Registry Operator `spec.managementState`, and the internal `image-registry` Service. When the internal registry is Removed or fails its health check, the ATP enumerates registry host keys in `openshift-config/pull-secret` and tries `podman login` for each credential-bearing host. The decoded pull-secret and Podman output are hidden, credentials are read from stdin, and Podman writes only to a temporary auth file that is removed after the probe. If the internal registry passes, external pull-secret host keys are reported as discovered references but are not authenticated by that case. The pull-secret must contain a valid credential for the external Quay/registry domain; Podman must be installed on the Ansible execution host. For a private CA, `atp_external_registry_ca_path` supplies the PEM file used for the login probe.
+
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
 - `general`: Tests covering standard OpenShift Container Platform features.
@@ -71,7 +73,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml --tags "telco,networking,sri
 ```
 
 ### 2. Using Feature Toggles in `toolkits/openshift-atp/vars/main.yml` or CLI Extra Vars
-Automated cases can be selectively run with the documented `run_tc*` variables. TC-26 and TC-27 remain manual-only. TC-62 is opt-in and remains `Skipped` by default; it executes only when the operator supplies the exact restore confirmation and all preflight gates pass.
+Automated cases can be selectively run with the documented `run_tc*` variables. TC-26 and TC-27 are opt-in, disabled by default, and require exact reboot confirmations. TC-62 is opt-in and remains `Skipped` by default; it executes only when the operator supplies the exact restore confirmation and all preflight gates pass.
 
 ## Output Reports
 The playbook writes a Markdown report and a self-contained HTML report to `reports/` by default. Set `atp_report_dir` to change the destination.
@@ -79,7 +81,7 @@ The playbook writes a Markdown report and a self-contained HTML report to `repor
 - `ATP-Report-OCP<version>-<timestamp>.md`
 - `ATP-Report-OCP<version>-<timestamp>.html`
 
-Both formats contain a run summary and per-test records. TC-23 is the first case and ensures `testproject` exists. TC-58 creates or updates `test-atp` in `testproject`, making reruns safe when the Secret already exists. TC-30 runs after all other ATP cases and deletes `testproject` as the final cleanup action. TC-17 reads API server and control-plane logs through the Kubernetes API. TC-18 checks the internal registry service when present, otherwise it tests the configured external registry endpoint from a worker. TC-20 requires a persistent storage backend for the internal registry. For an external registry, it checks endpoint reachability but records that storage persistence still needs an authenticated push/pull validation or provider-side health check. The HTML follows the supplied form layout and includes the procedure, expected result, captured command output, conclusion, and comments with remediation guidance for failures.
+Both formats contain a run summary and per-test records. TC-23 is the first case and ensures `testproject` exists. TC-58 creates or updates `test-atp` in `testproject`, making reruns safe when the Secret already exists. TC-30 runs after all other ATP cases and deletes `testproject` as the final cleanup action. TC-17 reads API server and control-plane logs through the Kubernetes API. TC-18 and TC-19 check the Image Registry Operator management state and internal service; when internal registry is Removed or unhealthy, they test an explicit/mirror endpoint or perform temporary-file Podman logins against credential-bearing registry hosts in the cluster pull-secret. If internal checks pass, discovered external pull-secret entries are noted without exposing credentials. TC-20 requires a persistent storage backend for the internal registry. For an external registry, it checks endpoint reachability but records that storage persistence still needs an authenticated push/pull validation or provider-side health check. The HTML follows the supplied form layout and includes the procedure, expected result, captured command output, conclusion, and comments with remediation guidance for failures.
 
 
 ## TC-22: logging API version compatibility
@@ -112,9 +114,9 @@ TC-55 reads the API server URL from the active kubeconfig, then validates that e
 
 The previous test subscribed to package `sample-operator`, which is not present in the healthy `redhat-operators` catalog. That is why OLM reported `ConstraintsNotSatisfiable` and never populated `.status.installedCSV`.
 
-TC-28 now installs package `self-node-remediation` from the `redhat-operators` CatalogSource, channel `stable`, in the dedicated `openshift-workload-availability` namespace. The playbook applies the Namespace, OperatorGroup, and Subscription declaratively, waits up to ten minutes for the installed ClusterServiceVersion (CSV) to reach `Succeeded`, then waits for the controller Deployment and remediation DaemonSet rollout. It also confirms the default `SelfNodeRemediationConfig` and `SelfNodeRemediationTemplate` exist, and checks that the DaemonSet is Ready on every targeted node.
+TC-28 installs package `self-node-remediation` from the `redhat-operators` CatalogSource, channel `stable`, in the dedicated `openshift-workload-availability` namespace. The playbook applies the Namespace, OperatorGroup, and Subscription declaratively, waits up to ten minutes for the installed ClusterServiceVersion (CSV) to reach `Succeeded`, and requires the controller Deployment to have all desired replicas available. It discovers SNRO DaemonSets by name instead of assuming a hard-coded resource name; any discovered matching DaemonSet must be Ready on all targeted nodes. If no matching DaemonSet is returned, that is recorded as an optional-resource note and does not invalidate an otherwise successful CSV and controller rollout. The default `SelfNodeRemediationConfig` and `SelfNodeRemediationTemplate` are recorded when present.
 
-The case is a deployment and readiness check only. It does not create a remediation request or simulate a node failure, because those actions can reboot nodes. Catalog health or a created Subscription alone does not count as Pass. On failure, the task reports Subscription resolution conditions, CSV/InstallPlan diagnostics, and workload status.
+The case is a deployment and readiness check only. It does not create a remediation request or simulate a node failure, because those actions can reboot nodes. Catalog health or a created Subscription alone does not count as Pass. Pass requires CSV phase `Succeeded` and a fully available controller Deployment. On failure, the task reports Subscription resolution conditions, CSV/InstallPlan diagnostics, and workload status.
 
 Run these read-only commands to inspect the same resources manually:
 
@@ -131,6 +133,14 @@ Reference: [Red Hat Workload Availability for OpenShift — Installing Self Node
 ## TC-51: self-provisioner security check
 
 TC-51 inspects all ClusterRoleBindings that reference the `self-provisioner` role and verifies that none includes the `system:authenticated:oauth` group. It allows a binding to remain for a different group, such as `self-provisioners`. The check is read-only: it does not modify RBAC. If the authenticated OAuth group is present, the report lists the affected binding and recommends removing that group with the documented `oc adm policy remove-cluster-role-from-group` command. If the group is absent but the default `self-provisioners` binding has `rbac.authorization.kubernetes.io/autoupdate=true`, the ATP remains Pass for the current state and adds a comment with the recommended `oc annotate ... autoupdate=false` command; Red Hat documents that default reconciliation can restore subjects.
+
+## TC-26 and TC-27: guarded node reboots
+
+Both reboot cases are disabled by default. The automation captures `oc get nodes -o wide` before and after, checks that all nodes are Ready and ClusterOperators/MachineConfigPools are healthy, cordons and drains without bypassing PodDisruptionBudgets, and reboots only one node at a time. It confirms the node boot ID changed and waits for that node to return Ready before continuing. TC-26 processes worker nodes before control-plane nodes and requires at least three control-plane nodes. TC-27 requires an explicit worker node and at least two worker nodes.
+
+To run TC-26, set `run_tc26_sanity_reboot: true` and provide the exact `tc26_reboot_confirmation: "REBOOT-CLUSTER-<cluster_name>"`. To run TC-27, set `run_tc27_reboot_worker: true`, set `tc27_worker_node` to the target, and provide `tc27_reboot_confirmation: "REBOOT-WORKER-<worker-node>"`. Alternatively pass these as Ansible extra vars. If the toggle is false, target/confirmation is missing, or the confirmation does not match, the test is recorded as **Skipped** and executes no reboot. A safety preflight or reboot failure after a correctly confirmed run is recorded as **Fail**. The automation never disables PDB checks.
+
+Reference: [OpenShift 4.20 graceful node reboot procedure](https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/nodes/working-with-nodes#nodes-nodes-rebooting_gracefully-rebooting-nodes).
 
 ## Cluster identity and DNS examples
 

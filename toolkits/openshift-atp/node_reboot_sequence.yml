@@ -1,0 +1,151 @@
+---
+# Shared guarded sequence used by TC-26 and TC-27.
+- name: "{{ tc_reboot_case_id }}: Capture nodes before reboot"
+  ansible.builtin.command: oc get nodes -o wide
+  register: tc_reboot_before_cmd
+  changed_when: false
+  failed_when: false
+
+- name: "{{ tc_reboot_case_id }}: Execute guarded sequential reboot workflow"
+  ansible.builtin.shell:
+    cmd: |
+      set -uo pipefail
+      scope={{ tc_reboot_scope | default('all') | quote }}
+      target={{ tc_reboot_worker_node | default('') | quote }}
+      ready_timeout={{ tc_reboot_ready_timeout_seconds | default(1800) | int }}
+      boot_timeout={{ tc_reboot_boot_timeout_seconds | default(900) | int }}
+      drain_timeout={{ tc_reboot_drain_timeout | default('10m') | quote }}
+      reboot_delay={{ tc_reboot_delay_minutes | default(2) | int }}
+
+      fail() {
+        echo "TC_REBOOT_RESULT=FAIL: $*" >&2
+        oc get nodes -o wide >&2 || true
+        exit 1
+      }
+
+      echo "== Preflight: verify all cluster nodes are Ready =="
+      nodes_json="$(oc get nodes -o json 2>&1)" || fail "Cannot query node inventory: $nodes_json"
+      if ! jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]?; .type=="Ready" and .status=="True"))' <<< "$nodes_json" >/dev/null; then
+        fail "At least one node is not Ready before the reboot sequence."
+      fi
+
+      cp_count="$(jq '[.items[] | select((.metadata.labels // {} | has("node-role.kubernetes.io/control-plane")) or (.metadata.labels // {} | has("node-role.kubernetes.io/master")))] | length' <<< "$nodes_json")"
+      worker_count="$(jq '[.items[] | select((.metadata.labels // {} | has("node-role.kubernetes.io/worker")) and ((.metadata.labels // {} | has("node-role.kubernetes.io/control-plane")) | not) and ((.metadata.labels // {} | has("node-role.kubernetes.io/master")) | not))] | length' <<< "$nodes_json")"
+      if [[ "$scope" == "all" && "$cp_count" -lt 3 ]]; then
+        fail "Cluster-wide rolling reboot requires at least three control-plane nodes; found $cp_count."
+      fi
+      if [[ "$scope" == "worker" ]]; then
+        if [[ ! "$target" =~ ^[A-Za-z0-9.-]+$ ]]; then
+          fail "A valid explicit worker node name is required."
+        fi
+        if [[ "$worker_count" -lt 2 ]]; then
+          fail "Worker reboot requires at least two worker nodes; found $worker_count."
+        fi
+        if ! jq -e --arg n "$target" '.items[] | select(.metadata.name==$n and (.metadata.labels // {} | has("node-role.kubernetes.io/worker")) and ((.metadata.labels // {} | has("node-role.kubernetes.io/control-plane")) | not) and ((.metadata.labels // {} | has("node-role.kubernetes.io/master")) | not))' <<< "$nodes_json" >/dev/null; then
+          fail "Target $target is not a worker-only node in the current cluster."
+        fi
+      fi
+
+      echo "== Preflight: verify ClusterOperators and MachineConfigPools =="
+      co_json="$(oc get clusteroperators -o json 2>&1)" || fail "Cannot query ClusterOperators: $co_json"
+      if ! jq -e 'all(.items[]; any(.status.conditions[]?; .type=="Available" and .status=="True") and all([.status.conditions[]? | select(.type=="Degraded")]; .status=="False"))' <<< "$co_json" >/dev/null; then
+        oc get clusteroperators
+        fail "ClusterOperators are not all Available and non-Degraded."
+      fi
+      mcp_json="$(oc get mcp -o json 2>&1)" || fail "Cannot query MachineConfigPools: $mcp_json"
+      if ! jq -e '(.items | length > 0) and all(.items[]; any(.status.conditions[]?; .type=="Updated" and .status=="True") and all([.status.conditions[]? | select(.type=="Degraded")]; .status=="False"))' <<< "$mcp_json" >/dev/null; then
+        oc get mcp
+        fail "MachineConfigPools are not fully Updated or one is Degraded."
+      fi
+      if ! jq -e 'all(.items[]; (.spec.unschedulable // false) == false)' <<< "$nodes_json" >/dev/null; then
+        fail "At least one node is already cordoned; resolve existing maintenance before starting."
+      fi
+
+      if [[ "$scope" == "all" ]]; then
+        node_records="$(jq -r '
+          .items
+          | sort_by(if ((.metadata.labels // {} | has("node-role.kubernetes.io/control-plane")) or (.metadata.labels // {} | has("node-role.kubernetes.io/master"))) then 1 else 0 end)[]
+          | [.metadata.name, (if ((.metadata.labels // {} | has("node-role.kubernetes.io/control-plane")) or (.metadata.labels // {} | has("node-role.kubernetes.io/master"))) then "control-plane" else "worker-or-other" end), (.spec.unschedulable // false | tostring)]
+          | @tsv
+        ' <<< "$nodes_json")"
+      else
+        node_records="$(jq -r --arg n "$target" '.items[] | select(.metadata.name==$n) | [.metadata.name, "worker", (.spec.unschedulable // false | tostring)] | @tsv' <<< "$nodes_json")"
+      fi
+
+      echo "Reboot order (workers first, control plane last when scope=all):"
+      printf '%s\n' "$node_records"
+      while IFS=$'\t' read -r node role was_unschedulable; do
+        [[ -n "$node" ]] || continue
+        echo "== Reboot $role node $node =="
+        if ! oc adm cordon "$node"; then
+          fail "Could not cordon $node; stopping without rebooting it."
+        fi
+        if ! oc adm drain "$node" --ignore-daemonsets --delete-emptydir-data --timeout="$drain_timeout"; then
+          if [[ "$was_unschedulable" == "false" ]]; then oc adm uncordon "$node" || true; fi
+          fail "Drain failed on $node. PDB checks were not bypassed; resolve the drain blocker and rerun."
+        fi
+
+        old_boot_id="$(jq -r '.status.nodeInfo.bootID // empty' <<< "$(oc get node "$node" -o json 2>&1)")"
+        if [[ -z "$old_boot_id" ]]; then
+          if [[ "$was_unschedulable" == "false" ]]; then oc adm uncordon "$node" || true; fi
+          fail "Could not read the boot ID for $node before reboot."
+        fi
+        echo "Boot ID before reboot: $old_boot_id"
+        if ! oc debug -q "node/$node" -- chroot /host shutdown -r "+$reboot_delay"; then
+          echo "The reboot command returned non-zero; checking whether the host restarted."
+        fi
+
+        boot_changed=false
+        boot_attempts=$((boot_timeout / 5))
+        for ((attempt=1; attempt<=boot_attempts; attempt++)); do
+          current_json="$(oc get node "$node" -o json 2>/dev/null)" || current_json=""
+          current_boot_id="$(jq -r '.status.nodeInfo.bootID // empty' <<< "$current_json" 2>/dev/null || true)"
+          if [[ -n "$current_boot_id" && "$current_boot_id" != "$old_boot_id" ]]; then
+            boot_changed=true
+            echo "Boot ID after reboot: $current_boot_id"
+            break
+          fi
+          sleep 5
+        done
+        if [[ "$boot_changed" != "true" ]]; then
+          fail "$node did not report a changed boot ID within $boot_timeout seconds; stopping before the next node."
+        fi
+
+        ready=false
+        ready_attempts=$((ready_timeout / 10))
+        for ((attempt=1; attempt<=ready_attempts; attempt++)); do
+          current_json="$(oc get node "$node" -o json 2>/dev/null)" || current_json=""
+          if jq -e 'any(.status.conditions[]?; .type=="Ready" and .status=="True")' <<< "$current_json" >/dev/null 2>&1; then
+            ready=true
+            break
+          fi
+          sleep 10
+        done
+        if [[ "$ready" != "true" ]]; then
+          fail "$node rebooted but did not return to Ready within $ready_timeout seconds; stopping before the next node."
+        fi
+        oc get node "$node" -o wide
+        if [[ "$was_unschedulable" == "false" ]]; then
+          if ! oc adm uncordon "$node"; then
+            fail "$node is Ready but could not be uncordoned; stopping before the next node."
+          fi
+        fi
+        if ! oc get nodes -o json | jq -e '.items | all(.[]; any(.status.conditions[]?; .type=="Ready" and .status=="True"))' >/dev/null; then
+          fail "Not all nodes are Ready after completing $node; stopping before the next node."
+        fi
+        echo "NODE_REBOOT_COMPLETE=$node ready=true uncordoned=$([[ "$was_unschedulable" == "false" ]] && echo true || echo false)"
+      done <<< "$node_records"
+
+      echo "== Nodes after reboot sequence =="
+      oc get nodes -o wide || fail "Could not capture final node status."
+      final_json="$(oc get nodes -o json 2>&1)" || fail "Could not query final node status: $final_json"
+      if ! jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]?; .type=="Ready" and .status=="True"))' <<< "$final_json" >/dev/null; then
+        fail "One or more nodes are not Ready after the reboot sequence."
+      fi
+      echo "TC_REBOOT_RESULT=PASS: every rebooted node reported a new boot ID, returned Ready before the next reboot, and final node inventory is Ready."
+    executable: /bin/bash
+  register: tc_reboot_cmd
+  changed_when: false
+  failed_when: false
+  async: 7200
+  poll: 10

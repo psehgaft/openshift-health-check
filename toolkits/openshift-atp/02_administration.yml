@@ -94,37 +94,100 @@
         }] }}"
   tags: ['general', 'telco', 'tc25', 'administration']
 
-# TC 26: Sanity Reboot (Disruptive)
+# TC 26: Sanity Reboot (guarded rolling reboot; opt-in)
 - name: "TC-26: Sanity Reboot"
   block:
-    - name: "TC-26: Check if Sanity Reboot should run"
+    - name: "TC-26: Determine whether the guarded reboot is explicitly authorized"
+      ansible.builtin.set_fact:
+        tc26_execution_requested: "{{ run_tc26_sanity_reboot | default(false) | bool }}"
+        tc26_confirmation_matches: "{{ (tc26_reboot_confirmation | default('') | string) == ('REBOOT-CLUSTER-' ~ cluster_name) }}"
+
+    - name: "TC-26: Reboot cluster nodes sequentially and collect before/after evidence"
+      ansible.builtin.include_tasks: node_reboot_sequence.yml
+      vars:
+        tc_reboot_case_id: "TC-26"
+        tc_reboot_scope: "all"
+        tc_reboot_ready_timeout_seconds: "{{ tc26_node_ready_timeout_seconds | default(1800) }}"
+        tc_reboot_boot_timeout_seconds: "{{ tc26_boot_id_timeout_seconds | default(900) }}"
+        tc_reboot_drain_timeout: "{{ tc26_drain_timeout | default('10m') }}"
+        tc_reboot_delay_minutes: "{{ tc26_reboot_delay_minutes | default(2) }}"
+      when:
+        - tc26_execution_requested | bool
+        - tc26_confirmation_matches | bool
+
+    - name: "TC-26: Classify reboot outcome"
+      ansible.builtin.set_fact:
+        tc26_status: >-
+          {% if not (tc26_execution_requested | bool and tc26_confirmation_matches | bool) %}
+          Skipped
+          {% elif tc_reboot_cmd is defined and (tc_reboot_cmd.rc | default(1) | int) == 0 and 'TC_REBOOT_RESULT=PASS' in (tc_reboot_cmd.stdout | default('')) %}
+          Pass
+          {% else %}
+          Fail
+          {% endif %}
+
+    - name: "TC-26: Record Result"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-26',
           'name': 'Sanity Reboot',
           'category': 'OpenShift Administration',
-          'expected': 'Cluster nodes reboot and return to Ready state',
-          'status': 'Skipped',
-          'procedure': 'Manual only: follow the approved cluster reboot runbook and record operator-run evidence.',
-          'evidence': 'No command executed by this playbook. Attach evidence from the approved manual procedure if performed.',
-          'details': 'Manual and disruptive; the ATP does not automate cluster-wide reboot.'
+          'expected': 'Capture node status before and after; reboot nodes one at a time, wait for each boot ID to change and node to return Ready before proceeding; leave every node Ready and restore its schedulability.',
+          'status': tc26_status | trim,
+          'procedure': 'Opt-in guarded rolling reboot: verify cluster health, capture oc get nodes before, cordon and drain without bypassing PDBs, reboot workers before control-plane nodes, wait for the rebooted node to become Ready before continuing, uncordon, then capture oc get nodes after.',
+          'evidence': ((('No reboot command was executed. Enable run_tc26_sanity_reboot and provide tc26_reboot_confirmation=REBOOT-CLUSTER-' ~ cluster_name ~ '.' ) if tc26_status | trim == 'Skipped' else ((tc_reboot_before_cmd.stdout | default('')) ~ '\n' ~ (tc_reboot_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc_reboot_cmd.stderr | default(''))) if (tc_reboot_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc_reboot_cmd.rc | string) if tc_reboot_cmd.rc is defined else ''))),
+          'details': ('TC-26 was not executed; the default is disabled and an exact confirmation is required.' if tc26_status | trim == 'Skipped' else tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available')) | truncate(700)),
+          'remediation': 'If execution failed, use the captured per-node evidence to identify the blocked drain, reboot timeout, API/operator health issue, or uncordon failure. PDB protections are not bypassed. Resolve the blocker and rerun only after all nodes and ClusterOperators are healthy.'
         }] }}"
   tags: ['general', 'telco', 'tc26', 'administration']
 
-# TC 27: Reboot Worker (Disruptive)
+# TC 27: Reboot Worker (guarded; opt-in)
 - name: "TC-27: Reboot Worker"
   block:
-    - name: "TC-27: Check if Reboot Worker should run"
+    - name: "TC-27: Determine whether the selected worker reboot is explicitly authorized"
+      ansible.builtin.set_fact:
+        tc27_execution_requested: "{{ run_tc27_reboot_worker | default(false) | bool }}"
+        tc27_confirmation_matches: "{{ (tc27_reboot_confirmation | default('') | string) == ('REBOOT-WORKER-' ~ (tc27_worker_node | default(''))) }}"
+        tc27_target_configured: "{{ tc27_worker_node | default('') | length > 0 }}"
+
+    - name: "TC-27: Reboot one worker and collect before/after evidence"
+      ansible.builtin.include_tasks: node_reboot_sequence.yml
+      vars:
+        tc_reboot_case_id: "TC-27"
+        tc_reboot_scope: "worker"
+        tc_reboot_worker_node: "{{ tc27_worker_node }}"
+        tc_reboot_ready_timeout_seconds: "{{ tc27_node_ready_timeout_seconds | default(1800) }}"
+        tc_reboot_boot_timeout_seconds: "{{ tc27_boot_id_timeout_seconds | default(900) }}"
+        tc_reboot_drain_timeout: "{{ tc27_drain_timeout | default('10m') }}"
+        tc_reboot_delay_minutes: "{{ tc27_reboot_delay_minutes | default(2) }}"
+      when:
+        - tc27_execution_requested | bool
+        - tc27_target_configured | bool
+        - tc27_confirmation_matches | bool
+
+    - name: "TC-27: Classify reboot outcome"
+      ansible.builtin.set_fact:
+        tc27_status: >-
+          {% if not (tc27_execution_requested | bool and tc27_target_configured | bool and tc27_confirmation_matches | bool) %}
+          Skipped
+          {% elif tc_reboot_cmd is defined and (tc_reboot_cmd.rc | default(1) | int) == 0 and 'TC_REBOOT_RESULT=PASS' in (tc_reboot_cmd.stdout | default('')) %}
+          Pass
+          {% else %}
+          Fail
+          {% endif %}
+
+    - name: "TC-27: Record Result"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
           'id': 'TC-27',
           'name': 'Reboot Worker',
           'category': 'OpenShift Administration',
-          'expected': 'Cordon, reboot worker node, and uncordon successfully',
-          'status': 'Skipped',
-          'procedure': 'Manual only: follow the approved worker maintenance and reboot runbook, then verify the node returns Ready.',
-          'evidence': 'No command executed by this playbook. Attach evidence from the approved manual procedure if performed.',
-          'details': 'Manual and disruptive; the ATP does not automate worker reboot.'
+          'expected': 'The explicitly selected worker is cordoned and drained; its boot ID changes, it returns Ready, then it is uncordoned; node evidence is captured before and after.',
+          'status': tc27_status | trim,
+          'procedure': 'Opt-in guarded single-worker reboot: capture oc get nodes before; cordon and drain the selected worker without bypassing PDBs; reboot it, wait for the boot ID to change and Ready status, uncordon, then capture oc get nodes after.',
+          'evidence': ((('No reboot command was executed. Enable run_tc27_reboot_worker, set tc27_worker_node, and provide tc27_reboot_confirmation=REBOOT-WORKER-<node>.' ) if tc27_status | trim == 'Skipped' else ((tc_reboot_before_cmd.stdout | default('')) ~ '\n' ~ (tc_reboot_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc_reboot_cmd.stderr | default(''))) if (tc_reboot_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc_reboot_cmd.rc | string) if tc_reboot_cmd.rc is defined else ''))),
+          'details': ('TC-27 was not executed; the default is disabled and an exact worker target and confirmation are required.' if tc27_status | trim == 'Skipped' else tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available')) | truncate(700)),
+          'remediation': 'If execution failed, use the evidence to inspect the selected worker, drain/PDB conditions, boot ID transition, Ready timeout, and schedulability. Do not bypass PDB protections. Resolve the cause and rerun after the cluster is healthy.'
         }] }}"
   tags: ['general', 'telco', 'tc27', 'administration']
 
@@ -202,17 +265,37 @@
           exit 1
         fi
 
-        echo "Waiting for SNRO controller Deployment and node-remediation DaemonSet rollout."
+        echo "Waiting for the SNRO controller Deployment rollout."
         oc rollout status deployment/self-node-remediation-controller-manager -n "$operator_namespace" --timeout=10m
-        oc rollout status daemonset/self-node-remediation-ds -n "$operator_namespace" --timeout=10m
-
-        daemonset_json="$(oc get daemonset self-node-remediation-ds -n "$operator_namespace" -o json)"
-        desired="$(jq -r '.status.desiredNumberScheduled // 0' <<< "$daemonset_json")"
-        ready="$(jq -r '.status.numberReady // 0' <<< "$daemonset_json")"
-        if [[ "$desired" -lt 1 || "$ready" -ne "$desired" ]]; then
-          echo "SNRO DaemonSet is not ready on all targeted nodes: desired=$desired ready=$ready" >&2
+        deployment_json="$(oc get deployment self-node-remediation-controller-manager -n "$operator_namespace" -o json)"
+        deployment_desired="$(jq -r '.spec.replicas // 1' <<< "$deployment_json")"
+        deployment_available="$(jq -r '.status.availableReplicas // 0' <<< "$deployment_json")"
+        if [[ "$deployment_desired" -lt 1 || "$deployment_available" -lt "$deployment_desired" ]]; then
+          echo "SNRO controller Deployment is not fully available: available=$deployment_available desired=$deployment_desired" >&2
           oc get pods -n "$operator_namespace" -o wide >&2 || true
           exit 1
+        fi
+
+        echo "== Discover Self Node Remediation DaemonSets =="
+        daemonsets_json="$(oc get daemonsets -n "$operator_namespace" -o json)"
+        daemonset_names="$(jq -r '.items[] | select(.metadata.name | test("self-node-remediation"; "i")) | .metadata.name' <<< "$daemonsets_json")"
+        daemonset_note=""
+        if [[ -z "$daemonset_names" ]]; then
+          daemonset_note="No Self Node Remediation DaemonSet was returned by the API. CSV and controller Deployment are successful; inspect this resource if the installed operator release is expected to deploy an agent DaemonSet."
+          echo "SNRO_OPTIONAL_RESOURCE_NOTE=$daemonset_note"
+        else
+          while IFS= read -r daemonset_name; do
+            [[ -n "$daemonset_name" ]] || continue
+            daemonset_json="$(oc get daemonset "$daemonset_name" -n "$operator_namespace" -o json)"
+            desired="$(jq -r '.status.desiredNumberScheduled // 0' <<< "$daemonset_json")"
+            ready="$(jq -r '.status.numberReady // 0' <<< "$daemonset_json")"
+            echo "DaemonSet=$daemonset_name ready=$ready desired=$desired"
+            if [[ "$desired" -lt 1 || "$ready" -ne "$desired" ]]; then
+              echo "SNRO DaemonSet $daemonset_name is not ready on all targeted nodes: ready=$ready desired=$desired" >&2
+              oc get pods -n "$operator_namespace" -o wide >&2 || true
+              exit 1
+            fi
+          done <<< "$daemonset_names"
         fi
 
         echo "== Subscription =="
@@ -221,15 +304,20 @@
         oc get csv "$installed_csv" -n "$operator_namespace" -o yaml
         echo "== Controller Deployment =="
         oc get deployment self-node-remediation-controller-manager -n "$operator_namespace" -o wide
-        echo "== Remediation DaemonSet =="
-        oc get daemonset self-node-remediation-ds -n "$operator_namespace" -o wide
-        echo "== Remediation configuration =="
-        oc get selfnoderemediationconfig self-node-remediation-config -n "$operator_namespace" -o yaml
-        echo "== Remediation strategy template =="
-        oc get selfnoderemediationtemplate self-node-remediation-automatic-strategy-template -n "$operator_namespace" -o yaml
+        echo "== Remediation DaemonSets (if present) =="
+        oc get daemonsets -n "$operator_namespace" -o wide
+        echo "== Remediation configuration (if present) =="
+        if ! oc get selfnoderemediationconfig self-node-remediation-config -n "$operator_namespace" -o yaml; then
+          echo "SNRO_OPTIONAL_RESOURCE_NOTE=SelfNodeRemediationConfig was not found; inspect the installed release and CRD availability."
+        fi
+        echo "== Remediation strategy template (if present) =="
+        if ! oc get selfnoderemediationtemplate self-node-remediation-automatic-strategy-template -n "$operator_namespace" -o yaml; then
+          echo "SNRO_OPTIONAL_RESOURCE_NOTE=SelfNodeRemediationTemplate was not found; inspect the installed release and CRD availability."
+        fi
         echo "== SNRO pods =="
         oc get pods -n "$operator_namespace" -o wide
-        echo "SNRO_RESULT=PASS csv=$installed_csv phase=Succeeded daemonset_ready=$ready/$desired"
+        echo "SNRO_RESULT=PASS csv=$installed_csv phase=Succeeded controller_available=$deployment_available/$deployment_desired"
+        if [[ -n "$daemonset_names" ]]; then echo "SNRO_DAEMONSET_RESULT=PASS names=$(tr '\n' ',' <<< "$daemonset_names")"; fi
       args:
         executable: /bin/bash
       register: tc28_cmd
@@ -242,7 +330,7 @@
           id: "TC-28"
           name: "Install Self Node Remediation Operator"
           category: "OpenShift Administration"
-          expected: "Self Node Remediation Operator installed from redhat-operators/stable in openshift-workload-availability; CSV Succeeded, controller available, configuration/template present, and DaemonSet ready on every targeted node"
+          expected: "Self Node Remediation Operator CSV is Succeeded and the controller Deployment is available; any discovered SNRO DaemonSet is ready, with configuration/template resources recorded when present"
           status: "{{ 'Pass' if tc28_cmd.rc == 0 and 'SNRO_RESULT=PASS' in (tc28_cmd.stdout | default('')) else 'Fail' }}"
           procedure: "{{ tc28_cmd.cmd | default('Install the self-node-remediation package from redhat-operators/stable in openshift-workload-availability, then verify its CSV and workloads') }}"
           evidence: "{{ (tc28_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc28_cmd.stderr | default(''))) if (tc28_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc28_cmd.rc | string) if tc28_cmd.rc is defined else '') }}"
