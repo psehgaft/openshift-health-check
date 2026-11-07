@@ -221,6 +221,10 @@
 - name: "TC-55: Check API Certificate"
   when: run_tc55_api_certificate | default(true) | bool
   block:
+    - name: "TC-55: Resolve self-signed certificate skip setting"
+      ansible.builtin.set_fact:
+        tc55_self_signed_exception_enabled: "{{ atp_api_cert_self_signed | default(false) | bool }}"
+
     - name: "TC-55: Validate API certificate trust, SAN, and expiration"
       ansible.builtin.shell: |
         set -uo pipefail
@@ -326,7 +330,7 @@
       register: tc55_cmd
       changed_when: false
       failed_when: false
-      when: not (atp_api_cert_self_signed | default(false) | bool)
+      when: not (tc55_self_signed_exception_enabled | bool)
 
     - name: "TC-55: Build report result"
       ansible.builtin.set_fact:
@@ -335,12 +339,12 @@
           name: "Check API Certificate"
           category: "User & Security"
           expected: "API certificate chains to the active kubeconfig CA or configured API CA bundle, contains a matching SAN for the active API FQDN, and remains valid for at least {{ atp_api_cert_min_validity_days | default(7) | string }} days"
-          status: "{{ 'Skipped' if (atp_api_cert_self_signed | default(false) | bool) else ('Pass' if (tc55_cmd.rc | default(1) | int) == 0 else 'Fail') }}"
+          status: "{{ 'Skipped' if (tc55_self_signed_exception_enabled | bool) else ('Pass' if (tc55_cmd.rc | default(1) | int) == 0 else 'Fail') }}"
           procedure: "Read the API endpoint from the active kubeconfig, validate its TLS chain using the kubeconfig CA or configured PEM CA bundle, check the endpoint hostname SAN, and confirm the configured minimum remaining validity"
-          evidence: "{{ 'API certificate validation was skipped because atp_api_cert_self_signed=true.' if (atp_api_cert_self_signed | default(false) | bool) else ((tc55_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc55_cmd.stderr | default(''))) if (tc55_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc55_cmd.rc | string) if tc55_cmd.rc is defined else '')) }}"
-          details: "{{ 'Self-signed API certificates are in use; TC-55 validation was skipped by configuration.' if (atp_api_cert_self_signed | default(false) | bool) else (tc55_cmd.stdout | default(tc55_cmd.stderr) | truncate(250)) }}"
-          additional_comments: "{{ 'Self-signed API certificates are in use; TC-55 was skipped by configuration. This case did not validate the certificate chain, SAN, or expiration.' if (atp_api_cert_self_signed | default(false) | bool) else '' }}"
-          remediation: "{{ 'No certificate validation was performed because the self-signed certificate skip was explicitly enabled.' if (atp_api_cert_self_signed | default(false) | bool) else 'Confirm the active KUBECONFIG/context points to the intended cluster. If the kubeconfig contains no CA data or readable certificate-authority file, set atp_api_cert_ca_path to the API issuing CA PEM bundle on the Ansible controller; do not disable TLS verification. If chain, SAN, or minimum-validity checks then fail, inspect DNS and the API serving certificate and renew/replace it as needed; confirm kube-apiserver operator health after any certificate change.' }}"
+          evidence: "{{ 'Self-signed skip setting resolved to true; certificate validation was skipped.' if (tc55_self_signed_exception_enabled | bool) else ((tc55_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc55_cmd.stderr | default(''))) if (tc55_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc55_cmd.rc | string) if tc55_cmd.rc is defined else '')) }}"
+          details: "{{ 'TC-55 self-signed mode resolved to true. Self-signed API certificates are in use; TC-55 validation was skipped by configuration.' if (tc55_self_signed_exception_enabled | bool) else (tc55_cmd.stdout | default(tc55_cmd.stderr) | truncate(250)) }}"
+          additional_comments: "{{ 'Self-signed API certificates are in use (atp_api_cert_self_signed=true); TC-55 was skipped by configuration. This case did not validate the certificate chain, SAN, or expiration.' if (tc55_self_signed_exception_enabled | bool) else '' }}"
+          remediation: "{{ 'No certificate validation was performed because the self-signed certificate skip was explicitly enabled.' if (tc55_self_signed_exception_enabled | bool) else 'Confirm the active KUBECONFIG/context points to the intended cluster. If the kubeconfig contains no CA data or readable certificate-authority file, set atp_api_cert_ca_path to the API issuing CA PEM bundle on the Ansible controller; do not disable TLS verification. If chain, SAN, or minimum-validity checks then fail, inspect DNS and the API serving certificate and renew/replace it as needed; confirm kube-apiserver operator health after any certificate change.' }}"
 
     - name: "TC-55: Append Result"
       ansible.builtin.set_fact:
