@@ -8,6 +8,18 @@
     - "{{ playbook_dir }}/../toolkits/openshift-atp/vars/atp_document_cases.yml"
 
   pre_tasks:
+    - name: "Check for optional local ATP overrides"
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../toolkits/openshift-atp/vars/main.yaml"
+      register: atp_local_overrides_file
+      tags: ['always']
+
+    - name: "Load optional local ATP overrides"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../toolkits/openshift-atp/vars/main.yaml"
+      when: atp_local_overrides_file.stat.exists
+      tags: ['always']
+
     - name: "Initialize ATP execution facts and results repository"
       ansible.builtin.set_fact:
         atp_results: []
