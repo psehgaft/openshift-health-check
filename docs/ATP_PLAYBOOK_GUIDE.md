@@ -3,18 +3,30 @@
 ## Overview
 This Ansible playbook automates the acceptance verification procedures defined in the **ATP - Red Hat OpenShift Container Platform 4.20** specification. It covers **73 numbered test cases**; TC-67 is recorded as two independently reported sub-cases, producing 74 report records. TC-23 runs first and creates or verifies `testproject` so later cases can use it. TC-30 runs last because it deletes `testproject`. The cases span core OpenShift components, infrastructure governance, application scheduling, storage resilience, networking, and Telco 5G performance tuning (HugePages, LACP Bonding, MTU 9000, and SR-IOV VFs).
 
-## Directory Structure
+## Repository and role layout
 ```text
 openshift-health-check/
-├── playbooks/atp.yml
+├── ansible.cfg
+├── inventories/                       # Inventory examples for project playbooks
+├── playbooks/                         # Stable runnable entry points
+│   ├── atp.yml
+│   ├── openshift_certificate_audit.yml
+│   └── openshift_dns_validation.yml
+├── roles/
+│   ├── openshift_atp/                 # ATP role and its Galaxy metadata
+│   ├── openshift_certificate_audit/
+│   └── openshift_healthcheck_legacy/
+├── requirements/                      # Ansible collection requirements
+├── scripts/                           # Repository validators and runtime helpers
 ├── toolkits/
-│   ├── openshift-atp/                 # ATP tasks, variables, and report templates
-│   ├── openshift-healthcheck/         # Specialist health-check tools
-│   └── arch-design-doc-generator/     # Architecture documentation generator
-└── docs/ATP_PLAYBOOK_GUIDE.md
+│   ├── openshift-healthcheck/         # Standalone Shell/Python, ACM, and Headlamp tools
+│   └── arch-design-doc-generator/     # Non-Ansible architecture generator
+└── docs/                              # User and architecture documentation
 ```
 
-The ATP implementation is in [roles/openshift_atp](../roles/openshift_atp/). Each automated test stores the invoked command, full stdout/stderr, exit code, expected result, and conclusion. Reports also include the original procedure and expected result from the supplied ATP source document as a separate reference, so readers can distinguish documented steps from commands actually executed. The playbook renders an ATP-specific Markdown and HTML report template alongside the existing health-check reporting system.
+Reusable Ansible tasks, defaults, templates, helper files, and Galaxy metadata for ATP live in [the `openshift_atp` role](../roles/openshift_atp/). Run it through the stable entry point, [`playbooks/atp.yml`](../playbooks/atp.yml). The former `toolkits/openshift-atp` directory is retired. `toolkits/` contains standalone specialist utilities that are not Ansible roles or playbooks. Repository-level validation scripts stay in `scripts/`, and a role-specific helper that is required at runtime stays inside that role.
+
+Each automated ATP case records the invoked command, stdout/stderr, exit code, expected result, and conclusion. Reports also include the source procedure as separate reference data, so readers can distinguish documented steps from commands actually executed. The role renders its Markdown and HTML reports from templates in the role itself.
 
 ## Reports
 
