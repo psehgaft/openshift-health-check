@@ -1,0 +1,33 @@
+---
+- name: Load legacy OpenShift health-check settings
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/vars/main.yml"
+    name: vars_oscp
+  no_log: true
+
+- name: Create the legacy report output directory
+  ansible.builtin.include_tasks: kpi_report_folder.yaml
+
+- name: Authenticate the legacy collector
+  ansible.builtin.include_tasks: oscp_login.yaml
+  no_log: true
+
+- name: Record legacy login metadata
+  ansible.builtin.set_fact:
+    kpi_date: "{{ oscp_login_reg.start | default('') }}"
+    kpi_success: "{{ (oscp_login_reg.stdout_lines | default(['']))[0] }}"
+    ocp_token: "{{ oscp_token_reg.stdout | default('') }}"
+
+- name: Collect node names and addresses
+  ansible.builtin.include_tasks: oscp_get_nodes.yaml
+
+- name: Save the node-name list
+  ansible.builtin.set_fact:
+    oscp_nodes: "{{ oscp_get_name_nodes_reg.stdout_lines | default([]) }}"
+
+- name: Collect node usage data
+  ansible.builtin.include_tasks: oscp_top_node.yaml
+
+- name: Save the node usage output
+  ansible.builtin.set_fact:
+    oscp_top_nodes_out: "{{ oscp_top_reg.stdout_lines | default([]) }}"
