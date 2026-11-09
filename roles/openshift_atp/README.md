@@ -22,7 +22,7 @@ Reports are written to `reports/` by default. Override `atp_report_dir` to selec
 - `tasks/*.yml`: ATP case sections and reusable probe tasks.
 - `templates/`: Markdown and HTML report templates.
 - `files/tc62_etcd_restore.sh`: guarded helper for the approved etcd restore case.
-- `vars/atp_document_cases.yml`: source-document procedure and expected-result catalog.
+- `vars/atp_document_cases.yml`: retained source-language reference catalog for traceability; its original Spanish text is not rendered in the English execution reports.
 
 ## Local overrides
 
