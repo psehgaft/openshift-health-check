@@ -42,3 +42,7 @@ ansible-playbook -i localhost, playbooks/legacy/openshift_healthcheck_legacy.yml
 ```
 
 The standard role structure follows the [Ansible role documentation](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html) and [Galaxy user guide](https://docs.ansible.com/ansible/latest/galaxy/user_guide.html).
+
+## Report language
+
+Repository documentation, role descriptions, and generated report labels are in English. The legacy ATP source procedure catalog at `roles/openshift_atp/vars/atp_document_cases.yml` is preserved in its original Spanish for traceability; these source entries are not included in generated reports. ATP report content comes from the English automation task descriptions and captured evidence.
