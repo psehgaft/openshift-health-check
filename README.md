@@ -121,7 +121,7 @@ scripts/run_ci_report.sh playbooks/openshift_cluster_health_report.yml
 | --- | --- |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | Shortest path and common command variants |
 | [docs/ANSIBLE_GALAXY_LAYOUT.md](docs/ANSIBLE_GALAXY_LAYOUT.md) | Reusable role structure and specialist Ansible entry points |
-| [docs/ATP_PLAYBOOK_GUIDE.md](docs/ATP_PLAYBOOK_GUIDE.md) | ATP role variables, evidence, and operational gates |
+| [docs/ATP_PLAYBOOK_GUIDE.md](docs/ATP_PLAYBOOK_GUIDE.md) | ATP role variables, evidence, operational gates, and case troubleshooting links |
 | [docs/DESIGN-PRINCIPLE.md](docs/DESIGN-PRINCIPLE.md) | Why the report is structured this way |
 | [docs/ocp-health-check-sa-rbac.md](docs/ocp-health-check-sa-rbac.md) | Dedicated ServiceAccount / RBAC |
 | [docs/three-repository-integration.md](docs/three-repository-integration.md) | Unified toolkit workflow |
