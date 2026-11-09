@@ -155,13 +155,26 @@ Select `AI_TOOL=claude` or `AI_TOOL=cursor` if appropriate. Do not run `make cle
 | --- | --- |
 | ACM | [Toolkit README](../toolkits/openshift-healthcheck/ACM/acm-health-check-toolkit/README.md) and [runbook](../toolkits/openshift-healthcheck/ACM/ACM_Health_Check_Runbook.md) |
 | Certificates | [Audit installation and execution](../toolkits/openshift-healthcheck/Certificates/README.md) |
-| DNS | [DNS playbook](../toolkits/openshift-healthcheck/DNS/dns-validation.yml) and matching inventory |
-| Original Ansible role | [Role README](../toolkits/openshift-healthcheck/Ansible/README.md) |
+| DNS | [DNS playbook](../playbooks/openshift_dns_validation.yml) and matching inventory |
+| Original Ansible role | [Role README](../roles/openshift_healthcheck_legacy/README.md) |
 | Headlamp | [Plugin build, installation, and RBAC](../toolkits/openshift-healthcheck/Shell/headlamp-openshift-rbac-html-report/README.md) |
 | Versioned shell diagnostics and CER | [Shell README](../toolkits/openshift-healthcheck/Shell/README.md) and [report guide](../toolkits/openshift-healthcheck/Shell/reports/README-reports.md) |
 | Native architecture tooling | [Generator README](../toolkits/arch-design-doc-generator/README.md) |
 
 These are available in the consolidated repository but are not all executed automatically by `suite`. ACM remediation, certificate audits, DNS validation, and Headlamp installation remain explicit specialist workflows.
+
+## Ansible role entry points
+
+Reusable role content follows the repository-level Ansible role layout:
+
+| Role or playbook | Entry point |
+| --- | --- |
+| ATP | [playbooks/atp.yml](../playbooks/atp.yml) → [roles/openshift_atp](../roles/openshift_atp/README.md) |
+| Certificate audit | [playbooks/openshift_certificate_audit.yml](../playbooks/openshift_certificate_audit.yml) → [role README](../roles/openshift_certificate_audit/README.md) |
+| DNS validation | [playbooks/openshift_dns_validation.yml](../playbooks/openshift_dns_validation.yml) |
+| Legacy collector | [playbooks/legacy/openshift_healthcheck_legacy.yml](../playbooks/legacy/openshift_healthcheck_legacy.yml) → [role README](../roles/openshift_healthcheck_legacy/README.md) |
+
+Standalone specialist utilities and their documentation remain under `toolkits/openshift-healthcheck/`. The canonical report engine remains under root `playbooks/` and `roles/`.
 
 ## 7. Validation and maintenance
 

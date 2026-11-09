@@ -91,11 +91,11 @@ oc auth can-i get nodes
 ```text
 ocp-certificate-audit/
 ├── README.md
-├── audit-certificates.yml
-├── inventory.ini
-├── requirements.yml
-├── vars.example.yml
-└── files/
+├── playbooks/openshift_certificate_audit.yml
+├── inventories/openshift_certificate_audit/hosts.ini
+├── requirements/openshift_certificate_audit.yml
+├── roles/openshift_certificate_audit/examples/vars.example.yml
+└── roles/openshift_certificate_audit/files/
     ├── node_cert_scan.sh
     └── ocp_certificate_audit.py
 ```
@@ -123,7 +123,7 @@ The standard mode inventories all API-stored certificates, scans nodes, and prob
 
 ```bash
 cd ocp-certificate-audit
-ansible-playbook -i inventory.ini audit-certificates.yml
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml
 ```
 
 The final Ansible task prints the generated report directory.
@@ -131,14 +131,14 @@ The final Ansible task prints the generated report directory.
 ### 6.3 Run with an explicit kubeconfig
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e audit_kubeconfig=/secure/path/cluster-kubeconfig
 ```
 
 ### 6.4 Use a named kubeconfig context
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e audit_context=my-cluster-context
 ```
 
@@ -147,7 +147,7 @@ ansible-playbook -i inventory.ini audit-certificates.yml \
 To connect to every admitted TLS Route and observe the certificate chain actually presented through the router or passthrough backend:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e scan_route_endpoints=true
 ```
 
@@ -156,7 +156,7 @@ This mode can take significantly longer on clusters with many Routes. It generat
 Limit the number of unique endpoints when validating the process in a large cluster:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e scan_route_endpoints=true \
   -e max_route_endpoints=100
 ```
@@ -168,7 +168,7 @@ ansible-playbook -i inventory.ini audit-certificates.yml \
 Use this mode when node-level permissions are unavailable or when only Kubernetes API objects and externally presented certificates are required:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e scan_nodes=false
 ```
 
@@ -184,7 +184,7 @@ Default thresholds:
 Example:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e critical_days=15 \
   -e warning_days=60
 ```
@@ -193,11 +193,11 @@ The critical threshold must not exceed the warning threshold.
 
 ## 10. Use the example variable file
 
-Edit `vars.example.yml`, then execute:
+Edit `roles/openshift_certificate_audit/examples/vars.example.yml`, then execute:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
-  -e @vars.example.yml
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
+  -e @roles/openshift_certificate_audit/examples/vars.example.yml
 ```
 
 ## 11. Generated evidence
@@ -405,7 +405,7 @@ Confirm the interpreter selected by the playbook:
 ```bash
 ansible-playbook --version
 python3 --version
-ansible-playbook -i inventory.ini audit-certificates.yml -e python_binary=/usr/bin/python3
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml -e python_binary=/usr/bin/python3
 ```
 
 The playbook now defaults to the same Python interpreter used to launch Ansible.
@@ -423,7 +423,7 @@ oc auth can-i get nodes
 Use a `cluster-admin` identity for the complete run. To permit partial evidence collection instead of failing the playbook:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e require_complete_permissions=false
 ```
 
@@ -434,14 +434,14 @@ The report will contain an RBAC warning and can be incomplete.
 Increase the per-node timeout:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e node_scan_timeout=900
 ```
 
 Or disable node scanning and run it separately during a maintenance or diagnostic window:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e scan_nodes=false
 ```
 
@@ -450,7 +450,7 @@ ansible-playbook -i inventory.ini audit-certificates.yml \
 Increase the TLS timeout or restrict the endpoint count:
 
 ```bash
-ansible-playbook -i inventory.ini audit-certificates.yml \
+ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml \
   -e scan_route_endpoints=true \
   -e endpoint_timeout=20 \
   -e max_route_endpoints=100

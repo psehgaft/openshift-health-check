@@ -1,0 +1,33 @@
+# Acceptance Test Procedure (ATP) — Execution Report
+
+## Execution summary
+
+- **Platform:** Red Hat OpenShift Container Platform {{ expected_ocp_version | default('4.20') }}
+- **Cluster:** {{ cluster_name }}.{{ cluster_domain }}
+- **Topology:** Bare-metal OpenShift cluster
+- **Started:** {{ atp_start_time }}
+- **Completed:** {{ atp_end_time | default('N/A') }}
+- **Cases:** {{ atp_results | length }} · **Pass:** {{ atp_results | selectattr('status', 'equalto', 'Pass') | list | length }} · **Fail:** {{ atp_results | selectattr('status', 'equalto', 'Fail') | list | length }} · **Skipped:** {{ atp_results | selectattr('status', 'equalto', 'Skipped') | list | length }}
+
+{% for tc in atp_results %}
+## {{ tc.id }} — {{ tc.name }}
+
+| Field | Record |
+| --- | --- |
+| Date | {{ atp_start_time[0:10] }} |
+| Time | {{ atp_start_time[11:19] }} UTC |
+| Description | {{ tc.name }} |
+| Topology | Red Hat OpenShift Container Platform {{ expected_ocp_version | default('4.20') }} ({{ cluster_name }}.{{ cluster_domain }}) |
+| Procedure | `{{ tc.procedure | default('See ATP task implementation') | replace('`', '\`') | replace('
+', ' ') }}` |
+| Expected result | {{ tc.expected | replace('|', '\|') }} |
+| Conclusion | {{ '[x]' if tc.status == 'Pass' else '[ ]' }} Pass · {{ '[x]' if tc.status == 'Fail' else '[ ]' }} Fail · {{ '[x]' if tc.status == 'Skipped' else '[ ]' }} Skipped |
+| Additional comments | {% if tc.additional_comments is defined and tc.additional_comments %}{{ tc.additional_comments | replace('|', '\\|') }}{% if tc.status == 'Fail' and tc.remediation is defined %} {{ tc.remediation | replace('|', '\\|') }}{% endif %}{% elif tc.status == 'Fail' %}{{ tc.remediation | default('Review the captured output, verify the affected component and its prerequisites, apply the relevant OpenShift remediation, and rerun this case.') | replace('|', '\\|') }}{% elif tc.status == 'Skipped' %}Not executed. Review operational impact and prerequisites before enabling this gated test.{% else %}No corrective action required based on this result.{% endif %} |
+
+**Observed evidence**
+
+```text
+{{ tc.evidence | default(tc.details | default('No command output captured')) }}
+```
+
+{% endfor %}

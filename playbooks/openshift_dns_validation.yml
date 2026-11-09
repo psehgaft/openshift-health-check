@@ -1,0 +1,104 @@
+---
+- name: Validate DNS configuration for OpenShift nodes
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    expected_domain: example.com
+
+  tasks:
+    - name: Read the short hostname
+      ansible.builtin.command: hostname
+      register: dns_hostname
+      changed_when: false
+
+    - name: Read the fully qualified domain name
+      ansible.builtin.command: hostname -f
+      register: dns_fqdn
+      changed_when: false
+      failed_when: false
+
+    - name: Read resolver configuration
+      ansible.builtin.command: cat /etc/resolv.conf
+      register: dns_resolv_conf
+      changed_when: false
+
+    - name: Extract configured DNS servers
+      ansible.builtin.shell: "awk '$1 == \"nameserver\" {print $2}' /etc/resolv.conf"
+      register: dns_servers
+      changed_when: false
+
+    - name: Check reachability of configured DNS servers
+      ansible.builtin.command:
+        argv:
+          - ping
+          - -c
+          - "2"
+          - "{{ item }}"
+      loop: "{{ dns_servers.stdout_lines | default([]) }}"
+      register: dns_server_ping
+      changed_when: false
+      failed_when: false
+
+    - name: Resolve the inventory hostname
+      ansible.builtin.command:
+        argv: [getent, hosts, "{{ inventory_hostname }}"]
+      register: dns_inventory_hostname
+      changed_when: false
+      failed_when: false
+
+    - name: Resolve the host FQDN
+      ansible.builtin.command:
+        argv: [getent, hosts, "{{ dns_fqdn.stdout | default('') | trim }}"]
+      register: dns_fqdn_lookup
+      changed_when: false
+      failed_when: false
+      when: dns_fqdn.stdout | default('') | trim | length > 0
+
+    - name: Query the forward DNS record
+      ansible.builtin.command:
+        argv: [dig, +short, "{{ dns_fqdn.stdout | default('') | trim }}"]
+      register: dns_forward_lookup
+      changed_when: false
+      failed_when: false
+      when: dns_fqdn.stdout | default('') | trim | length > 0
+
+    - name: Query the reverse DNS record
+      ansible.builtin.command:
+        argv: [dig, +short, -x, "{{ ansible_default_ipv4.address }}"]
+      register: dns_reverse_lookup
+      changed_when: false
+      failed_when: false
+      when: ansible_default_ipv4.address is defined
+
+    - name: Query the FQDN with nslookup
+      ansible.builtin.command:
+        argv: [nslookup, "{{ dns_fqdn.stdout | default('') | trim }}"]
+      register: dns_nslookup
+      changed_when: false
+      failed_when: false
+      when: dns_fqdn.stdout | default('') | trim | length > 0
+
+    - name: Resolve every inventory host
+      ansible.builtin.command:
+        argv: [getent, hosts, "{{ item }}"]
+      loop: "{{ groups['all'] }}"
+      register: dns_inventory_resolution
+      changed_when: false
+      failed_when: false
+
+    - name: Report DNS validation results
+      ansible.builtin.debug:
+        msg:
+          inventory_hostname: "{{ inventory_hostname }}"
+          hostname: "{{ dns_hostname.stdout | default('Unavailable') }}"
+          fqdn: "{{ dns_fqdn.stdout | default('Unavailable') }}"
+          expected_domain: "{{ expected_domain }}"
+          ipv4_address: "{{ ansible_default_ipv4.address | default('Unavailable') }}"
+          dns_servers: "{{ dns_servers.stdout_lines | default([]) }}"
+          resolver_configuration: "{{ dns_resolv_conf.stdout_lines | default([]) }}"
+          forward_lookup: "{{ dns_forward_lookup.stdout | default('Not available') }}"
+          reverse_lookup: "{{ dns_reverse_lookup.stdout | default('Not available') }}"
+          nslookup: "{{ dns_nslookup.stdout_lines | default([]) }}"
+          inventory_host_resolutions: "{{ dns_inventory_resolution.results | default([]) | map(attribute='stdout') | list }}"
+          dns_server_ping_results: "{{ dns_server_ping.results | default([]) | map(attribute='rc') | list }}"

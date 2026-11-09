@@ -1,11 +1,10 @@
 # Toolkits
 
-This directory contains three toolkits with separate responsibilities.
+This directory contains supporting utilities that complement the repository's Ansible roles and canonical health-report engine. Standalone Ansible playbooks and reusable roles live under the repository-level `playbooks/` and `roles/` directories.
 
 | Toolkit | Purpose | Start here |
 | --- | --- | --- |
-| [openshift-healthcheck](openshift-healthcheck/) | Shell, Ansible, ACM, certificate, DNS, and Headlamp health-check utilities | [Integration guide](../docs/three-repository-integration.md) |
-| [openshift-atp](openshift-atp/) | OpenShift acceptance tests with Markdown and HTML evidence reports | [ATP guide](../docs/ATP_PLAYBOOK_GUIDE.md) |
+| [openshift-healthcheck](openshift-healthcheck/) | Shell diagnostics, ACM manifests and scripts, certificate-audit documentation, DNS toolkit documentation, and the Headlamp report plugin | [Integration guide](../docs/three-repository-integration.md) |
 | [arch-design-doc-generator](arch-design-doc-generator/) | Architecture decisions, HLD/LLD, diagrams, and work items | [Generator README](arch-design-doc-generator/README.md) |
 
-The canonical health-check engine and its multi-platform reporting workflow remain at the repository root. These folders group the specialist and imported tools; existing documents are retained.
+The OpenShift ATP is now the reusable `roles/openshift_atp` role, invoked through `playbooks/atp.yml`. The former Ansible subdirectory in the specialist toolkit has been migrated to role and playbook locations. See [Ansible role layout](../docs/ANSIBLE_GALAXY_LAYOUT.md).
