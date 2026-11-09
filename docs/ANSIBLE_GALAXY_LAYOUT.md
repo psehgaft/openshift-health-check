@@ -1,36 +1,79 @@
-# Ansible project and role layout
+# Ansible project and Galaxy-compatible role layout
 
-The repository uses a root-level Ansible project layout: top-level playbooks are in `playbooks/`, reusable roles are in `roles/`, inventories are in `inventories/`, and collection dependencies are declared under `requirements/`. The root `ansible.cfg` points `roles_path` at `./roles`.
+The repository uses Ansible's standard project layout. Runnable entry points live in `playbooks/`, reusable role content lives in `roles/`, example inventories live in `inventories/`, and collection dependencies live in `requirements/`. The root `ansible.cfg` sets `roles_path = ./roles`.
+
+## Repository layout
+
+```text
+openshift-health-check/
+├── ansible.cfg
+├── inventories/
+├── playbooks/
+│   ├── atp.yml
+│   ├── openshift_certificate_audit.yml
+│   ├── openshift_dns_validation.yml
+│   └── legacy/
+├── roles/
+│   ├── openshift_atp/
+│   ├── openshift_certificate_audit/
+│   └── openshift_healthcheck_legacy/
+├── requirements/
+├── scripts/                           # Repository validation and shared runtime helpers
+├── toolkits/
+│   ├── openshift-healthcheck/         # Standalone, non-Ansible utilities and guides
+│   └── arch-design-doc-generator/     # Non-Ansible generator
+└── docs/
+```
 
 ## Reusable roles
 
 | Role | Entry point | Purpose |
 | --- | --- | --- |
-| `openshift_atp` | `playbooks/atp.yml` | Acceptance Test Procedure with evidence reports |
-| `openshift_certificate_audit` | `playbooks/openshift_certificate_audit.yml` | Read-only OpenShift certificate inventory and expiration audit |
+| `openshift_atp` | `playbooks/atp.yml` | ATP case execution and Markdown/HTML evidence reports |
+| `openshift_certificate_audit` | `playbooks/openshift_certificate_audit.yml` | OpenShift certificate inventory and expiration audit |
 | `openshift_healthcheck_legacy` | `playbooks/legacy/openshift_healthcheck_legacy.yml` | Compatibility wrapper for the original collector |
-| Existing report roles | `playbooks/*_cluster_health_report.yml` | Canonical multi-platform cluster health reports |
+| Health-report roles | `playbooks/*_cluster_health_report.yml` | Canonical multi-platform health reporting |
 
-Each role follows the Ansible role directories for `defaults/`, `tasks/`, `handlers/`, `templates/`, `files/`, `vars/`, `meta/`, and `tests/` as needed. Roles keep their supporting scripts and templates within their own package so role-relative lookups continue to work when the playbook is launched from the repository root.
+The ATP uses the standard reusable role directories:
 
-## Specialist non-Ansible tools
+```text
+roles/openshift_atp/
+├── defaults/main.yml
+├── files/
+├── meta/main.yml
+├── tasks/
+├── templates/
+└── vars/
+```
 
-`toolkits/` is reserved for supporting utilities and their documentation, including Shell, Python, Kubernetes manifests, Headlamp sources, and the architecture generator. Standalone Ansible playbooks and role task files are kept in `playbooks/` and `roles/`; supporting scripts required to make a role self-contained remain under that role's standard `files/` directory.
+The role's `meta/main.yml` declares its Galaxy metadata. Its runnable entry point stays in `playbooks/atp.yml`; that playbook invokes the role through the configured `roles_path`. The ATP case files, report templates, defaults, source-procedure catalog, and guarded helper script remain within the role so its runtime assets stay together. The site-specific `roles/openshift_atp/vars/main.yaml` file is optional and is not tracked.
 
-## Dependencies
+The source ATP procedure catalog in `roles/openshift_atp/vars/atp_document_cases.yml` is preserved in its original Spanish for traceability. Repository documentation, automation descriptions, and generated report labels are in English; the Spanish source catalog is not rendered into reports.
 
-- The canonical repository environment is described in `requirements.txt` and the setup scripts.
-- Legacy role collection dependencies are in `requirements/openshift_healthcheck_legacy.yml`.
-- The certificate audit uses only `ansible.builtin` modules; its empty Galaxy requirements file is kept for explicit dependency documentation.
+These are project-local Galaxy-compatible roles. This repository does not currently publish an Ansible collection. If the roles are to be distributed independently through Galaxy, package them in a dedicated role repository or add collection metadata and use the Ansible collection layout.
 
-## Entry points and checks
+## Placement rules
 
-Run playbooks from the repository root so `ansible.cfg` and the expected inventory paths are discovered:
+- Put Ansible playbooks in `playbooks/` and reusable role code in `roles/<role_name>/`.
+- Keep a role's defaults, tasks, templates, files, vars, and metadata inside that role.
+- Keep inventories under `inventories/` and collection dependencies under `requirements/`.
+- Keep standalone Shell, Python, Kubernetes-manifest, Headlamp, and architecture-generator assets under `toolkits/`.
+- Keep repository validators and shared project runtime helpers under `scripts/`. If a script is required only by one role at runtime, place it under that role's `files/` directory.
+- Do not keep duplicate Ansible roles or task trees under `toolkits/`. Toolkit documentation may link to the canonical role and playbook.
+
+The specialist toolkit remains in [`toolkits/openshift-healthcheck`](../toolkits/openshift-healthcheck/). Its Ansible certificate audit and DNS entry points were moved to `roles/` and `playbooks/`; the toolkit keeps their documentation and standalone specialist components. The architecture generator remains under [`toolkits/arch-design-doc-generator`](../toolkits/arch-design-doc-generator/).
+
+## Dependencies and execution
+
+The Python/Ansible environment is described in the root `requirements.txt` and setup scripts. Ansible collection dependencies are declared under `requirements/`.
+
+Run from the repository root so that `ansible.cfg`, relative paths, and the default inventory are discovered:
 
 ```bash
+source .venv/bin/activate
 ansible-playbook -i inventory.ini playbooks/atp.yml
 ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml
-ansible-playbook -i inventories/openshift_dns_validation/hosts.ini.example \\
+ansible-playbook -i inventories/openshift_dns_validation/hosts.ini.example \
   playbooks/openshift_dns_validation.yml --syntax-check
 ```
 
@@ -41,8 +84,13 @@ ansible-galaxy collection install -r requirements/openshift_healthcheck_legacy.y
 ansible-playbook -i localhost, playbooks/legacy/openshift_healthcheck_legacy.yml --syntax-check
 ```
 
-The standard role structure follows the [Ansible role documentation](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html) and [Galaxy user guide](https://docs.ansible.com/ansible/latest/galaxy/user_guide.html).
+Run the repository validator after changes to playbooks, roles, or documentation that affect execution paths:
 
-## Report language
+```bash
+scripts/validate_repo.sh
+```
 
-Repository documentation, role descriptions, and generated report labels are in English. The legacy ATP source procedure catalog at `roles/openshift_atp/vars/atp_document_cases.yml` is preserved in its original Spanish for traceability; these source entries are not included in generated reports. ATP report content comes from the English automation task descriptions and captured evidence.
+## References
+
+- [Ansible roles in playbooks](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html)
+- [Ansible Galaxy user guide](https://docs.ansible.com/ansible/latest/galaxy/user_guide.html)
