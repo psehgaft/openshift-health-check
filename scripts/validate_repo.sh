@@ -108,12 +108,12 @@ for path in python_files:
 print(f"Python OK: {len(python_files)} files")
 PY
 
-log "Checking shell script syntax"
+log "Checking shell script syntax in scripts, tests, and toolkits"
 while IFS= read -r script_path; do
   bash -n "${script_path}"
 done < <(
   git -C "${ROOT_DIR}" ls-files \
-    | awk '/^(scripts|tests)\/.*\.sh$/ { print "'"${ROOT_DIR}"'/" $0 }'
+    | awk '/^(scripts|tests|toolkits)\/.*\.sh$/ { print "'"${ROOT_DIR}"'/" $0 }'
 )
 
 log "Validating report template"

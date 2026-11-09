@@ -2,6 +2,10 @@
 
 This role preserves the original environment-driven OpenShift collector while placing it in a standard Ansible role layout. The current repository health-report engine remains the recommended implementation; this role is retained for compatibility with existing workflows.
 
+## Lifecycle
+
+This role is deprecated for new deployments and remains available only for compatibility with existing workflows. The unified health-report playbook is the supported path for new use. Remove this role only after downstream consumers have migrated and the compatibility entry point is no longer referenced.
+
 ## Run
 
 From the repository root:

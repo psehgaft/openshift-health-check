@@ -21,6 +21,8 @@ The report covers:
 
 > The plugin is read-only. It does not create or modify any OpenShift resource.
 
+The `src/` directory is the canonical plugin source used by the package build and the project-scaffolding script. Keep implementation changes there so both workflows use the same files.
+
 ---
 
 ## 2. How it works

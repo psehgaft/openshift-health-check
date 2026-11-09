@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLKIT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SOURCE_DIR="${TOOLKIT_DIR}/src"
 TARGET_DIR="${1:-${PWD}/openshift-rbac-report}"
 
 for command_name in node npm npx; do
@@ -28,7 +29,7 @@ echo "Creating Headlamp plugin project: ${TARGET_DIR}"
 npx --yes @kinvolk/headlamp-plugin create "${TARGET_DIR}"
 
 rm -rf "${TARGET_DIR}/src"
-cp -R "${TOOLKIT_DIR}/plugin-overlay/src" "${TARGET_DIR}/src"
+cp -R "${SOURCE_DIR}" "${TARGET_DIR}/src"
 cp "${TOOLKIT_DIR}/README.md" "${TARGET_DIR}/RBAC-REPORT-GUIDE.md"
 cp -R "${TOOLKIT_DIR}/manifests" "${TARGET_DIR}/manifests"
 

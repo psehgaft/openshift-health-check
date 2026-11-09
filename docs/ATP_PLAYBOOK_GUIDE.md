@@ -67,6 +67,17 @@ Before selecting the endpoint, TC-18/TC-19 query `oc get clusteroperator image-r
 
 For TC-18, the report result is assembled into a dedicated `tc18_result` fact and appended to `atp_results` in a separate task. This avoids parsing the nested inline Jinja dictionary that caused `expected token ')', got ':'` during result finalization. If the syntax error reappears, confirm the playbook is using the latest `01_services_check.yml` from the ATP branch; this reporting refactor does not change the registry pass criteria. TC-19 uses the same separate result-fact and append pattern, and parses pod names in its own task before building the report record.
 
+## Test-case troubleshooting references
+
+Use these case-specific notes alongside the current playbook output. Their captured cluster evidence is historical and must not be treated as the current cluster state.
+
+| Test cases | Guide |
+| --- | --- |
+| TC-20 and TC-22 | [Registry storage and logging fixes](ATP_TC22_TC20_FIXES.md) |
+| TC-70 | [LACP bonding and MTU 9000](ATP_TC70_LACP_MTU9000.md) |
+| TC-71 | [Node roles and maximum pod capacity](ATP_TC71_NODE_PROFILING.md) |
+| TC-72 | [HugePages for CNF workers](ATP_TC72_HUGEPAGES.md) |
+
 ## Mandatory Tags
 Every task in the ATP playbook is tagged with:
 - `general`: Tests covering standard OpenShift Container Platform features.
