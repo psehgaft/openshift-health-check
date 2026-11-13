@@ -37,10 +37,14 @@ def main() -> int:
         print("Enter both the robot username and token, or leave both blank.", file=sys.stderr)
         return 2
 
-    values = {
-        "atp_external_registry_robot_username": username,
-        "atp_external_registry_robot_token": token,
-    }
+    values = (
+        {
+            "atp_external_registry_robot_username": username,
+            "atp_external_registry_robot_token": token,
+        }
+        if username
+        else {}
+    )
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix=".atp-vault-", dir=vault_dir) as tmp:
         tmp_dir = Path(tmp)
@@ -49,7 +53,10 @@ def main() -> int:
         encrypted_file = tmp_dir / "vault.yml.encrypted"
         # JSON scalar quoting is valid YAML and safely handles special characters.
         plain_file.write_text(
-            "".join(f"{key}: {json.dumps(value, ensure_ascii=False)}\n" for key, value in values.items()),
+            "{}\n" if not values else "".join(
+                f"{key}: {json.dumps(value, ensure_ascii=False)}\n"
+                for key, value in values.items()
+            ),
             encoding="utf-8",
         )
         plain_file.chmod(0o600)
