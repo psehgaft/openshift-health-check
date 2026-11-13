@@ -19,10 +19,19 @@
   tags: [always]
 
 - name: Load encrypted ATP credentials when configured
-  ansible.builtin.include_vars:
-    file: "{{ role_path }}/../../group_vars/atp/vault.yml"
-  no_log: true
-  when: atp_vault_file.stat.exists
+  block:
+    - name: Decrypt ATP-only Vault variables
+      ansible.builtin.include_vars:
+        file: "{{ role_path }}/../../group_vars/atp/vault.yml"
+      no_log: true
+      when: atp_vault_file.stat.exists
+  rescue:
+    - name: Explain ATP Vault decryption failure
+      ansible.builtin.fail:
+        msg: >-
+          Could not load group_vars/atp/vault.yml. Run ATP with
+          --ask-vault-pass or --vault-password-file, verify the Vault password,
+          and confirm the encrypted file contains valid Ansible variables.
   tags: [always]
 
 - name: Initialize ATP execution facts and results
