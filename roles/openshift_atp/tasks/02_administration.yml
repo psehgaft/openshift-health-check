@@ -236,6 +236,15 @@
     - name: "TC-28: Install SNRO and verify its workloads"
       ansible.builtin.shell: |
         set -euo pipefail
+        wait_attempts={{ tc28_install_wait_attempts | default(60) | int }}
+        wait_interval={{ tc28_install_wait_interval_seconds | default(10) | int }}
+        package_name={{ tc28_package_name | default('self-node-remediation') | quote }}
+        catalog_namespace={{ tc28_catalog_namespace | default('openshift-marketplace') | quote }}
+        packagemanifest_resource={{ tc28_packagemanifest_api_resource | default('packagemanifests.packages.operators.coreos.com') | quote }}
+        csv_resource={{ tc28_csv_api_resource | default('clusterserviceversions.operators.coreos.com') | quote }}
+        controller_deployment={{ tc28_controller_deployment | default('self-node-remediation-controller-manager') | quote }}
+        subscription={{ tc28_subscription_name | default('self-node-remediation') | quote }}
+        operator_namespace={{ tc28_operator_namespace | default('openshift-workload-availability') | quote }}
         cat <<'SNRO_RESOURCES' | oc apply -f -
         apiVersion: v1
         kind: Namespace
@@ -261,12 +270,10 @@
           sourceNamespace: openshift-marketplace
         SNRO_RESOURCES
 
-        subscription="self-node-remediation"
-        operator_namespace="openshift-workload-availability"
         echo "Subscription applied. Waiting up to $((wait_attempts * wait_interval)) seconds for the SNRO CSV to reach Succeeded."
 
         installed_csv=""
-        for attempt in $(seq 1 60); do
+        for attempt in $(seq 1 "$wait_attempts"); do
           subscription_json="$(oc get subscription "$subscription" -n "$operator_namespace" -o json)"
           installed_csv="$(jq -r '.status.installedCSV // empty' <<< "$subscription_json")"
           resolution_error="$(jq -r '[.status.conditions[]? | select(.type == "ResolutionFailed" and .status == "True") | .message] | join("; ")' <<< "$subscription_json")"
@@ -292,7 +299,7 @@
           else
             echo "Attempt $attempt: waiting for Subscription to resolve an installed CSV."
           fi
-          sleep 10
+          sleep "$wait_interval"
         done
 
         if [[ -z "$installed_csv" || "$(oc get csv "$installed_csv" -n "$operator_namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)" != "Succeeded" ]]; then
@@ -304,8 +311,8 @@
         fi
 
         echo "Waiting for the SNRO controller Deployment rollout."
-        oc rollout status deployment/self-node-remediation-controller-manager -n "$operator_namespace" --timeout=10m
-        deployment_json="$(oc get deployment self-node-remediation-controller-manager -n "$operator_namespace" -o json)"
+        oc rollout status deployment/"$controller_deployment" -n "$operator_namespace" --timeout=10m
+        deployment_json="$(oc get deployment "$controller_deployment" -n "$operator_namespace" -o json)"
         deployment_desired="$(jq -r '.spec.replicas // 1' <<< "$deployment_json")"
         deployment_available="$(jq -r '.status.availableReplicas // 0' <<< "$deployment_json")"
         if [[ "$deployment_desired" -lt 1 || "$deployment_available" -lt "$deployment_desired" ]]; then

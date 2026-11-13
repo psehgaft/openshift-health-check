@@ -685,20 +685,90 @@
       ansible.builtin.shell: |
         set -euo pipefail
         if oc get svc image-registry -n openshift-image-registry -o name >/dev/null 2>&1; then
-          storage="$(oc get configs.imageregistry.operator.openshift.io/cluster -o jsonpath='{.spec.storage}' | jq .)"
-          if [[ -z "$storage" || "$storage" == "{}" || "$storage" == "null" ]]; then
-            echo "Internal registry service exists, but Image Registry Operator has no storage backend configured: $storage" >&2
+          storage_json="$(oc get configs.imageregistry.operator.openshift.io/cluster -o json | jq -c '.spec.storage // {}')"
+          if [[ -z "$storage_json" || "$storage_json" == "{}" || "$storage_json" == "null" ]]; then
+            echo "Internal registry service exists, but Image Registry Operator has no storage backend configured: $storage_json" >&2
             exit 1
           fi
-          if [[ "$storage" == *emptyDir* ]]; then
-            echo "Internal registry uses ephemeral emptyDir storage; persistent storage is not configured: $storage" >&2
+          if jq -e 'has("emptyDir")' <<< "$storage_json" >/dev/null; then
+            echo "Internal registry uses ephemeral emptyDir storage; persistent storage is not configured: $storage_json" >&2
             exit 1
           fi
-          echo "Internal registry storage backend: $storage"
-        else
-          echo "TC20_RESULT=SKIPPED_EXTERNAL_ONLY: No internal image-registry service is configured; internal registry storage validation is not applicable. External registry storage is managed by its provider and cannot be inspected through the OpenShift Image Registry Operator. Validate persistence with the registry owner's storage health checks or an authenticated push/pull test."
+          echo "Internal registry storage backend: $storage_json"
+          echo "TC20_RESULT=PASS_INTERNAL"
           exit 0
         fi
+
+        echo "Internal image-registry Service is absent; looking for an OpenShift-managed QuayRegistry."
+        if ! oc get crd quayregistries.quay.redhat.com >/dev/null 2>&1; then
+          echo "TC20_RESULT=SKIPPED_EXTERNAL_ONLY: No internal registry Service or Quay Operator CRD exists. External registry storage is managed by its provider and is not visible through the OpenShift Image Registry API."
+          exit 0
+        fi
+
+        quay_json="$(oc get quayregistries.quay.redhat.com -A -o json)"
+        quay_count="$(jq '.items | length' <<< "$quay_json")"
+        if [[ "$quay_count" -eq 0 ]]; then
+          echo "TC20_RESULT=SKIPPED_EXTERNAL_ONLY: No internal registry Service or QuayRegistry resource exists in this cluster. External registry storage must be verified with its provider."
+          exit 0
+        fi
+
+        quay_failures=0
+        while IFS= read -r quay_ref; do
+          [[ -n "$quay_ref" ]] || continue
+          quay_namespace="${quay_ref%%/*}"
+          quay_name="${quay_ref#*/}"
+          quay_resource="$(jq -c --arg ns "$quay_namespace" --arg name "$quay_name" '.items[] | select(.metadata.namespace == $ns and .metadata.name == $name)' <<< "$quay_json")"
+          available="$(jq -r '[.status.conditions[]? | select(.type == "Available") | .status] | last // "Unknown"' <<< "$quay_resource")"
+          endpoint="$(jq -r '.status.registryEndpoint // "not-reported"' <<< "$quay_resource")"
+          postgres_managed="$(jq -r '([.spec.components[]? | select(.kind == "postgres") | .managed] | first) // true' <<< "$quay_resource")"
+          objectstorage_managed="$(jq -r '([.spec.components[]? | select(.kind == "objectstorage") | .managed] | first) // true' <<< "$quay_resource")"
+
+          echo "== QuayRegistry $quay_namespace/$quay_name =="
+          echo "Available=$available endpoint=$endpoint postgres_managed=$postgres_managed objectstorage_managed=$objectstorage_managed"
+          if [[ "$available" != "True" ]]; then
+            echo "QuayRegistry $quay_namespace/$quay_name is not Available=True." >&2
+            quay_failures=$((quay_failures + 1))
+          fi
+
+          pvc_json="$(oc get pvc -n "$quay_namespace" -o json)"
+          echo "Quay PVCs (namespace=$quay_namespace):"
+          jq -r '.items[] | [.metadata.name, .status.phase, (.spec.storageClassName // "default/none"), (.spec.volumeName // "unbound"), (.status.capacity.storage // "pending")] | @tsv' <<< "$pvc_json"
+          unbound_pvc_names="$(jq -r '.items[] | select(.status.phase != "Bound") | .metadata.name' <<< "$pvc_json")"
+          if [[ -n "$unbound_pvc_names" ]]; then
+            echo "Quay PVCs are not all Bound:"
+            printf '%s\n' "$unbound_pvc_names" >&2
+            quay_failures=$((quay_failures + 1))
+          fi
+          if [[ "$postgres_managed" == "true" ]]; then
+            bound_db_pvcs="$(jq '[.items[] | select(.status.phase == "Bound" and (.metadata.name | test("postgres"; "i")))] | length' <<< "$pvc_json")"
+            echo "Bound Quay/PostgreSQL PVC count: $bound_db_pvcs"
+            if [[ "$bound_db_pvcs" -lt 1 ]]; then
+              echo "Managed Quay PostgreSQL is enabled, but no Bound PostgreSQL PVC was found in $quay_namespace." >&2
+              quay_failures=$((quay_failures + 1))
+            fi
+          else
+            echo "PostgreSQL is unmanaged; its persistence is provided outside this Quay namespace and must be verified by its owner."
+          fi
+
+          if [[ "$objectstorage_managed" == "true" ]]; then
+            obc_json="$(oc get objectbucketclaims.objectbucket.io -n "$quay_namespace" -o json)"
+            echo "Quay ObjectBucketClaims:"
+            jq -r '.items[] | [.metadata.name, .status.phase, (.spec.storageClassName // "default/none")] | @tsv' <<< "$obc_json"
+            bound_obcs="$(jq '[.items[] | select(.status.phase == "Bound")] | length' <<< "$obc_json")"
+            if [[ "$bound_obcs" -lt 1 ]]; then
+              echo "Managed Quay object storage is enabled, but no Bound ObjectBucketClaim was found." >&2
+              quay_failures=$((quay_failures + 1))
+            fi
+          else
+            echo "Object storage is unmanaged and provider-owned; its persistence/health cannot be proven from this QuayRegistry. Verify it with the storage provider."
+          fi
+        done < <(jq -r '.items[] | .metadata.namespace + "/" + .metadata.name' <<< "$quay_json")
+
+        if [[ "$quay_failures" -gt 0 ]]; then
+          echo "TC20_RESULT=FAIL_QUAY_OPERATOR: one or more Quay availability or persistent storage checks failed."
+          exit 1
+        fi
+        echo "TC20_RESULT=PASS_QUAY_OPERATOR: QuayRegistry is Available and managed database/object storage claims are bound; unmanaged storage is explicitly identified as provider-owned."
       args:
         executable: /bin/bash
       register: tc20_cmd
@@ -707,7 +777,7 @@
 
     - name: "TC-20: Classify registry storage result"
       ansible.builtin.set_fact:
-        tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and 'Internal registry storage backend:' in (tc20_cmd.stdout | default('')) else 'Skipped' if (tc20_cmd.rc == 0 and 'TC20_RESULT=SKIPPED_EXTERNAL_ONLY' in (tc20_cmd.stdout | default(''))) or (tc20_cmd.rc == 2 and 'no external registry URL' in (tc20_cmd.stdout | default('') | lower)) else 'Fail' }}"
+        tc20_status: "{{ 'Pass' if tc20_cmd.rc == 0 and ('TC20_RESULT=PASS_INTERNAL' in (tc20_cmd.stdout | default('')) or 'TC20_RESULT=PASS_QUAY_OPERATOR' in (tc20_cmd.stdout | default(''))) else 'Skipped' if tc20_cmd.rc == 0 and 'TC20_RESULT=SKIPPED_EXTERNAL_ONLY' in (tc20_cmd.stdout | default('')) else 'Fail' }}"
 
     - name: "TC-20: Build Result Record"
       ansible.builtin.set_fact:
@@ -715,7 +785,7 @@
           id: "TC-20"
           name: "Check Configured Registry Storage"
           category: "Services Check"
-          expected: "The registry storage configuration is returned as JSON; internal storage is persistent, while external storage persistence requires verification by its owner"
+          expected: "Pass when the internal Image Registry Operator has a persistent backend, or an OpenShift-managed QuayRegistry is available with its managed PostgreSQL PVC and managed object-storage claim Bound. Skip only when storage belongs to an external registry and is not represented in this cluster."
           status: "{{ tc20_status | trim }}"
           procedure: "{{ tc20_cmd.cmd | default('See ATP task source; command metadata unavailable') }}"
           evidence: "{{ (tc20_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc20_cmd.stderr | default(''))) if (tc20_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc20_cmd.rc | string) if tc20_cmd.rc is defined else '') }}"

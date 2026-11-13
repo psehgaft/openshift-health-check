@@ -379,24 +379,34 @@
 - name: "TC-57: Check Custom Ingress Certificate"
   when: run_tc57_custom_ingress_certificate | default(true) | bool
   block:
-    - name: "TC-57: Query IngressController custom certificate spec"
-      ansible.builtin.command: oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate}'
+    - name: "TC-57: Resolve self-signed certificate skip setting"
+      ansible.builtin.set_fact:
+        tc57_self_signed_exception_enabled: "{{ atp_ingress_cert_self_signed | default(false) | bool }}"
+
+    - name: "TC-57: Query IngressController custom certificate reference"
+      ansible.builtin.command: oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate.name}'
       register: tc57_cmd
       changed_when: false
       failed_when: false
+      when: not (tc57_self_signed_exception_enabled | bool)
 
-    - name: "TC-57: Record Result"
+    - name: "TC-57: Build report result"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-57',
-          'name': 'Check Custom Ingress Certificate',
-          'category': 'User & Security',
-          'expected': 'Custom wildcard Ingress certificate configured and applied',
-          'status': ('Pass' if tc57_cmd.rc == 0 else 'Fail'),
-          'procedure': (tc57_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc57_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc57_cmd.stderr | default(''))) if (tc57_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc57_cmd.rc | string) if tc57_cmd.rc is defined else '')),
-          'details': tc57_cmd.stdout | default('Default certificate in use') | truncate(150)
-        }] }}"
+        tc57_result:
+          id: "TC-57"
+          name: "Check Custom Ingress Certificate"
+          category: "User & Security"
+          expected: "A custom wildcard Ingress certificate is configured; when the approved certificate is self-signed, this case is explicitly Skipped."
+          status: "{{ 'Skipped' if (tc57_self_signed_exception_enabled | bool) else ('Pass' if (tc57_cmd.rc | default(1) | int) == 0 and (tc57_cmd.stdout | default('') | trim | length > 0) else 'Fail') }}"
+          procedure: "Read the default IngressController custom certificate secret reference. If atp_ingress_cert_self_signed is true, skip validation and record the accepted self-signed exception."
+          evidence: "{{ 'Self-signed Ingress certificate mode enabled; certificate validation was skipped.' if (tc57_self_signed_exception_enabled | bool) else ((tc57_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc57_cmd.stderr | default(''))) if (tc57_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc57_cmd.rc | string) if tc57_cmd.rc is defined else '')) }}"
+          details: "{{ 'Self-signed Ingress certificates are in use; TC-57 was skipped by configuration.' if (tc57_self_signed_exception_enabled | bool) else ('Configured default certificate secret: ' ~ (tc57_cmd.stdout | default('') | trim) if (tc57_cmd.stdout | default('') | trim | length > 0) else 'No custom IngressController defaultCertificate reference was returned.') }}"
+          additional_comments: "{{ 'Self-signed Ingress certificates are in use (atp_ingress_cert_self_signed=true); TC-57 was skipped. This case did not validate chain, SAN, or expiry.' if (tc57_self_signed_exception_enabled | bool) else '' }}"
+          remediation: "{{ 'No certificate validation was performed because the self-signed exception was explicitly enabled.' if (tc57_self_signed_exception_enabled | bool) else 'Configure the intended custom wildcard certificate secret on ingresscontroller/default, ensure it exists in openshift-ingress, and validate its SAN, issuing chain, and expiration. If the design intentionally uses a self-signed certificate, set atp_ingress_cert_self_signed: true and document the exception.' }}"
+
+    - name: "TC-57: Append Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc57_result] }}"
   tags: ['general', 'telco', 'tc57', 'certificates']
 
 # TC 58: Create a Secret
