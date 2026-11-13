@@ -209,7 +209,7 @@ Configuration variables (defaults in [the certificate role](../roles/openshift_c
 | `cluster_query_timeout`, `require_complete_permissions` | API query timeout and whether incomplete permissions should fail the audit. |
 | `oc_binary`, `openssl_binary`, `python_binary` | Executable paths used by the audit. |
 
-Results are stored under `audit_output_root`, defaulting to `reports/certificate-audit/`. The audit avoids exporting private keys, raw Secret objects, or certificate bodies. See the [certificate audit guide](../toolkits/openshift-healthcheck/Certificates/README.md) for artifact names and privacy details.
+Results are stored under `audit_output_root`, defaulting to `reports/certificate-audit/`. The audit produces CSV, JSON, and Markdown inventories. Findings use states such as `EXPIRED`, `NOT_YET_VALID`, `CRITICAL`, `WARNING`, `OK`, or `UNKNOWN`. It avoids exporting private keys, raw Secret objects, or certificate bodies. See the [certificate audit guide](../toolkits/openshift-healthcheck/Certificates/README.md) for the full fields, artifact names, and privacy details.
 
 ### OpenShift DNS validation
 
@@ -238,15 +238,24 @@ This is a compatibility entry point for the original health-check role. Prefer [
 
 Prerequisites:
 
-- Authenticated `oc` context and access to resources queried by the legacy role.
-- Install the declared collection dependency:
+- Install the declared `community.okd` collection.
+- Provide the OpenShift API URL and a username/password in the execution environment. The current legacy login task uses these values:
+  - `OPENSHIFT_API_URL`: API server URL, for example `https://api.cluster.example.com:6443`.
+  - `OPENSHIFT_USER`: username used for the legacy login.
+  - `OPENSHIFT_PASSWORD`: password used for the legacy login. Do not store it in tracked files.
+- Authenticate with permissions to read node inventory and run `oc adm top node`.
+- Review the legacy role's environment-driven authentication and output behavior before running it against production.
 
 ```bash
 ansible-galaxy collection install -r requirements/openshift_healthcheck_legacy.yml
+export OPENSHIFT_API_URL=https://api.<cluster-name>.<domain>:6443
+export OPENSHIFT_USER=<user>
+read -rsp 'OpenShift password: ' OPENSHIFT_PASSWORD; export OPENSHIFT_PASSWORD; echo
 ansible-playbook -i inventory.ini playbooks/legacy/openshift_healthcheck_legacy.yml
+unset OPENSHIFT_PASSWORD
 ```
 
-Results follow the legacy role's report configuration. Review [the legacy role defaults](../roles/openshift_healthcheck_legacy/defaults/main.yml) and role documentation before execution.
+The legacy role also declares `OPENSHIFT_TOKEN`, but the current login task authenticates with username/password; token-only authentication is not wired into that task. Prefer the unified OpenShift health-report playbook for new use. Results are written to its legacy `reports/` output. Review [the legacy role variables](../roles/openshift_healthcheck_legacy/vars/main.yml) and [role documentation](../roles/openshift_healthcheck_legacy/README.md) before execution.
 
 ## References
 
