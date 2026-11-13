@@ -279,12 +279,18 @@
           subscription_json="$(oc get "$subscription_resource" "$subscription" -n "$operator_namespace" -o json)"
           installed_csv="$(jq -r '.status.installedCSV // empty' <<< "$subscription_json")"
           resolution_error="$(jq -r '[.status.conditions[]? | select(.type == "ResolutionFailed" and .status == "True") | .message] | join("; ")' <<< "$subscription_json")"
-
           if [[ -n "$resolution_error" ]]; then
-            echo "Subscription resolution failed: $resolution_error" >&2
-            oc describe "$subscription_resource" "$subscription" -n "$operator_namespace" >&2 || true
-            oc get "$packagemanifest_resource" "$package_name" -n "$catalog_namespace" -o yaml >&2 || true
-            exit 1
+            echo "SNRO_SUBSCRIPTION_RESOLUTION_WARNING=$resolution_error"
+          fi
+
+          # OLM may not yet populate Subscription.status.installedCSV when the
+          # matching operator CSV is already installed and healthy. Reuse it.
+          if [[ -z "$installed_csv" ]]; then
+            existing_csvs="$(oc get "$csv_resource" -n "$operator_namespace" -o json)"
+            installed_csv="$(jq -r '[.items[] | select((.metadata.name // "") | startswith("self-node-remediation.")) | select(.status.phase == "Succeeded") | .metadata.name] | first // empty' <<< "$existing_csvs")"
+            if [[ -n "$installed_csv" ]]; then
+              echo "Using already-installed Succeeded SNRO CSV: $installed_csv"
+            fi
           fi
 
           if [[ -n "$installed_csv" ]]; then
@@ -299,7 +305,13 @@
               exit 1
             fi
           else
-            echo "Attempt $attempt: waiting for Subscription to resolve an installed CSV."
+            if [[ -n "$resolution_error" ]]; then
+              echo "Subscription resolution failed and no Succeeded SNRO CSV is installed: $resolution_error" >&2
+              oc describe "$subscription_resource" "$subscription" -n "$operator_namespace" >&2 || true
+              oc get "$packagemanifest_resource" "$package_name" -n "$catalog_namespace" -o yaml >&2 || true
+              exit 1
+            fi
+            echo "Attempt $attempt: waiting for Subscription or an existing SNRO CSV to become ready."
           fi
           sleep "$wait_interval"
         done
