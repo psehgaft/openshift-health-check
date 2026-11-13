@@ -32,7 +32,7 @@ From the repository root, run:
 python3 scripts/init-atp-vault.py
 ```
 
-The helper securely prompts for a Vault password and optionally for Quay robot credentials. Input is not echoed, and secrets are written only into a temporary mode-0600 file before Ansible Vault encrypts it. The resulting `group_vars/atp/vault.yml` is ignored by Git and has mode 0600. Keep the Vault password in a password manager; it is not saved by the helper.
+The helper securely prompts for a Vault password and optionally for Quay robot credentials. Input is not echoed, and secrets are written only into a temporary mode-0600 file before Ansible Vault encrypts it. If both Quay fields are left blank, it stores only a harmless initialization marker so the encrypted vars file remains loadable. The resulting `group_vars/atp/vault.yml` is ignored by Git and has mode 0600. Keep the Vault password in a password manager; it is not saved by the helper.
 
 If you prefer to initialize or edit the file manually:
 
