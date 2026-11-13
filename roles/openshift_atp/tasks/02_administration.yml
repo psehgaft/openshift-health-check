@@ -100,6 +100,7 @@
     - name: "TC-26: Determine whether the guarded reboot is explicitly authorized"
       ansible.builtin.set_fact:
         tc26_execution_requested: "{{ run_tc26_sanity_reboot | default(false) | bool }}"
+        tc26_manual_execution_enabled: "{{ tc26_manual_execution | default(false) | bool }}"
         tc26_confirmation_matches: "{{ (tc26_reboot_confirmation | default('') | string) == ('REBOOT-CLUSTER-' ~ cluster_name) }}"
 
     - name: "TC-26: Reboot cluster nodes sequentially and collect before/after evidence"
@@ -114,11 +115,47 @@
       when:
         - tc26_execution_requested | bool
         - tc26_confirmation_matches | bool
+        - not (tc26_manual_execution_enabled | bool)
 
+    - name: "TC-26: Verify cluster health after manual reboot"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        nodes_json="$(oc get nodes -o json 2>&1)"; nodes_rc=$?
+        operators_json="$(oc get co -o json 2>&1)"; operators_rc=$?
+        echo "COMMAND: oc get nodes -o json"
+        printf '%s\n' "$nodes_json"
+        echo "COMMAND: oc get co -o json"
+        printf '%s\n' "$operators_json"
+        nodes_health_rc=1
+        operators_health_rc=1
+        if [[ "$nodes_rc" -eq 0 ]]; then
+          jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]; .type == "Ready" and .status == "True"))' <<< "$nodes_json" >/dev/null 2>&1
+          nodes_health_rc=$?
+        fi
+        if [[ "$operators_rc" -eq 0 ]]; then
+          jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]; .type == "Available" and .status == "True") and all([.status.conditions[] | select(.type == "Degraded")]; .status == "False") and all([.status.conditions[] | select(.type == "Progressing")]; .status == "False"))' <<< "$operators_json" >/dev/null 2>&1
+          operators_health_rc=$?
+        fi
+        echo "Node readiness check exit code: $nodes_health_rc"
+        echo "ClusterOperator health check exit code: $operators_health_rc"
+        if [[ "$nodes_health_rc" -eq 0 && "$operators_health_rc" -eq 0 ]]; then
+          echo "TC26_MANUAL_RESULT=PASS"
+          exit 0
+        fi
+        echo "TC26_MANUAL_RESULT=FAIL: one or more nodes or ClusterOperators are not healthy after the declared manual reboot." >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: tc26_manual_cmd
+      changed_when: false
+      failed_when: false
+      when: tc26_manual_execution_enabled | bool
     - name: "TC-26: Classify reboot outcome"
       ansible.builtin.set_fact:
         tc26_status: >-
-          {% if not (tc26_execution_requested | bool and tc26_confirmation_matches | bool) %}
+          {% if tc26_manual_execution_enabled | bool %}
+          {{ 'Pass' if (tc26_manual_cmd.rc | default(1) | int) == 0 and 'TC26_MANUAL_RESULT=PASS' in (tc26_manual_cmd.stdout | default('')) else 'Fail' }}
+          {% elif not (tc26_execution_requested | bool and tc26_confirmation_matches | bool) %}
           Skipped
           {% elif tc_reboot_cmd is defined and (tc_reboot_cmd.rc | default(1) | int) == 0 and 'TC_REBOOT_RESULT=PASS' in (tc_reboot_cmd.stdout | default('')) %}
           Pass
@@ -134,9 +171,17 @@
           category: "OpenShift Administration"
           expected: "Capture node status before and after; reboot nodes one at a time, wait for each boot ID to change and node to return Ready before proceeding; leave every node Ready and restore its schedulability."
           status: "{{ tc26_status | trim }}"
-          procedure: "Opt-in guarded rolling reboot: verify cluster health, capture oc get nodes before, cordon and drain without bypassing PDBs, reboot workers before control-plane nodes, wait for the rebooted node to become Ready before continuing, uncordon, then capture oc get nodes after."
+          procedure: "{{ 'Manual execution attested by tc26_manual_execution=true; the playbook only checks cluster health using oc get nodes and oc get co.' if (tc26_manual_execution_enabled | bool) else 'Opt-in guarded rolling reboot: verify cluster health, capture oc get nodes before, cordon and drain without bypassing PDBs, reboot workers before control-plane nodes, wait for the rebooted node to become Ready before continuing, uncordon, then capture oc get nodes after.' }}"
           evidence: |
-            {% if tc26_status | trim == 'Skipped' %}
+            {% if tc26_manual_execution_enabled | bool %}
+            {{ tc26_manual_cmd.stdout | default('') }}
+            {% if tc26_manual_cmd.stderr | default('') | length > 0 %}
+            STDERR:
+            {{ tc26_manual_cmd.stderr }}
+            {% endif %}
+            Exit code: {{ tc26_manual_cmd.rc | default('unknown') }}
+            {% elif tc26_status | trim == 'Skipped' %}
+            Manual flag is false and automated reboot authorization was not provided.
             No reboot command was executed. Enable run_tc26_sanity_reboot and provide tc26_reboot_confirmation=REBOOT-CLUSTER-{{ cluster_name }}.
             {% else %}
             {{ tc_reboot_before_cmd.stdout | default('') }}
@@ -148,12 +193,15 @@
             Exit code: {{ tc_reboot_cmd.rc | default('unknown') }}
             {% endif %}
           details: |
-            {% if tc26_status | trim == 'Skipped' %}
+            {% if tc26_manual_execution_enabled | bool %}
+            TC-26 was declared manually executed. Only node readiness (oc get nodes) and ClusterOperator health (oc get co) were validated; this does not independently prove the reboot event occurred.
+            {% elif tc26_status | trim == 'Skipped' %}
             TC-26 was not executed; the default is disabled and an exact confirmation is required.
             {% else %}
             {{ tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available'), true) | truncate(700) }}
             {% endif %}
-          remediation: "If execution failed, use the captured per-node evidence to identify the blocked drain, reboot timeout, API/operator health issue, or uncordon failure. PDB protections are not bypassed. Resolve the blocker and rerun only after all nodes and ClusterOperators are healthy."
+          additional_comments: "{{ 'Manual execution was declared with tc26_manual_execution=true. The ATP ran read-only checks only: oc get nodes and oc get co; it did not reboot nodes or independently verify the reboot event.' if (tc26_manual_execution_enabled | bool) else '' }}"
+          remediation: "{{ 'Review the oc get nodes and oc get co evidence; resolve NotReady nodes or unhealthy ClusterOperators, then rerun manual verification.' if (tc26_manual_execution_enabled | bool) else 'If execution failed, use the captured per-node evidence to identify the blocked drain, reboot timeout, API/operator health issue, or uncordon failure. PDB protections are not bypassed. Resolve the blocker and rerun only after all nodes and ClusterOperators are healthy.' }}"
 
     - name: "TC-26: Append Result"
       ansible.builtin.set_fact:
@@ -166,6 +214,7 @@
     - name: "TC-27: Determine whether the selected worker reboot is explicitly authorized"
       ansible.builtin.set_fact:
         tc27_execution_requested: "{{ run_tc27_reboot_worker | default(false) | bool }}"
+        tc27_manual_execution_enabled: "{{ tc27_manual_execution | default(false) | bool }}"
         tc27_confirmation_matches: "{{ (tc27_reboot_confirmation | default('') | string) == ('REBOOT-WORKER-' ~ (tc27_worker_node | default(''))) }}"
         tc27_target_configured: "{{ tc27_worker_node | default('') | length > 0 }}"
 
@@ -183,11 +232,56 @@
         - tc27_execution_requested | bool
         - tc27_target_configured | bool
         - tc27_confirmation_matches | bool
+        - not (tc27_manual_execution_enabled | bool)
 
+    - name: "TC-27: Verify cluster health after manual worker reboot"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        worker_target={{ tc27_worker_node | default('') | quote }}
+        nodes_json="$(oc get nodes -o json 2>&1)"; nodes_rc=$?
+        operators_json="$(oc get co -o json 2>&1)"; operators_rc=$?
+        echo "COMMAND: oc get nodes -o json"
+        printf '%s\n' "$nodes_json"
+        echo "COMMAND: oc get co -o json"
+        printf '%s\n' "$operators_json"
+        nodes_health_rc=1
+        target_health_rc=1
+        operators_health_rc=1
+        if [[ "$nodes_rc" -eq 0 ]]; then
+          jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]; .type == "Ready" and .status == "True"))' <<< "$nodes_json" >/dev/null 2>&1
+          nodes_health_rc=$?
+          if [[ -n "$worker_target" ]]; then
+            jq -e --arg target "$worker_target" '[.items[] | select(.metadata.name == $target and has("metadata") and (.metadata.labels | has("node-role.kubernetes.io/worker"))) | select(any(.status.conditions[]; .type == "Ready" and .status == "True"))] | length == 1' <<< "$nodes_json" >/dev/null 2>&1
+            target_health_rc=$?
+          else
+            echo "TC-27 manual verification requires tc27_worker_node to identify the worker rebooted." >&2
+          fi
+        fi
+        if [[ "$operators_rc" -eq 0 ]]; then
+          jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]; .type == "Available" and .status == "True") and all([.status.conditions[] | select(.type == "Degraded")]; .status == "False") and all([.status.conditions[] | select(.type == "Progressing")]; .status == "False"))' <<< "$operators_json" >/dev/null 2>&1
+          operators_health_rc=$?
+        fi
+        echo "Node readiness check exit code: $nodes_health_rc"
+        echo "Selected worker readiness check exit code: $target_health_rc"
+        echo "ClusterOperator health check exit code: $operators_health_rc"
+        if [[ "$nodes_health_rc" -eq 0 && "$target_health_rc" -eq 0 && "$operators_health_rc" -eq 0 ]]; then
+          echo "TC27_MANUAL_RESULT=PASS"
+          exit 0
+        fi
+        echo "TC27_MANUAL_RESULT=FAIL: selected worker, nodes, or ClusterOperators are not healthy after the declared manual reboot." >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: tc27_manual_cmd
+      changed_when: false
+      failed_when: false
+      when: tc27_manual_execution_enabled | bool
     - name: "TC-27: Classify reboot outcome"
       ansible.builtin.set_fact:
         tc27_status: >-
-          {% if not (tc27_execution_requested | bool and tc27_target_configured | bool and tc27_confirmation_matches | bool) %}
+          {% if tc27_manual_execution_enabled | bool %}
+          {{ 'Pass' if (tc27_manual_cmd.rc | default(1) | int) == 0 and 'TC27_MANUAL_RESULT=PASS' in (tc27_manual_cmd.stdout | default('')) else 'Fail' }}
+          {% elif not (tc27_execution_requested | bool and tc27_target_configured | bool and tc27_confirmation_matches | bool) %}
           Skipped
           {% elif tc_reboot_cmd is defined and (tc_reboot_cmd.rc | default(1) | int) == 0 and 'TC_REBOOT_RESULT=PASS' in (tc_reboot_cmd.stdout | default('')) %}
           Pass
@@ -203,9 +297,16 @@
           category: "OpenShift Administration"
           expected: "The explicitly selected worker is cordoned and drained; its boot ID changes, it returns Ready, then it is uncordoned; node evidence is captured before and after."
           status: "{{ tc27_status | trim }}"
-          procedure: "Opt-in guarded single-worker reboot: capture oc get nodes before; cordon and drain the selected worker without bypassing PDBs; reboot it, wait for the boot ID to change and Ready status, uncordon, then capture oc get nodes after."
+          procedure: "{{ 'Manual execution attested by tc27_manual_execution=true for worker ' ~ (tc27_worker_node | default('unspecified')) ~ '; the playbook only checks oc get nodes and oc get co.' if (tc27_manual_execution_enabled | bool) else 'Opt-in guarded single-worker reboot: capture oc get nodes before; cordon and drain the selected worker without bypassing PDBs; reboot it, wait for the boot ID to change and Ready status, uncordon, then capture oc get nodes after.' }}"
           evidence: |
-            {% if tc27_status | trim == 'Skipped' %}
+            {% if tc27_manual_execution_enabled | bool %}
+            {{ tc27_manual_cmd.stdout | default('') }}
+            {% if tc27_manual_cmd.stderr | default('') | length > 0 %}
+            STDERR:
+            {{ tc27_manual_cmd.stderr }}
+            {% endif %}
+            Exit code: {{ tc27_manual_cmd.rc | default('unknown') }}
+            {% elif tc27_status | trim == 'Skipped' %}
             No reboot command was executed. Enable run_tc27_reboot_worker, set tc27_worker_node, and provide tc27_reboot_confirmation=REBOOT-WORKER-<node>.
             {% else %}
             {{ tc_reboot_before_cmd.stdout | default('') }}
@@ -217,12 +318,15 @@
             Exit code: {{ tc_reboot_cmd.rc | default('unknown') }}
             {% endif %}
           details: |
-            {% if tc27_status | trim == 'Skipped' %}
+            {% if tc27_manual_execution_enabled | bool %}
+            TC-27 was declared manually executed for worker {{ tc27_worker_node | default('unspecified') }}. The ATP validated all nodes, the selected worker, and ClusterOperators using only oc get nodes and oc get co; it did not independently prove the reboot event occurred.
+            {% elif tc27_status | trim == 'Skipped' %}
             TC-27 was not executed; the default is disabled and an exact worker target and confirmation are required.
             {% else %}
             {{ tc_reboot_cmd.stdout | default(tc_reboot_cmd.stderr | default('No reboot evidence available'), true) | truncate(700) }}
             {% endif %}
-          remediation: "If execution failed, use the evidence to inspect the selected worker, drain/PDB conditions, boot ID transition, Ready timeout, and schedulability. Do not bypass PDB protections. Resolve the cause and rerun after the cluster is healthy."
+          additional_comments: "{{ ('Manual execution was declared with tc27_manual_execution=true for worker ' ~ (tc27_worker_node | default('unspecified')) ~ '. The ATP ran read-only oc get nodes and oc get co checks only; it did not reboot the node or independently verify the reboot event.') if (tc27_manual_execution_enabled | bool) else '' }}"
+          remediation: "{{ 'Set tc27_worker_node to the manually rebooted worker, and review the oc get nodes / oc get co evidence for readiness and operator health.' if (tc27_manual_execution_enabled | bool) else 'If execution failed, use the evidence to inspect the selected worker, drain/PDB conditions, boot ID transition, Ready timeout, and schedulability. Do not bypass PDB protections. Resolve the cause and rerun after the cluster is healthy.' }}"
 
     - name: "TC-27: Append Result"
       ansible.builtin.set_fact:
