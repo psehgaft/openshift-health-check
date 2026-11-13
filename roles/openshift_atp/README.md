@@ -12,6 +12,14 @@ oc whoami
 ansible-playbook -i inventory.ini playbooks/atp.yml
 ```
 
+If you are already in the `playbooks/` directory, this also works:
+
+```bash
+ansible-playbook atp.yml
+```
+
+The directory includes its own `ansible.cfg`, which points Ansible to the repository's `roles/`, `callback_plugins/`, and `filter_plugins/`. This keeps the short command working without installing the role globally or setting a machine-specific `roles_path`.
+
 Reports are written to `reports/` by default. Override `atp_report_dir` to select another directory.
 
 ## Layout

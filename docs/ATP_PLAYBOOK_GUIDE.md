@@ -26,6 +26,22 @@ openshift-health-check/
 
 Reusable Ansible tasks, defaults, templates, helper files, and Galaxy metadata for ATP live in [the `openshift_atp` role](../roles/openshift_atp/). Run it through the stable entry point, [`playbooks/atp.yml`](../playbooks/atp.yml). The former `toolkits/openshift-atp` directory is retired. `toolkits/` contains standalone specialist utilities that are not Ansible roles or playbooks. Repository-level validation scripts stay in `scripts/`, and a role-specific helper that is required at runtime stays inside that role.
 
+### Run ATP from either repository directory
+
+From the repository root, run:
+
+```bash
+ansible-playbook -i inventory.ini playbooks/atp.yml
+```
+
+If your shell is already in `playbooks/`, run:
+
+```bash
+ansible-playbook atp.yml
+```
+
+The [playbooks-scoped Ansible configuration](../playbooks/ansible.cfg) adds the repository's `roles/` and plugin directories to Ansible's search paths. You do not need to install `openshift_atp` into `~/.ansible/roles`. For a syntax-only check that does not contact a cluster, run `ansible-playbook --syntax-check -i localhost, atp.yml` from `playbooks/`.
+
 Each automated ATP case records the invoked command, stdout/stderr, exit code, expected result, and conclusion. Reports also include the source procedure as separate reference data, so readers can distinguish documented steps from commands actually executed. The role renders its Markdown and HTML reports from templates in the role itself.
 
 ## Reports

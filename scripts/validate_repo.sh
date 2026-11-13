@@ -83,10 +83,19 @@ if failures:
 print(f"YAML OK: {len(yaml_files)} files")
 PY
 
-log "Running Ansible playbook syntax checks"
-while IFS= read -r playbook; do
-  "${ANSIBLE_PLAYBOOK_BIN}" --syntax-check "${playbook}"
-done < <(find "${ROOT_DIR}/playbooks" -type f -name '*.yml' | sort)
+(
+  cd "${ROOT_DIR}"
+  log "Running Ansible playbook syntax checks from repository root"
+  while IFS= read -r playbook; do
+    "${ANSIBLE_PLAYBOOK_BIN}" --syntax-check "${playbook}"
+  done < <(find "${ROOT_DIR}/playbooks" -type f -name '*.yml' | sort)
+)
+
+(
+  cd "${ROOT_DIR}/playbooks"
+  log "Validating ATP role resolution from the playbooks directory"
+  "${ANSIBLE_PLAYBOOK_BIN}" --syntax-check -i localhost, atp.yml
+)
 
 log "Compiling Python sources"
 "${VENV_PYTHON_BIN}" - "${ROOT_DIR}" <<'PY'
