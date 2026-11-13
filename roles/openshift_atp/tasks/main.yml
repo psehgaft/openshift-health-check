@@ -44,16 +44,12 @@
 
 - name: Record disabled ATP cases as Skipped
   ansible.builtin.include_tasks: record_disabled_case.yml
-  loop: "{{ vars | dict2items | selectattr('key', 'match', '^run_tc[0-9]+[a-z]?_') | sort(attribute='key') | list }}"
+  loop: "{{ query('varnames', '^run_tc[0-9]+[a-z]?_') | sort }}"
   loop_control:
     loop_var: atp_run_toggle
-    label: "{{ atp_run_toggle.key }}"
-  vars:
-    atp_skip_case_id: "TC-{{ atp_run_toggle.key[6:] | split('_') | first }}"
-    atp_skip_case_toggle: "{{ atp_run_toggle.key }}"
+    label: "{{ atp_run_toggle }}"
   when:
-    - not (atp_run_toggle.value | bool)
-    - atp_skip_case_id not in (atp_results | map(attribute='id') | list)
+    - not (lookup('vars', atp_run_toggle) | bool)
   tags: [always, general, telco]
 
 - name: Record ATP completion timestamp
