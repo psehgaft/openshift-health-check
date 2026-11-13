@@ -273,3 +273,6 @@ The manual flags are attestations that the approved manual procedure has already
 - TC-62: set `tc62_manual_execution: true`. The ATP runs only `oc get nodes -o json`, `oc get co -o json`, and `oc get pods -n openshift-etcd -o json`; Pass requires healthy nodes/operators and Running, ready etcd pods.
 
 When a manual flag is true, it takes precedence over the automated case path so the playbook cannot repeat the disruptive operation. A Pass certifies current health after the declared manual run; these read-only checks do not independently prove that a reboot or restore occurred, or validate the restore backup. Keep an operator-maintained change/runbook record for that proof.
+
+
+For manual procedure evidence and read-only post-operation verification of TC-26, TC-27, and TC-62, see [ATP Manual Execution Flags](ATP_MANUAL_EXECUTION_FLAGS.md). Use the OpenShift 4.20 [graceful node reboot guidance](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/nodes/working-with-nodes) and [control plane backup and restore guidance](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/observability/backup_and_restore/control-plane-backup-and-restore) as the approved procedure references.
