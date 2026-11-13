@@ -1,4 +1,15 @@
 ---
+- name: Derive the ATP ID for the disabled run toggle
+  ansible.builtin.set_fact:
+    atp_skip_case_id: "TC-{{ atp_run_toggle[6:] | split('_') | first }}"
+    atp_skip_case_toggle: "{{ atp_run_toggle }}"
+  tags: [always, general, telco]
+
+- name: Check whether the skipped case already has a result
+  ansible.builtin.set_fact:
+    atp_skip_case_should_record: "{{ atp_skip_case_id not in (atp_results | map(attribute='id') | list) }}"
+  tags: [always, general, telco]
+
 - name: Build an explicit skipped result for a disabled ATP case
   ansible.builtin.set_fact:
     atp_disabled_case_result:
@@ -11,9 +22,11 @@
       evidence: "Skipped by configuration: {{ atp_skip_case_toggle }}=false."
       details: "Set {{ atp_skip_case_toggle }}: true in group_vars/all.yml to run this case."
       additional_comments: "This ATP case was intentionally skipped by the configured run toggle."
+  when: atp_skip_case_should_record | bool
   tags: [always, general, telco]
 
 - name: Append disabled case to ATP report
   ansible.builtin.set_fact:
     atp_results: "{{ atp_results + [atp_disabled_case_result] }}"
+  when: atp_skip_case_should_record | bool
   tags: [always, general, telco]
