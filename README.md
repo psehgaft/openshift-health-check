@@ -115,10 +115,33 @@ scripts/run_ci_report.sh playbooks/openshift_cluster_health_report.yml
 # → reports/ci-cluster-report.md and reports/ci-cluster-report.json
 ```
 
+
+## Ansible playbooks
+
+The repository includes dedicated playbooks for OpenShift, Kubernetes, ATP, certificates, DNS, and a legacy compatibility path. Each playbook has documented prerequisites, configurable variables, execution examples, and expected outputs in the [playbook reference](playbooks/README.md).
+
+| Playbook | Purpose | Execution |
+| --- | --- | --- |
+| [OpenShift health report](playbooks/openshift_cluster_health_report.yml) | Live or collected-evidence OpenShift health report | `ansible-playbook -i inventory.ini playbooks/openshift_cluster_health_report.yml` |
+| [Kubernetes health report](playbooks/k8s_cluster_health_report.yml) | Generic Kubernetes health report | `ansible-playbook -i inventory.ini playbooks/k8s_cluster_health_report.yml` |
+| [AKS health report](playbooks/aks_cluster_health_report.yml) | AKS-specific Kubernetes health profile | `ansible-playbook -i inventory.ini playbooks/aks_cluster_health_report.yml` |
+| [EKS health report](playbooks/eks_cluster_health_report.yml) | EKS-specific Kubernetes health profile | `ansible-playbook -i inventory.ini playbooks/eks_cluster_health_report.yml` |
+| [GKE health report](playbooks/gke_cluster_health_report.yml) | GKE-specific Kubernetes health profile | `ansible-playbook -i inventory.ini playbooks/gke_cluster_health_report.yml` |
+| [Rancher health report](playbooks/rancher_cluster_health_report.yml) | Rancher-managed Kubernetes health profile | `ansible-playbook -i inventory.ini playbooks/rancher_cluster_health_report.yml` |
+| [Minikube health report](playbooks/minikube_cluster_health_report.yml) | Lightweight Minikube profile | `ansible-playbook -i inventory.ini playbooks/minikube_cluster_health_report.yml` |
+| [Development Kubernetes report](playbooks/development_k8s_cluster_health_report.yml) | Reduced collection profile for development clusters | `ansible-playbook -i inventory.ini playbooks/development_k8s_cluster_health_report.yml` |
+| [ATP](playbooks/atp.yml) | OpenShift Acceptance Test Procedure with Markdown/HTML evidence | `ansible-playbook -i inventory.ini playbooks/atp.yml` |
+| [Certificate audit](playbooks/openshift_certificate_audit.yml) | OpenShift certificate inventory and expiration checks | `ansible-playbook -i localhost, playbooks/openshift_certificate_audit.yml` |
+| [DNS validation](playbooks/openshift_dns_validation.yml) | DNS and resolver checks over SSH to inventory hosts | `ansible-playbook -i inventories/openshift_dns_validation/hosts.ini.example playbooks/openshift_dns_validation.yml -e expected_domain=example.com` |
+| [Legacy OpenShift health check](playbooks/legacy/openshift_healthcheck_legacy.yml) | Compatibility entry point for the legacy collector | `ansible-playbook -i inventory.ini playbooks/legacy/openshift_healthcheck_legacy.yml` |
+
+Before running a report, activate the repository virtual environment and select the matching authenticated `oc` or `kubectl` context. Some ATP cases and live support collectors can modify cluster state or create temporary debug resources; review their gates and permissions before enabling them. For variable definitions, prerequisites, and report artifact details for every entry point, see [playbooks/README.md](playbooks/README.md).
+
 ## Documentation map
 
 | Doc | Purpose |
 | --- | --- |
+| [playbooks/README.md](playbooks/README.md) | Per-playbook prerequisites, variables, run commands, and expected results |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | Shortest path and common command variants |
 | [docs/ANSIBLE_GALAXY_LAYOUT.md](docs/ANSIBLE_GALAXY_LAYOUT.md) | Reusable role structure and specialist Ansible entry points |
 | [docs/ATP_PLAYBOOK_GUIDE.md](docs/ATP_PLAYBOOK_GUIDE.md) | ATP role variables, evidence, operational gates, and case troubleshooting links |
