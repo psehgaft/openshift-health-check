@@ -227,3 +227,24 @@ domain and use the same cluster name configured for its API and ingress endpoint
 Keep shared case definitions environment-neutral. Store site-specific hostnames and DNS
 domains in the execution inventory or runtime variables rather than in the reusable ATP
 catalog.
+
+
+## Site variables and per-case execution controls
+
+The shared [`group_vars/all.yml`](../group_vars/all.yml) file is the editable site configuration for repository playbooks. The ATP entry point explicitly loads it, so it works even when Ansible uses an implicit localhost inventory. The role defaults remain fallback values for standalone role use.
+
+Every automated ATP case has its own `run_tc*` switch in that file. Set an individual switch to `false` to avoid running that case; the ATP still adds a report row with conclusion `Skipped` and identifies the switch to re-enable it. For example:
+
+```yaml
+run_tc28_install_operator: false
+run_tc51_disable_self_provisioner: true
+run_tc67a_storage_iscsi_multipath: true
+```
+
+TC-26 and TC-27 are disabled by default because they reboot nodes. TC-62 uses the separate `tc62_restore_enabled` control and requires its exact confirmation string. Keep those false except during an approved maintenance or recovery exercise.
+
+TC-28's earlier failure was caused by the short `oc get subscription` resource name resolving to the unrelated `subscriptions.apps.open-cluster-management.io` API in this cluster. The task now queries the explicit `subscriptions.operators.coreos.com` resource. Package, namespace, channel, catalog source, wait period, and controller deployment are also configurable in `group_vars/all.yml`.
+
+TC-51 correctly failed because the observed `self-provisioners` ClusterRoleBinding still granted `system:authenticated:oauth` the `self-provisioner` role. This is a cluster configuration finding, not an automation error. Remove that group from the binding using the approved change procedure, set the binding's autoupdate behavior so the default subject is not restored, then rerun TC-51. The ATP remains read-only for this check.
+
+TC-67a's `NOT_APPLICABLE` result is expected when no SAN-backed PV or SAN StorageClass is configured. The reported inventory showed Ceph RBD and local block storage, with no iSCSI/FC/SAN resources, so the check was correctly Skipped. The report now states this explicitly. For a custom SAN StorageClass that cannot be auto-detected, list its name in `tc67a_san_storage_class_names`.

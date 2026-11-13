@@ -405,6 +405,7 @@
           'category': 'General Support / Telco',
           'expected': 'When SAN storage is configured, a SAN-backed PVC is Bound; worker nodes report multipathd active and at least one active/ready/running path. For iSCSI-backed PVs, an active iSCSI session is also detected. If no SAN storage is configured, the multipath-specific check is not applicable.',
           'status': ('Skipped' if tc67a_cmd.rc == 3 else 'Pass' if tc67a_cmd.rc == 0 else 'Fail'),
+          'additional_comments': ('Not applicable: no iSCSI, Fibre Channel, or SAN-backed PV/StorageClass was detected. This cluster uses other storage backends, so the multipath-specific check is not required.' if tc67a_cmd.rc == 3 else ('Review SAN PVC/PV binding and worker multipath/iSCSI evidence before rerunning.' if tc67a_cmd.rc != 0 else '')),
           'procedure': 'Query Bound PVCs, PV volume types and configured SAN StorageClasses; on every worker inspect /etc/iscsi, iscsid sessions, multipathd, and multipath -ll through oc debug node/<worker> -- chroot /host.',
           'evidence': ((tc67a_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc67a_cmd.stderr | default(''))) if (tc67a_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc67a_cmd.rc | string) if tc67a_cmd.rc is defined else '')),
           'details': tc67a_cmd.stdout | default(tc67a_cmd.stderr) | truncate(300),
