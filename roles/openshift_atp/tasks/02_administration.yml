@@ -263,7 +263,7 @@
 
         subscription="self-node-remediation"
         operator_namespace="openshift-workload-availability"
-        echo "Subscription applied. Waiting up to 10 minutes for the SNRO CSV to reach Succeeded."
+        echo "Subscription applied. Waiting up to $((wait_attempts * wait_interval)) seconds for the SNRO CSV to reach Succeeded."
 
         installed_csv=""
         for attempt in $(seq 1 60); do
@@ -274,7 +274,7 @@
           if [[ -n "$resolution_error" ]]; then
             echo "Subscription resolution failed: $resolution_error" >&2
             oc describe subscription "$subscription" -n "$operator_namespace" >&2 || true
-            oc get packagemanifest self-node-remediation -n openshift-marketplace -o yaml >&2 || true
+            oc get "$packagemanifest_resource" "$package_name" -n "$catalog_namespace" -o yaml >&2 || true
             exit 1
           fi
 
@@ -299,7 +299,7 @@
           echo "Timed out waiting for the SNRO CSV to reach Succeeded." >&2
           oc describe subscription "$subscription" -n "$operator_namespace" >&2 || true
           oc get installplan -n "$operator_namespace" >&2 || true
-          oc get csv -n "$operator_namespace" >&2 || true
+          oc get "$csv_resource" -n "$operator_namespace" >&2 || true
           exit 1
         fi
 

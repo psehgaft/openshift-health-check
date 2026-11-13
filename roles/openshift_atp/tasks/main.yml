@@ -42,6 +42,20 @@
   ansible.builtin.include_tasks: main_cases.yml
   tags: [general, telco, atp]
 
+- name: Record disabled ATP cases as Skipped
+  ansible.builtin.include_tasks: record_disabled_case.yml
+  loop: "{{ vars | dict2items | selectattr('key', 'match', '^run_tc[0-9]+[a-z]?_') | sort(attribute='key') | list }}"
+  loop_control:
+    loop_var: atp_run_toggle
+    label: "{{ atp_run_toggle.key }}"
+  vars:
+    atp_skip_case_id: "TC-{{ atp_run_toggle.key[6:] | split('_') | first }}"
+    atp_skip_case_toggle: "{{ atp_run_toggle.key }}"
+  when:
+    - not (atp_run_toggle.value | bool)
+    - atp_skip_case_id not in (atp_results | map(attribute='id') | list)
+  tags: [always, general, telco]
+
 - name: Record ATP completion timestamp
   ansible.builtin.set_fact:
     atp_end_time: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
