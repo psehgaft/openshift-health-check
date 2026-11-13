@@ -32,6 +32,10 @@
 # TC 62: etcd restore (destructive recovery; opt-in)
 - name: "TC-62: etcd restore"
   block:
+    - name: "TC-62: Resolve manual execution mode"
+      ansible.builtin.set_fact:
+        tc62_manual_execution_enabled: "{{ tc62_manual_execution | default(false) | bool }}"
+
     - name: "TC-62: Execute guarded etcd restore and verify recovery"
       ansible.builtin.command:
         argv:
@@ -54,20 +58,57 @@
       when:
         - tc62_restore_enabled | default(false) | bool
         - (tc62_restore_confirmation | default('')) == ('RESTORE-ETCD-' ~ (cluster_name | default('')))
+        - not (tc62_manual_execution_enabled | bool)
       async: 7200
       poll: 10
 
-    - name: "TC-62: Record Result"
+    - name: "TC-62: Classify restore result"
       ansible.builtin.set_fact:
-        atp_results: "{{ atp_results + [{
-          'id': 'TC-62',
-          'name': 'etcd restore',
-          'category': 'Cluster Backup & Restore',
-          'expected': 'Restore from the matching z-stream snapshot and verify API, node, ClusterOperator, and etcd health',
-          'status': ('Skipped' if not (tc62_restore_enabled | default(false) | bool) else 'Fail' if ((tc62_restore_confirmation | default('')) != ('RESTORE-ETCD-' ~ (cluster_name | default('')))) else 'Pass' if (tc62_cmd.rc | default(1) == 0) else 'Fail'),
-          'procedure': 'Opt-in destructive recovery: preflight SSH access, matching snapshot/static resources and release; reject a ready API; run disable-etcd.sh on configured control-plane hosts; run cluster-restore.sh on the recovery host; wait for stable cluster; restore quorum guard; verify nodes, ClusterOperators, etcd pods and pending CSRs.',
-          'evidence': ((tc62_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc62_cmd.stderr | default(''))) if (tc62_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc62_cmd.rc | string) if tc62_cmd.rc is defined else '\nNo execution: restore is disabled or exact confirmation is missing.')),
-          'details': 'This recovery is destructive. It stays Skipped unless tc62_restore_enabled=true and tc62_restore_confirmation=RESTORE-ETCD-<cluster_name>. If enabled, a wrong confirmation is a Fail and no restore command runs.',
-          'remediation': 'Never use this to validate routine health. Confirm a controlled recovery exercise, matching cluster/backup z-stream, working out-of-band access to every control-plane node, and a backup with matching snapshot and static_kuberesources files. If any restore step has started and fails, follow the Red Hat recovery runbook; do not rerun the playbook blindly.'
-        }] }}"
+        tc62_status: >-
+          {% if tc62_manual_execution_enabled | bool %}
+          {{ 'Pass' if (tc62_manual_cmd.rc | default(1) | int) == 0 and 'TC62_MANUAL_RESULT=PASS' in (tc62_manual_cmd.stdout | default('')) else 'Fail' }}
+          {% elif not (tc62_restore_enabled | default(false) | bool) %}
+          Skipped
+          {% elif (tc62_restore_confirmation | default('')) != ('RESTORE-ETCD-' ~ (cluster_name | default(''))) %}
+          Fail
+          {% elif (tc62_cmd.rc | default(1) | int) == 0 %}
+          Pass
+          {% else %}
+          Fail
+          {% endif %}
+
+    - name: "TC-62: Build Result Record"
+      ansible.builtin.set_fact:
+        tc62_result:
+          id: "TC-62"
+          name: "etcd restore"
+          category: "Cluster Backup & Restore"
+          expected: "Restore from the matching z-stream snapshot and verify API, node, ClusterOperator, and etcd health"
+          status: "{{ tc62_status | trim }}"
+          procedure: "{{ 'Manual execution attested by tc62_manual_execution=true; the playbook only checks oc get nodes, oc get co, and etcd pod readiness.' if (tc62_manual_execution_enabled | bool) else 'Opt-in destructive recovery with preflight, snapshot restore, and post-restore API, node, ClusterOperator, and etcd validation.' }}"
+          evidence: |
+            {% if tc62_manual_execution_enabled | bool %}
+            {{ tc62_manual_cmd.stdout | default('') }}
+            {% if tc62_manual_cmd.stderr | default('') | length > 0 %}
+            STDERR:
+            {{ tc62_manual_cmd.stderr }}
+            {% endif %}
+            Exit code: {{ tc62_manual_cmd.rc | default('unknown') }}
+            {% elif tc62_cmd is defined %}
+            {{ tc62_cmd.stdout | default('') }}
+            {% if tc62_cmd.stderr | default('') | length > 0 %}
+            STDERR:
+            {{ tc62_cmd.stderr }}
+            {% endif %}
+            Exit code: {{ tc62_cmd.rc | default('unknown') }}
+            {% else %}
+            No restore execution: the destructive case is disabled or its exact confirmation is missing.
+            {% endif %}
+          details: "{{ 'Manual restore execution was declared. ATP validated node readiness, ClusterOperator health, and etcd pod readiness only; it did not independently verify that the restore procedure was performed.' if (tc62_manual_execution_enabled | bool) else 'This recovery is destructive and remains Skipped unless tc62_restore_enabled=true and tc62_restore_confirmation=RESTORE-ETCD-<cluster_name>. A wrong confirmation is a Fail and no restore command runs.' }}"
+          additional_comments: "{{ 'Manual execution was declared with tc62_manual_execution=true. Evidence is limited to oc get nodes, oc get co, and oc get pods -n openshift-etcd; the playbook did not execute an etcd restore.' if (tc62_manual_execution_enabled | bool) else '' }}"
+          remediation: "{{ 'Review node readiness, ClusterOperator conditions, and etcd pod readiness from the captured evidence. Resolve any unhealthy state before declaring the manual recovery complete.' if (tc62_manual_execution_enabled | bool) else 'Never use this to validate routine health. Confirm a controlled recovery exercise, matching cluster/backup z-stream, working out-of-band access to every control-plane node, and matching snapshot/static_kuberesources files. If any restore step has started and fails, follow the Red Hat recovery runbook; do not rerun blindly.' }}"
+
+    - name: "TC-62: Append Result"
+      ansible.builtin.set_fact:
+        atp_results: "{{ atp_results + [tc62_result] }}"
   tags: ['general', 'telco', 'tc62', 'etcd_restore']
