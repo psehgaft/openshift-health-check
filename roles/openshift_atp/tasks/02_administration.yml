@@ -241,6 +241,8 @@
         package_name={{ tc28_package_name | default('self-node-remediation') | quote }}
         catalog_namespace={{ tc28_catalog_namespace | default('openshift-marketplace') | quote }}
         packagemanifest_resource={{ tc28_packagemanifest_api_resource | default('packagemanifests.packages.operators.coreos.com') | quote }}
+        subscription_resource={{ tc28_subscription_api_resource | default('subscriptions.operators.coreos.com') | quote }}
+        installplan_resource={{ tc28_installplan_api_resource | default('installplans.operators.coreos.com') | quote }}
         csv_resource={{ tc28_csv_api_resource | default('clusterserviceversions.operators.coreos.com') | quote }}
         controller_deployment={{ tc28_controller_deployment | default('self-node-remediation-controller-manager') | quote }}
         subscription={{ tc28_subscription_name | default('self-node-remediation') | quote }}
@@ -270,30 +272,30 @@
           sourceNamespace: openshift-marketplace
         SNRO_RESOURCES
 
-        echo "Subscription applied. Waiting up to $((wait_attempts * wait_interval)) seconds for the SNRO CSV to reach Succeeded."
+        echo "Subscription applied or already configured. Waiting up to $((wait_attempts * wait_interval)) seconds for the SNRO CSV to reach Succeeded."
 
         installed_csv=""
         for attempt in $(seq 1 "$wait_attempts"); do
-          subscription_json="$(oc get subscription "$subscription" -n "$operator_namespace" -o json)"
+          subscription_json="$(oc get "$subscription_resource" "$subscription" -n "$operator_namespace" -o json)"
           installed_csv="$(jq -r '.status.installedCSV // empty' <<< "$subscription_json")"
           resolution_error="$(jq -r '[.status.conditions[]? | select(.type == "ResolutionFailed" and .status == "True") | .message] | join("; ")' <<< "$subscription_json")"
 
           if [[ -n "$resolution_error" ]]; then
             echo "Subscription resolution failed: $resolution_error" >&2
-            oc describe subscription "$subscription" -n "$operator_namespace" >&2 || true
+            oc describe "$subscription_resource" "$subscription" -n "$operator_namespace" >&2 || true
             oc get "$packagemanifest_resource" "$package_name" -n "$catalog_namespace" -o yaml >&2 || true
             exit 1
           fi
 
           if [[ -n "$installed_csv" ]]; then
-            phase="$(oc get csv "$installed_csv" -n "$operator_namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            phase="$(oc get "$csv_resource" "$installed_csv" -n "$operator_namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
             echo "Attempt $attempt: CSV=$installed_csv phase=${phase:-Pending}"
             if [[ "$phase" == "Succeeded" ]]; then
               break
             fi
             if [[ "$phase" == "Failed" ]]; then
               echo "ClusterServiceVersion $installed_csv entered Failed phase." >&2
-              oc describe csv "$installed_csv" -n "$operator_namespace" >&2 || true
+              oc describe "$csv_resource" "$installed_csv" -n "$operator_namespace" >&2 || true
               exit 1
             fi
           else
@@ -302,10 +304,10 @@
           sleep "$wait_interval"
         done
 
-        if [[ -z "$installed_csv" || "$(oc get csv "$installed_csv" -n "$operator_namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)" != "Succeeded" ]]; then
+        if [[ -z "$installed_csv" || "$(oc get "$csv_resource" "$installed_csv" -n "$operator_namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)" != "Succeeded" ]]; then
           echo "Timed out waiting for the SNRO CSV to reach Succeeded." >&2
-          oc describe subscription "$subscription" -n "$operator_namespace" >&2 || true
-          oc get installplan -n "$operator_namespace" >&2 || true
+          oc describe "$subscription_resource" "$subscription" -n "$operator_namespace" >&2 || true
+          oc get "$installplan_resource" -n "$operator_namespace" >&2 || true
           oc get "$csv_resource" -n "$operator_namespace" >&2 || true
           exit 1
         fi
@@ -344,9 +346,9 @@
         fi
 
         echo "== Subscription =="
-        oc get subscription "$subscription" -n "$operator_namespace" -o yaml
+        oc get "$subscription_resource" "$subscription" -n "$operator_namespace" -o yaml
         echo "== Installed ClusterServiceVersion =="
-        oc get csv "$installed_csv" -n "$operator_namespace" -o yaml
+        oc get "$csv_resource" "$installed_csv" -n "$operator_namespace" -o yaml
         echo "== Controller Deployment =="
         oc get deployment self-node-remediation-controller-manager -n "$operator_namespace" -o wide
         echo "== Remediation DaemonSets (if present) =="
