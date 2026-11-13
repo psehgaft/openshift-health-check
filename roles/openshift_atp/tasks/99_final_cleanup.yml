@@ -2,16 +2,43 @@
 - name: "TC-30: Delete Namespace (Project)"
   when: run_tc30_delete_namespace | default(true) | bool
   block:
-    - name: "TC-30: Delete and verify testproject"
+    - name: "TC-30: Delete testproject and wait for namespace finalization"
       ansible.builtin.shell: |
-        set -euo pipefail
-        oc delete project testproject --ignore-not-found=true --wait=true
-        projects="$(oc get projects -o name)"
-        if grep -iq 'testproject' <<< "$projects"; then
-          echo "Project testproject still exists after deletion." >&2
+        set -uo pipefail
+        project="testproject"
+        timeout_seconds={{ tc30_delete_wait_timeout_seconds | default(600) | int }}
+        poll_interval=5
+
+        if ! delete_output="$(oc delete project "$project" --ignore-not-found=true --wait=false 2>&1)"; then
+          echo "$delete_output" >&2
           exit 1
         fi
-        echo "Verified: project testproject is absent."
+        echo "$delete_output"
+
+        deadline=$((SECONDS + timeout_seconds))
+        while (( SECONDS < deadline )); do
+          project_json="$(oc get project "$project" -o json 2>&1)"
+          project_rc=$?
+          if [[ "$project_rc" -ne 0 ]]; then
+            lowered="$(printf '%s' "$project_json" | tr '[:upper:]' '[:lower:]')"
+            if [[ "$lowered" == *"notfound"* || "$lowered" == *"not found"* ]]; then
+              echo "Verified: project $project is absent after deletion."
+              exit 0
+            fi
+            echo "Could not verify project deletion: $project_json" >&2
+            exit 1
+          fi
+
+          deletion_timestamp="$(jq -r '.metadata.deletionTimestamp // empty' <<< "$project_json")"
+          phase="$(jq -r '.status.phase // "Unknown"' <<< "$project_json")"
+          echo "Waiting for project $project deletion: phase=$phase deletionTimestamp=${deletion_timestamp:-not-set}"
+          sleep "$poll_interval"
+        done
+
+        echo "Timed out after $timeout_seconds seconds waiting for project $project to disappear." >&2
+        oc get project "$project" -o json | jq '{name: .metadata.name, phase: .status.phase, deletionTimestamp: .metadata.deletionTimestamp, finalizers: .metadata.finalizers, conditions: .status.conditions}' >&2 || true
+        echo "Do not remove finalizers blindly; inspect remaining namespaced resources and their owners." >&2
+        exit 1
       args:
         executable: /bin/bash
       register: tc30_cmd
@@ -24,10 +51,11 @@
           'id': 'TC-30',
           'name': 'Delete Namespace (Project)',
           'category': 'OpenShift Administration',
-          'expected': 'Project testproject is deleted and absent from the project list',
-          'status': ('Pass' if tc30_cmd.rc == 0 else 'Fail'),
-          'procedure': (tc30_cmd.cmd | default('See ATP task source; command metadata unavailable')),
-          'evidence': ((tc30_cmd.stdout | default('')) ~ (('\nSTDERR:\n' ~ (tc30_cmd.stderr | default(''))) if (tc30_cmd.stderr | default('') | length > 0) else '') ~ ('\nExit code: ' ~ (tc30_cmd.rc | string) if tc30_cmd.rc is defined else '')),
-          'details': tc30_cmd.stdout | default(tc30_cmd.stderr) | truncate(150)
+          'expected': 'Project testproject is deleted and absent from the API after namespace finalization',
+          'status': ('Pass' if tc30_cmd.rc == 0 and 'Verified: project testproject is absent' in (tc30_cmd.stdout | default('')) else 'Fail'),
+          'procedure': (tc30_cmd.cmd | default('Request project deletion, poll the API until it returns NotFound, and report finalizers if it remains')),
+          'evidence': ((tc30_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc30_cmd.stderr | default(''))) if (tc30_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc30_cmd.rc | string) if tc30_cmd.rc is defined else '')),
+          'details': tc30_cmd.stdout | default(tc30_cmd.stderr) | truncate(400),
+          'remediation': 'If the project remains Terminating, inspect the reported namespace conditions, finalizers, and remaining namespaced resources. Resolve the owning controller or storage cleanup problem; do not remove finalizers without understanding the data-loss impact.'
         }] }}"
   tags: ['general', 'telco', 'tc30', 'administration']
