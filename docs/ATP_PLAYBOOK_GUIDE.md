@@ -248,3 +248,8 @@ TC-28's earlier failure was caused by the short `oc get subscription` resource n
 TC-51 correctly failed because the observed `self-provisioners` ClusterRoleBinding still granted `system:authenticated:oauth` the `self-provisioner` role. This is a cluster configuration finding, not an automation error. Remove that group from the binding using the approved change procedure, set the binding's autoupdate behavior so the default subject is not restored, then rerun TC-51. The ATP remains read-only for this check.
 
 TC-67a's `NOT_APPLICABLE` result is expected when no SAN-backed PV or SAN StorageClass is configured. The reported inventory showed Ceph RBD and local block storage, with no iSCSI/FC/SAN resources, so the check was correctly Skipped. The report now states this explicitly. For a custom SAN StorageClass that cannot be auto-detected, list its name in `tc67a_san_storage_class_names`.
+
+
+## ATP-only encrypted credentials
+
+For external registry URL settings, Quay robot credentials, Vault initialization, and safe execution instructions, see [ATP Vault and external registry setup](ATP_VAULT_AND_EXTERNAL_REGISTRY.md). The ATP role loads `group_vars/atp/vault.yml` only when present; other playbooks do not load these credentials.
