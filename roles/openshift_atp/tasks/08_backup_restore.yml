@@ -62,6 +62,48 @@
       async: 7200
       poll: 10
 
+    - name: "TC-62: Verify cluster health after manual etcd restore"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        nodes_json="$(oc get nodes -o json 2>&1)"; nodes_rc=$?
+        operators_json="$(oc get co -o json 2>&1)"; operators_rc=$?
+        etcd_pods_json="$(oc get pods -n openshift-etcd -o json 2>&1)"; etcd_pods_rc=$?
+        echo "COMMAND: oc get nodes -o json"
+        printf '%s\n' "$nodes_json"
+        echo "COMMAND: oc get co -o json"
+        printf '%s\n' "$operators_json"
+        echo "COMMAND: oc get pods -n openshift-etcd -o json"
+        printf '%s\n' "$etcd_pods_json"
+        nodes_health_rc=1
+        operators_health_rc=1
+        etcd_health_rc=1
+        if [[ "$nodes_rc" -eq 0 ]]; then
+          jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]; .type == "Ready" and .status == "True"))' <<< "$nodes_json" >/dev/null 2>&1
+          nodes_health_rc=$?
+        fi
+        if [[ "$operators_rc" -eq 0 ]]; then
+          jq -e '.items | length > 0 and all(.[]; any(.status.conditions[]; .type == "Available" and .status == "True") and all([.status.conditions[] | select(.type == "Degraded")]; .status == "False") and all([.status.conditions[] | select(.type == "Progressing")]; .status == "False"))' <<< "$operators_json" >/dev/null 2>&1
+          operators_health_rc=$?
+        fi
+        if [[ "$etcd_pods_rc" -eq 0 ]]; then
+          jq -e '[.items[] | select(.metadata.name | startswith("etcd-")) | select(.metadata.name | contains("quorum-guard") | not)] as $pods | ($pods | length) > 0 and all($pods[]; .status.phase == "Running" and ([.status.containerStatuses[]?.ready] | length > 0 and all))' <<< "$etcd_pods_json" >/dev/null 2>&1
+          etcd_health_rc=$?
+        fi
+        echo "Node readiness check exit code: $nodes_health_rc"
+        echo "ClusterOperator health check exit code: $operators_health_rc"
+        echo "etcd pod readiness check exit code: $etcd_health_rc"
+        if [[ "$nodes_health_rc" -eq 0 && "$operators_health_rc" -eq 0 && "$etcd_health_rc" -eq 0 ]]; then
+          echo "TC62_MANUAL_RESULT=PASS"
+          exit 0
+        fi
+        echo "TC62_MANUAL_RESULT=FAIL: node, ClusterOperator, or etcd pod health validation failed after the declared manual restore." >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: tc62_manual_cmd
+      changed_when: false
+      failed_when: false
+      when: tc62_manual_execution_enabled | bool
     - name: "TC-62: Classify restore result"
       ansible.builtin.set_fact:
         tc62_status: >-
