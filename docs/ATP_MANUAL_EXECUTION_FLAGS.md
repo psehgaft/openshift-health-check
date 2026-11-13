@@ -40,3 +40,7 @@ ansible-playbook -i inventory.ini playbooks/atp.yml --tags "tc26,tc27,tc62"
 ```
 
 Reset the flags to false after generating the report so a later run does not carry forward a prior manual-execution attestation.
+
+## Official runbooks
+
+Complete the approved procedure before setting a manual flag. See the OpenShift Container Platform 4.20 [graceful node reboot guidance](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/nodes/working-with-nodes) for TC-26/TC-27 and the [control plane backup and restore guidance](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/observability/backup_and_restore/control-plane-backup-and-restore) for TC-62. An etcd restore is a last-resort recovery procedure; the manual flag must not be used as a substitute for the approved runbook or its evidence.
