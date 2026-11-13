@@ -321,6 +321,33 @@
             echo "$sc_json"
             exit 1
           fi
+          echo "== StorageClass inventory (type and purpose inferred from provisioner) =="
+          printf '%s\n' "$sc_json" | jq -r '
+            def backend($p):
+              if ($p | test("ceph.rbd"; "i")) then ["Ceph RBD block", "Persistent block volumes for databases, VM disks, or other RWO workloads"]
+              elif ($p | test("cephfs"; "i")) then ["CephFS shared file", "Shared filesystem volumes for workloads that need concurrent file access"]
+              elif ($p | test("local"; "i")) then ["Local PV", "Node-local storage tied to a specific node; locality and node failure affect availability"]
+              elif ($p | test("iscsi"; "i")) then ["iSCSI SAN block", "Remote SAN block devices; multipath/session checks may apply"]
+              elif ($p | test("fibre|fc"; "i")) then ["Fibre Channel SAN block", "Remote SAN block devices; multipath checks may apply"]
+              elif ($p | test("nfs"; "i")) then ["NFS file", "Network file share"]
+              elif ($p | test("ebs|cinder|vsphere|disk.csi|powerstore"; "i")) then ["CSI block", "Provider-managed persistent block volumes"]
+              elif ($p | test("azurefile|file.csi"; "i")) then ["CSI file", "Provider-managed network filesystem"]
+              else ["CSI/backend-specific", "Inspect provisioner and site design; purpose is not encoded by StorageClass alone"]
+              end;
+            .items[] |
+            (.provisioner // "unknown") as $p |
+            backend($p) as $b |
+            "StorageClass=" + .metadata.name
+              + " provisioner=" + $p
+              + " type=" + $b[0]
+              + " purpose=" + $b[1]
+              + " default=" + ((.metadata.annotations["storageclass.kubernetes.io/is-default-class"] // .metadata.annotations["storageclass.beta.kubernetes.io/is-default-class"] // "false") | tostring)
+              + " binding=" + (.volumeBindingMode // "Immediate")
+              + " reclaim=" + (.reclaimPolicy // "Delete")
+              + " expansion=" + ((.allowVolumeExpansion // false) | tostring)
+              + " description=" + (.metadata.annotations["storageclass.kubernetes.io/description"] // .metadata.annotations["description"] // "not provided")
+          '
+          echo "StorageClass purpose is inferred from its provisioner. For workload-specific intent, add a site description annotation or document it in the storage design."
           worker_names="$(printf '%s' "$worker_json" | jq -r '.items[].metadata.name')"
           if [[ -z "$worker_names" ]]; then
             echo "No worker nodes were found."
