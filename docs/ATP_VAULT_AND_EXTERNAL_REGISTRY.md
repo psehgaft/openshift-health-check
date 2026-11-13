@@ -67,7 +67,7 @@ ansible-playbook --ask-vault-pass -i localhost, atp.yml
 
 Without a Vault file, normal ATP execution remains available:
 
-```
+```bash
 cd playbooks
 ansible-playbook -i localhost, atp.yml
 ```
