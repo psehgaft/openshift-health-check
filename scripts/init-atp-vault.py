@@ -53,7 +53,7 @@ def main() -> int:
         encrypted_file = tmp_dir / "vault.yml.encrypted"
         # JSON scalar quoting is valid YAML and safely handles special characters.
         plain_file.write_text(
-            "{}\n" if not values else "".join(
+            "".join(
                 f"{key}: {json.dumps(value, ensure_ascii=False)}\n"
                 for key, value in values.items()
             ),
