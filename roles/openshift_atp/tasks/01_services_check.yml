@@ -713,7 +713,10 @@
         fi
 
         quay_failures=0
-        while IFS=
+        while IFS= read -r quay_ref; do
+          [[ -n "$quay_ref" ]] || continue
+          quay_namespace="${quay_ref%%/*}"
+          quay_name="${quay_ref#*/}"
           quay_resource="$(jq -c --arg ns "$quay_namespace" --arg name "$quay_name" '.items[] | select(.metadata.namespace == $ns and .metadata.name == $name)' <<< "$quay_json")"
           available="$(jq -r '[.status.conditions[]? | select(.type == "Available") | .status] | last // "Unknown"' <<< "$quay_resource")"
           endpoint="$(jq -r '.status.registryEndpoint // "not-reported"' <<< "$quay_resource")"
