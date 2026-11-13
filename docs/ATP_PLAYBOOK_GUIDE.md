@@ -262,3 +262,14 @@ For external registry URL settings, Quay robot credentials, Vault initialization
 - **TC-30:** Project deletion is asynchronous. The case now polls until the API returns NotFound and reports namespace finalizers/conditions after timeout instead of checking immediately after the delete request.
 - **TC-55 / TC-57:** Set `atp_api_cert_self_signed: true` or `atp_ingress_cert_self_signed: true` in `group_vars/atp/main.yml` to record that case as Skipped with an explicit note. Skipped means chain, SAN, and expiry were not validated.
 - **TC-67a:** The report lists each StorageClass with its CSI provisioner, inferred backend type and purpose, default status, binding mode, reclaim policy, and expansion setting. Business purpose cannot be derived reliably from a provisioner alone; add a StorageClass description annotation or document it in the storage design.
+
+
+## Manual execution flags for TC-26, TC-27, and TC-62
+
+The manual flags are attestations that the approved manual procedure has already been completed. They do not trigger a reboot or an etcd restore. Set the applicable flag to `true` in `group_vars/atp/main.yml` for one report run, then reset it to `false`.
+
+- TC-26: set `tc26_manual_execution: true`. The ATP runs only `oc get nodes -o json` and `oc get co -o json`; Pass requires every node Ready and every ClusterOperator Available, not Degraded, and not Progressing.
+- TC-27: set `tc27_manual_execution: true` and set `tc27_worker_node` to the worker that was rebooted. The same two API queries are used; Pass also requires the selected node to exist, have the worker role, and be Ready.
+- TC-62: set `tc62_manual_execution: true`. The ATP runs only `oc get nodes -o json`, `oc get co -o json`, and `oc get pods -n openshift-etcd -o json`; Pass requires healthy nodes/operators and Running, ready etcd pods.
+
+When a manual flag is true, it takes precedence over the automated case path so the playbook cannot repeat the disruptive operation. A Pass certifies current health after the declared manual run; these read-only checks do not independently prove that a reboot or restore occurred, or validate the restore backup. Keep an operator-maintained change/runbook record for that proof.
