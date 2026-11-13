@@ -323,21 +323,26 @@
           fi
           echo "== StorageClass inventory (type and purpose inferred from provisioner) =="
           printf '%s\n' "$sc_json" | jq -r '
-            def backend($p):
-              if ($p | test("ceph.rbd"; "i")) then ["Ceph RBD block", "Persistent block volumes for databases, VM disks, or other RWO workloads"]
-              elif ($p | test("cephfs"; "i")) then ["CephFS shared file", "Shared filesystem volumes for workloads that need concurrent file access"]
-              elif ($p | test("local"; "i")) then ["Local PV", "Node-local storage tied to a specific node; locality and node failure affect availability"]
+            def backend($p; $n):
+              if (($p | test("rbd"; "i")) or ($n | test("rbd"; "i"))) then ["Ceph RBD block/filesystem", "Ceph RBD CSI storage; use the StorageClass description for supported access modes and volume modes"]
+              elif ($p | test("cephfs"; "i")) then ["CephFS shared filesystem", "Shared filesystem volumes for workloads that need concurrent file access"]
+              elif (($p | test("rgw|noobaa|object|bucket|obc"; "i")) or ($n | test("rgw|noobaa|object|bucket"; "i"))) then ["Object storage (S3-compatible bucket)", "Object Bucket Claims provide bucket/object storage; this is not a block PVC"]
+              elif (($p | test("no-provisioner"; "i")) and ($n | test("local|block"; "i"))) then ["Static local block PV", "Pre-created node-local block volumes; scheduling and node failure affect availability"]
+              elif (($p | test("local"; "i")) or ($n | test("local"; "i"))) then ["Local PV", "Node-local storage tied to a specific node; locality and node failure affect availability"]
               elif ($p | test("iscsi"; "i")) then ["iSCSI SAN block", "Remote SAN block devices; multipath/session checks may apply"]
               elif ($p | test("fibre|fc"; "i")) then ["Fibre Channel SAN block", "Remote SAN block devices; multipath checks may apply"]
-              elif ($p | test("nfs"; "i")) then ["NFS file", "Network file share"]
+              elif ($p | test("nfs"; "i")) then ["NFS shared filesystem", "Network file share"]
               elif ($p | test("ebs|cinder|vsphere|disk.csi|powerstore"; "i")) then ["CSI block", "Provider-managed persistent block volumes"]
               elif ($p | test("azurefile|file.csi"; "i")) then ["CSI file", "Provider-managed network filesystem"]
+              elif ($p | test("no-provisioner"; "i")) then ["Static PV (no dynamic provisioner)", "Pre-created persistent volumes are bound according to administrator configuration"]
               else ["CSI/backend-specific", "Inspect provisioner and site design; purpose is not encoded by StorageClass alone"]
               end;
             .items[] |
+            (.metadata.name // "unnamed") as $n |
             (.provisioner // "unknown") as $p |
-            backend($p) as $b |
-            "StorageClass=" + .metadata.name
+            (.metadata.annotations["storageclass.kubernetes.io/description"] // .metadata.annotations["description"] // "not provided") as $description |
+            backend($p; $n) as $b |
+            "StorageClass=" + $n
               + " provisioner=" + $p
               + " type=" + $b[0]
               + " purpose=" + $b[1]
@@ -345,7 +350,7 @@
               + " binding=" + (.volumeBindingMode // "Immediate")
               + " reclaim=" + (.reclaimPolicy // "Delete")
               + " expansion=" + ((.allowVolumeExpansion // false) | tostring)
-              + " description=" + (.metadata.annotations["storageclass.kubernetes.io/description"] // .metadata.annotations["description"] // "not provided")
+              + " description=" + $description
           '
           echo "StorageClass purpose is inferred from its provisioner. For workload-specific intent, add a site description annotation or document it in the storage design."
           worker_names="$(printf '%s' "$worker_json" | jq -r '.items[].metadata.name')"
@@ -424,6 +429,10 @@
       changed_when: false
       failed_when: false
 
+    - name: "TC-67a: Summarize StorageClass observations"
+      ansible.builtin.set_fact:
+        tc67a_storageclass_observations: "{{ tc67a_cmd.stdout | default('') | regex_findall('(?m)^StorageClass=.*$') | join('; ') | default('No StorageClasses were returned', true) }}"
+
     - name: "TC-67a: Record Result"
       ansible.builtin.set_fact:
         atp_results: "{{ atp_results + [{
@@ -432,7 +441,7 @@
           'category': 'General Support / Telco',
           'expected': 'When SAN storage is configured, a SAN-backed PVC is Bound; worker nodes report multipathd active and at least one active/ready/running path. For iSCSI-backed PVs, an active iSCSI session is also detected. If no SAN storage is configured, the multipath-specific check is not applicable.',
           'status': ('Skipped' if tc67a_cmd.rc == 3 else 'Pass' if tc67a_cmd.rc == 0 else 'Fail'),
-          'additional_comments': ('Not applicable: no iSCSI, Fibre Channel, or SAN-backed PV/StorageClass was detected. This cluster uses other storage backends, so the multipath-specific check is not required.' if tc67a_cmd.rc == 3 else ('Review SAN PVC/PV binding and worker multipath/iSCSI evidence before rerunning.' if tc67a_cmd.rc != 0 else '')),
+          'additional_comments': ('StorageClasses observed (type, purpose, and cluster description): ' ~ (tc67a_storageclass_observations | default('No StorageClasses were returned')) ~ '. ' ~ ('No iSCSI, Fibre Channel, or SAN-backed PV/StorageClass was detected, so multipath is not applicable.' if tc67a_cmd.rc == 3 else ('Review SAN PVC/PV binding and worker multipath/iSCSI evidence before rerunning.' if tc67a_cmd.rc != 0 else 'Multipath validation completed; see the inventory and node evidence above.'))),
           'procedure': 'Query Bound PVCs, PV volume types and configured SAN StorageClasses; on every worker inspect /etc/iscsi, iscsid sessions, multipathd, and multipath -ll through oc debug node/<worker> -- chroot /host.',
           'evidence': ((tc67a_cmd.stdout | default('')) ~ (('\\nSTDERR:\\n' ~ (tc67a_cmd.stderr | default(''))) if (tc67a_cmd.stderr | default('') | length > 0) else '') ~ ('\\nExit code: ' ~ (tc67a_cmd.rc | string) if tc67a_cmd.rc is defined else '')),
           'details': tc67a_cmd.stdout | default(tc67a_cmd.stderr) | truncate(300),
